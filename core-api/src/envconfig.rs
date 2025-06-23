@@ -50,9 +50,7 @@
 //! ```
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::HashMap, fs, path::Path};
 use thiserror::Error;
 
 /// Default profile name when none is specified
@@ -71,7 +69,7 @@ pub enum ConfigError {
     InvalidConfig(String),
 
     #[error("Configuration loading error: {0}")]
-    LoadError(anyhow::Error),
+    LoadError(Box<dyn std::error::Error>),
 }
 
 impl From<std::str::Utf8Error> for ConfigError {

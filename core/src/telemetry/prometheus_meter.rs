@@ -1,8 +1,9 @@
 use crate::abstractions::dbg_panic;
+use anyhow::anyhow;
 use parking_lot::RwLock;
 use prometheus::{
     GaugeVec, HistogramVec, IntCounterVec, IntGaugeVec, Opts,
-    core::{Collector, GenericCounter},
+    core::{Collector, Desc, GenericCounter},
     proto::{LabelPair, MetricFamily},
 };
 use std::{
@@ -39,11 +40,79 @@ impl LabelSchema {
     }
 }
 
+#[derive(derive_more::From, Debug, Clone)]
+enum PromCollector {
+    Histo(HistogramVec),
+    Counter(IntCounterVec),
+    Gauge(IntGaugeVec),
+    GaugeF64(GaugeVec),
+}
+
+impl TryFrom<PromCollector> for HistogramVec {
+    type Error = ();
+    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
+        match value {
+            PromCollector::Histo(v) => Ok(v),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<PromCollector> for IntCounterVec {
+    type Error = ();
+    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
+        match value {
+            PromCollector::Counter(v) => Ok(v),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<PromCollector> for IntGaugeVec {
+    type Error = ();
+    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
+        match value {
+            PromCollector::Gauge(v) => Ok(v),
+            _ => Err(()),
+        }
+    }
+}
+
+impl TryFrom<PromCollector> for GaugeVec {
+    type Error = ();
+    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
+        match value {
+            PromCollector::GaugeF64(v) => Ok(v),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Collector for PromCollector {
+    fn desc(&self) -> Vec<&Desc> {
+        match self {
+            PromCollector::Histo(v) => v.desc(),
+            PromCollector::Counter(v) => v.desc(),
+            PromCollector::Gauge(v) => v.desc(),
+            PromCollector::GaugeF64(v) => v.desc(),
+        }
+    }
+
+    fn collect(&self) -> Vec<MetricFamily> {
+        match self {
+            PromCollector::Histo(v) => v.collect(),
+            PromCollector::Counter(v) => v.collect(),
+            PromCollector::Gauge(v) => v.collect(),
+            PromCollector::GaugeF64(v) => v.collect(),
+        }
+    }
+}
+
 /// Replaces Prometheus's default registry with a custom one that allows us to register metrics that
 /// have different label sets for the same name.
 #[derive(Clone)]
 pub(super) struct Registry {
-    collectors_by_id: Arc<RwLock<HashMap<u64, Box<dyn Collector>>>>,
+    collectors_by_id: Arc<RwLock<HashMap<u64, PromCollector>>>,
     global_tags: BTreeMap<String, String>,
 }
 
@@ -59,9 +128,10 @@ impl Registry {
         }
     }
 
-    fn register(&self, c: Box<dyn Collector>) {
+    fn register<T: Into<PromCollector>>(&self, c: T) -> Option<PromCollector> {
         let mut desc_id_set = HashSet::new();
         let mut collector_id: u64 = 0;
+        let c = c.into();
 
         for desc in c.desc() {
             // If it is not a duplicate desc in this collector, add it to
@@ -75,25 +145,19 @@ impl Registry {
                     .wrapping_add(desc.dim_hash);
             } else {
                 dbg_panic!(
-                    "Prometheus metric has duplicate descriptors, values will not be recorded on \
+                    "Prometheus metric has duplicate descriptors, values may not be recorded on \
                     this metric. This is an SDK bug. Details: {:?}",
                     c.desc(),
                 );
-                return;
+                return None;
             }
         }
         match self.collectors_by_id.write().entry(collector_id) {
             hash_map::Entry::Vacant(vc) => {
                 vc.insert(c);
+                None
             }
-            hash_map::Entry::Occupied(o) => {
-                dbg_panic!(
-                    "Prometheus metric already registered, values will not be recorded on this \
-                    metric. Details: {:?} / Existing: {:?}",
-                    c.desc(),
-                    o.get().desc(),
-                );
-            }
+            hash_map::Entry::Occupied(o) => Some(o.get().clone()),
         }
     }
 
@@ -202,7 +266,7 @@ struct PromMetric<T> {
 
 impl<T> PromMetric<T>
 where
-    T: Clone + Collector + 'static,
+    T: Clone + Into<PromCollector> + TryFrom<PromCollector> + 'static,
 {
     fn new(metric_name: String, metric_description: String, registry: Registry) -> Self {
         Self {
@@ -215,7 +279,7 @@ where
     }
 
     /// Generic double-checked locking pattern for vector creation
-    fn get_or_create_vector<F>(&self, labels: &LabelSet, create_fn: F) -> T
+    fn get_or_create_vector<F>(&self, labels: &LabelSet, create_fn: F) -> anyhow::Result<T>
     where
         F: FnOnce(&str, &str, &[&str]) -> T,
     {
@@ -225,7 +289,7 @@ where
         {
             let vectors = self.vectors.read();
             if let Some(vector) = vectors.get(&schema) {
-                return vector.clone();
+                return Ok(vector.clone());
             }
         }
 
@@ -233,7 +297,7 @@ where
         let mut vectors = self.vectors.write();
         // Double-check pattern in case another thread created it
         if let Some(vector) = vectors.get(&schema) {
-            return vector.clone();
+            return Ok(vector.clone());
         }
 
         let label_names = schema.label_names_ref();
@@ -245,10 +309,20 @@ where
 
         let vector = create_fn(&self.metric_name, description, &label_names);
 
-        self.registry.register(Box::new(vector.clone()));
+        let maybe_exists = self.registry.register(vector.clone());
+        let vector = if let Some(m) = maybe_exists {
+            T::try_from(m).map_err(|_| {
+                anyhow!(
+                    "Tried to register a metric that already exists as a different type: {:?}",
+                    self.metric_name
+                )
+            })?
+        } else {
+            vector
+        };
 
         vectors.insert(schema, vector.clone());
-        vector
+        Ok(vector)
     }
 }
 
@@ -269,7 +343,7 @@ impl PromMetric<HistogramVec> {
     }
 
     /// Specialized get_or_create_vector for histograms that handles custom buckets
-    fn get_or_create_vector_with_buckets(&self, labels: &LabelSet) -> HistogramVec {
+    fn get_or_create_vector_with_buckets(&self, labels: &LabelSet) -> anyhow::Result<HistogramVec> {
         self.get_or_create_vector(labels, |name, desc, label_names| {
             let mut opts = prometheus::HistogramOpts::new(name, desc);
             if let Some(buckets) = &self.histogram_buckets {
@@ -284,12 +358,10 @@ impl<T> PromMetric<T>
 where
     T: Clone + Collector + 'static,
 {
-    /// Helper function to extract labels from attributes and handle common error cases
-    /// Returns the labels and prometheus-formatted labels for use in vector operations
     fn extract_prometheus_labels<'a>(
         &self,
         attributes: &'a MetricAttributes,
-    ) -> Result<(&'a LabelSet, HashMap<&'a str, &'a str>), ()> {
+    ) -> anyhow::Result<(&'a LabelSet, HashMap<&'a str, &'a str>)> {
         if matches!(attributes, MetricAttributes::Empty) {
             return Ok((LabelSet::empty(), HashMap::new()));
         }
@@ -301,24 +373,30 @@ where
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
-            Err(())
+            Err(anyhow!(
+                "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
+                attributes
+            ))
         }
     }
 
-    /// Helper to handle metric extraction failures with consistent error handling
-    /// Returns ! since it always panics, avoiding the need for type annotations
-    fn handle_metric_error(
+    fn label_mismatch_err(
         &self,
         attributes: &MetricAttributes,
         prom_labels: &HashMap<&str, &str>,
-    ) -> ! {
+    ) -> anyhow::Error {
         dbg_panic!(
             "Mismatch between expected # of prometheus labels and provided. \
             This is an SDK bug. Attributes: {:?} / Labels: {:?}",
             attributes,
             prom_labels
         );
-        panic!("TODO: Needs to be fallible?");
+        anyhow!(
+            "Mismatch between expected # of prometheus labels and provided. \
+            This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+            attributes,
+            prom_labels
+        )
     }
 }
 
@@ -329,20 +407,20 @@ impl CounterBase for CorePromCounter {
     }
 }
 impl MetricAttributable<Box<dyn CounterBase>> for PromMetric<IntCounterVec> {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn CounterBase> {
-        let (labels, prom_labels) = self
-            .extract_prometheus_labels(attributes)
-            .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
-
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
+        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             IntCounterVec::new(opts, label_names).unwrap()
-        });
-        Box::new(if let Ok(c) = vector.get_metric_with(&prom_labels) {
-            CorePromCounter(c)
+        })?;
+        if let Ok(c) = vector.get_metric_with(&prom_labels) {
+            Ok(Box::new(CorePromCounter(c)))
         } else {
-            self.handle_metric_error(attributes, &prom_labels)
-        })
+            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+        }
     }
 }
 
@@ -353,44 +431,44 @@ impl GaugeBase for CorePromIntGauge {
     }
 }
 impl MetricAttributable<Box<dyn GaugeBase>> for PromMetric<IntGaugeVec> {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeBase> {
-        let (labels, prom_labels) = self
-            .extract_prometheus_labels(attributes)
-            .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
-
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
+        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             IntGaugeVec::new(opts, label_names).unwrap()
-        });
-        Box::new(if let Ok(g) = vector.get_metric_with(&prom_labels) {
-            CorePromIntGauge(g)
+        })?;
+        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+            Ok(Box::new(CorePromIntGauge(g)))
         } else {
-            self.handle_metric_error(attributes, &prom_labels)
-        })
+            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+        }
     }
 }
 
 struct CorePromGauge(prometheus::Gauge);
 impl GaugeF64Base for CorePromGauge {
-    fn record(&self, value: f64) {
+    fn records(&self, value: f64) {
         self.0.set(value);
     }
 }
 impl MetricAttributable<Box<dyn GaugeF64Base>> for PromMetric<GaugeVec> {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeF64Base> {
-        let (labels, prom_labels) = self
-            .extract_prometheus_labels(attributes)
-            .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
-
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
+        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             GaugeVec::new(opts, label_names).unwrap()
-        });
-        Box::new(if let Ok(g) = vector.get_metric_with(&prom_labels) {
-            CorePromGauge(g)
+        })?;
+        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+            Ok(Box::new(CorePromGauge(g)))
         } else {
-            self.handle_metric_error(attributes, &prom_labels)
-        })
+            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+        }
     }
 }
 
@@ -410,36 +488,34 @@ impl HistogramF64Base for CorePromHistogram {
 #[derive(Debug)]
 struct PromHistogramU64(PromMetric<HistogramVec>);
 impl MetricAttributable<Box<dyn HistogramBase>> for PromHistogramU64 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramBase> {
-        let (labels, prom_labels) = self
-            .0
-            .extract_prometheus_labels(attributes)
-            .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
-
-        let vector = self.0.get_or_create_vector_with_buckets(labels);
-        Box::new(if let Ok(h) = vector.get_metric_with(&prom_labels) {
-            CorePromHistogram(h)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
+        let (labels, prom_labels) = self.0.extract_prometheus_labels(attributes)?;
+        let vector = self.0.get_or_create_vector_with_buckets(labels)?;
+        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+            Ok(Box::new(CorePromHistogram(h)))
         } else {
-            self.0.handle_metric_error(attributes, &prom_labels)
-        })
+            Err(self.0.label_mismatch_err(attributes, &prom_labels).into())
+        }
     }
 }
 
 #[derive(Debug)]
 struct PromHistogramF64(PromMetric<HistogramVec>);
 impl MetricAttributable<Box<dyn HistogramF64Base>> for PromHistogramF64 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramF64Base> {
-        let (labels, prom_labels) = self
-            .0
-            .extract_prometheus_labels(attributes)
-            .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
-
-        let vector = self.0.get_or_create_vector_with_buckets(labels);
-        Box::new(if let Ok(h) = vector.get_metric_with(&prom_labels) {
-            CorePromHistogram(h)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
+        let (labels, prom_labels) = self.0.extract_prometheus_labels(attributes)?;
+        let vector = self.0.get_or_create_vector_with_buckets(labels)?;
+        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+            Ok(Box::new(CorePromHistogram(h)))
         } else {
-            self.0.handle_metric_error(attributes, &prom_labels)
-        })
+            Err(self.0.label_mismatch_err(attributes, &prom_labels).into())
+        }
     }
 }
 
@@ -628,23 +704,30 @@ impl HistogramDurationBase for DurationHistogramBase {
     }
 }
 impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
-        match self {
-            DurationHistogram::Milliseconds(h) => {
-                Box::new(DurationHistogramBase::Millis(h.with_attributes(attributes)))
-            }
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(match self {
+            DurationHistogram::Milliseconds(h) => Box::new(DurationHistogramBase::Millis(
+                h.with_attributes(attributes)?,
+            )),
             DurationHistogram::Seconds(h) => {
-                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)))
+                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)?))
             }
-        }
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::{TelemetryInstance, metrics::MetricsContext};
     use prometheus::{Encoder, TextEncoder};
-    use temporal_sdk_core_api::telemetry::metrics::{MetricKeyValue, NewAttributes};
+    use temporal_sdk_core_api::telemetry::{
+        METRIC_PREFIX,
+        metrics::{MetricKeyValue, NewAttributes},
+    };
 
     #[test]
     fn test_prometheus_meter_dynamic_labels() {
@@ -805,7 +888,38 @@ mod tests {
 
         let output = output_string(&registry);
 
-        assert!(output.contains("no_labels 1"),);
+        assert!(output.contains("no_labels 1"));
+    }
+
+    #[test]
+    fn works_with_recreated_metrics_context() {
+        let registry = Registry::new(HashMap::new());
+        let meter = CorePrometheusMeter::new(
+            registry.clone(),
+            false,
+            false,
+            temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
+        );
+        let telem_instance = TelemetryInstance::new(
+            None,
+            None,
+            METRIC_PREFIX.to_string(),
+            Some(Arc::new(meter)),
+            true,
+        );
+        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
+        mc.worker_registered();
+        drop(mc);
+
+        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
+        mc.worker_registered();
+
+        let mc = MetricsContext::top_level("foo".to_string(), "q2".to_string(), &telem_instance);
+        mc.worker_registered();
+
+        let output = output_string(&registry);
+        assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q\"} 2"));
+        assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q2\"} 1"));
     }
 
     fn output_string(registry: &Registry) -> String {

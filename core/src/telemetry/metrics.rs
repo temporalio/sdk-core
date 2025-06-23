@@ -872,11 +872,14 @@ impl<I> MetricAttributable<Box<dyn CounterBase>> for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn CounterBase> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 
@@ -884,11 +887,14 @@ impl<I> MetricAttributable<Box<dyn HistogramBase>> for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramBase> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 
@@ -896,11 +902,14 @@ impl<I> MetricAttributable<Box<dyn HistogramF64Base>> for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramF64Base> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 
@@ -908,11 +917,14 @@ impl<I> MetricAttributable<Box<dyn HistogramDurationBase>> for BufferInstrument<
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 
@@ -920,11 +932,14 @@ impl<I> MetricAttributable<Box<dyn GaugeBase>> for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeBase> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 
@@ -932,11 +947,14 @@ impl<I> MetricAttributable<Box<dyn GaugeF64Base>> for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeF64Base> {
-        Box::new(InstrumentWithAttributes {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
             inner: self.clone(),
             attributes: attributes.clone(),
-        })
+        }))
     }
 }
 impl<I> CounterBase for InstrumentWithAttributes<BufferInstrument<I>>
@@ -961,7 +979,7 @@ impl<I> GaugeF64Base for InstrumentWithAttributes<BufferInstrument<I>>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: f64) {
+    fn records(&self, value: f64) {
         self.inner
             .send(MetricUpdateVal::ValueF64(value), &self.attributes)
     }

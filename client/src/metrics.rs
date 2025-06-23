@@ -89,17 +89,27 @@ impl MetricsContext {
             .meter
             .extend_attributes(self.kvs.clone(), new_kvs.into());
 
-        self.instruments.svc_request = self.instruments.svc_request.with_attributes(&self.kvs);
-        self.instruments.long_svc_request =
-            self.instruments.long_svc_request.with_attributes(&self.kvs);
-        self.instruments.svc_request_latency = self
+        // TODO: elses
+        if let Ok(v) = self.instruments.svc_request.with_attributes(&self.kvs) {
+            self.instruments.svc_request = v;
+        }
+        if let Ok(v) = self.instruments.long_svc_request.with_attributes(&self.kvs) {
+            self.instruments.long_svc_request = v;
+        }
+        if let Ok(v) = self
             .instruments
             .svc_request_latency
-            .with_attributes(&self.kvs);
-        self.instruments.long_svc_request_latency = self
+            .with_attributes(&self.kvs)
+        {
+            self.instruments.svc_request_latency = v;
+        }
+        if let Ok(v) = self
             .instruments
             .long_svc_request_latency
-            .with_attributes(&self.kvs);
+            .with_attributes(&self.kvs)
+        {
+            self.instruments.long_svc_request_latency = v;
+        }
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {
