@@ -7,8 +7,6 @@ use super::{
         WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     },
-    prometheus_meter::CorePrometheusMeter,
-    prometheus_server::PromServer,
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
@@ -23,17 +21,15 @@ use opentelemetry_sdk::{
         SdkMeterProvider, Temporality,
     },
 };
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
-    PrometheusExporterOptions,
     metrics::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramBase, HistogramDuration,
         HistogramDurationBase, HistogramF64, HistogramF64Base, MetricAttributable,
         MetricAttributes, MetricParameters, NewAttributes,
     },
 };
-use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
 fn histo_view(
@@ -50,7 +46,7 @@ fn histo_view(
                         record_min_max: true,
                     })
                     .build()
-                    .expect("Failed to build stream"),
+                    .expect("Hardcoded metric stream always builds"),
             )
         } else {
             None
@@ -65,10 +61,8 @@ pub(super) fn augment_meter_provider_with_defaults(
     bucket_overrides: HistogramBucketOverrides,
 ) -> Result<MeterProviderBuilder, anyhow::Error> {
     for (name, buckets) in bucket_overrides.overrides {
-        let name_pattern = format!("*{name}");
         mpb = mpb.with_view(move |ins: &Instrument| {
-            if ins.name().contains(&name_pattern[1..]) {
-                // Remove the '*' prefix for contains check
+            if ins.name().contains(&name) {
                 Some(
                     metrics::Stream::builder()
                         .with_aggregation(Aggregation::ExplicitBucketHistogram {
@@ -76,7 +70,7 @@ pub(super) fn augment_meter_provider_with_defaults(
                             record_min_max: true,
                         })
                         .build()
-                        .expect("Failed to build stream"),
+                        .expect("Hardcoded metric stream always builds"),
                 )
             } else {
                 None
@@ -106,21 +100,20 @@ pub(super) fn augment_meter_provider_with_defaults(
             use_seconds,
         ));
     // Fallback default
-    let default_buckets = if use_seconds {
-        DEFAULT_S_BUCKETS.to_vec()
-    } else {
-        DEFAULT_MS_BUCKETS.to_vec()
-    };
     mpb = mpb.with_view(move |ins: &Instrument| {
         if ins.kind() == InstrumentKind::Histogram {
             Some(
                 metrics::Stream::builder()
                     .with_aggregation(Aggregation::ExplicitBucketHistogram {
-                        boundaries: default_buckets.clone(),
+                        boundaries: if use_seconds {
+                            DEFAULT_S_BUCKETS.to_vec()
+                        } else {
+                            DEFAULT_MS_BUCKETS.to_vec()
+                        },
                         record_min_max: true,
                     })
                     .build()
-                    .expect("Failed to build stream"),
+                    .expect("Hardcoded metric stream always builds"),
             )
         } else {
             None
@@ -167,35 +160,6 @@ pub fn build_otlp_metric_exporter(
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,
         _mp: mp,
-    })
-}
-
-pub struct StartedPromServer {
-    pub meter: Arc<CorePrometheusMeter>,
-    pub bound_addr: SocketAddr,
-    pub abort_handle: AbortHandle,
-}
-
-/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
-/// Returns the meter that can be used as a [CoreMeter].
-///
-/// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
-pub fn start_prometheus_metric_exporter(
-    opts: PrometheusExporterOptions,
-) -> Result<StartedPromServer, anyhow::Error> {
-    let srv = PromServer::new(&opts)?;
-    let meter = Arc::new(CorePrometheusMeter::new(
-        srv.registry().clone(),
-        opts.use_seconds_for_durations,
-        opts.unit_suffix,
-        opts.histogram_bucket_overrides,
-    ));
-    let bound_addr = srv.bound_addr()?;
-    let handle = tokio::spawn(async move { srv.run().await });
-    Ok(StartedPromServer {
-        meter,
-        bound_addr,
-        abort_handle: handle.abort_handle(),
     })
 }
 

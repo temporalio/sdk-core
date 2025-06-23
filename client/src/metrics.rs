@@ -1,4 +1,4 @@
-use crate::{AttachMetricLabels, CallType};
+use crate::{AttachMetricLabels, CallType, dbg_panic};
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
     sync::Arc,
@@ -89,27 +89,32 @@ impl MetricsContext {
             .meter
             .extend_attributes(self.kvs.clone(), new_kvs.into());
 
-        // TODO: elses
-        if let Ok(v) = self.instruments.svc_request.with_attributes(&self.kvs) {
-            self.instruments.svc_request = v;
-        }
-        if let Ok(v) = self.instruments.long_svc_request.with_attributes(&self.kvs) {
-            self.instruments.long_svc_request = v;
-        }
-        if let Ok(v) = self
+        let _ = self
             .instruments
-            .svc_request_latency
+            .svc_request
             .with_attributes(&self.kvs)
-        {
-            self.instruments.svc_request_latency = v;
-        }
-        if let Ok(v) = self
-            .instruments
-            .long_svc_request_latency
-            .with_attributes(&self.kvs)
-        {
-            self.instruments.long_svc_request_latency = v;
-        }
+            .and_then(|v| {
+                self.instruments.svc_request = v;
+                self.instruments.long_svc_request.with_attributes(&self.kvs)
+            })
+            .and_then(|v| {
+                self.instruments.long_svc_request = v;
+                self.instruments
+                    .svc_request_latency
+                    .with_attributes(&self.kvs)
+            })
+            .and_then(|v| {
+                self.instruments.svc_request_latency = v;
+                self.instruments
+                    .long_svc_request_latency
+                    .with_attributes(&self.kvs)
+            })
+            .map(|v| {
+                self.instruments.long_svc_request_latency = v;
+            })
+            .inspect_err(|e| {
+                dbg_panic!("Failed to extend client metrics attributes: {:?}", e);
+            });
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {

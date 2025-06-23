@@ -1,12 +1,13 @@
+use crate::dbg_panic;
 use std::{
     any::Any,
     borrow::Cow,
-    fmt::Debug,
+    collections::{BTreeMap, HashMap},
+    fmt::{Debug, Display},
     ops::Deref,
     sync::{Arc, OnceLock},
     time::Duration,
 };
-use tracing::error;
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
@@ -118,9 +119,8 @@ pub enum MetricAttributes {
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
-    #[cfg(feature = "prom_impls")]
     Prometheus {
-        labels: Arc<LabelSet>,
+        labels: Arc<OrderedMetricLabelSet>,
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
@@ -156,7 +156,7 @@ where
 }
 
 /// A K/V pair that can be used to label a specific recording of a metric
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MetricKeyValue {
     pub key: String,
     pub value: MetricValue,
@@ -171,7 +171,7 @@ impl MetricKeyValue {
 }
 
 /// Values metric labels may assume
-#[derive(Clone, Debug, derive_more::From)]
+#[derive(Clone, Debug, PartialEq, derive_more::From)]
 pub enum MetricValue {
     String(String),
     Int(i64),
@@ -182,6 +182,16 @@ pub enum MetricValue {
 impl From<&'static str> for MetricValue {
     fn from(value: &'static str) -> Self {
         MetricValue::String(value.to_string())
+    }
+}
+impl Display for MetricValue {
+    fn fmt(&self, f1: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MetricValue::String(s) => write!(f1, "{}", s),
+            MetricValue::Int(i) => write!(f1, "{}", i),
+            MetricValue::Float(f) => write!(f1, "{}", f),
+            MetricValue::Bool(b) => write!(f1, "{}", b),
+        }
     }
 }
 
@@ -237,6 +247,8 @@ impl Counter {
 }
 impl CounterBase for Counter {
     fn adds(&self, value: u64) {
+        // TODO: Replace all of these with below when stable
+        //   https://doc.rust-lang.org/std/sync/struct.OnceLock.html#method.get_or_try_init
         let bound = self.bound_cache.get_or_init(|| {
             self.metric
                 .with_attributes(&self.attributes)
@@ -624,73 +636,40 @@ impl CoreMeter for NoOpCoreMeter {
     }
 }
 
+macro_rules! impl_metric_attributable {
+    ($base_trait:ident, $rt:ty, $init:expr) => {
+        impl MetricAttributable<Box<dyn $base_trait>> for $rt {
+            fn with_attributes(
+                &self,
+                _: &MetricAttributes,
+            ) -> Result<Box<dyn $base_trait>, Box<dyn std::error::Error>> {
+                Ok(Box::new($init))
+            }
+        }
+    };
+}
+
 pub struct NoOpInstrument;
-impl MetricAttributable<Box<dyn CounterBase>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
+macro_rules! impl_no_op {
+    ($base_trait:ident, $value_type:ty) => {
+        impl_metric_attributable!($base_trait, NoOpInstrument, NoOpInstrument);
+        impl $base_trait for NoOpInstrument {
+            fn records(&self, _: $value_type) {}
+        }
+    };
+    ($base_trait:ident) => {
+        impl_metric_attributable!($base_trait, NoOpInstrument, NoOpInstrument);
+        impl $base_trait for NoOpInstrument {
+            fn adds(&self, _: u64) {}
+        }
+    };
 }
-impl CounterBase for NoOpInstrument {
-    fn adds(&self, _: u64) {}
-}
-impl MetricAttributable<Box<dyn HistogramBase>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
-}
-impl HistogramBase for NoOpInstrument {
-    fn records(&self, _: u64) {}
-}
-impl MetricAttributable<Box<dyn HistogramF64Base>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
-}
-impl HistogramF64Base for NoOpInstrument {
-    fn records(&self, _: f64) {}
-}
-impl MetricAttributable<Box<dyn HistogramDurationBase>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
-}
-impl HistogramDurationBase for NoOpInstrument {
-    fn records(&self, _: Duration) {}
-}
-impl MetricAttributable<Box<dyn GaugeBase>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
-}
-impl GaugeBase for NoOpInstrument {
-    fn records(&self, _: u64) {}
-}
-impl MetricAttributable<Box<dyn GaugeF64Base>> for NoOpInstrument {
-    fn with_attributes(
-        &self,
-        _: &MetricAttributes,
-    ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
-        Ok(Box::new(NoOpInstrument))
-    }
-}
-impl GaugeF64Base for NoOpInstrument {
-    fn records(&self, _: f64) {}
-}
+impl_no_op!(CounterBase);
+impl_no_op!(HistogramBase, u64);
+impl_no_op!(HistogramF64Base, f64);
+impl_no_op!(HistogramDurationBase, Duration);
+impl_no_op!(GaugeBase, u64);
+impl_no_op!(GaugeF64Base, f64);
 
 #[derive(Debug, Clone)]
 pub struct NoOpAttributes;
@@ -745,10 +724,7 @@ mod otel_impls {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.add(value, kvs);
             } else {
-                debug_assert!(
-                    false,
-                    "Must use OTel attributes with an OTel metric implementation"
-                );
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
             }
         }
     }
@@ -770,10 +746,7 @@ mod otel_impls {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
-                debug_assert!(
-                    false,
-                    "Must use OTel attributes with an OTel metric implementation"
-                );
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
             }
         }
     }
@@ -795,10 +768,7 @@ mod otel_impls {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
-                debug_assert!(
-                    false,
-                    "Must use OTel attributes with an OTel metric implementation"
-                );
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
             }
         }
     }
@@ -820,10 +790,7 @@ mod otel_impls {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
-                debug_assert!(
-                    false,
-                    "Must use OTel attributes with an OTel metric implementation"
-                );
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
             }
         }
     }
@@ -845,70 +812,37 @@ mod otel_impls {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
-                debug_assert!(
-                    false,
-                    "Must use OTel attributes with an OTel metric implementation"
-                );
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
             }
         }
     }
 }
 
-use crate::dbg_panic;
-#[cfg(feature = "prom_impls")]
-pub use prom_impls::LabelSet;
+/// Maintains a mapping of metric labels->values with a defined ordering, used for Prometheus labels
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrderedMetricLabelSet {
+    pub attributes: BTreeMap<String, MetricValue>,
+}
 
-#[cfg(feature = "prom_impls")]
-mod prom_impls {
-    use super::*;
-    use std::collections::HashMap;
-
-    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-    pub struct LabelSet {
-        labels: Vec<(String, String)>,
+impl OrderedMetricLabelSet {
+    pub fn keys_ordered(&self) -> impl Iterator<Item = &str> {
+        self.attributes.keys().map(|s| s.as_str())
     }
-
-    static EMPTY_LABELS: LabelSet = LabelSet { labels: Vec::new() };
-
-    impl LabelSet {
-        pub fn new(mut labels: Vec<(String, String)>) -> Self {
-            // Sort by key for deterministic ordering and efficient comparison
-            labels.sort_by(|a, b| a.0.cmp(&b.0));
-            Self { labels }
+    pub fn as_prom_labels(&self) -> HashMap<&str, String> {
+        let mut labels = HashMap::new();
+        for (k, v) in self.attributes.iter() {
+            labels.insert(k.as_str(), v.to_string());
         }
-
-        pub fn empty() -> &'static LabelSet {
-            &EMPTY_LABELS
-        }
-
-        pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
-            self.labels.iter().map(|(k, v)| (k.as_str(), v.as_str()))
-        }
-
-        pub fn to_prometheus_labels_filtered(&self) -> HashMap<&str, &str> {
-            self.iter().filter(|(_, v)| !v.is_empty()).collect()
-        }
-
-        pub fn is_empty(&self) -> bool {
-            self.labels.is_empty()
-        }
+        labels
     }
+}
 
-    impl From<Vec<MetricKeyValue>> for LabelSet {
-        fn from(kvs: Vec<MetricKeyValue>) -> Self {
-            let labels = kvs
-                .into_iter()
-                .map(|kv| {
-                    let value = match kv.value {
-                        MetricValue::String(s) => s,
-                        MetricValue::Int(i) => i.to_string(),
-                        MetricValue::Float(f) => f.to_string(),
-                        MetricValue::Bool(b) => b.to_string(),
-                    };
-                    (kv.key, value)
-                })
-                .collect();
-            LabelSet::new(labels)
+impl From<NewAttributes> for OrderedMetricLabelSet {
+    fn from(n: NewAttributes) -> Self {
+        let mut attributes = BTreeMap::new();
+        for kv in n.attributes {
+            attributes.insert(kv.key.clone(), kv.value);
         }
+        Self { attributes }
     }
 }
