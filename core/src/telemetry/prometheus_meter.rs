@@ -1,4 +1,4 @@
-use crate::abstractions::dbg_panic;
+use crate::{abstractions::dbg_panic, telemetry::default_buckets_for};
 use anyhow::anyhow;
 use parking_lot::RwLock;
 use prometheus::{
@@ -15,77 +15,15 @@ use std::{
 use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
     HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
-    LabelSet, MetricAttributable, MetricAttributes, MetricParameters, NewAttributes,
+    MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedMetricLabelSet,
 };
 
-/// Represents the schema of labels for a metric (the set of label names, not their values)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct LabelSchema {
-    label_names: Vec<String>,
-}
-
-impl LabelSchema {
-    fn from_label_set(labels: &LabelSet) -> Self {
-        let mut label_names: Vec<String> = labels
-            .iter()
-            .filter(|(_, v)| !v.is_empty()) // TODO: Shouldn't be necessary (is right now for some)
-            .map(|(k, _)| k.to_string())
-            .collect();
-        label_names.sort();
-        Self { label_names }
-    }
-
-    fn label_names_ref(&self) -> Vec<&str> {
-        self.label_names.iter().map(|s| s.as_str()).collect()
-    }
-}
-
-#[derive(derive_more::From, Debug, Clone)]
+#[derive(derive_more::From, derive_more::TryInto, Debug, Clone)]
 enum PromCollector {
     Histo(HistogramVec),
     Counter(IntCounterVec),
     Gauge(IntGaugeVec),
     GaugeF64(GaugeVec),
-}
-
-impl TryFrom<PromCollector> for HistogramVec {
-    type Error = ();
-    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
-        match value {
-            PromCollector::Histo(v) => Ok(v),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<PromCollector> for IntCounterVec {
-    type Error = ();
-    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
-        match value {
-            PromCollector::Counter(v) => Ok(v),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<PromCollector> for IntGaugeVec {
-    type Error = ();
-    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
-        match value {
-            PromCollector::Gauge(v) => Ok(v),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<PromCollector> for GaugeVec {
-    type Error = ();
-    fn try_from(value: PromCollector) -> Result<Self, Self::Error> {
-        match value {
-            PromCollector::GaugeF64(v) => Ok(v),
-            _ => Err(()),
-        }
-    }
 }
 
 impl Collector for PromCollector {
@@ -128,6 +66,8 @@ impl Registry {
         }
     }
 
+    // Register a collector, potentially returning an existing collector that matches the provided
+    // one. In such cases the passed-in collector is discarded.
     fn register<T: Into<PromCollector>>(&self, c: T) -> Option<PromCollector> {
         let mut desc_id_set = HashSet::new();
         let mut collector_id: u64 = 0;
@@ -259,7 +199,7 @@ struct PromMetric<T> {
     metric_description: String,
     registry: Registry,
     /// Map from label schema to the corresponding Prometheus vector metric
-    vectors: RwLock<HashMap<LabelSchema, T>>,
+    vectors: RwLock<HashMap<Vec<String>, T>>,
     /// Bucket configuration for histograms (None for other metric types)
     histogram_buckets: Option<Vec<f64>>,
 }
@@ -279,13 +219,18 @@ where
     }
 
     /// Generic double-checked locking pattern for vector creation
-    fn get_or_create_vector<F>(&self, labels: &LabelSet, create_fn: F) -> anyhow::Result<T>
+    fn get_or_create_vector<F>(
+        &self,
+        kvs: &OrderedMetricLabelSet,
+        create_fn: F,
+    ) -> anyhow::Result<T>
     where
         F: FnOnce(&str, &str, &[&str]) -> T,
     {
-        let schema = LabelSchema::from_label_set(labels);
+        // Just the metric label names
+        let mut schema: Vec<String> = kvs.keys_ordered().map(|kv| kv.to_string()).collect();
+        schema.sort();
 
-        // Fast path: try to get existing vector
         {
             let vectors = self.vectors.read();
             if let Some(vector) = vectors.get(&schema) {
@@ -293,21 +238,20 @@ where
             }
         }
 
-        // Slow path: create new vector for this label schema
         let mut vectors = self.vectors.write();
-        // Double-check pattern in case another thread created it
+        // Double-check in case another thread created it
         if let Some(vector) = vectors.get(&schema) {
             return Ok(vector.clone());
         }
 
-        let label_names = schema.label_names_ref();
         let description = if self.metric_description.is_empty() {
             &self.metric_name
         } else {
             &self.metric_description
         };
 
-        let vector = create_fn(&self.metric_name, description, &label_names);
+        let boxed: Box<[&str]> = schema.iter().map(String::as_str).collect();
+        let vector = create_fn(&self.metric_name, description, &boxed);
 
         let maybe_exists = self.registry.register(vector.clone());
         let vector = if let Some(m) = maybe_exists {
@@ -342,8 +286,10 @@ impl PromMetric<HistogramVec> {
         }
     }
 
-    /// Specialized get_or_create_vector for histograms that handles custom buckets
-    fn get_or_create_vector_with_buckets(&self, labels: &LabelSet) -> anyhow::Result<HistogramVec> {
+    fn get_or_create_vector_with_buckets(
+        &self,
+        labels: &OrderedMetricLabelSet,
+    ) -> anyhow::Result<HistogramVec> {
         self.get_or_create_vector(labels, |name, desc, label_names| {
             let mut opts = prometheus::HistogramOpts::new(name, desc);
             if let Some(buckets) = &self.histogram_buckets {
@@ -354,6 +300,10 @@ impl PromMetric<HistogramVec> {
     }
 }
 
+static EMPTY_LABEL_SET: OrderedMetricLabelSet = OrderedMetricLabelSet {
+    attributes: BTreeMap::new(),
+};
+
 impl<T> PromMetric<T>
 where
     T: Clone + Collector + 'static,
@@ -361,42 +311,31 @@ where
     fn extract_prometheus_labels<'a>(
         &self,
         attributes: &'a MetricAttributes,
-    ) -> anyhow::Result<(&'a LabelSet, HashMap<&'a str, &'a str>)> {
+    ) -> anyhow::Result<&'a OrderedMetricLabelSet, anyhow::Error> {
         if matches!(attributes, MetricAttributes::Empty) {
-            return Ok((LabelSet::empty(), HashMap::new()));
+            return Ok(&EMPTY_LABEL_SET);
         }
         if let MetricAttributes::Prometheus { labels } = attributes {
-            let prom_labels = labels.to_prometheus_labels_filtered();
-            Ok((labels, prom_labels))
+            Ok(labels)
         } else {
-            dbg_panic!(
+            let e = anyhow!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
-            Err(anyhow!(
-                "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
-                attributes
-            ))
+            dbg_panic!("{:?}", e);
+            Err(e)
         }
     }
 
-    fn label_mismatch_err(
-        &self,
-        attributes: &MetricAttributes,
-        prom_labels: &HashMap<&str, &str>,
-    ) -> anyhow::Error {
-        dbg_panic!(
-            "Mismatch between expected # of prometheus labels and provided. \
-            This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+    fn label_mismatch_err(&self, attributes: &MetricAttributes) -> anyhow::Error {
+        let e = anyhow!(
+            "Mismatch between expected # of prometheus labels and provided for metric {}. \
+            This is an SDK bug. Attributes: {:?}",
+            self.metric_name,
             attributes,
-            prom_labels
         );
-        anyhow!(
-            "Mismatch between expected # of prometheus labels and provided. \
-            This is an SDK bug. Attributes: {:?} / Labels: {:?}",
-            attributes,
-            prom_labels
-        )
+        dbg_panic!("{:?}", e);
+        e
     }
 }
 
@@ -411,15 +350,15 @@ impl MetricAttributable<Box<dyn CounterBase>> for PromMetric<IntCounterVec> {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
-        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
+        let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             IntCounterVec::new(opts, label_names).unwrap()
         })?;
-        if let Ok(c) = vector.get_metric_with(&prom_labels) {
+        if let Ok(c) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromCounter(c)))
         } else {
-            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+            Err(self.label_mismatch_err(attributes).into())
         }
     }
 }
@@ -435,15 +374,15 @@ impl MetricAttributable<Box<dyn GaugeBase>> for PromMetric<IntGaugeVec> {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
-        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
+        let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             IntGaugeVec::new(opts, label_names).unwrap()
         })?;
-        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+        if let Ok(g) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromIntGauge(g)))
         } else {
-            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+            Err(self.label_mismatch_err(attributes).into())
         }
     }
 }
@@ -459,15 +398,15 @@ impl MetricAttributable<Box<dyn GaugeF64Base>> for PromMetric<GaugeVec> {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
-        let (labels, prom_labels) = self.extract_prometheus_labels(attributes)?;
+        let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
             GaugeVec::new(opts, label_names).unwrap()
         })?;
-        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+        if let Ok(g) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromGauge(g)))
         } else {
-            Err(self.label_mismatch_err(attributes, &prom_labels).into())
+            Err(self.label_mismatch_err(attributes).into())
         }
     }
 }
@@ -492,12 +431,12 @@ impl MetricAttributable<Box<dyn HistogramBase>> for PromHistogramU64 {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
-        let (labels, prom_labels) = self.0.extract_prometheus_labels(attributes)?;
+        let labels = self.0.extract_prometheus_labels(attributes)?;
         let vector = self.0.get_or_create_vector_with_buckets(labels)?;
-        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+        if let Ok(h) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromHistogram(h)))
         } else {
-            Err(self.0.label_mismatch_err(attributes, &prom_labels).into())
+            Err(self.0.label_mismatch_err(attributes).into())
         }
     }
 }
@@ -509,12 +448,12 @@ impl MetricAttributable<Box<dyn HistogramF64Base>> for PromHistogramF64 {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
-        let (labels, prom_labels) = self.0.extract_prometheus_labels(attributes)?;
+        let labels = self.0.extract_prometheus_labels(attributes)?;
         let vector = self.0.get_or_create_vector_with_buckets(labels)?;
-        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+        if let Ok(h) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromHistogram(h)))
         } else {
-            Err(self.0.label_mismatch_err(attributes, &prom_labels).into())
+            Err(self.0.label_mismatch_err(attributes).into())
         }
     }
 }
@@ -571,41 +510,29 @@ impl CorePrometheusMeter {
 impl CoreMeter for CorePrometheusMeter {
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         MetricAttributes::Prometheus {
-            labels: Arc::new(LabelSet::from(attribs.attributes)),
+            labels: Arc::new(attribs.into()),
         }
     }
 
     fn extend_attributes(
         &self,
         existing: MetricAttributes,
-        attribs: NewAttributes,
+        new: NewAttributes,
     ) -> MetricAttributes {
         if let MetricAttributes::Prometheus {
             labels: existing_labels,
         } = existing
         {
-            // Merge existing labels with new ones
-            let mut all_labels = Vec::new();
-
-            // Add existing labels
-            for (k, v) in existing_labels.iter() {
-                all_labels.push((k.to_string(), v.to_string()));
+            let mut all_labels = Arc::unwrap_or_clone(existing_labels);
+            for kv in new.attributes.into_iter() {
+                all_labels.attributes.insert(kv.key, kv.value);
             }
-
-            // Add new labels (potentially overriding existing ones)
-            let new_label_set: LabelSet = attribs.attributes.into();
-            for (k, v) in new_label_set.iter() {
-                // Remove any existing entry with the same key
-                all_labels.retain(|(existing_k, _)| existing_k != k);
-                all_labels.push((k.to_string(), v.to_string()));
-            }
-
             MetricAttributes::Prometheus {
-                labels: Arc::new(LabelSet::new(all_labels)),
+                labels: Arc::new(all_labels),
             }
         } else {
             dbg_panic!("Must use Prometheus attributes with a Prometheus metric implementation");
-            self.new_attributes(attribs)
+            self.new_attributes(new)
         }
     }
 
@@ -658,24 +585,16 @@ impl CoreMeter for CorePrometheusMeter {
 }
 
 impl CorePrometheusMeter {
-    /// Get bucket configuration for a histogram metric
     fn get_buckets_for_metric(&self, metric_name: &str) -> Vec<f64> {
-        // Check for specific override first
         for (name_pattern, buckets) in &self.bucket_overrides.overrides {
             if metric_name.contains(name_pattern) {
                 return buckets.clone();
             }
         }
-
-        // Strip the temporal prefix if present to match against base metric names
         let base_metric_name = metric_name.strip_prefix("temporal_").unwrap_or(metric_name);
-
-        // Use default buckets for temporal metrics
-        crate::telemetry::default_buckets_for(base_metric_name, self.use_seconds_for_durations)
-            .to_vec()
+        default_buckets_for(base_metric_name, self.use_seconds_for_durations).to_vec()
     }
 
-    /// Get the appropriate metric name with unit suffix if configured
     fn get_histogram_metric_name(&self, base_name: &str, unit: &str) -> String {
         if self.unit_suffix && !unit.is_empty() {
             format!("{}_{}", base_name, unit)

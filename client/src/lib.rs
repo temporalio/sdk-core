@@ -1673,6 +1673,15 @@ impl<T> RequestExt for tonic::Request<T> {
     }
 }
 
+macro_rules! dbg_panic {
+  ($($arg:tt)*) => {
+      use tracing::error;
+      error!($($arg)*);
+      debug_assert!(false, $($arg)*);
+  };
+}
+pub(crate) use dbg_panic;
+
 #[cfg(test)]
 mod tests {
     use super::*;

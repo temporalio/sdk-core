@@ -141,6 +141,7 @@ pub trait Worker: Send + Sync {
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
+      use tracing::error;
       error!($($arg)*);
       debug_assert!(false, $($arg)*);
   };

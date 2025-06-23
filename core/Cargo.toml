@@ -13,9 +13,10 @@ categories = ["development-tools"]
 [lib]
 
 [features]
-default = ["otel"]
+default = ["otel", "prom"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:hyper",
-    "dep:hyper-util", "dep:http-body-util", "dep:prometheus"]
+    "dep:hyper-util", "dep:http-body-util"]
+prom = ["dep:prometheus"]
 tokio-console = ["console-subscriber"]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest"]
@@ -74,7 +75,7 @@ zip = { version = "2.0", optional = true }
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]
 path = "../core-api"
-features = ["otel_impls", "prom_impls"]
+features = ["otel_impls"]
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
