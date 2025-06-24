@@ -169,7 +169,7 @@ async fn switching_worker_client_changes_poll() {
 
     // Create a worker only on the first server
     let worker = init_worker(
-        init_integ_telem(),
+        init_integ_telem().unwrap(),
         integ_worker_config("my-task-queue")
             // We want a cache so we don't get extra remove-job activations
             .max_cached_workflows(100_usize)
