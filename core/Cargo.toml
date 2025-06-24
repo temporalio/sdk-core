@@ -91,7 +91,7 @@ path = "../fsm"
 assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
-criterion = "0.5"
+criterion = { version = "0.6", features = ["async", "async_tokio"] }
 rstest = "0.25"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
