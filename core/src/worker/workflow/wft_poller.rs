@@ -102,16 +102,6 @@ impl WFTPollerShared {
     /// Makes either the sticky or non-sticky poller wait pre-permit-acquisition so that we can
     /// balance which kind of queue we poll appropriately.
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
-        // If there's a sticky backlog, prioritize it.
-        if !is_sticky {
-            let _ = self
-                .last_seen_sticky_backlog
-                .0
-                .clone()
-                .wait_for(|v| *v == 0)
-                .await;
-        }
-
         // We need to make sure there's at least one poller of both kinds available. So, we check
         // that we won't end up using every available permit with one kind of poller. In practice
         // this is only ever likely to be an issue with very small numbers of slots.
@@ -121,26 +111,63 @@ impl WFTPollerShared {
             {
                 let mut sticky_active = sticky_active.clone();
                 let mut non_sticky_active = non_sticky_active.clone();
+                let mut sticky_backlog = self.last_seen_sticky_backlog.0.clone();
+
                 loop {
                     let num_sticky_active = *sticky_active.borrow_and_update();
                     let num_non_sticky_active = *non_sticky_active.borrow_and_update();
-                    let both_are_zero = num_sticky_active == 0 && num_non_sticky_active == 0;
-                    if both_are_zero {
+                    let num_sticky_backlog = *sticky_backlog.borrow_and_update();
+
+                    let allow = || {
                         if !is_sticky {
-                            break;
+                            // There should always be at least one non-sticky poller.
+                            if num_non_sticky_active == 0 {
+                                return true;
+                            }
+
+                            // Do not allow an additional non-sticky poller to prevent starting a first sticky poller.
+                            if num_sticky_active == 0 && num_non_sticky_active + 1 >= max_slots {
+                                return false;
+                            }
+
+                            // If there's a meaningful sticky backlog, prioritize sticky.
+                            if num_sticky_backlog > 1 && num_sticky_backlog > num_sticky_active {
+                                return false;
+                            }
+                        } else {
+                            // There should always be at least one sticky poller.
+                            if num_sticky_active == 0 {
+                                return true;
+                            }
+
+                            // Do not allow an additional sticky poller to prevent starting a first non-sticky poller.
+                            if num_non_sticky_active == 0 && num_sticky_active + 1 >= max_slots {
+                                return false;
+                            }
+
+                            // If there's a meaningful sticky backlog, prioritize sticky.
+                            if num_sticky_backlog > 1 && num_sticky_backlog > num_sticky_active {
+                                return true;
+                            }
                         }
-                    } else {
-                        let would_exceed_max_slots =
-                            (num_sticky_active + num_non_sticky_active + 1) >= max_slots;
-                        let must_wait = would_exceed_max_slots
-                            && (num_sticky_active == 0 || num_non_sticky_active == 0);
-                        if !must_wait {
-                            break;
+
+                        // Just balance the two poller types.
+                        // FIXME: Do we need anything more here, to ensure proper balancing?
+                        if num_sticky_active + num_non_sticky_active < max_slots {
+                            return true;
                         }
+
+                        false
+                    };
+
+                    if allow() {
+                        return;
                     }
+
                     tokio::select! {
                         _ = sticky_active.changed() => (),
                         _ = non_sticky_active.changed() => (),
+                        _ = sticky_backlog.changed() => (),
                     }
                 }
             }
