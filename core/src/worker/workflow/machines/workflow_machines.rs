@@ -512,15 +512,11 @@ impl WorkflowMachines {
         self.last_processed_event -= 2;
         // Then, we have to drop any state machines (which should only be one workflow task machine)
         // we may have created when servicing the speculative task.
-        // Remove when https://github.com/rust-lang/rust/issues/59618 is stable
         let remove_these: Vec<_> = self
             .machines_by_event_id
-            .iter()
-            .filter(|(mid, _)| **mid > self.last_processed_event)
-            .map(|(mid, mkey)| (*mid, *mkey))
+            .extract_if(|mid, _| *mid > self.last_processed_event)
             .collect();
-        for (mid, mkey) in remove_these {
-            self.machines_by_event_id.remove(&mid);
+        for (_, mkey) in remove_these {
             self.all_machines.remove(mkey);
         }
     }

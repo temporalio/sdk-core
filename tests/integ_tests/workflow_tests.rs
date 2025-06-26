@@ -72,7 +72,7 @@ async fn parallel_workflows_same_queue() {
     });
     for i in 0..25 {
         core.submit_wf(
-            format!("{}-{}", wf_name, i),
+            format!("{wf_name}-{i}"),
             wf_name,
             vec![],
             starter.workflow_options.clone(),

@@ -848,7 +848,7 @@ async fn long_local_activity_with_update(
     let replay_worker = init_core_replay_preloaded(
         starter.get_task_queue(),
         [HistoryForReplay::new(
-            history_from_proto_binary(&format!("histories/{}_history.bin", wf_name))
+            history_from_proto_binary(&format!("histories/{wf_name}_history.bin"))
                 .await
                 .unwrap(),
             "fake".to_owned(),

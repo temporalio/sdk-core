@@ -556,10 +556,10 @@ impl Display for FailureReason {
             FailureReason::Nondeterminism => "NonDeterminismError".to_owned(),
             FailureReason::Workflow => "WorkflowError".to_owned(),
             FailureReason::Timeout => "timeout".to_owned(),
-            FailureReason::NexusOperation(op) => format!("operation_{}", op),
-            FailureReason::NexusHandlerError(op) => format!("handler_error_{}", op),
+            FailureReason::NexusOperation(op) => format!("operation_{op}"),
+            FailureReason::NexusHandlerError(op) => format!("handler_error_{op}"),
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 impl From<WorkflowTaskFailedCause> for FailureReason {

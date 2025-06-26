@@ -477,8 +477,7 @@ fn apply_data_source_env_var(
 
     if has_path_env && has_data_env {
         return Err(ConfigError::InvalidConfig(format!(
-            "Cannot specify both {} and {}",
-            path_var, data_var
+            "Cannot specify both {path_var} and {data_var}"
         )));
     }
 
@@ -488,8 +487,7 @@ fn apply_data_source_env_var(
             .is_some_and(|s| matches!(s, DataSource::Path(_)))
         {
             return Err(ConfigError::InvalidConfig(format!(
-                "Cannot specify {0} data via {1} when {0} path is already specified",
-                name, data_var
+                "Cannot specify {name} data via {data_var} when {name} path is already specified"
             )));
         }
         *dest = Some(DataSource::Data(
@@ -501,8 +499,7 @@ fn apply_data_source_env_var(
             .is_some_and(|s| matches!(s, DataSource::Data(_)))
         {
             return Err(ConfigError::InvalidConfig(format!(
-                "Cannot specify {0} path via {1} when {0} data is already specified",
-                name, path_var
+                "Cannot specify {name} path via {path_var} when {name} data is already specified"
             )));
         }
         *dest = Some(DataSource::Path(env_vars.get(path_var).unwrap().clone()));

@@ -39,7 +39,7 @@ where
     pub fn unwrap_success(self) -> T {
         match self {
             Self::Succeeded(t) => t,
-            o => panic!("Expected success, got {:?}", o),
+            o => panic!("Expected success, got {o:?}"),
         }
     }
 }

@@ -757,7 +757,7 @@ async fn docker_metrics_with_prometheus(
                 .starts_with(test_name)
         );
     } else {
-        panic!("Invalid Prometheus response: {:?}", response);
+        panic!("Invalid Prometheus response: {response:?}");
     }
 }
 
