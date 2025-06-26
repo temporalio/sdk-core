@@ -386,7 +386,7 @@ impl ClientHeaders {
         if let Some(api_key) = &self.api_key {
             // Only if not already present
             if !metadata.contains_key("authorization") {
-                if let Ok(val) = format!("Bearer {}", api_key).parse() {
+                if let Ok(val) = format!("Bearer {api_key}").parse() {
                     metadata.insert("authorization", val);
                 }
             }
@@ -512,7 +512,7 @@ impl ClientOptions {
                 // up correct on requests while we use TLS. Setting the header directly in our
                 // interceptor doesn't work since seemingly it is overridden at some point by
                 // something lower level.
-                let uri: Uri = format!("https://{}", domain).parse()?;
+                let uri: Uri = format!("https://{domain}").parse()?;
                 channel = channel.origin(uri);
             }
 

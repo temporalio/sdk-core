@@ -92,7 +92,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
             .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
                 namespace: client.namespace().to_owned(),
                 deployment_name: deploy_name.clone(),
-                version: format!("{}.1.0", deploy_name),
+                version: format!("{deploy_name}.1.0"),
                 conflict_token: desc_resp.conflict_token,
                 ..Default::default()
             })
@@ -135,7 +135,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
     {
         assert_eq!(
             wft_complete.worker_deployment_version,
-            format!("{}.1.0", deploy_name)
+            format!("{deploy_name}.1.0")
         );
     }
 }
@@ -198,7 +198,7 @@ async fn activity_has_deployment_stamp() {
             .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
                 namespace: client.namespace().to_owned(),
                 deployment_name: deploy_name.clone(),
-                version: format!("{}.1.0", deploy_name),
+                version: format!("{deploy_name}.1.0"),
                 conflict_token: desc_resp.conflict_token,
                 ..Default::default()
             })

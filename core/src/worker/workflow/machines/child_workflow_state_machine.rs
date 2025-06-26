@@ -259,10 +259,7 @@ impl StartCommandCreated {
     ) -> ChildWorkflowMachineTransition<Cancelled> {
         state.cancelled_before_sent = true;
         ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::StartCancel(Failure {
-            message: format!(
-                "Child Workflow Execution cancelled before scheduled: {}",
-                reason
-            ),
+            message: format!("Child Workflow Execution cancelled before scheduled: {reason}"),
             cause: Some(Box::new(Failure {
                 failure_info: Some(FailureInfo::CanceledFailureInfo(
                     failure::CanceledFailureInfo {
