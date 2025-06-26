@@ -539,7 +539,9 @@ impl PollScalerReportHandle {
             }
             Err(e) => {
                 // We should only see (and react to) errors in autoscaling mode
-                if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
+                if matches!(self.behavior, PollerBehavior::Autoscaling { .. })
+                    && self.ever_saw_scaling_decision.load(Ordering::Relaxed)
+                {
                     debug!("Got error from server while polling: {:?}", e);
                     if e.code() == Code::ResourceExhausted {
                         // Scale down significantly for resource exhaustion
