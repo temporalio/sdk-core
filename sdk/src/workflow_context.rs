@@ -866,10 +866,10 @@ impl StartedChildWorkflow {
 }
 
 #[derive(derive_more::Debug)]
-#[debug("StartedNexusOperation{{ operation_id: {operation_id:?} }}")]
+#[debug("StartedNexusOperation{{ operation_token: {operation_token:?} }}")]
 pub struct StartedNexusOperation {
-    /// The operation id, if the operation started asynchronously
-    pub operation_id: Option<String>,
+    /// The operation token, if the operation started asynchronously
+    pub operation_token: Option<String>,
     pub(crate) unblock_dat: NexusUnblockData,
 }
 
