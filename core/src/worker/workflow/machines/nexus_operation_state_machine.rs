@@ -85,7 +85,7 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum NexusOperationCommand {
     #[display("Start")]
-    Start { operation_id: String },
+    Start { operation_token: String },
     #[display("StartSync")]
     StartSync,
     #[display("CancelBeforeStart")]
@@ -249,7 +249,7 @@ impl ScheduledEventRecorded {
         sa: NexusOperationStartedEventAttributes,
     ) -> NexusOperationMachineTransition<Started> {
         NexusOperationMachineTransition::commands([NexusOperationCommand::Start {
-            operation_id: sa.operation_id,
+            operation_token: sa.operation_token,
         }])
     }
 }
@@ -478,12 +478,12 @@ impl WFMachinesAdapter for NexusOperationMachine {
                     .into(),
                 ]
             }
-            NexusOperationCommand::Start { operation_id } => {
+            NexusOperationCommand::Start { operation_token } => {
                 vec![
                     ResolveNexusOperationStart {
                         seq: self.shared_state.lang_seq_num,
-                        status: Some(resolve_nexus_operation_start::Status::OperationId(
-                            operation_id,
+                        status: Some(resolve_nexus_operation_start::Status::OperationToken(
+                            operation_token,
                         )),
                     }
                     .into(),

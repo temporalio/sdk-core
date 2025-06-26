@@ -711,15 +711,15 @@ impl Unblockable for NexusStartResult {
     fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::NexusOperationStart(_, result) => match *result {
-                resolve_nexus_operation_start::Status::OperationId(op_id) => {
+                resolve_nexus_operation_start::Status::OperationToken(op_token) => {
                     Ok(StartedNexusOperation {
-                        operation_id: Some(op_id),
+                        operation_token: Some(op_token),
                         unblock_dat: od,
                     })
                 }
                 resolve_nexus_operation_start::Status::StartedSync(_) => {
                     Ok(StartedNexusOperation {
-                        operation_id: None,
+                        operation_token: None,
                         unblock_dat: od,
                     })
                 }
