@@ -146,11 +146,12 @@ mockall::mock! {
         fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn record_worker_heartbeat<'a, 'b>(&self) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
+
         fn replace_client(&self, new_client: RetryClient<Client>);
         fn capabilities(&self) -> Option<Capabilities>;
         fn workers(&self) -> Arc<SlotManager>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
-        fn record_worker_heartbeat<'a, 'b>(&self) -> impl Future<Output = Result<()>> + Send + 'b where 'a: 'b, Self: 'b;
     }
 }

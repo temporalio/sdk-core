@@ -71,6 +71,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["p
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }
 zip = { version = "2.0", optional = true }
+gethostname = "1.0.2"
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]

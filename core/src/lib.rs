@@ -100,8 +100,8 @@ where
     }
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
-    let in_mem_thing = runtime.telemetry.in_mem_thing();
-    let heartbeat_info = Arc::new(Mutex::new(crate::worker::WorkerHeartbeatInfo::new(in_mem_thing, worker_config.clone())));
+    let in_memory_meter = runtime.telemetry.in_memory_meter();
+    let heartbeat_info = Arc::new(Mutex::new(worker::WorkerHeartbeatInfo::new(in_memory_meter, worker_config.clone())));
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
@@ -109,6 +109,9 @@ where
         worker_config.versioning_strategy.clone(),
         heartbeat_info.clone(),
     ));
+    
+    // TODO: adding client after feels clunky
+    heartbeat_info.lock().add_client(client_bag.clone());
 
     Ok(Worker::new(
         worker_config,

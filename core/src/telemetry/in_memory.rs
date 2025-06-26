@@ -2,9 +2,9 @@ use crate::api::telemetry::metrics::MetricAttributes;
 use fmt::Debug;
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use std::{fmt, sync::Arc};
+use anyhow::anyhow;
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::Meter;
-use opentelemetry_sdk::InMemoryExporterError;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
@@ -41,10 +41,9 @@ impl InMemoryMeter {
     }
 
     /// TODO
-    pub fn get_metrics(&self) ->  Result<Vec<ResourceMetrics>, InMemoryExporterError> {
-        // TODO: propogate error
-        self.mp.force_flush().unwrap();
-        self.in_memory_exporter.get_finished_metrics()
+    pub fn get_metrics(&self) ->  Result<Vec<ResourceMetrics>, anyhow::Error> {
+        self.mp.force_flush().map_err(|e| anyhow!("failed to flush MeterProvider: {}", e))?;
+        self.in_memory_exporter.get_finished_metrics().map_err(Into::into)
     }
 }
 

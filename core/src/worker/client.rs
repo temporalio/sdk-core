@@ -4,9 +4,13 @@ pub(crate) mod mocks;
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use std::time::SystemTime;
+use futures_util::future;
+use futures_util::future::AbortHandle;
+use gethostname::gethostname;
 use opentelemetry_sdk::metrics::data::{Aggregation, Gauge, Sum};
 use prost_types::Timestamp;
 use prost_types::Duration as PbDuration;
+use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SlotManager, WorkflowService,
@@ -31,6 +35,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        worker::v1::WorkerHostInfo,
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
 };
@@ -126,6 +131,10 @@ impl WorkerClientBag {
             None
         }
     }
+
+    fn capture_heartbeat(&self) -> Result<WorkerHeartbeat> {
+        self.heartbeat_info.lock().capture_heartbeat()
+    }
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
@@ -215,10 +224,8 @@ pub trait WorkerClient: Sync + Send {
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
-    // TODO: params and return type?
-    //  Probably whatever metrics itself can't update?
     /// Record a worker heartbeat
-    async fn record_worker_heartbeat(&self) -> Result<()>;
+    async fn record_worker_heartbeat(&self) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
     fn replace_client(&self, new_client: RetryClient<Client>);
@@ -283,7 +290,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None, // TODO
+            worker_heartbeat: Some(self.capture_heartbeat()?),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -321,7 +328,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: Some(heartbeat_info.capture_heartbeat()), // TODO:
+            worker_heartbeat: Some(self.capture_heartbeat()?),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -354,7 +361,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None, // TODO:
+            worker_heartbeat: Some(self.capture_heartbeat()?),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -632,7 +639,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: None, // TODO:
+            worker_heartbeat: Some(self.capture_heartbeat()?),
         };
 
         Ok(
@@ -642,19 +649,16 @@ impl WorkerClient for WorkerClientBag {
         )
     }
     
-    async fn record_worker_heartbeat(&self) -> Result<()> {
-        let worker_heartbeat = self.heartbeat_info.lock().capture_heartbeat();
-        self
+    async fn record_worker_heartbeat(&self) -> Result<RecordWorkerHeartbeatResponse> {
+        Ok(self
         .cloned_client()
         .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
-            worker_heartbeat: Some(worker_heartbeat),
+            worker_heartbeat: Some(self.capture_heartbeat()?),
         })
         .await?
-        .map(|_| ()) // TODO: Do we want response?
-        .into_inner();
-        Ok(())
+        .into_inner())
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {
@@ -719,25 +723,6 @@ pub struct WorkflowTaskCompletion {
     pub versioning_behavior: VersioningBehavior,
 }
 
-#[derive(Debug, Clone)]
-struct WorkerPollerInfo {
-    /// Number of polling RPCs that are currently in flight.
-    current_pollers: u32,
-    last_successful_poll_time: Timestamp,
-    is_autoscaling: bool,
-}
-
-struct HostInfo {
-    host_name: String,
-    process_id: u32,
-    /// System used CPU as a float in the range [0.0, 1.0] where 1.0 is
-    /// defined as all cores on the host pegged.
-    current_host_cpu_usage: f32,
-    /// System used memory as a float in the range [0.0, 1.0] where 1.0
-    /// is defined as all available memory on the host is used.
-    current_host_mem_usage: f32,
-}
-
 struct WorkerSlotsInfo<SK: SlotKind> {
     /// Number of slots available to the worker.
     available_slots: u32,
@@ -760,26 +745,34 @@ struct WorkerSlotsInfo<SK: SlotKind> {
 /// Heartbeat information
 ///
 /// Note: Experimental
-#[derive(Debug)]
-pub(crate) struct WorkerHeartbeatInfo {
+pub struct WorkerHeartbeatInfo {
     in_memory_meter: Option<Arc<InMemoryMeter>>,
     pub(crate) data: WorkerHeartbeatData,
+    timer_abort: AbortHandle,
+    client: Option<Arc<dyn WorkerClient>>,
 }
 
 impl WorkerHeartbeatInfo {
     pub(crate) fn new(in_memory_meter: Option<Arc<InMemoryMeter>>, worker_config: WorkerConfig) -> Self {
-        Self {
+        // spawn heartbeat things here, then on capture_heartbeat, send signal to thread
+        let (abort_handle, _) = AbortHandle::new_pair();
+
+        let mut heartbeat = Self {
             in_memory_meter,
             data: WorkerHeartbeatData::new(worker_config),
-        }
+            timer_abort: abort_handle,
+            client: None,
+        };
+        heartbeat.create_new_timer();
+        heartbeat
     }
 
     /// Transform heartbeat data into `WorkerHeartbeat` we can send in gRPC request. Some
     /// metrics are also cached into `self` for future calls of this function
-    fn capture_heartbeat(&mut self) -> WorkerHeartbeat {
-        println!("capture_heartbeat_data");
-        println!("\tsdk_name {:?}", self.data.sdk_name);
-        println!("\tsdk_version {:?}", self.data.sdk_version);
+    fn capture_heartbeat(&mut self) -> Result<WorkerHeartbeat> {
+        self.create_new_timer();
+
+        // Start a process to receive
         let mut sticky_cache_hit = 0;
         if let Some(in_memory_meter) = &self.in_memory_meter {
             // TODO: propagate error
@@ -787,11 +780,8 @@ impl WorkerHeartbeatInfo {
             for metric in metrics {
                 for sm in metric.scope_metrics {
                     for m in sm.metrics {
-                        println!("m.name {:?}", m.name);
-
-                        // sticky cache name
+                        // println!("m.name {:?}", m.name);
                         if m.name == STICKY_CACHE_SIZE_NAME {
-                            // println!("sticky_cache_size: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
                             if let Some(gauge) = any.downcast_ref::<Gauge<u64>>() {
@@ -801,7 +791,6 @@ impl WorkerHeartbeatInfo {
                                 }
                             }
                         } else if m.name == "sticky_cache_hit" {
-                            println!("sticky_cache_hit: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
                             if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
@@ -810,9 +799,7 @@ impl WorkerHeartbeatInfo {
                                     self.data.total_sticky_cache_hit = data_point.value as i32;
                                 }
                             }
-
                         } else if m.name == "sticky_cache_miss" {
-                            println!("sticky_cache_miss: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
                             if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
@@ -821,7 +808,6 @@ impl WorkerHeartbeatInfo {
                                     self.data.total_sticky_cache_hit = data_point.value as i32;
                                 }
                             }
-
                         }
                     }
                 }
@@ -830,7 +816,7 @@ impl WorkerHeartbeatInfo {
 
         let now = SystemTime::now();
         let elapsed_since_last_heartbeat = if let Some(heartbeat_time) = self.data.heartbeat_time {
-            let dur = now.duration_since(heartbeat_time).unwrap(); // TODO: map_err
+            let dur = now.duration_since(heartbeat_time).unwrap_or(Duration::ZERO); // TODO: do we want to fall back to ZERO?
             Some(PbDuration {
                 seconds: dur.as_secs() as i64,
                 nanos: dur.subsec_nanos() as i32,
@@ -843,9 +829,8 @@ impl WorkerHeartbeatInfo {
 
         let heartbeat = WorkerHeartbeat {
             worker_instance_key: self.data.worker_instance_key.clone(),
-            // TODO: get host name and process ID
-            worker_identity: "".to_string(),
-            host_info: None,
+            worker_identity: self.data.worker_identity.clone(),
+            host_info: Some(self.data.host_info.clone()),
             task_queue: self.data.task_queue.clone(),
             deployment_version: None,
             sdk_name: self.data.sdk_name.clone(),
@@ -867,92 +852,75 @@ impl WorkerHeartbeatInfo {
             current_sticky_cache_size: sticky_cache_hit as i32,
         };
         println!("[hb]: {:#?}", heartbeat);
-        heartbeat
+        Ok(heartbeat)
+    }
+
+    fn create_new_timer(&mut self) {
+        self.timer_abort.abort();
+
+        let (abort_handle, abort_reg) = AbortHandle::new_pair();
+        let client = self.client.clone();
+        tokio::spawn(future::Abortable::new(
+            async move {
+                // TODO: make configurable
+                tokio::time::sleep(Duration::from_secs(60)).await;
+
+                if let Some(c) = client {
+                    if let Err(e) = c.record_worker_heartbeat().await {
+                        warn!(error=?e, "Network error while sending worker heartbeat");
+                    }
+                }
+            },
+            abort_reg,
+        ));
+
+        self.timer_abort = abort_handle;
+    }
+
+    pub fn add_client(&mut self, client: Arc<dyn WorkerClient>) {
+        self.client = Some(client);
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorkerHeartbeatData {
     worker_instance_key: String,
-    // worker_identity: String,
-    // TODO: Customer metrics
-    // host_info: HostInfo,
+    pub(crate) worker_identity: String,
+    host_info: WorkerHostInfo,
     // Time of the last heartbeat. This is used to both for heartbeat_time and last_heartbeat_time
-    pub(crate) heartbeat_time: Option<SystemTime>, // TODO: Why is this option? Because the first heartbeat will be blank?
+    pub(crate) heartbeat_time: Option<SystemTime>,
     pub(crate) task_queue: String,
-    // worker_deployment_version: Option<temporal_sdk_core_api::worker::WorkerDeploymentVersion>,
     /// SDK name
     pub(crate) sdk_name: String,
     /// SDK version
     pub(crate) sdk_version: String,
-    // status: WorkerStatus,
     /// Worker start time
     pub(crate) start_time: SystemTime,
-    // // workflow_task_slots_info: WorkerSlotsInfo<WorkflowSlotKind>,
-    // // ///
-    // // activity_task_slots_info: WorkerSlotsInfo<ActivitySlotKind>,
-    // // ///
-    // // nexus_task_slots_info: WorkerSlotsInfo<NexusSlotKind>,
-    // // local_activity_slots_info: WorkerSlotsInfo<LocalActivitySlotKind>,
-    //
-    // ///
-    // workflow_poller_info: WorkerPollerInfo,
-    // ///
-    // activity_poller_info: WorkerPollerInfo,
-    // ///
-    // nexus_poller_info: WorkerPollerInfo,
-    // ///
-    // workflow_sticky_poller_info: WorkerPollerInfo,
-    //
-    // // TODO: Need to plumb this from metrics to here
     /// A Workflow Task found a cached Workflow Execution to run against.
     total_sticky_cache_hit: i32,
     /// A Workflow Task did not find a cached Workflow execution to run against.
     total_sticky_cache_miss: i32,
-    // /// Current cache size, expressed in number of Workflow Executions.
-    // current_sticky_cache_size: u32,
 }
 
 impl WorkerHeartbeatData {
     fn new(worker_config: WorkerConfig) -> Self {
-        // let workflow_poller_info = WorkerPollerInfo {
-        //     current_pollers: 0, // TODO
-        //     last_successful_poll_time: Timestamp::default(), // TODO
-        //     is_autoscaling: worker_config.workflow_task_poller_behavior.is_autoscaling(),
-        // };
-        // let activity_poller_info = WorkerPollerInfo {
-        //     current_pollers: 0,
-        //     last_successful_poll_time: Timestamp::default(),
-        //     is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
-        // };
-        // // TODO: make_wft_poller seems important for this?
-        // // TODO: I think WFTPollerShared will give the list
-        // //  new_workflow_task
-        // //  make_wft_poller
-        // let nexus_poller_info = WorkerPollerInfo {
-        //     current_pollers: 0,
-        //     last_successful_poll_time: Timestamp::default(),
-        //     is_autoscaling: worker_config.nexus_task_poller_behavior.is_autoscaling(),
-        // };
-        // // TODO: none of these values are right
-        // let workflow_sticky_poller_info = WorkerPollerInfo {
-        //     current_pollers: 0,
-        //     last_successful_poll_time: Timestamp::default(),
-        //     is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
-        // };
         Self {
+            worker_identity: worker_config.client_identity_override.clone().unwrap_or_default(),
+            host_info: WorkerHostInfo {
+                host_name: gethostname().to_string_lossy().to_string(),
+                process_id: std::process::id().to_string(),
+                // TODO:
+                current_host_cpu_usage: 0.0,
+                current_host_mem_usage: 0.0,
+            },
             sdk_name: String::new(),
             sdk_version: String::new(),
-            task_queue: String::new(),
+            task_queue: worker_config.task_queue.clone(),
             start_time: SystemTime::now(),
             heartbeat_time: None,
             worker_instance_key: Uuid::new_v4().to_string(),
             total_sticky_cache_hit: 0,
             total_sticky_cache_miss: 0,
-            // workflow_poller_info,
-            // activity_poller_info,
-            // nexus_poller_info,
-            // workflow_sticky_poller_info
         }
     }
 }

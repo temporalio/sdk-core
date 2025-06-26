@@ -502,8 +502,8 @@ impl Worker {
             let mut heartbeat_info = heartbeat_info.lock();
             heartbeat_info.data.sdk_name = sdk_name_and_ver.0.clone();
             heartbeat_info.data.sdk_version = sdk_name_and_ver.1.clone();
-            heartbeat_info.data.task_queue = config.task_queue.clone();
             heartbeat_info.data.start_time = SystemTime::now();
+            // heartbeat_info.data.
         }
 
         Self {
