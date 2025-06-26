@@ -343,10 +343,10 @@ message ResolveNexusOperationStart {
     // Sequence number as provided by lang in the corresponding ScheduleNexusOperation command
     uint32 seq = 1;
     oneof status {
-        // The operation started asynchronously. Contains an ID that can be used to perform
+        // The operation started asynchronously. Contains a token that can be used to perform
         // operations on the started operation by, ex, clients. A `ResolveNexusOperation` job will
         // follow at some point.
-        string operation_id = 2;
+        string operation_token = 2;
         // If true the operation "started" but only because it's also already resolved. A
         // `ResolveNexusOperation` job will be in the same activation.
         bool started_sync = 3;
