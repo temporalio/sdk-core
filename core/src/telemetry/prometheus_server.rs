@@ -1,14 +1,48 @@
+use crate::telemetry::prometheus_meter::Registry;
 use http_body_util::Full;
 use hyper::{Method, Request, Response, body::Bytes, header::CONTENT_TYPE, service::service_fn};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto,
 };
-use opentelemetry_prometheus::PrometheusExporter;
-use prometheus::{Encoder, Registry, TextEncoder};
-use std::net::{SocketAddr, TcpListener};
+use prometheus::{Encoder, TextEncoder};
+use std::{
+    net::{SocketAddr, TcpListener},
+    sync::Arc,
+};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
-use tokio::io;
+use tokio::{io, task::AbortHandle};
+
+pub struct StartedPromServer {
+    pub meter: Arc<crate::telemetry::prometheus_meter::CorePrometheusMeter>,
+    pub bound_addr: SocketAddr,
+    pub abort_handle: AbortHandle,
+}
+
+/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
+/// Returns the meter that can be used as a [CoreMeter].
+///
+/// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
+pub fn start_prometheus_metric_exporter(
+    opts: PrometheusExporterOptions,
+) -> Result<StartedPromServer, anyhow::Error> {
+    let srv = PromServer::new(&opts)?;
+    let meter = Arc::new(
+        crate::telemetry::prometheus_meter::CorePrometheusMeter::new(
+            srv.registry().clone(),
+            opts.use_seconds_for_durations,
+            opts.unit_suffix,
+            opts.histogram_bucket_overrides,
+        ),
+    );
+    let bound_addr = srv.bound_addr()?;
+    let handle = tokio::spawn(async move { srv.run().await });
+    Ok(StartedPromServer {
+        meter,
+        bound_addr,
+        abort_handle: handle.abort_handle(),
+    })
+}
 
 /// Exposes prometheus metrics for scraping
 pub(super) struct PromServer {
@@ -17,30 +51,16 @@ pub(super) struct PromServer {
 }
 
 impl PromServer {
-    pub(super) fn new(
-        opts: &PrometheusExporterOptions,
-    ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
-        let registry = Registry::new();
-        let exporter = opentelemetry_prometheus::exporter()
-            .without_scope_info()
-            .with_registry(registry.clone());
-        let exporter = if !opts.counters_total_suffix {
-            exporter.without_counter_suffixes()
-        } else {
-            exporter
-        };
-        let exporter = if !opts.unit_suffix {
-            exporter.without_units()
-        } else {
-            exporter
-        };
-        Ok((
-            Self {
-                listener: TcpListener::bind(opts.socket_addr)?,
-                registry,
-            },
-            exporter.build()?,
-        ))
+    pub(super) fn new(opts: &PrometheusExporterOptions) -> Result<Self, anyhow::Error> {
+        let registry = Registry::new(opts.global_tags.clone());
+        Ok(Self {
+            listener: TcpListener::bind(opts.socket_addr)?,
+            registry,
+        })
+    }
+
+    pub(super) fn registry(&self) -> &Registry {
+        &self.registry
     }
 
     pub(super) async fn run(self) -> Result<(), anyhow::Error> {

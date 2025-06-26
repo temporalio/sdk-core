@@ -72,7 +72,7 @@ use temporal_sdk_core_protos::{
 };
 use tonic::{
     Code,
-    body::BoxBody,
+    body::Body,
     client::GrpcService,
     codegen::InterceptedService,
     metadata::{MetadataKey, MetadataMap, MetadataValue},
@@ -595,7 +595,7 @@ fn get_decode_max_size() -> usize {
 impl<T> TemporalServiceClient<T>
 where
     T: Clone,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -1175,13 +1175,13 @@ impl From<common::v1::Priority> for Priority {
 impl<T> WorkflowClientTrait for T
 where
     T: RawClientLike + NamespacedClient + Clone + Send + Sync + 'static,
-    <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
+    <Self as RawClientLike>::SvcType: GrpcService<Body> + Send + Clone + 'static,
+    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody:
     tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
+    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Error:
     Into<tonic::codegen::StdError>,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
-    <<<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody
+    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Future: Send,
+    <<<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody
     as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
     async fn start_workflow(
@@ -1672,6 +1672,15 @@ impl<T> RequestExt for tonic::Request<T> {
         }
     }
 }
+
+macro_rules! dbg_panic {
+  ($($arg:tt)*) => {
+      use tracing::error;
+      error!($($arg)*);
+      debug_assert!(false, $($arg)*);
+  };
+}
+pub(crate) use dbg_panic;
 
 #[cfg(test)]
 mod tests {

@@ -7,7 +7,6 @@ use super::{
         WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     },
-    prometheus_server::PromServer,
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
@@ -16,38 +15,43 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::{
-    Resource,
+    Resource, metrics,
     metrics::{
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, MetricError, PeriodicReader,
-        SdkMeterProvider, Temporality, View, new_view,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
+        SdkMeterProvider, Temporality,
     },
 };
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
-    PrometheusExporterOptions,
     metrics::{
-        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
+        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramBase, HistogramDuration,
+        HistogramDurationBase, HistogramF64, HistogramF64Base, MetricAttributable,
         MetricAttributes, MetricParameters, NewAttributes,
     },
 };
-use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
-/// A specialized `Result` type for metric operations.
-type Result<T> = std::result::Result<T, MetricError>;
-
-fn histo_view(metric_name: &'static str, use_seconds: bool) -> Result<Box<dyn View>> {
-    let buckets = default_buckets_for(metric_name, use_seconds);
-    new_view(
-        Instrument::new().name(format!("*{metric_name}")),
-        opentelemetry_sdk::metrics::Stream::new().aggregation(
-            Aggregation::ExplicitBucketHistogram {
-                boundaries: buckets.to_vec(),
-                record_min_max: true,
-            },
-        ),
-    )
+fn histo_view(
+    metric_name: &'static str,
+    use_seconds: bool,
+) -> impl Fn(&Instrument) -> Option<metrics::Stream> + Send + Sync + 'static {
+    let buckets = default_buckets_for(metric_name, use_seconds).to_vec();
+    move |ins: &Instrument| {
+        if ins.name().ends_with(metric_name) {
+            Some(
+                metrics::Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: buckets.clone(),
+                        record_min_max: true,
+                    })
+                    .build()
+                    .expect("Hardcoded metric stream always builds"),
+            )
+        } else {
+            None
+        }
+    }
 }
 
 pub(super) fn augment_meter_provider_with_defaults(
@@ -55,68 +59,73 @@ pub(super) fn augment_meter_provider_with_defaults(
     global_tags: &HashMap<String, String>,
     use_seconds: bool,
     bucket_overrides: HistogramBucketOverrides,
-) -> Result<MeterProviderBuilder> {
+) -> Result<MeterProviderBuilder, anyhow::Error> {
     for (name, buckets) in bucket_overrides.overrides {
-        mpb = mpb.with_view(new_view(
-            Instrument::new().name(format!("*{name}")),
-            opentelemetry_sdk::metrics::Stream::new().aggregation(
-                Aggregation::ExplicitBucketHistogram {
-                    boundaries: buckets,
-                    record_min_max: true,
-                },
-            ),
-        )?)
+        mpb = mpb.with_view(move |ins: &Instrument| {
+            if ins.name().contains(&name) {
+                Some(
+                    metrics::Stream::builder()
+                        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                            boundaries: buckets.clone(),
+                            record_min_max: true,
+                        })
+                        .build()
+                        .expect("Hardcoded metric stream always builds"),
+                )
+            } else {
+                None
+            }
+        });
     }
     let mut mpb = mpb
-        .with_view(histo_view(
-            WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
-            use_seconds,
-        )?)
+        .with_view(histo_view(WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME, use_seconds))
         .with_view(histo_view(
             WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?);
+        ));
     // Fallback default
-    mpb = mpb.with_view(new_view(
-        {
-            let mut i = Instrument::new();
-            i.kind = Some(InstrumentKind::Histogram);
-            i
-        },
-        opentelemetry_sdk::metrics::Stream::new().aggregation(
-            Aggregation::ExplicitBucketHistogram {
-                boundaries: if use_seconds {
-                    DEFAULT_S_BUCKETS.to_vec()
-                } else {
-                    DEFAULT_MS_BUCKETS.to_vec()
-                },
-                record_min_max: true,
-            },
-        ),
-    )?);
+    mpb = mpb.with_view(move |ins: &Instrument| {
+        if ins.kind() == InstrumentKind::Histogram {
+            Some(
+                metrics::Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: if use_seconds {
+                            DEFAULT_S_BUCKETS.to_vec()
+                        } else {
+                            DEFAULT_MS_BUCKETS.to_vec()
+                        },
+                        record_min_max: true,
+                    })
+                    .build()
+                    .expect("Hardcoded metric stream always builds"),
+            )
+        } else {
+            None
+        }
+    });
     Ok(mpb.with_resource(default_resource(global_tags)))
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
-) -> std::result::Result<CoreOtelMeter, anyhow::Error> {
+) -> Result<CoreOtelMeter, anyhow::Error> {
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
             let mut exporter = opentelemetry_otlp::MetricExporter::builder()
@@ -154,40 +163,6 @@ pub fn build_otlp_metric_exporter(
     })
 }
 
-pub struct StartedPromServer {
-    pub meter: Arc<CoreOtelMeter>,
-    pub bound_addr: SocketAddr,
-    pub abort_handle: AbortHandle,
-}
-
-/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
-/// Returns the meter that can be used as a [CoreMeter].
-///
-/// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
-pub fn start_prometheus_metric_exporter(
-    opts: PrometheusExporterOptions,
-) -> std::result::Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) = PromServer::new(&opts)?;
-    let meter_provider = augment_meter_provider_with_defaults(
-        MeterProviderBuilder::default().with_reader(exporter),
-        &opts.global_tags,
-        opts.use_seconds_for_durations,
-        opts.histogram_bucket_overrides,
-    )?
-    .build();
-    let bound_addr = srv.bound_addr()?;
-    let handle = tokio::spawn(async move { srv.run().await });
-    Ok(StartedPromServer {
-        meter: Arc::new(CoreOtelMeter {
-            meter: meter_provider.meter(TELEM_SERVICE_NAME),
-            use_seconds_for_durations: opts.use_seconds_for_durations,
-            _mp: meter_provider,
-        }),
-        bound_addr,
-        abort_handle: handle.abort_handle(),
-    })
-}
-
 #[derive(Debug)]
 pub struct CoreOtelMeter {
     pub meter: Meter,
@@ -218,79 +193,107 @@ impl CoreMeter for CoreOtelMeter {
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(
+    fn counter(&self, params: MetricParameters) -> Counter {
+        Counter::new(Arc::new(
             self.meter
                 .u64_counter(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
     }
 
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(
-            self.meter
-                .u64_histogram(params.name)
-                .with_unit(params.unit)
-                .with_description(params.description)
-                .build(),
-        )
+    fn histogram(&self, params: MetricParameters) -> Histogram {
+        Histogram::new(Arc::new(self.create_histogram(params)))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(
-            self.meter
-                .f64_histogram(params.name)
-                .with_unit(params.unit)
-                .with_description(params.description)
-                .build(),
-        )
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
+        HistogramF64::new(Arc::new(self.create_histogram_f64(params)))
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(if self.use_seconds_for_durations {
+    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
+        HistogramDuration::new(Arc::new(if self.use_seconds_for_durations {
             params.unit = "s".into();
-            DurationHistogram::Seconds(self.histogram_f64(params))
+            DurationHistogram::Seconds(self.create_histogram_f64(params))
         } else {
             params.unit = "ms".into();
-            DurationHistogram::Milliseconds(self.histogram(params))
-        })
+            DurationHistogram::Milliseconds(self.create_histogram(params))
+        }))
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(
+    fn gauge(&self, params: MetricParameters) -> Gauge {
+        Gauge::new(Arc::new(
             self.meter
                 .u64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
+        GaugeF64::new(Arc::new(
             self.meter
                 .f64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
     }
 }
 
-/// A histogram being used to record durations.
-#[derive(Clone)]
-enum DurationHistogram {
-    Milliseconds(Arc<dyn Histogram>),
-    Seconds(Arc<dyn HistogramF64>),
+impl CoreOtelMeter {
+    fn create_histogram(&self, params: MetricParameters) -> opentelemetry::metrics::Histogram<u64> {
+        self.meter
+            .u64_histogram(params.name)
+            .with_unit(params.unit)
+            .with_description(params.description)
+            .build()
+    }
+
+    fn create_histogram_f64(
+        &self,
+        params: MetricParameters,
+    ) -> opentelemetry::metrics::Histogram<f64> {
+        self.meter
+            .f64_histogram(params.name)
+            .with_unit(params.unit)
+            .with_description(params.description)
+            .build()
+    }
 }
-impl HistogramDuration for DurationHistogram {
-    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+
+enum DurationHistogram {
+    Milliseconds(opentelemetry::metrics::Histogram<u64>),
+    Seconds(opentelemetry::metrics::Histogram<f64>),
+}
+
+enum DurationHistogramBase {
+    Millis(Box<dyn HistogramBase>),
+    Secs(Box<dyn HistogramF64Base>),
+}
+
+impl HistogramDurationBase for DurationHistogramBase {
+    fn records(&self, value: Duration) {
         match self {
-            DurationHistogram::Milliseconds(h) => h.record(value.as_millis() as u64, attributes),
-            DurationHistogram::Seconds(h) => h.record(value.as_secs_f64(), attributes),
+            DurationHistogramBase::Millis(h) => h.records(value.as_millis() as u64),
+            DurationHistogramBase::Secs(h) => h.records(value.as_secs_f64()),
         }
+    }
+}
+impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(match self {
+            DurationHistogram::Milliseconds(h) => Box::new(DurationHistogramBase::Millis(
+                h.with_attributes(attributes)?,
+            )),
+            DurationHistogram::Seconds(h) => {
+                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)?))
+            }
+        })
     }
 }
 

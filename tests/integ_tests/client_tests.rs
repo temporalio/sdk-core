@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
 use futures_util::{FutureExt, future::BoxFuture};
-use http_body_util::BodyExt;
+use http_body_util::Full;
 use prost::Message;
 use std::{
     collections::HashMap,
@@ -30,7 +30,7 @@ use tokio::{
 };
 use tonic::{
     Code, Request, Status,
-    body::BoxBody,
+    body::Body,
     codegen::{Service, http::Response},
     server::NamedService,
     transport::Server,
@@ -108,11 +108,11 @@ struct GenericService<F> {
     header_tx: UnboundedSender<String>,
     response_maker: F,
 }
-impl<F> Service<tonic::codegen::http::Request<BoxBody>> for GenericService<F>
+impl<F> Service<tonic::codegen::http::Request<Body>> for GenericService<F>
 where
-    F: FnMut() -> Response<BoxBody>,
+    F: FnMut() -> Response<Body>,
 {
-    type Response = Response<BoxBody>;
+    type Response = Response<Body>;
     type Error = Infallible;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -120,7 +120,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
+    fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
         self.header_tx
             .send(
                 String::from_utf8_lossy(
@@ -149,7 +149,7 @@ struct FakeServer {
 
 async fn fake_server<F>(response_maker: F) -> FakeServer
 where
-    F: FnMut() -> Response<BoxBody> + Clone + Send + 'static,
+    F: FnMut() -> Response<Body> + Clone + Send + Sync + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, header_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -191,7 +191,7 @@ impl FakeServer {
 
 #[tokio::test]
 async fn timeouts_respected_one_call_fake_server() {
-    let mut fs = fake_server(|| Response::new(tonic::codegen::empty_body())).await;
+    let mut fs = fake_server(|| Response::new(Body::empty())).await;
     let header_rx = &mut fs.header_rx;
 
     let mut opts = get_integ_server_options();
@@ -335,7 +335,7 @@ async fn namespace_header_attached_to_relevant_calls() {
             .add_service(GenericService {
                 header_to_parse: "Temporal-Namespace",
                 header_tx,
-                response_maker: || Response::new(tonic::codegen::empty_body()),
+                response_maker: || Response::new(Body::empty()),
             })
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -409,7 +409,7 @@ async fn cloud_ops_test() {
     assert_eq!(res.into_inner().namespace.unwrap().namespace, namespace);
 }
 
-fn make_ok_response<T>(message: T) -> Response<BoxBody>
+fn make_ok_response<T>(message: T) -> Response<Body>
 where
     T: Message,
 {
@@ -425,9 +425,8 @@ where
     let len = buf.len() as u32;
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(&buf);
-    let full_body = http_body_util::Full::from(frame)
-        .map_err(|e: Infallible| -> Status { unreachable!("Infallible error: {:?}", e) });
-    let body = BoxBody::new(full_body);
+    let full_body = Full::new(frame.into());
+    let body = Body::new(full_body);
 
     // Build the HTTP response with the required gRPC headers.
     Response::builder()

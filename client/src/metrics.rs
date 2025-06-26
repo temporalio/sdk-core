@@ -1,4 +1,4 @@
-use crate::{AttachMetricLabels, CallType};
+use crate::{AttachMetricLabels, CallType, dbg_panic};
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
     sync::Arc,
@@ -6,10 +6,10 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, HistogramDuration, MetricAttributes, MetricKeyValue, MetricParameters,
-    TemporalMeter,
+    CoreMeter, Counter, CounterBase, HistogramDuration, HistogramDurationBase, MetricAttributable,
+    MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
 };
-use tonic::{Code, body::BoxBody, transport::Channel};
+use tonic::{Code, body::Body, transport::Channel};
 use tower::Service;
 
 /// The string name (which may be prefixed) for this metric
@@ -26,22 +26,24 @@ pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,
     poll_is_long: bool,
+    instruments: Instruments,
+}
+#[derive(Clone)]
+struct Instruments {
+    svc_request: Counter,
+    svc_request_failed: Counter,
+    long_svc_request: Counter,
+    long_svc_request_failed: Counter,
 
-    svc_request: Arc<dyn Counter>,
-    svc_request_failed: Arc<dyn Counter>,
-    long_svc_request: Arc<dyn Counter>,
-    long_svc_request_failed: Arc<dyn Counter>,
-
-    svc_request_latency: Arc<dyn HistogramDuration>,
-    long_svc_request_latency: Arc<dyn HistogramDuration>,
+    svc_request_latency: HistogramDuration,
+    long_svc_request_latency: HistogramDuration,
 }
 
 impl MetricsContext {
     pub(crate) fn new(tm: TemporalMeter) -> Self {
         let meter = tm.inner;
-        Self {
-            kvs: meter.new_attributes(tm.default_attribs),
-            poll_is_long: false,
+        let kvs = meter.new_attributes(tm.default_attribs);
+        let instruments = Instruments {
             svc_request: meter.counter(MetricParameters {
                 name: "request".into(),
                 description: "Count of client request successes by rpc name".into(),
@@ -72,6 +74,11 @@ impl MetricsContext {
                 unit: "duration".into(),
                 description: "Histogram of client long-poll request latencies".into(),
             }),
+        };
+        Self {
+            kvs,
+            poll_is_long: false,
+            instruments,
             meter,
         }
     }
@@ -81,6 +88,33 @@ impl MetricsContext {
         self.kvs = self
             .meter
             .extend_attributes(self.kvs.clone(), new_kvs.into());
+
+        let _ = self
+            .instruments
+            .svc_request
+            .with_attributes(&self.kvs)
+            .and_then(|v| {
+                self.instruments.svc_request = v;
+                self.instruments.long_svc_request.with_attributes(&self.kvs)
+            })
+            .and_then(|v| {
+                self.instruments.long_svc_request = v;
+                self.instruments
+                    .svc_request_latency
+                    .with_attributes(&self.kvs)
+            })
+            .and_then(|v| {
+                self.instruments.svc_request_latency = v;
+                self.instruments
+                    .long_svc_request_latency
+                    .with_attributes(&self.kvs)
+            })
+            .map(|v| {
+                self.instruments.long_svc_request_latency = v;
+            })
+            .inspect_err(|e| {
+                dbg_panic!("Failed to extend client metrics attributes: {:?}", e);
+            });
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {
@@ -90,9 +124,9 @@ impl MetricsContext {
     /// A request to the temporal service was made
     pub(crate) fn svc_request(&self) {
         if self.poll_is_long {
-            self.long_svc_request.add(1, &self.kvs);
+            self.instruments.long_svc_request.adds(1);
         } else {
-            self.svc_request.add(1, &self.kvs);
+            self.instruments.svc_request.adds(1);
         }
     }
 
@@ -108,18 +142,18 @@ impl MetricsContext {
             &self.kvs
         };
         if self.poll_is_long {
-            self.long_svc_request_failed.add(1, kvs);
+            self.instruments.long_svc_request_failed.add(1, kvs);
         } else {
-            self.svc_request_failed.add(1, kvs);
+            self.instruments.svc_request_failed.add(1, kvs);
         }
     }
 
     /// Record service request latency
     pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
         if self.poll_is_long {
-            self.long_svc_request_latency.record(dur, &self.kvs);
+            self.instruments.long_svc_request_latency.records(dur);
         } else {
-            self.svc_request_latency.record(dur, &self.kvs);
+            self.instruments.svc_request_latency.records(dur);
         }
     }
 }
@@ -177,8 +211,8 @@ pub struct GrpcMetricSvc {
     pub(crate) disable_errcode_label: bool,
 }
 
-impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
-    type Response = http::Response<BoxBody>;
+impl Service<http::Request<Body>> for GrpcMetricSvc {
+    type Response = http::Response<Body>;
     type Error = tonic::transport::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -186,7 +220,7 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut req: http::Request<BoxBody>) -> Self::Future {
+    fn call(&mut self, mut req: http::Request<Body>) -> Self::Future {
         let metrics = self
             .metrics
             .clone()

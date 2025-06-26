@@ -12,13 +12,15 @@ use std::{
 };
 use temporal_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{ResourceBasedTuner, ResourceSlotOptions};
+use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, rand_6_chars, workflows::la_problem_workflow};
+use temporal_sdk_core_test_utils::{
+    CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
+};
 
 mod fuzzy_workflow;
 
@@ -183,7 +185,13 @@ async fn workflow_load() {
     const SIGNAME: &str = "signame";
     let num_workflows = 500;
     let wf_name = "workflow_load";
-    let mut starter = CoreWfStarter::new("workflow_load");
+    let (mut telemopts, _, _aborter) = prom_metrics(None);
+    // Avoid initting two logging systems, since when this test is run with others it can
+    // cause us to encounter the tracing span drop bug
+    telemopts.logging = None;
+    init_integ_telem();
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime("workflow_load", rt);
     starter
         .worker_config
         .max_outstanding_workflow_tasks(5_usize)
