@@ -5,7 +5,7 @@ use crate::{
         MockPollCfg, ResponseType, WorkerExt, build_mock_pollers, hist_to_poll_resp, mock_sdk,
         mock_sdk_cfg, mock_worker, single_hist_mock_sg,
     },
-    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
@@ -69,7 +69,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let resps = if replay {
         vec![ResponseType::AllHistory]
     } else {
@@ -140,7 +140,7 @@ async fn local_act_many_concurrent() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let mut worker = mock_sdk(mh);
 
@@ -178,7 +178,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2], mock);
     mh.enforce_correct_number_of_polls = false;
     let mut worker = mock_sdk_cfg(mh, |wc| {
@@ -240,7 +240,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mut worker = mock_sdk(mh);
 
@@ -316,7 +316,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -376,7 +376,7 @@ async fn local_act_null_result() {
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
@@ -418,7 +418,7 @@ async fn local_act_command_immediately_follows_la_marker() {
     t.add_full_wf_task();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     // Bug only repros when seeing history up to third wft
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [3], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 0);
@@ -489,7 +489,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
             ),
         ),
     ];
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -605,7 +605,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
             pr
         },
     ];
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     if impossible_query_in_task {
         mock.expect_respond_legacy_query()
             .times(1)
@@ -712,7 +712,7 @@ async fn test_schedule_to_start_timeout() {
     t.add_full_wf_task();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::ToTaskNum(1)], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
@@ -791,7 +791,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
@@ -868,7 +868,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -947,7 +947,7 @@ async fn wft_failure_cancels_running_las() {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2], mock);
     mh.num_expected_fails = 1;
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
@@ -1007,7 +1007,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -1058,7 +1058,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let nonfirst_counts = Arc::new(SegQueue::new());
     let nfc_c = nonfirst_counts.clone();
@@ -1125,7 +1125,7 @@ async fn local_activities_can_be_delivered_during_shutdown() {
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock = single_hist_mock_sg(
         wfid,
         t,
@@ -1214,7 +1214,7 @@ async fn queries_can_be_received_while_heartbeating() {
             pr
         },
     ];
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Ok(Default::default()));
@@ -1291,7 +1291,7 @@ async fn local_activity_after_wf_complete_is_discarded() {
     t.add_full_wf_task();
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock_cfg = MockPollCfg::from_resp_batches(
         wfid,
         t,
@@ -1385,7 +1385,7 @@ async fn local_act_retry_explicit_delay() {
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mut worker = mock_sdk(mh);
 

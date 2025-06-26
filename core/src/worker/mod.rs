@@ -4,6 +4,7 @@ mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
+mod heartbeat;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
@@ -54,6 +55,7 @@ use std::{
     },
     time::Duration,
 };
+use std::time::SystemTime;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
@@ -93,6 +95,7 @@ use {
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
+pub(crate) use crate::worker::heartbeat::WorkerHeartbeatInfo;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -271,6 +274,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -280,6 +284,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
+            heartbeat_info,
         )
     }
 
@@ -297,7 +302,10 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None)
+        let heartbeat_info = Arc::new(Mutex::new(WorkerHeartbeatInfo::new(config.clone())));
+        let client = Arc::new(client);
+        heartbeat_info.lock().add_client(client.clone());
+        Self::new(config, None, client, None, Some(heartbeat_info))
     }
 
     pub(crate) fn new_with_pollers(
@@ -306,6 +314,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
         // TODO: Use existing MetricsContext or a new meter to record and export these metrics, possibly through the same MetricsCallBuffer
         let (metrics, meter) = if let Some(ti) = telem_instance {
@@ -438,17 +447,17 @@ impl Worker {
         };
 
         let (hb_tx, hb_rx) = unbounded_channel();
-        let la_pemit_dealer = MeteredPermitDealer::new(
+        let la_permit_dealer = MeteredPermitDealer::new(
             tuner.local_activity_slot_supplier(),
             metrics.with_new_attrs([local_activity_worker_type()]),
             None,
-            slot_context_data,
+            slot_context_data.clone(),
             meter.clone(),
         );
-        let la_permits = la_pemit_dealer.get_extant_count_rcv();
+        let la_permits = la_permit_dealer.get_extant_count_rcv();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.namespace.clone(),
-            la_pemit_dealer,
+            la_permit_dealer,
             hb_tx,
             metrics.clone(),
         ));
@@ -485,6 +494,14 @@ impl Worker {
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
+        if let Some(heartbeat_info) = heartbeat_info {
+            let mut heartbeat_info = heartbeat_info.lock();
+            let mut data = heartbeat_info.data.lock();
+            data.sdk_name = sdk_name_and_ver.0.clone();
+            data.sdk_version = sdk_name_and_ver.1.clone();
+            data.start_time = SystemTime::now();
+        }
+        
         Self {
             worker_key,
             client: client.clone(),
@@ -884,7 +901,7 @@ mod tests {
     use crate::{
         advance_fut,
         test_help::test_worker_cfg,
-        worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+        worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
     };
     use futures_util::FutureExt;
     use temporal_sdk_core_api::worker::PollerBehavior;
@@ -892,7 +909,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_timeouts_maintain_permit() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_poll_activity_task()
             .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
@@ -914,7 +931,7 @@ mod tests {
     async fn activity_errs_dont_eat_permits() {
         // Return one error followed by simulating waiting on the poll, otherwise the poller will
         // loop very fast and be in some indeterminate state.
-        let mut mock_client = mock_manual_workflow_client();
+        let mut mock_client = mock_manual_worker_client();
         mock_client
             .expect_poll_activity_task()
             .returning(|_, _| async { Err(tonic::Status::internal("ahhh")) }.boxed())

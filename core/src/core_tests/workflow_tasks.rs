@@ -13,7 +13,7 @@ use crate::{
     },
     worker::{
         TunerBuilder,
-        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+        client::mocks::{mock_manual_worker_client, mock_worker_client},
     },
 };
 use futures_util::{FutureExt, stream};
@@ -499,7 +499,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     t.add_timer_fired(timer_started_event_id, "2".to_string());
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
 
     worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
@@ -1156,7 +1156,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
 async fn complete_after_eviction() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task().times(0);
     let mock = single_hist_mock_sg(wfid, t, [2], mock, true);
     let core = mock_worker(mock);
@@ -1194,7 +1194,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
     // include the information that tells the server to enqueue the next task on a sticky queue.
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .withf(|comp| comp.sticky_attributes.is_some())
         .times(1)
@@ -1218,7 +1218,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mock = single_hist_mock_sg(wfid, t, [1, 2], mock_workflow_client(), false);
+    let mock = single_hist_mock_sg(wfid, t, [1, 2], mock_worker_client(), false);
     let taskmap = mock.outstanding_task_map.clone().unwrap();
     let core = mock_worker(mock);
 
@@ -1279,7 +1279,7 @@ async fn buffered_work_drained_on_shutdown() {
     tasks.extend(
         std::iter::repeat_with(|| hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp).take(50),
     );
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     let mut mock = MocksHolder::from_wft_stream(mock, stream::iter(tasks));
@@ -1323,7 +1323,7 @@ async fn fail_wft_then_recover() {
         t,
         // We need to deliver all of history twice because of eviction
         [ResponseType::AllHistory, ResponseType::AllHistory],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
@@ -1388,7 +1388,7 @@ async fn poll_response_triggers_wf_error() {
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     // Fail wft will be called when auto-failing.
     mh.num_expected_fails = 1;
@@ -1418,7 +1418,7 @@ async fn lang_slower_than_wft_timeouts() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));
@@ -1476,7 +1476,7 @@ async fn tries_cancel_of_completed_activity() {
     t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 2], mock, true);
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -1524,7 +1524,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock = MockPollCfg::from_resp_batches("fake_wf_id", t, [1, 1, 1], mock);
     mock.num_expected_fails = 1;
     let mut mock = build_mock_pollers(mock);
@@ -1586,7 +1586,7 @@ async fn cache_miss_will_fetch_history() {
         "fake_wf_id",
         t,
         [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     mh.mock_client
         .expect_get_workflow_execution_history()
@@ -1682,7 +1682,7 @@ async fn history_byte_size_and_can_suggestion_in_activation() {
         "fake_wf_id",
         t,
         [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
@@ -1713,7 +1713,7 @@ async fn tasks_from_completion_are_delivered() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     let complete_resp = RespondWorkflowTaskCompletedResponse {
         workflow_task: Some(hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp),
         activity_tasks: vec![],
@@ -1758,7 +1758,7 @@ async fn pagination_works_with_tasks_from_completion() {
     t.add_we_signaled("sig", vec![]);
     t.add_workflow_task_scheduled_and_started();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     let mut needs_pag_resp = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2)).resp;
     needs_pag_resp.next_page_token = vec![1];
     let complete_resp = RespondWorkflowTaskCompletedResponse {
@@ -1812,7 +1812,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
             response_batches: vec![ResponseType::ToTaskNum(1)],
         })
         .collect();
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_workflow_task()
         .times(3)
@@ -1937,7 +1937,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
 async fn eviction_waits_until_replay_finished() {
     let wfid = "fake_wf_id";
     let t = canned_histories::long_sequential_timers(3);
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mock = single_hist_mock_sg(wfid, t, [3], mock, true);
     let core = mock_worker(mock);
 
@@ -1998,7 +1998,7 @@ async fn autocompletes_wft_no_work() {
     let started_event_id = t.add_activity_task_started(scheduled_event_id);
     t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_full_wf_task();
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mock = single_hist_mock_sg(wfid, t, [1, 2, 3, 4], mock, true);
     mock.worker_cfg(|w| w.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -2052,7 +2052,7 @@ async fn autocompletes_wft_no_work() {
 #[tokio::test]
 async fn no_race_acquiring_permits() {
     let wfid = "fake_wf_id";
-    let mut mock_client = mock_manual_workflow_client();
+    let mut mock_client = mock_manual_worker_client();
     // We need to allow two polls to happen by triggering two processing events in the workflow
     // stream, but then delivering the actual tasks after that
     let task_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
@@ -2127,7 +2127,7 @@ async fn continue_as_new_preserves_some_values() {
     wes_attrs.memo = Some(memo);
     wes_attrs.search_attributes = Some(search);
     wes_attrs.retry_policy = Some(retry_policy);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let t = {
         let mut t = TestHistoryBuilder::default();
         t.add(wes_attrs.clone());
@@ -2185,7 +2185,7 @@ async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
     });
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mock = single_hist_mock_sg("wheee", t, [ResponseType::AllHistory], mock, true);
     let core = mock_worker(mock);
 
@@ -2198,7 +2198,7 @@ async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
 
 #[tokio::test]
 async fn fetching_to_continue_replay_works() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -2269,7 +2269,7 @@ async fn fetching_to_continue_replay_works() {
 
 #[tokio::test]
 async fn fetching_error_evicts_wf() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_workflow_task_scheduled_and_started();
@@ -2336,7 +2336,7 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
     next_page.history.as_mut().unwrap().events.truncate(9);
     next_page.next_page_token = vec![2];
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_get_workflow_execution_history()
         .returning(move |_, _, _| {
             error!("Called fetch!");
@@ -2392,7 +2392,7 @@ async fn lang_internal_flags() {
         "fake_wf_id",
         t,
         [ResponseType::ToTaskNum(2), ResponseType::AllHistory],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     mh.completion_mock_fn = Some(Box::new(|c| {
         assert_matches!(c.sdk_metadata.lang_used_flags.as_slice(), &[2]);
@@ -2433,7 +2433,7 @@ async fn lang_internal_flag_with_update() {
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
@@ -2483,7 +2483,7 @@ async fn core_internal_flags() {
         "fake_wf_id",
         t,
         [ResponseType::ToTaskNum(1)],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     mh.completion_mock_fn = Some(Box::new(move |c| {
         assert_eq!(
@@ -2585,7 +2585,7 @@ async fn _do_post_terminal_commands_test(
     t: TestHistoryBuilder,
 ) {
     let mut mh =
-        MockPollCfg::from_resp_batches("fake_wf_id", t, response_types, mock_workflow_client());
+        MockPollCfg::from_resp_batches("fake_wf_id", t, response_types, mock_worker_client());
     if let Some(expected_command_types) = expected_command_types {
         mh.num_expected_completions = Some(TimesRange::from(1));
         mh.completion_mock_fn = Some(Box::new(move |c| {
@@ -2636,7 +2636,7 @@ async fn jobs_are_in_appropriate_order() {
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
-        mock_workflow_client(),
+        mock_worker_client(),
     );
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
@@ -2705,7 +2705,7 @@ async fn history_length_with_fail_and_timeout(
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let history_responses = match history_responses_case {
         1 => vec![ResponseType::AllHistory],
         2 => vec![
@@ -2779,7 +2779,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
         )
         .resp
     });
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_poll_workflow_task()
         .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
@@ -2837,7 +2837,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
 
 #[tokio::test]
 async fn poller_wont_poll_until_lang_polls() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let (tx, rx) = sync_channel(101);
     // Normally you'd just not set any expectations, but the problem is since we never poll
     // the WFT stream, we'll never join the tasks running the pollers and thus the error
@@ -2878,7 +2878,7 @@ async fn use_compatible_version_flag(
     #[values("activity", "child_wf", "continue_as_new")] command_type: &'static str,
 ) {
     let wfid = "fake_wf_id";
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let t = {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -2974,7 +2974,7 @@ async fn sets_build_id_from_wft_complete() {
     t.add_timer_fired(timer_started_event_id, "2".to_string());
     t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut worker = mock_sdk_cfg(
         MockPollCfg::from_resp_batches(wfid, t, [ResponseType::AllHistory], mock),
         |cfg| {
@@ -3026,7 +3026,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
         )
         .resp
     });
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_poll_workflow_task()
         .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
@@ -3189,7 +3189,7 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         .resp
     });
 
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
 
     // Track normal vs sticky poll requests and return actual workflow tasks
     let cc = Arc::clone(&counters);
@@ -3260,6 +3260,7 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
             .unwrap(),
         Some("stickytq".to_string()),
         Arc::new(mock_client),
+        None,
         None,
     );
 

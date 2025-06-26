@@ -22,7 +22,7 @@ pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
 
 #[cfg(test)]
 /// Create a mock client primed with basic necessary expectations
-pub(crate) fn mock_workflow_client() -> MockWorkerClient {
+pub(crate) fn mock_worker_client() -> MockWorkerClient {
     let mut r = MockWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
@@ -37,7 +37,7 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
 }
 
 /// Create a mock manual client primed with basic necessary expectations
-pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
+pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
@@ -145,6 +145,8 @@ mockall::mock! {
 
         fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
+
+        fn record_worker_heartbeat<'a, 'b>(&self, heartbeat: WorkerHeartbeat) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
 
         fn replace_client(&self, new_client: RetryClient<Client>);
         fn capabilities(&self) -> Option<Capabilities>;

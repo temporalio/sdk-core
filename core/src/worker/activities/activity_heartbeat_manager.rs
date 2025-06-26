@@ -423,7 +423,7 @@ impl HeartbeatStreamState {
 mod test {
     use super::*;
 
-    use crate::worker::client::mocks::mock_workflow_client;
+    use crate::worker::client::mocks::mock_worker_client;
     use std::time::Duration;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::Payload, workflowservice::v1::RecordActivityTaskHeartbeatResponse,
@@ -434,7 +434,7 @@ mod test {
     /// every 1/2 of the heartbeat timeout.
     #[tokio::test]
     async fn process_heartbeats_and_shutdown() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -456,7 +456,7 @@ mod test {
 
     #[tokio::test]
     async fn send_heartbeats_less_frequently_than_throttle_interval() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -475,7 +475,7 @@ mod test {
     /// Ensure that heartbeat can be called from a tight loop and correctly throttle
     #[tokio::test]
     async fn process_tight_loop_and_shutdown() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -495,7 +495,7 @@ mod test {
     /// This test reports one heartbeat and waits for the throttle_interval to elapse before sending another
     #[tokio::test]
     async fn report_heartbeat_after_timeout() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -513,7 +513,7 @@ mod test {
 
     #[tokio::test]
     async fn evict_works() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
@@ -534,7 +534,7 @@ mod test {
 
     #[tokio::test]
     async fn evict_immediate_after_record() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))

@@ -9,7 +9,7 @@ use crate::{
     worker::{
         TaskPollers,
         client::{
-            MockWorkerClient, WorkerClient, WorkflowTaskCompletion, mocks::mock_workflow_client,
+            MockWorkerClient, WorkerClient, WorkflowTaskCompletion, mocks::mock_worker_client,
         },
     },
 };
@@ -179,6 +179,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
                 .unwrap_or_else(|| mock_poller_from_resps([])),
         },
         None,
+        None, // TODO: set this up properly
     )
 }
 
@@ -426,7 +427,7 @@ impl MockPollCfg {
             enforce_correct_number_of_polls,
             num_expected_fails,
             num_expected_legacy_query_resps: 0,
-            mock_client: mock_workflow_client(),
+            mock_client: mock_worker_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             completion_mock_fn: None,
             num_expected_completions: None,
@@ -439,14 +440,14 @@ impl MockPollCfg {
     pub(crate) fn from_hist_builder(t: TestHistoryBuilder) -> Self {
         let full_hist_info = t.get_full_history_info().unwrap();
         let tasks = 1..=full_hist_info.wf_task_count();
-        Self::from_resp_batches("fake_wf_id", t, tasks, mock_workflow_client())
+        Self::from_resp_batches("fake_wf_id", t, tasks, mock_worker_client())
     }
 
     pub(crate) fn from_resps(
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
     ) -> Self {
-        Self::from_resp_batches("fake_wf_id", t, resps, mock_workflow_client())
+        Self::from_resp_batches("fake_wf_id", t, resps, mock_worker_client())
     }
 
     pub(crate) fn from_resp_batches(

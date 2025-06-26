@@ -3,7 +3,7 @@ use crate::{
         MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, canned_histories,
         hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
-    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
 use futures_util::stream;
 use std::{
@@ -64,7 +64,7 @@ async fn legacy_query(#[case] include_history: bool) {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
     ];
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     if !include_history {
@@ -156,9 +156,9 @@ async fn new_queries(#[values(1, 3)] num_queries: usize) {
         }
         pr
     }]);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client.expect_respond_legacy_query().times(0);
-    let mut mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     mh.completion_mock_fn = Some(Box::new(move |c| {
         // If the completion is the one ending the workflow, make sure it includes the query resps
         if c.commands[0].command_type() == CommandType::CompleteWorkflowExecution {
@@ -235,7 +235,7 @@ async fn legacy_query_failure_on_wft_failure() {
         pr.history = Some(History { events: vec![] });
         pr
     }]);
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
@@ -298,7 +298,7 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
         }
         pr
     }];
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     if legacy {
         mock.num_expected_legacy_query_resps = 1;
     } else {
@@ -350,7 +350,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     };
     tasks.extend([query_with_hist_task.clone(), query_with_hist_task]);
 
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     mock.num_expected_legacy_query_resps = 2;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
@@ -443,7 +443,7 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
         );
         pr
     }]);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     if !matches!(hist_type, QueryHists::Full) {
         mock_client
             .expect_get_workflow_execution_history()
@@ -534,7 +534,7 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
         pr
     };
     let tasks = VecDeque::from(vec![query_with_hist_task]);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_workflow_task()
         .times(1)
@@ -618,7 +618,7 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
         });
         pr
     }];
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Err(tonic::Status::not_found("Query gone boi")));
@@ -671,7 +671,7 @@ async fn new_query_fail() {
         );
         pr
     }]);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_workflow_task()
         .times(1)
@@ -774,7 +774,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
             pr
         },
     ];
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_respond_legacy_query()
         .times(1)
         .returning(move |_, _| Ok(Default::default()));
@@ -875,9 +875,9 @@ async fn build_id_set_properly_on_query_on_first_task() {
         );
         pr
     }]);
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client.expect_respond_legacy_query().times(0);
-    let mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 10;
@@ -962,7 +962,7 @@ async fn queries_arent_lost_in_buffer_void(#[values(false, true)] buffered_becau
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
     ]);
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .returning(|_| Ok(Default::default()));
     mock.expect_respond_legacy_query()

@@ -697,7 +697,7 @@ mod tests {
     use super::*;
     use crate::{
         abstractions::tests::fixed_size_permit_dealer,
-        worker::client::mocks::mock_manual_workflow_client,
+        worker::client::mocks::mock_manual_worker_client,
     };
     use futures_util::FutureExt;
     use std::time::Duration;
@@ -705,7 +705,7 @@ mod tests {
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {
-        let mut mock_client = mock_manual_workflow_client();
+        let mut mock_client = mock_manual_worker_client();
         mock_client
             .expect_poll_workflow_task()
             .times(2)

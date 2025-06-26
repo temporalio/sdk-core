@@ -6,7 +6,7 @@ use crate::{
         gen_assert_and_reply, mock_manual_poller, mock_poller, mock_poller_from_resps,
         mock_sdk_cfg, mock_worker, poll_and_reply, single_hist_mock_sg, test_worker_cfg,
     },
-    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+    worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
 use futures_util::FutureExt;
 use itertools::Itertools;
@@ -86,7 +86,7 @@ fn three_tasks() -> VecDeque<PollActivityTaskQueueResponse> {
 async fn max_activities_respected() {
     let _task_q = "q";
     let mut tasks = three_tasks();
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_poll_activity_task()
         .times(3)
@@ -122,7 +122,7 @@ async fn max_activities_respected() {
 
 #[tokio::test]
 async fn activity_not_found_returns_ok() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     // Mock won't even be called, since we weren't tracking activity
     mock_client.expect_complete_activity_task().times(0);
 
@@ -139,7 +139,7 @@ async fn activity_not_found_returns_ok() {
 
 #[tokio::test]
 async fn heartbeats_report_cancels_only_once() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_record_activity_heartbeat()
         .times(2)
@@ -265,7 +265,7 @@ async fn activity_cancel_interrupts_poll() {
         .times(3)
         .returning(move || poll_resps.pop_front().unwrap());
 
-    let mut mock_client = mock_manual_workflow_client();
+    let mut mock_client = mock_manual_worker_client();
     mock_client
         .expect_record_activity_heartbeat()
         .times(1)
@@ -323,7 +323,7 @@ async fn activity_cancel_interrupts_poll() {
 
 #[tokio::test]
 async fn activity_poll_timeout_retries() {
-    let mock_client = mock_workflow_client();
+    let mock_client = mock_worker_client();
     let mut calls = 0;
     let mut mock_act_poller = mock_poller();
     mock_act_poller.expect_poll().times(3).returning(move || {
@@ -352,7 +352,7 @@ async fn many_concurrent_heartbeat_cancels() {
     // them after a few successful heartbeats
     const CONCURRENCY_NUM: usize = 5;
 
-    let mut mock_client = mock_manual_workflow_client();
+    let mut mock_client = mock_manual_worker_client();
     let mut poll_resps = VecDeque::from(
         (0..CONCURRENCY_NUM)
             .map(|i| {
@@ -516,7 +516,7 @@ async fn activity_timeout_no_double_resolve() {
 
 #[tokio::test]
 async fn can_heartbeat_acts_during_shutdown() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_record_activity_heartbeat()
         .times(1)
@@ -567,7 +567,7 @@ async fn can_heartbeat_acts_during_shutdown() {
 #[tokio::test]
 async fn complete_act_with_fail_flushes_heartbeat() {
     let last_hb = 50;
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     let last_seen_payload = Rc::new(RefCell::new(None));
     let lsp = last_seen_payload.clone();
     mock_client
@@ -622,7 +622,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
 #[tokio::test]
 async fn max_tq_acts_set_passed_to_poll_properly() {
     let rate = 9.28;
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_poll_activity_task()
         .returning(move |_, ao| {
@@ -659,7 +659,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_it(
     let num_eager_requested = Arc::new(AtomicUsize::new(0));
     let num_eager_requested_clone = num_eager_requested.clone();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(move |req| {
@@ -747,7 +747,7 @@ async fn activity_tasks_from_completion_are_delivered() {
     // Clone it to move into the callback below
     let num_eager_requested_clone = num_eager_requested.clone();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(move |req| {
@@ -876,7 +876,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     // Set up two tasks to be returned via normal activity polling
     let act_tasks = VecDeque::from(vec![
         PollActivityTaskQueueResponse {
@@ -1004,7 +1004,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
 
 #[tokio::test]
 async fn retryable_net_error_exhaustion_is_nonfatal() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_activity_task()
         .times(1)
@@ -1033,7 +1033,7 @@ async fn retryable_net_error_exhaustion_is_nonfatal() {
 
 #[tokio::test]
 async fn cant_complete_activity_with_unset_result_payload() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_poll_activity_task()
         .returning(move |_, _| {
@@ -1076,7 +1076,7 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
         .times(1)
         .returning(move || None);
     // They shall all be reported as failed
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_fail_activity_task()
         .times(3)
@@ -1153,7 +1153,7 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
         .expect_poll()
         .times(1)
         .returning(move || None);
-    let mut mock_client = mock_manual_workflow_client();
+    let mut mock_client = mock_manual_worker_client();
     mock_client
         .expect_complete_activity_task()
         .times(1)
@@ -1251,7 +1251,7 @@ async fn pass_activity_summary_to_metadata() {
 
 #[tokio::test]
 async fn heartbeat_response_can_be_paused() {
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     // First heartbeat returns pause only
     mock_client
         .expect_record_activity_heartbeat()

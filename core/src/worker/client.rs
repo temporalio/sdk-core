@@ -1,7 +1,7 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
@@ -31,6 +31,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
+use crate::worker::heartbeat::WorkerHeartbeatInfo;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -40,6 +42,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
 }
 
 impl WorkerClientBag {
@@ -54,6 +57,7 @@ impl WorkerClientBag {
             namespace,
             identity,
             worker_versioning_strategy,
+            heartbeat_info: None,
         }
     }
 
@@ -112,6 +116,29 @@ impl WorkerClientBag {
             })
         } else {
             None
+        }
+    }
+
+    pub(crate) fn add_heartbeat_info(&mut self, heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>) {
+        self.heartbeat_info = Some(heartbeat_info);
+    }
+
+    fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
+        if let Some(heartbeat_info) = self.heartbeat_info.as_ref() {
+            Some(heartbeat_info.lock().capture_heartbeat())
+        } else {
+            warn!("WorkerClientBag missing client, unable to send worker heartbeat");
+            None
+        }
+    }
+
+    /// Wrap the `record_worker_heartbeat` call to allow mocking of the trait call for testing
+    pub(crate) async fn worker_heartbeat(&self) -> Result<RecordWorkerHeartbeatResponse> {
+        if let Some(heartbeat) = self.capture_heartbeat() {
+            self.record_worker_heartbeat(heartbeat).await
+        } else {
+            // TODO:
+            Ok(RecordWorkerHeartbeatResponse::default())
         }
     }
 }
@@ -203,6 +230,8 @@ pub trait WorkerClient: Sync + Send {
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
+    /// Record a worker heartbeat
+    async fn record_worker_heartbeat(&self, heartbeat: WorkerHeartbeat) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
     fn replace_client(&self, new_client: RetryClient<Client>);
@@ -267,7 +296,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -304,7 +333,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -337,7 +366,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -615,7 +644,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         };
 
         Ok(
@@ -628,6 +657,19 @@ impl WorkerClient for WorkerClientBag {
     fn replace_client(&self, new_client: RetryClient<Client>) {
         let mut replaceable_client = self.replaceable_client.write();
         *replaceable_client = new_client;
+    }
+
+    async fn record_worker_heartbeat(&self, heartbeat: WorkerHeartbeat) -> Result<RecordWorkerHeartbeatResponse> {
+        println!("[record_worker_heartbeat] received heartbeat {:?}", heartbeat);
+        Ok(self
+            .cloned_client()
+            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
+                namespace: self.namespace.clone(),
+                identity: self.identity.clone(),
+                worker_heartbeat: Some(heartbeat),
+            })
+            .await?
+            .into_inner())
     }
 
     fn capabilities(&self) -> Option<Capabilities> {
