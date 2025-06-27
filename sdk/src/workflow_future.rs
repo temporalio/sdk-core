@@ -177,7 +177,7 @@ impl WorkflowFuture {
         &mut self,
         variant: Option<Variant>,
         outgoing_cmds: &mut Vec<WorkflowCommand>,
-    ) -> Result<bool, Error> {
+    ) -> Result<(), Error> {
         if let Some(v) = variant {
             match v {
                 Variant::InitializeWorkflow(_) => {
@@ -326,17 +326,14 @@ impl WorkflowFuture {
                     ))?
                 }
                 Variant::RemoveFromCache(_) => {
-                    // TODO: Need to abort any user-spawned tasks, etc. See also cancel WF.
-                    //   How best to do this in executor agnostic way? Is that possible?
-                    //  -- tokio JoinSet does this in a nice way.
-                    return Ok(true);
+                    unreachable!("Cache removal should happen higher up");
                 }
             }
         } else {
             bail!("Empty activation job variant");
         }
 
-        Ok(false)
+        Ok(())
     }
 }
 
@@ -370,7 +367,6 @@ impl Future for WorkflowFuture {
                     .map(Into::into);
             }
 
-            let mut die_of_eviction_when_done = false;
             let mut activation_cmds = vec![];
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
@@ -391,25 +387,19 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            for WorkflowActivationJob { variant } in activation.jobs {
-                match self.handle_job(variant, &mut activation_cmds) {
-                    Ok(true) => {
-                        die_of_eviction_when_done = true;
-                    }
-                    Err(e) => {
-                        self.fail_wft(run_id, e);
-                        continue 'activations;
-                    }
-                    _ => (),
-                }
-            }
-
             if is_only_eviction {
                 // No need to do anything with the workflow code in this case
                 self.outgoing_completions
                     .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
                     .expect("Completion channel intact");
                 return Ok(WfExitValue::Evicted).into();
+            }
+
+            for WorkflowActivationJob { variant } in activation.jobs {
+                if let Err(e) = self.handle_job(variant, &mut activation_cmds) {
+                    self.fail_wft(run_id, e);
+                    continue 'activations;
+                }
             }
 
             // Drive update functions
@@ -449,10 +439,6 @@ impl Future for WorkflowFuture {
             // multiple completions.
 
             self.send_completion(run_id, activation_cmds);
-
-            if die_of_eviction_when_done {
-                return Ok(WfExitValue::Evicted).into();
-            }
 
             // We don't actually return here, since we could be queried after finishing executing,
             // and it allows us to rely on evictions for death and cache management
