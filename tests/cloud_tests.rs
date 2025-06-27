@@ -1,14 +1,16 @@
-use std::env;
-use std::str::FromStr;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
+use std::{
+    env,
+    str::FromStr,
+    sync::atomic::{AtomicBool, Ordering::Relaxed},
+};
 use temporal_client::{
     Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
 };
 use temporal_sdk::WfContext;
-use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure;
-use temporal_sdk_core_protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
+use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::{EventType, WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure},
+    history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use url::Url;
 

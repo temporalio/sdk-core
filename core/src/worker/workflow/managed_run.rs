@@ -779,17 +779,17 @@ impl ManagedRun {
     ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
         debug!(resolution=?res, "Applying local resolution");
         self.wfm.notify_of_local_result(res)?;
-        if self.wfm.machines.outstanding_local_activity_count() == 0 {
-            if let Some(mut wait_dat) = self.waiting_on_la.take() {
-                // Cancel the heartbeat timeout
-                wait_dat.hb_timeout_handle.abort();
-                if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
-                    return Ok(Some(self.prepare_complete_resp(
-                        resp_chan,
-                        completion_dat,
-                        false,
-                    )));
-                }
+        if self.wfm.machines.outstanding_local_activity_count() == 0
+            && let Some(mut wait_dat) = self.waiting_on_la.take()
+        {
+            // Cancel the heartbeat timeout
+            wait_dat.hb_timeout_handle.abort();
+            if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
+                return Ok(Some(self.prepare_complete_resp(
+                    resp_chan,
+                    completion_dat,
+                    false,
+                )));
             }
         }
         Ok(None)
@@ -903,10 +903,9 @@ impl ManagedRun {
                 // If the wft was just a legacy query, still reply, otherwise we might try to
                 // reply to the task as if it were a task rather than a query.
                 && !self.pending_work_is_legacy_query()
+                && let Some(wft) = self.wft.as_mut()
             {
-                if let Some(wft) = self.wft.as_mut() {
-                    wft.pending_queries.clear();
-                }
+                wft.pending_queries.clear();
             }
 
             self.trying_to_evict = Some(info);
@@ -1182,25 +1181,24 @@ impl ManagedRun {
         outcome: ActivationCompleteOutcome,
         chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) {
-        if let Some(chan) = chan {
-            if chan
+        if let Some(chan) = chan
+            && chan
                 .send(ActivationCompleteResult {
                     outcome,
                     replaying: self.wfm.machines.replaying,
                 })
                 .is_err()
-            {
-                let warnstr = "The workflow task completer went missing! This likely indicates an \
+        {
+            let warnstr = "The workflow task completer went missing! This likely indicates an \
                                SDK bug, please report."
-                    .to_string();
-                warn!(run_id=%self.run_id(), "{}", warnstr);
-                self.request_eviction(RequestEvictMsg {
-                    run_id: self.run_id().to_string(),
-                    message: warnstr,
-                    reason: EvictionReason::Fatal,
-                    auto_reply_fail_tt: None,
-                });
-            }
+                .to_string();
+            warn!(run_id=%self.run_id(), "{}", warnstr);
+            self.request_eviction(RequestEvictMsg {
+                run_id: self.run_id().to_string(),
+                message: warnstr,
+                reason: EvictionReason::Fatal,
+                auto_reply_fail_tt: None,
+            });
         }
     }
 

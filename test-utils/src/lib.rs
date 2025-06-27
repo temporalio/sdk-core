@@ -539,13 +539,13 @@ impl TestWorker {
             Arc::new(self.inner.shutdown_handle()),
         );
         // Automatically use results-based complete detection if we have a client
-        if self.fetch_results {
-            if let Some(c) = self.client.clone() {
-                iceptor.condition = TestWorkerShutdownCond::GetResults(
-                    std::mem::take(&mut self.started_workflows.lock()),
-                    c,
-                );
-            }
+        if self.fetch_results
+            && let Some(c) = self.client.clone()
+        {
+            iceptor.condition = TestWorkerShutdownCond::GetResults(
+                std::mem::take(&mut self.started_workflows.lock()),
+                c,
+            );
         }
         iceptor.next = next_interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>);
         let get_results_waiter = iceptor.wait_all_wfs();

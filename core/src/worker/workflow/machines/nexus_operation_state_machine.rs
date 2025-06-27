@@ -7,18 +7,16 @@ use crate::worker::workflow::{
 };
 use itertools::Itertools;
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
-use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
-use temporal_sdk_core_protos::temporal::api::command::v1::command;
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{NexusOperationResult, nexus_operation_result},
+        nexus::{NexusOperationCancellationType, NexusOperationResult, nexus_operation_result},
         workflow_activation::{
             ResolveNexusOperation, ResolveNexusOperationStart, resolve_nexus_operation_start,
         },
         workflow_commands::ScheduleNexusOperation,
     },
     temporal::api::{
-        command::v1::RequestCancelNexusOperationCommandAttributes,
+        command::v1::{RequestCancelNexusOperationCommandAttributes, command},
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::{self as failure, Failure, failure::FailureInfo},

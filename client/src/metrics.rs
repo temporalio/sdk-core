@@ -195,10 +195,10 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
                 if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
                     m.with_new_attrs(other_labels.labels)
                 }
-                if let Some(ct) = req.extensions().get::<CallType>() {
-                    if ct.is_long() {
-                        m.set_is_long_poll();
-                    }
+                if let Some(ct) = req.extensions().get::<CallType>()
+                    && ct.is_long()
+                {
+                    m.set_is_long_poll();
                 }
                 m
             })
@@ -218,22 +218,21 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
             let res = callfut.await;
             if let Some(metrics) = metrics {
                 metrics.record_svc_req_latency(started.elapsed());
-                if let Ok(ref ok_res) = res {
-                    if let Some(number) = ok_res
+                if let Ok(ref ok_res) = res
+                    && let Some(number) = ok_res
                         .headers()
                         .get("grpc-status")
                         .and_then(|s| s.to_str().ok())
                         .and_then(|s| s.parse::<i32>().ok())
-                    {
-                        let code = Code::from(number);
-                        if code != Code::Ok {
-                            let code = if errcode_label_disabled {
-                                None
-                            } else {
-                                Some(code)
-                            };
-                            metrics.svc_request_failed(code);
-                        }
+                {
+                    let code = Code::from(number);
+                    if code != Code::Ok {
+                        let code = if errcode_label_disabled {
+                            None
+                        } else {
+                            Some(code)
+                        };
+                        metrics.svc_request_failed(code);
                     }
                 }
             }

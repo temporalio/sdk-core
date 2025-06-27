@@ -5,13 +5,12 @@ use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_api::errors::PollError;
-use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
 use temporal_sdk_core_protos::{
     coresdk::{
         FromJsonPayloadExt,
         nexus::{
-            NexusOperationResult, NexusTaskCancelReason, NexusTaskCompletion,
-            nexus_operation_result, nexus_task, nexus_task_completion,
+            NexusOperationCancellationType, NexusOperationResult, NexusTaskCancelReason,
+            NexusTaskCompletion, nexus_operation_result, nexus_task, nexus_task_completion,
         },
     },
     temporal::api::{
@@ -26,8 +25,10 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{CoreWfStarter, WorkflowHandleExt, rand_6_chars};
-use tokio::sync::watch;
-use tokio::{join, sync::mpsc};
+use tokio::{
+    join,
+    sync::{mpsc, watch},
+};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Outcome {

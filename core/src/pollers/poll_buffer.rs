@@ -316,10 +316,10 @@ where
                             _ = shutdown.cancelled() => return,
                         };
                         drop(active_guard);
-                        if let Ok(r) = &r {
-                            if let Some(ppf) = post_pf.as_ref() {
-                                ppf(r);
-                            }
+                        if let Ok(r) = &r
+                            && let Some(ppf) = post_pf.as_ref()
+                        {
+                            ppf(r);
                         }
                         if report_handle.poll_result(&r) {
                             let _ = tx.send(r.map(|r| (r, permit)));
@@ -380,14 +380,14 @@ where
 }
 
 async fn handle_task_panic(t: JoinHandle<()>) {
-    if let Err(e) = t.await {
-        if e.is_panic() {
-            let as_panic = e.into_panic().downcast::<String>();
-            dbg_panic!(
-                "Poller task died or did not terminate cleanly: {:?}",
-                as_panic
-            );
-        }
+    if let Err(e) = t.await
+        && e.is_panic()
+    {
+        let as_panic = e.into_panic().downcast::<String>();
+        dbg_panic!(
+            "Poller task died or did not terminate cleanly: {:?}",
+            as_panic
+        );
     }
 }
 

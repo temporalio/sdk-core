@@ -85,21 +85,20 @@ impl InternalFlags {
             last_sdk_version,
             ..
         } = self
+            && let Some(metadata) = e.sdk_metadata.as_ref()
         {
-            if let Some(metadata) = e.sdk_metadata.as_ref() {
-                core.extend(
-                    metadata
-                        .core_used_flags
-                        .iter()
-                        .map(|u| CoreInternalFlags::from_u32(*u)),
-                );
-                lang.extend(metadata.lang_used_flags.iter());
-                if !metadata.sdk_name.is_empty() {
-                    *last_sdk_name = metadata.sdk_name.clone();
-                }
-                if !metadata.sdk_version.is_empty() {
-                    *last_sdk_version = metadata.sdk_version.clone();
-                }
+            core.extend(
+                metadata
+                    .core_used_flags
+                    .iter()
+                    .map(|u| CoreInternalFlags::from_u32(*u)),
+            );
+            lang.extend(metadata.lang_used_flags.iter());
+            if !metadata.sdk_name.is_empty() {
+                *last_sdk_name = metadata.sdk_name.clone();
+            }
+            if !metadata.sdk_version.is_empty() {
+                *last_sdk_version = metadata.sdk_version.clone();
             }
         }
     }
