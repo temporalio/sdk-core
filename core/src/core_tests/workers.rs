@@ -370,16 +370,16 @@ async fn worker_heartbeat() {
         .returning(|heartbeat| {
             let host_info = heartbeat.host_info.clone().unwrap();
             println!("heartbeat: {:?}", heartbeat);
-            assert_eq!(heartbeat.worker_identity, "TODO");
-            assert_eq!(heartbeat.worker_instance_key, "TODO");
+            // TODO
+            assert_eq!(heartbeat.worker_identity, "");
+            assert!(!heartbeat.worker_instance_key.is_empty());
             assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
             assert_eq!(host_info.process_id, std::process::id().to_string());
             assert_eq!(heartbeat.sdk_name, "test-core");
             assert_eq!(heartbeat.sdk_version, "0.0.0");
-            // TODO: assert_eq!(heartbeat.task_queue, tasks);
+            assert_eq!(heartbeat.task_queue, "q");
             assert!(heartbeat.heartbeat_time.is_some());
             assert!(heartbeat.start_time.is_some());
-
 
             Ok(RecordWorkerHeartbeatResponse {})
         });
@@ -404,47 +404,3 @@ async fn worker_heartbeat() {
     worker.poll_activity_task().await.unwrap();
     assert!(false);
 }
-
-// #[tokio::test]
-// async fn worker_heartbeat1() {
-//     let mut mock = mock_worker_client(); // mock worker client
-//     mock
-//         .expect_record_worker_heartbeat()
-//         .times(1)
-//         .returning(|heartbeat| {
-//             let host_info = heartbeat.host_info.clone().unwrap();
-//             println!("heartbeat: {:?}", heartbeat);
-//             assert_eq!(heartbeat.worker_identity, "TODO");
-//             assert_eq!(heartbeat.worker_instance_key, "TODO");
-//             assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
-//             assert_eq!(host_info.process_id, std::process::id().to_string());
-//             assert_eq!(heartbeat.sdk_name, "test-core");
-//             assert_eq!(heartbeat.sdk_version, "0.0.0");
-//             // TODO: assert_eq!(heartbeat.task_queue, tasks);
-//             assert!(heartbeat.heartbeat_time.is_some());
-//             assert!(heartbeat.start_time.is_some());
-//
-//
-//             Ok(RecordWorkerHeartbeatResponse {})
-//         });
-//     mock
-//         .expect_poll_activity_task()
-//         .times(1)
-//         .returning(move |_, _| Ok(PollActivityTaskQueueResponse {
-//             task_token: vec![1],
-//             ..Default::default()
-//         }));
-//
-//     // or let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
-//     let worker = worker::Worker::new_test(
-//         test_worker_cfg()
-//             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-//             .build()
-//             .unwrap(),
-//         mock,
-//     );
-//     // Give time for worker heartbeat timer to fire
-//     tokio::time::sleep(Duration::from_millis(3000)).await;
-//     worker.poll_activity_task().await.unwrap();
-//     assert!(false);
-// }

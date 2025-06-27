@@ -19,24 +19,23 @@ type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 pub struct WorkerHeartbeatInfo {
     pub(crate) data: Arc<Mutex<WorkerHeartbeatData>>,
     timer_abort: AbortHandle,
-    client: Arc<dyn WorkerClient>,
+    client: Option<Arc<dyn WorkerClient>>,
     interval: Option<Duration>,
 }
 
 impl WorkerHeartbeatInfo {
     /// Create a new WorkerHeartbeatInfo. A timer is immediately started to track the worker
     /// heartbeat interval.
-    pub(crate) fn new(worker_config: WorkerConfig, client: Arc<dyn WorkerClient>) -> Self {
+    pub(crate) fn new(worker_config: WorkerConfig) -> Self {
         // spawn heartbeat things here, then on capture_heartbeat, send signal to thread
         let (abort_handle, _) = AbortHandle::new_pair();
 
-        let mut heartbeat = Self {
+        let heartbeat = Self {
             data: Arc::new(Mutex::new(WorkerHeartbeatData::new(worker_config.clone()))),
             timer_abort: abort_handle,
-            client,
+            client: None,
             interval: worker_config.heartbeat_interval,
         };
-        heartbeat.create_new_timer();
         heartbeat
     }
 
@@ -54,35 +53,37 @@ impl WorkerHeartbeatInfo {
         self.timer_abort.abort();
 
         let (abort_handle, abort_reg) = AbortHandle::new_pair();
-        let client = self.client.clone();
         let interval = if let Some(dur) = self.interval {
             dur
         } else {
             Duration::from_secs(60)
         };
         let data = self.data.clone();
-        let client = self.client.clone();
-        tokio::spawn(future::Abortable::new(
-            async move {
-                println!("sleeping for {:?}", interval);
-                tokio::time::sleep(interval).await;
-                println!("sleep done");
+        if let Some(client) = self.client.clone() {
+            tokio::spawn(future::Abortable::new(
+                async move {
+                    println!("sleeping for {:?}", interval);
+                    tokio::time::sleep(interval).await;
+                    println!("sleep done");
 
-                if let Err(e) = client.clone().record_worker_heartbeat(data.lock().capture_heartbeat()).await {
-                    warn!(error=?e, "Network error while sending worker heartbeat");
-                }
+                    if let Err(e) = client.clone().record_worker_heartbeat(data.lock().capture_heartbeat()).await {
+                        warn!(error=?e, "Network error while sending worker heartbeat");
+                    }
 
-            },
-            abort_reg,
-        ));
-
+                },
+                abort_reg,
+            ));
+        } else {
+            warn!("No client attached to heartbeat_info")
+        };
         self.timer_abort = abort_handle;
     }
 
-    // pub(crate) fn add_client(&mut self, client: Arc<dyn WorkerClient>) {
-    //     println!("[add_client]");
-    //     self.client = Some(client);
-    // }
+    pub(crate) fn add_client(&mut self, client: Arc<dyn WorkerClient>) {
+        println!("[add_client]");
+        self.client = Some(client);
+        self.create_new_timer();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -104,6 +105,7 @@ pub(crate) struct WorkerHeartbeatData {
 impl WorkerHeartbeatData {
     fn new(worker_config: WorkerConfig) -> Self {
         Self {
+            // TODO: Is this right for worker_identity?
             worker_identity: worker_config.client_identity_override.clone().unwrap_or_default(),
             host_info: WorkerHostInfo {
                 host_name: gethostname().to_string_lossy().to_string(),

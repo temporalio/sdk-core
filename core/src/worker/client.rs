@@ -42,7 +42,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
+    heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>,
 }
 
 impl WorkerClientBag {
@@ -51,13 +51,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
+        heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_info: None,
+            heartbeat_info,
         }
     }
 
@@ -119,17 +120,12 @@ impl WorkerClientBag {
         }
     }
 
-    pub(crate) fn add_heartbeat_info(&mut self, heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>) {
-        self.heartbeat_info = Some(heartbeat_info);
-    }
+    // pub(crate) fn add_heartbeat_info(&mut self, heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>) {
+    //     self.heartbeat_info = heartbeat_info;
+    // }
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        if let Some(heartbeat_info) = self.heartbeat_info.as_ref() {
-            Some(heartbeat_info.lock().capture_heartbeat())
-        } else {
-            warn!("WorkerClientBag missing client, unable to send worker heartbeat");
-            None
-        }
+        Some(self.heartbeat_info.lock().capture_heartbeat())
     }
 
     /// Wrap the `record_worker_heartbeat` call to allow mocking of the trait call for testing
