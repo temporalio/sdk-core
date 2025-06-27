@@ -1078,7 +1078,7 @@ impl WorkerExt for Worker {
                             .await
                             .unwrap();
                         }
-                        o => panic!("Unexpected activation while draining: {:?}", o),
+                        o => panic!("Unexpected activation while draining: {o:?}"),
                     }
                 }
             }

@@ -622,7 +622,6 @@ fn remove_file_past_ttl(ttl: &Option<Duration>, dest: &PathBuf) -> Result<bool, 
 mod tests {
     use super::{get_free_port, remove_file_past_ttl};
     use std::{
-        collections::HashSet,
         env::temp_dir,
         fs::File,
         net::{TcpListener, TcpStream},
