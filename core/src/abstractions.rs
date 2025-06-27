@@ -101,10 +101,10 @@ where
     }
 
     pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
-        if let Some(max) = self.max_permits {
-            if *self.extant_permits.1.borrow() >= max {
-                return Err(());
-            }
+        if let Some(max) = self.max_permits
+            && *self.extant_permits.1.borrow() >= max
+        {
+            return Err(());
         }
         if let Some(res) = self.supplier.try_reserve_slot(self) {
             Ok(self.build_owned(res))

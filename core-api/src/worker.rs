@@ -217,12 +217,12 @@ impl WorkerConfigBuilder {
             b.validate()?
         }
 
-        if let Some(Some(ref x)) = self.max_worker_activities_per_second {
-            if !x.is_normal() || x.is_sign_negative() {
-                return Err(
-                    "`max_worker_activities_per_second` must be positive and nonzero".to_owned(),
-                );
-            }
+        if let Some(Some(ref x)) = self.max_worker_activities_per_second
+            && (!x.is_normal() || x.is_sign_negative())
+        {
+            return Err(
+                "`max_worker_activities_per_second` must be positive and nonzero".to_owned(),
+            );
         }
 
         if matches!(self.max_outstanding_workflow_tasks.as_ref(), Some(Some(v)) if *v == 0) {
@@ -238,25 +238,25 @@ impl WorkerConfigBuilder {
             return Err("`max_outstanding_nexus_tasks` must be > 0".to_owned());
         }
 
-        if let Some(cache) = self.max_cached_workflows.as_ref() {
-            if *cache > 0 {
-                if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref() {
-                    if *max_wft < 2 {
-                        return Err(
-                            "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
-                                .to_owned(),
-                        );
-                    }
-                }
-                if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
-                    if matches!(b, PollerBehavior::SimpleMaximum(u) if *u < 2) {
-                        return Err(
+        if let Some(cache) = self.max_cached_workflows.as_ref()
+            && *cache > 0
+        {
+            if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref()
+                && *max_wft < 2
+            {
+                return Err(
+                    "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
+                        .to_owned(),
+                );
+            }
+            if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
+                if matches!(b, PollerBehavior::SimpleMaximum(u) if *u < 2) {
+                    return Err(
                             "`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2"
                                 .to_owned(),
                         );
-                    }
-                    b.validate()?
                 }
+                b.validate()?
             }
         }
 

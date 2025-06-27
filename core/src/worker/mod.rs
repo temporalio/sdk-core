@@ -645,12 +645,12 @@ impl Worker {
             }
             if let Some(ref act_mgr) = self.at_task_mgr {
                 let res = act_mgr.poll().await;
-                if let Err(err) = res.as_ref() {
-                    if matches!(err, PollError::ShutDown) {
-                        self.non_local_activities_complete
-                            .store(true, Ordering::Relaxed);
-                        return Ok(None);
-                    }
+                if let Err(err) = res.as_ref()
+                    && matches!(err, PollError::ShutDown)
+                {
+                    self.non_local_activities_complete
+                        .store(true, Ordering::Relaxed);
+                    return Ok(None);
                 };
                 res.map(Some)
             } else {
