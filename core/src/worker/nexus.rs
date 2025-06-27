@@ -404,9 +404,34 @@ fn parse_request_timeout(timeout: &str) -> Result<Duration, anyhow::Error> {
             .map(Duration::from_secs_f64)
             .map_err(Into::into),
         "ms" => value
-            .parse::<u64>()
-            .map(Duration::from_millis)
-            .map_err(Into::into),
+            .parse::<f64>()
+            .map_err(anyhow::Error::from)
+            .and_then(|v| Duration::try_from_secs_f64(v / 1000.0).map_err(Into::into)),
         _ => Err(anyhow!("Invalid timeout format")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_parse_request_timeout() {
+        assert_eq!(
+            parse_request_timeout("10m").unwrap(),
+            Duration::from_secs(600)
+        );
+        assert_eq!(
+            parse_request_timeout("30s").unwrap(),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_request_timeout("500ms").unwrap(),
+            Duration::from_millis(500)
+        );
+        assert_eq!(
+            parse_request_timeout("9.155416ms").unwrap(),
+            Duration::from_secs_f64(9.155416 / 1000.0)
+        );
     }
 }
