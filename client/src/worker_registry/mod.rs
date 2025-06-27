@@ -73,10 +73,10 @@ impl SlotManagerImpl {
         task_queue: String,
     ) -> Option<Box<dyn Slot + Send>> {
         let key = SlotKey::new(namespace, task_queue);
-        if let Some(p) = self.providers.get(&key) {
-            if let Some(slot) = p.try_reserve_wft_slot() {
-                return Some(slot);
-            }
+        if let Some(p) = self.providers.get(&key)
+            && let Some(slot) = p.try_reserve_wft_slot()
+        {
+            return Some(slot);
         }
         None
     }

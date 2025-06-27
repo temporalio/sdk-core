@@ -385,10 +385,10 @@ impl ClientHeaders {
         }
         if let Some(api_key) = &self.api_key {
             // Only if not already present
-            if !metadata.contains_key("authorization") {
-                if let Ok(val) = format!("Bearer {api_key}").parse() {
-                    metadata.insert("authorization", val);
-                }
+            if !metadata.contains_key("authorization")
+                && let Ok(val) = format!("Bearer {api_key}").parse()
+            {
+                metadata.insert("authorization", val);
             }
         }
     }

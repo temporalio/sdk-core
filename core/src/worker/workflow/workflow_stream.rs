@@ -111,10 +111,10 @@ impl WFStream {
                     }
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
-                        if let Some(rid) = local_input.input.run_id() {
-                            if let Some(rh) = state.runs.get_mut(rid) {
-                                rh.record_span_fields(&local_input.span);
-                            }
+                        if let Some(rid) = local_input.input.run_id()
+                            && let Some(rh) = state.runs.get_mut(rid)
+                        {
+                            rh.record_span_fields(&local_input.span);
                         }
                         match local_input.input {
                             LocalInputs::Completion(completion) => {
@@ -184,13 +184,13 @@ impl WFStream {
                 })
             })
             .inspect(|o| {
-                if let Some(e) = o.as_ref().err() {
-                    if !matches!(e, PollError::ShutDown) {
-                        error!(
-                            "Workflow processing encountered fatal error and must shut down {:?}",
-                            e
-                        );
-                    }
+                if let Some(e) = o.as_ref().err()
+                    && !matches!(e, PollError::ShutDown)
+                {
+                    error!(
+                        "Workflow processing encountered fatal error and must shut down {:?}",
+                        e
+                    );
                 }
             })
             // Stop the stream once we have shut down
@@ -381,24 +381,24 @@ impl WFStream {
             }
         }
 
-        if res.is_none() {
-            if let Some(rh) = self.runs.get_mut(run_id) {
-                // Attempt to produce the next activation if needed
-                res = rh.check_more_activations();
-                // If there's no more work and we reported workflow completion to server, evict.
-                if res.is_none()
-                    && rh.workflow_is_finished()
-                    && matches!(report.wft_report_status, WFTReportStatus::Reported { .. })
-                {
-                    res = rh
-                        .request_eviction(RequestEvictMsg {
-                            run_id: run_id.to_string(),
-                            message: "Workflow completed".to_string(),
-                            reason: EvictionReason::WorkflowExecutionEnding,
-                            auto_reply_fail_tt: None,
-                        })
-                        .into_run_update_resp()
-                }
+        if res.is_none()
+            && let Some(rh) = self.runs.get_mut(run_id)
+        {
+            // Attempt to produce the next activation if needed
+            res = rh.check_more_activations();
+            // If there's no more work and we reported workflow completion to server, evict.
+            if res.is_none()
+                && rh.workflow_is_finished()
+                && matches!(report.wft_report_status, WFTReportStatus::Reported { .. })
+            {
+                res = rh
+                    .request_eviction(RequestEvictMsg {
+                        run_id: run_id.to_string(),
+                        message: "Workflow completed".to_string(),
+                        reason: EvictionReason::WorkflowExecutionEnding,
+                        auto_reply_fail_tt: None,
+                    })
+                    .into_run_update_resp()
             }
         }
         res
