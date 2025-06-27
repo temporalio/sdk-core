@@ -14,7 +14,6 @@ mod workflow_stream;
 pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
-use crate::protosext::ValidPollWFTQResponse;
 use crate::{
     MetricsContext,
     abstractions::{
@@ -23,7 +22,9 @@ use crate::{
     },
     internal_flags::InternalFlags,
     pollers::TrackedPermittedTqResp,
-    protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
+    protosext::{
+        ValidPollWFTQResponse, legacy_query_failure, protocol_messages::IncomingProtocolMessage,
+    },
     telemetry::{TelemetryInstance, VecDisplayer, set_trace_subscriber_for_current_thread},
     worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -345,10 +346,10 @@ impl Workflows {
                 debug!(commands=%commands.display(), query_responses=%query_responses.display(),
                            messages=%messages.display(), force_new_wft,
                            "Sending responses to server");
-                if let Some(default_vb) = self.default_versioning_behavior.as_ref() {
-                    if versioning_behavior == VersioningBehavior::Unspecified {
-                        versioning_behavior = *default_vb;
-                    }
+                if let Some(default_vb) = self.default_versioning_behavior.as_ref()
+                    && versioning_behavior == VersioningBehavior::Unspecified
+                {
+                    versioning_behavior = *default_vb;
                 }
                 let mut completion = WorkflowTaskCompletion {
                     task_token: task_token.clone(),

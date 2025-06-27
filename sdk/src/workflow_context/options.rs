@@ -1,10 +1,10 @@
 use std::{collections::HashMap, time::Duration};
 
 use temporal_client::{Priority, WorkflowOptions};
-use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::ChildWorkflowCancellationType,
+        nexus::NexusOperationCancellationType,
         workflow_commands::{
             ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
             ScheduleNexusOperation, StartChildWorkflowExecution, WorkflowCommand,

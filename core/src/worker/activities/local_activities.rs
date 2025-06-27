@@ -349,10 +349,10 @@ impl LocalActivityManager {
                 LocalActRequest::Cancel(id) => {
                     debug!(id=?id, "Cancelling local activity");
                     let mut dlock = self.dat.lock();
-                    if let Some(lai) = dlock.la_info.get_mut(&id) {
-                        if let Some(immediate_res) = self.cancel_one_la(id.seq_num, lai) {
-                            immediate_resolutions.push(immediate_res);
-                        }
+                    if let Some(lai) = dlock.la_info.get_mut(&id)
+                        && let Some(immediate_res) = self.cancel_one_la(id.seq_num, lai)
+                    {
+                        immediate_resolutions.push(immediate_res);
                     }
                 }
                 LocalActRequest::CancelAllInRun(run_id) => {
@@ -551,11 +551,11 @@ impl LocalActivityManager {
                 seq_num: info.la_info.schedule_cmd.seq,
             };
             let maybe_old_lai = dlock.la_info.remove(&exec_id);
-            if let Some(ref oldlai) = maybe_old_lai {
-                if let Some(ref bot) = oldlai.backing_off_task {
-                    dbg_panic!("Just-resolved LA should not have backoff task");
-                    bot.abort();
-                }
+            if let Some(ref oldlai) = maybe_old_lai
+                && let Some(ref bot) = oldlai.backing_off_task
+            {
+                dbg_panic!("Just-resolved LA should not have backoff task");
+                bot.abort();
             }
 
             let la_metrics = self.metrics.with_new_attrs([
@@ -916,10 +916,10 @@ impl TimeoutBag {
         // Remove any time already elapsed since the scheduling time
         let schedule_to_close = schedule_to_close
             .map(|s2c| s2c.saturating_sub(sched_time.elapsed().unwrap_or_default()));
-        if let Some(ref s2c) = schedule_to_close {
-            if s2c.is_zero() {
-                return Err(resolution);
-            }
+        if let Some(ref s2c) = schedule_to_close
+            && s2c.is_zero()
+        {
+            return Err(resolution);
         }
         let timeout_dat = CancelOrTimeout::Timeout {
             run_id: new_la.workflow_exec_info.run_id.clone(),

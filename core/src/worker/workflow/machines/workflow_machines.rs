@@ -527,10 +527,10 @@ impl WorkflowMachines {
         let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
         self.prepare_commands()?;
-        if self.workflow_is_finished() {
-            if let Some(rt) = self.total_runtime() {
-                self.metrics.wf_e2e_latency(rt);
-            }
+        if self.workflow_is_finished()
+            && let Some(rt) = self.total_runtime()
+        {
+            self.metrics.wf_e2e_latency(rt);
         }
         Ok(())
     }
@@ -615,13 +615,12 @@ impl WorkflowMachines {
             {
                 apply_wft_complete_data!(self, wtc);
             }
-            if peeked_events.peek().is_none() {
-                if let Some(wtc) = self
+            if peeked_events.peek().is_none()
+                && let Some(wtc) = self
                     .last_history_from_server
                     .peek_next_wft_completed(event.event_id)
-                {
-                    apply_wft_complete_data!(self, wtc);
-                }
+            {
+                apply_wft_complete_data!(self, wtc);
             }
         }
 
@@ -631,10 +630,10 @@ impl WorkflowMachines {
         }
         let replay_start = Instant::now();
 
-        if let Some(last_event) = events.last() {
-            if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
-                self.next_started_event_id = last_event.event_id;
-            }
+        if let Some(last_event) = events.last()
+            && last_event.event_type == EventType::WorkflowTaskStarted as i32
+        {
+            self.next_started_event_id = last_event.event_id;
         }
 
         let mut update_admitted_event_messages = HashMap::<String, IncomingProtocolMessage>::new();
@@ -1720,13 +1719,11 @@ fn patch_marker_handling(
     fn skip_one_or_two_events(next_event: Option<&HistoryEvent>) -> Result<EventHandlingOutcome> {
         // Also ignore the subsequent upsert event if present
         let mut skip_next_event = false;
-        if let Some(history_event::Attributes::UpsertWorkflowSearchAttributesEventAttributes(
-            atts,
-        )) = next_event.and_then(|ne| ne.attributes.as_ref())
+        if let Some(history_event::Attributes::UpsertWorkflowSearchAttributesEventAttributes(atts)) =
+            next_event.and_then(|ne| ne.attributes.as_ref())
+            && let Some(ref sa) = atts.search_attributes
         {
-            if let Some(ref sa) = atts.search_attributes {
-                skip_next_event = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);
-            }
+            skip_next_event = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);
         }
 
         Ok(EventHandlingOutcome::SkipEvent { skip_next_event })
