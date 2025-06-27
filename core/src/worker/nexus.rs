@@ -411,6 +411,7 @@ fn parse_request_timeout(timeout: &str) -> Result<Duration, anyhow::Error> {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::*;
 
