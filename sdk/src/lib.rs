@@ -109,6 +109,7 @@ use temporal_sdk_core_protos::{
 };
 use tokio::{
     sync::{
+        Notify,
         mpsc::{UnboundedSender, unbounded_channel},
         oneshot,
     },
@@ -151,6 +152,7 @@ struct WorkflowHalf {
     workflows: RefCell<HashMap<String, WorkflowData>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: RefCell<HashMap<String, WorkflowFunction>>,
+    workflow_removed_from_map: Notify,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
@@ -180,6 +182,7 @@ impl Worker {
             workflow_half: WorkflowHalf {
                 workflows: Default::default(),
                 workflow_fns: Default::default(),
+                workflow_removed_from_map: Default::default(),
             },
             activity_half: ActivityHalf {
                 activity_fns: Default::default(),
@@ -260,6 +263,7 @@ impl Worker {
                             join_handle.await??;
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
+                            wf_half.workflow_removed_from_map.notify_one();
                             Ok(())
                         }
                     },
@@ -293,12 +297,15 @@ impl Worker {
                     if let Some(ref i) = common.worker_interceptor {
                         i.on_workflow_activation(&activation).await?;
                     }
-                    if let Some(wf_fut) = wf_half.workflow_activation_handler(
-                        common,
-                        shutdown_token.clone(),
-                        activation,
-                        &completions_tx,
-                    )? && wf_future_tx.send(wf_fut).is_err()
+                    if let Some(wf_fut) = wf_half
+                        .workflow_activation_handler(
+                            common,
+                            shutdown_token.clone(),
+                            activation,
+                            &completions_tx,
+                        )
+                        .await?
+                        && wf_future_tx.send(wf_fut).is_err()
                     {
                         panic!("Receive half of completion processor channel cannot be dropped");
                     }
@@ -384,7 +391,7 @@ impl Worker {
 
 impl WorkflowHalf {
     #[allow(clippy::type_complexity)]
-    fn workflow_activation_handler(
+    async fn workflow_activation_handler(
         &self,
         common: &CommonWorker,
         shutdown_token: CancellationToken,
@@ -408,26 +415,29 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;
-            let wf_fns_borrow = self.workflow_fns.borrow();
-            let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
-                warn!("Workflow type {workflow_type} not found");
+            let (wff, activations) = {
+                let wf_fns_borrow = self.workflow_fns.borrow();
 
-                completions_tx
-                    .send(WorkflowActivationCompletion::fail(
-                        run_id,
-                        format!("Workflow type {workflow_type} not found").into(),
-                        Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
-                    ))
-                    .expect("Completion channel intact");
-                return Ok(None);
+                let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
+                    warn!("Workflow type {workflow_type} not found");
+
+                    completions_tx
+                        .send(WorkflowActivationCompletion::fail(
+                            run_id,
+                            format!("Workflow type {workflow_type} not found").into(),
+                            Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+                        ))
+                        .expect("Completion channel intact");
+                    return Ok(None);
+                };
+
+                wf_function.start_workflow(
+                    common.worker.get_config().namespace.clone(),
+                    common.task_queue.clone(),
+                    std::mem::take(sw),
+                    completions_tx.clone(),
+                )
             };
-
-            let (wff, activations) = wf_function.start_workflow(
-                common.worker.get_config().namespace.clone(),
-                common.task_queue.clone(),
-                std::mem::take(sw),
-                completions_tx.clone(),
-            );
             let jh = tokio::spawn(async move {
                 tokio::select! {
                     r = wff.fuse() => r,
@@ -442,6 +452,17 @@ impl WorkflowHalf {
                 join_handle: jh,
                 run_id: run_id.clone(),
             });
+            loop {
+                // It's possible that we've got a new initialize workflow action before the last
+                // future for this run finished evicting, as a result of how futures might be
+                // interleaved. In that case, just wait until it's not in the map, which should be
+                // a matter of only a few `poll` calls.
+                if self.workflows.borrow_mut().contains_key(&run_id) {
+                    self.workflow_removed_from_map.notified().await;
+                } else {
+                    break;
+                }
+            }
             self.workflows.borrow_mut().insert(
                 run_id.clone(),
                 WorkflowData {
@@ -474,7 +495,8 @@ impl WorkflowHalf {
                 return Ok(None);
             }
 
-            // In all other cases, we want to panic as the runtime could be in an inconsistent state at this point.
+            // In all other cases, we want to error as the runtime could be in an inconsistent state
+            // at this point.
             bail!(
                 "Got activation {:?} for unknown workflow {}",
                 activation,
