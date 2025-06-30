@@ -45,7 +45,7 @@ message WorkflowExecutionInfo {
     int64 history_size_bytes = 15;
     // If set, the most recent worker version stamp that appeared in a workflow task completion
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    temporal.api.common.v1.WorkerVersionStamp most_recent_worker_version_stamp = 16;
+    temporal.api.common.v1.WorkerVersionStamp most_recent_worker_version_stamp = 16 [deprecated = true];
     // Workflow execution duration is defined as difference between close time and execution time.
     // This field is only populated if the workflow is closed.
     google.protobuf.Duration execution_duration = 17;
@@ -137,7 +137,7 @@ message WorkflowExecutionVersioningInfo {
     // behaviors.
     // This field is first set after an execution completes its first workflow task on a versioned
     // worker, and set again on completion of every subsequent workflow task.
-    // For child workflows of Pinned parents, this will be set to Pinned (along with `version`) when
+    // For child workflows of Pinned parents, this will be set to Pinned (along with `deployment_version`) when
     // the the child starts so that child's first workflow task goes to the same Version as the
     // parent. After the first workflow task, it depends on the child workflow itself if it wants
     // to stay pinned or become unpinned (according to Versioning Behavior set in the worker).
@@ -167,7 +167,8 @@ message WorkflowExecutionVersioningInfo {
     // precedence over SDK-sent `behavior` (and `version` when override is PINNED). An
     // override can be set when starting a new execution, as well as afterwards by calling the
     // `UpdateWorkflowExecutionOptions` API.
-    // Pinned overrides are automatically inherited by child workflows.
+    // Pinned overrides are automatically inherited by child workflows, continue-as-new workflows,
+    // workflow retries, and cron workflows.
     VersioningOverride versioning_override = 3;
     // When present, indicates the workflow is transitioning to a different deployment. Can
     // indicate one of the following transitions: unversioned -> versioned, versioned -> versioned
@@ -202,7 +203,7 @@ message WorkflowExecutionVersioningInfo {
     // start a transition to that version and continue execution there.
     // A version transition can only exist while there is a pending or started workflow task.
     // Once the pending workflow task completes on the transition's target version, the
-    // transition completes and the workflow's `behavior`, and `version` fields are updated per the
+    // transition completes and the workflow's `behavior`, and `deployment_version` fields are updated per the
     // worker's task completion response.
     // Pending activities will not start new attempts during a transition. Once the transition is
     // completed, pending activities will start their next attempt on the new version.
@@ -260,16 +261,16 @@ message PendingActivityInfo {
     // independently-assigned build ID to the database. This case heals automatically once the task is dispatched.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     oneof assigned_build_id {
-        // When present, it means this activity is assigned to the build ID of its workflow.
+        // Deprecated. When present, it means this activity is assigned to the build ID of its workflow.
         google.protobuf.Empty use_workflow_build_id = 13 [deprecated = true];
-        // This means the activity is independently versioned and not bound to the build ID of its workflow.
+        // Deprecated. This means the activity is independently versioned and not bound to the build ID of its workflow.
         // The activity will use the build id in this field instead.
         // If the task fails and is scheduled again, the assigned build ID may change according to the latest versioning
         // rules.
         string last_independently_assigned_build_id = 14 [deprecated = true];
     }
-    // The version stamp of the worker to whom this activity was most recently dispatched
-    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    // Deprecated. The version stamp of the worker to whom this activity was most recently dispatched
+    // This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     temporal.api.common.v1.WorkerVersionStamp last_worker_version_stamp = 15 [deprecated = true];
 
     // The time activity will wait until the next retry.
@@ -370,7 +371,7 @@ message ResetPoints {
 message ResetPointInfo {
     // Worker build id.
     string build_id = 7;
-    // A worker binary version identifier (deprecated).
+    // Deprecated. A worker binary version identifier.
     string binary_checksum = 1 [deprecated = true];
     // The first run ID in the execution chain that was touched by this worker build.
     string run_id = 2;
@@ -465,8 +466,8 @@ message PendingNexusOperationInfo {
 
     // Operation ID. Only set for asynchronous operations after a successful StartOperation call.
     //
-    // Deprecated: Renamed to operation_token.
-    string operation_id = 4;
+    // Deprecated. Renamed to operation_token.
+    string operation_id = 4 [deprecated = true];
 
     // Schedule-to-close timeout for this operation.
     // This is the only timeout settable by a workflow.
@@ -535,6 +536,8 @@ message WorkflowExecutionOptions {
 // `WorkflowExecutionInfo.VersioningInfo` for more information. To remove the override, call
 // `UpdateWorkflowExecutionOptions` with a null `VersioningOverride`, and use the `update_mask`
 // to indicate that it should be mutated.
+// Pinned overrides are automatically inherited by child workflows, continue-as-new workflows,
+// workflow retries, and cron workflows.
 message VersioningOverride {
     // Indicates whether to override the workflow to be AutoUpgrade or Pinned.
     oneof override {

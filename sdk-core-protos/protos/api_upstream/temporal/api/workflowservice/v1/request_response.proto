@@ -40,6 +40,7 @@ import "temporal/api/batch/v1/message.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
 import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/api/nexus/v1/message.proto";
+import "temporal/api/worker/v1/message.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/field_mask.proto";
@@ -254,17 +255,20 @@ message PollWorkflowTaskQueueRequest {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
     // The identity of the worker/client who is polling this task queue
     string identity = 3;
-    // DEPRECATED since 1.21 - use `deployment_options` instead.
+    // Deprecated. Use deployment_options instead.
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
     string binary_checksum = 4 [deprecated = true];
+    // Deprecated. Use deployment_options instead.
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
-    // Deprecated. Replaced by deployment_options.
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     // Experimental. Worker Deployments are experimental and might significantly change in the future.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Worker info to be sent to the server.
+    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -339,7 +343,7 @@ message RespondWorkflowTaskCompletedRequest {
     // something useful, but cannot complete it within the workflow task timeout. Local activities
     // which run for longer than the task timeout being the prime example.
     bool force_create_new_workflow_task = 6;
-    // DEPRECATED since 1.21 - use `deployment_options` instead.
+    // Deprecated. Use `deployment_options` instead.
     // Worker process' unique binary id
     string binary_checksum = 7 [deprecated = true];
     // Responses to the `queries` field in the task being responded to
@@ -402,7 +406,7 @@ message RespondWorkflowTaskFailedRequest {
     temporal.api.failure.v1.Failure failure = 3;
     // The identity of the worker/client
     string identity = 4;
-    // DEPRECATED since 1.21 - use `deployment_options` instead.
+    // Deprecated. Use `deployment_options` instead.
     // Worker process' unique binary id
     string binary_checksum = 5 [deprecated = true];
     string namespace = 6;
@@ -436,6 +440,10 @@ message PollActivityTaskQueueRequest {
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Worker info to be sent to the server.
+    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
+
 }
 
 message PollActivityTaskQueueResponse {
@@ -713,8 +721,8 @@ message SignalWorkflowExecutionRequest {
     string identity = 5;
     // Used to de-dupe sent signals
     string request_id = 6;
-    // Deprecated
-    string control = 7;
+    // Deprecated.
+    string control = 7 [deprecated = true];
     // Headers that are passed with the signal to the processing workflow.
     // These can include things like auth or tracing tokens.
     temporal.api.common.v1.Header header = 8;
@@ -760,8 +768,8 @@ message SignalWithStartWorkflowExecutionRequest {
     string signal_name = 12;
     // Serialized value(s) to provide with the signal
     temporal.api.common.v1.Payloads signal_input = 13;
-    // Deprecated
-    string control = 14;
+    // Deprecated.
+    string control = 14 [deprecated = true];
     // Retry policy for the workflow
     temporal.api.common.v1.RetryPolicy retry_policy = 15;
     // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
@@ -809,15 +817,17 @@ message ResetWorkflowExecutionRequest {
     int64 workflow_task_finish_event_id = 4;
     // Used to de-dupe reset requests
     string request_id = 5;
-    // Event types to be reapplied (deprecated)
+    // Deprecated. Use `options`.
     // Default: RESET_REAPPLY_TYPE_SIGNAL
-    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
+    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6 [deprecated = true];
     // Event types not to be reapplied
     repeated temporal.api.enums.v1.ResetReapplyExcludeType reset_reapply_exclude_types = 7;
     // Operations to perform after the workflow has been reset. These operations will be applied
     // to the *new* run of the workflow execution in the order they are provided.
     // All operations are applied to the workflow before the first new workflow task is generated
     repeated temporal.api.workflow.v1.PostResetOperation post_reset_operations = 8;
+    // The identity of the worker/client
+    string identity = 9;
 }
 
 message ResetWorkflowExecutionResponse {
@@ -975,6 +985,9 @@ message RespondQueryTaskCompletedRequest {
     // traces.
     // Mutually exclusive with `query_result`. Set when the query fails.
     temporal.api.failure.v1.Failure failure = 7;
+    // Why did the task fail? It's important to note that many of the variants in this enum cannot
+    // apply to worker responses. See the type's doc for more.
+    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 8;
 }
 
 message RespondQueryTaskCompletedResponse {
@@ -993,6 +1006,8 @@ message ShutdownWorkerRequest {
     string sticky_task_queue = 2;
     string identity = 3;
     string reason = 4;
+
+    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 5;
 }
 
 message ShutdownWorkerResponse {
@@ -1032,44 +1047,52 @@ message DescribeWorkflowExecutionResponse {
 //     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
 message DescribeTaskQueueRequest {
     string namespace = 1;
-    // Sticky queues are not supported in `ENHANCED` mode.
+
+    // Sticky queues are not supported in deprecated ENHANCED mode.
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
-    // Deprecated. Use `ENHANCED` mode with `task_queue_types`. Ignored in `ENHANCED` mode.
+
     // If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
+    // Only supported in default mode (use `task_queue_types` in ENHANCED mode instead).
     temporal.api.enums.v1.TaskQueueType task_queue_type = 3;
-    // Deprecated. Ignored in `ENHANCED` mode.
-    bool include_task_queue_status = 4;
 
-    // All options except `task_queue_type` and `include_task_queue_status` are only available in the `ENHANCED` mode.
-    temporal.api.enums.v1.DescribeTaskQueueMode api_mode = 5;
+    // Report stats for the requested task queue type(s).
+    bool report_stats = 8;
 
+    // Deprecated, use `report_stats` instead.
+    // If true, the task queue status will be included in the response.
+    bool include_task_queue_status = 4 [deprecated = true];
+
+    // Deprecated. ENHANCED mode is also being deprecated.
+    // Select the API mode to use for this request: DEFAULT mode (if unset) or ENHANCED mode.
+    // Consult the documentation for each field to understand which mode it is supported in.
+    temporal.api.enums.v1.DescribeTaskQueueMode api_mode = 5 [deprecated = true];
+
+    // Deprecated (as part of the ENHANCED mode deprecation).
     // Optional. If not provided, the result for the default Build ID will be returned. The default Build ID is the one
     // mentioned in the first unconditional Assignment Rule. If there is no default Build ID, the result for the
     // unversioned queue will be returned.
     // (-- api-linter: core::0140::prepositions --)
-    temporal.api.taskqueue.v1.TaskQueueVersionSelection versions = 6;
+    temporal.api.taskqueue.v1.TaskQueueVersionSelection versions = 6 [deprecated = true];
 
+    // Deprecated (as part of the ENHANCED mode deprecation).
     // Task queue types to report info about. If not specified, all types are considered.
-    repeated temporal.api.enums.v1.TaskQueueType task_queue_types = 7;
-    // Report stats for the requested task queue types and versions
-    bool report_stats = 8;
-    // Report list of pollers for requested task queue types and versions
-    bool report_pollers = 9;
+    repeated temporal.api.enums.v1.TaskQueueType task_queue_types = 7 [deprecated = true];
+
+    // Deprecated (as part of the ENHANCED mode deprecation).
+    // Report list of pollers for requested task queue types and versions.
+    bool report_pollers = 9 [deprecated = true];
+
+    // Deprecated (as part of the ENHANCED mode deprecation).
     // Report task reachability for the requested versions and all task types (task reachability is not reported
     // per task type).
-    bool report_task_reachability = 10;
+    bool report_task_reachability = 10 [deprecated = true];
 }
 
 message DescribeTaskQueueResponse {
-    // Deprecated. Use `versions_info.types_info.pollers` with `ENHANCED` mode instead.
-    // Not set in `ENHANCED` mode.
     repeated temporal.api.taskqueue.v1.PollerInfo pollers = 1;
-    // Deprecated. Not set in `ENHANCED` mode.
-    temporal.api.taskqueue.v1.TaskQueueStatus task_queue_status = 2;
 
-    // This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
-    // Only set in `ENHANCED` mode.
-    map<string, temporal.api.taskqueue.v1.TaskQueueVersionInfo> versions_info = 3;
+    // Statistics for the task queue. Only populated when `report_stats` is set to true in the request.
+    temporal.api.taskqueue.v1.TaskQueueStats stats = 5;
 
     // Specifies which Worker Deployment Version(s) Server routes this Task Queue's tasks to.
     // When not present, it means the tasks are routed to Unversioned workers (workers with
@@ -1081,6 +1104,15 @@ message DescribeTaskQueueResponse {
     // are typically not Pinned until they complete their first task (unless they are started with
     // a Pinned VersioningOverride or are Child Workflows of a Pinned parent).
     temporal.api.taskqueue.v1.TaskQueueVersioningInfo versioning_info = 4;
+
+    // Deprecated.
+    // Status of the task queue. Only populated when `include_task_queue_status` is set to true in the request.
+    temporal.api.taskqueue.v1.TaskQueueStatus task_queue_status = 2 [deprecated = true];
+
+    // Deprecated.
+    // Only returned in ENHANCED mode.
+    // This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
+    map<string, temporal.api.taskqueue.v1.TaskQueueVersionInfo> versions_info = 3 [deprecated = true];
 }
 
 message GetClusterInfoRequest {
@@ -1153,6 +1185,7 @@ message GetSystemInfoResponse {
         // True if the server supports Nexus operations.
         // This flag is dependent both on server version and for Nexus to be enabled via server configuration.
         bool nexus = 11;
+
     }
 }
 
@@ -1737,6 +1770,9 @@ message PollNexusTaskQueueRequest {
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 4 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Worker info to be sent to the server.
+    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
 }
 
 message PollNexusTaskQueueResponse {
@@ -1835,13 +1871,20 @@ message UpdateActivityOptionsRequest {
     // Controls which fields from `activity_options` will be applied
     google.protobuf.FieldMask update_mask = 5;
 
-        // either activity id or activity type must be provided
-        oneof activity {
-            // Only activity with this ID will be updated.
-            string id = 6;
-            // Update all running activities of this type.
-            string type = 7;
-        }
+    // either activity id or activity type must be provided
+    oneof activity {
+        // Only activity with this ID will be updated.
+        string id = 6;
+        // Update all running activities of this type.
+        string type = 7;
+    }
+
+    // If set, the activity options will be restored to the default.
+    // Default options are then options activity was created with.
+    // They are part of the first SCHEDULE event.
+    // This flag cannot be combined with any other option; if you supply
+    // restore_original together with other options, the request will be rejected.
+    bool restore_original = 8;
 }
 
 message UpdateActivityOptionsResponse {
@@ -1932,6 +1975,12 @@ message ResetActivityRequest {
     // If set, and activity is in backoff, the activity will start at a random time within the specified jitter duration.
     // (unless it is paused and keep_paused is set)
     google.protobuf.Duration jitter = 8;
+
+    // If set, the activity options will be restored to the defaults.
+    // Default options are then options activity was created with.
+    // They are part of the first SCHEDULE event.
+    bool restore_original_options = 9;
+
 }
 
 message ResetActivityResponse {
@@ -1977,10 +2026,22 @@ message DescribeWorkerDeploymentVersionRequest {
     string version = 2 [deprecated = true];
     // Required.
     temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 3;
+    // Report stats for task queues which have been polled by this version.
+    bool report_task_queue_stats = 4;
 }
 
 message DescribeWorkerDeploymentVersionResponse {
     temporal.api.deployment.v1.WorkerDeploymentVersionInfo worker_deployment_version_info = 1;
+
+    // All the Task Queues that have ever polled from this Deployment version.
+    repeated VersionTaskQueue version_task_queues = 2;
+    // (-- api-linter: core::0123::resource-annotation=disabled --)
+    message VersionTaskQueue {
+        string name = 1;
+        temporal.api.enums.v1.TaskQueueType type = 2;
+        // Only set if `report_task_queue_stats` is set on the request.
+        temporal.api.taskqueue.v1.TaskQueueStats stats = 3;
+    }
 }
 
 message DescribeWorkerDeploymentRequest {
@@ -2146,6 +2207,12 @@ message ListWorkerDeploymentsResponse {
         string name = 1;
         google.protobuf.Timestamp create_time = 2;
         temporal.api.deployment.v1.RoutingConfig routing_config = 3;
+        // Summary of the version that was added most recently in the Worker Deployment.
+        temporal.api.deployment.v1.WorkerDeploymentInfo.WorkerDeploymentVersionSummary latest_version_summary = 4; 
+        // Summary of the current version of the Worker Deployment. 
+        temporal.api.deployment.v1.WorkerDeploymentInfo.WorkerDeploymentVersionSummary current_version_summary = 5;
+        // Summary of the ramping version of the Worker Deployment.
+        temporal.api.deployment.v1.WorkerDeploymentInfo.WorkerDeploymentVersionSummary ramping_version_summary = 6;
     }
 }
 
@@ -2193,6 +2260,8 @@ message UpdateWorkerDeploymentVersionMetadataRequest {
     map<string, temporal.api.common.v1.Payload> upsert_entries = 3;
     // List of keys to remove from the metadata.
     repeated string remove_entries = 4;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 6;
 }
 
 message UpdateWorkerDeploymentVersionMetadataResponse {
@@ -2307,4 +2376,46 @@ message TriggerWorkflowRuleRequest {
 message TriggerWorkflowRuleResponse {
     // True is the rule was applied, based on the rule conditions (predicate/visibility_query).
     bool applied = 1;
+}
+message RecordWorkerHeartbeatRequest {
+    // Namespace this worker belongs to.
+    string namespace = 1;
+
+    // The identity of the client who initiated this request.
+    string identity = 2;
+
+    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 3;
+}
+
+message RecordWorkerHeartbeatResponse {
+
+}
+
+message ListWorkersRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+
+    // `query` in ListWorkers is used to filter workers based on worker status info.
+    // The following worker status attributes are expected are supported as part of the query:
+    //* WorkerInstanceKey
+    //* WorkerIdentity
+    //* HostName
+    //* TaskQueue
+    //* DeploymentName
+    //* BuildId
+    //* SdkName
+    //* SdkVersion
+    //* StartTime
+    //* LastHeartbeatTime
+    //* Status
+    // Currently metrics are not supported as a part of ListWorkers query.
+    string query = 4;
+}
+
+message ListWorkersResponse {
+    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1;
+
+    // Next page token
+    bytes next_page_token = 2;
 }

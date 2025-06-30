@@ -154,9 +154,9 @@ message ResetOptions {
         string build_id = 4;
     }
 
-    // Event types to be reapplied (deprecated)
+    // Deprecated. Use `options`.
     // Default: RESET_REAPPLY_TYPE_SIGNAL
-    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 10;
+    temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 10 [deprecated = true];
 
     // If true, limit the reset to only within the current run. (Applies to build_id targets and
     // possibly others in the future.)
