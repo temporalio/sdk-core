@@ -621,7 +621,7 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
     let mut mock = mock_workflow_client();
     mock.expect_respond_legacy_query()
         .times(1)
-        .returning(move |_, _, _| Err(tonic::Status::not_found("Query gone boi")));
+        .returning(move |_, _| Err(tonic::Status::not_found("Query gone boi")));
     let mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock);
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
@@ -777,7 +777,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     let mut mock = mock_workflow_client();
     mock.expect_respond_legacy_query()
         .times(1)
-        .returning(move |_, _, _| Ok(Default::default()));
+        .returning(move |_, _| Ok(Default::default()));
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -967,7 +967,7 @@ async fn queries_arent_lost_in_buffer_void(#[values(false, true)] buffered_becau
         .returning(|_| Ok(Default::default()));
     mock.expect_respond_legacy_query()
         .times(2)
-        .returning(|_, _, _| Ok(Default::default()));
+        .returning(|_, _| Ok(Default::default()));
     let mut mock =
         MocksHolder::from_wft_stream(mock, stream::iter(tasks.into_iter().map(|r| r.resp)));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);

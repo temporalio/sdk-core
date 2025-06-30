@@ -609,7 +609,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     if impossible_query_in_task {
         mock.expect_respond_legacy_query()
             .times(1)
-            .returning(move |_, _, _| Ok(Default::default()));
+            .returning(move |_, _| Ok(Default::default()));
     }
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
@@ -1217,7 +1217,7 @@ async fn queries_can_be_received_while_heartbeating() {
     let mut mock = mock_workflow_client();
     mock.expect_respond_legacy_query()
         .times(1)
-        .returning(move |_, _, _| Ok(Default::default()));
+        .returning(move |_, _| Ok(Default::default()));
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);

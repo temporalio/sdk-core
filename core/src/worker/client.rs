@@ -1,6 +1,7 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
+use crate::protosext::legacy_query_failure;
 use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
@@ -10,7 +11,7 @@ use temporal_client::{
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
 use temporal_sdk_core_protos::{
     TaskToken,
-    coresdk::workflow_commands::QueryResult,
+    coresdk::{workflow_commands::QueryResult, workflow_completion},
     temporal::api::{
         command::v1::Command,
         common::v1::{
@@ -33,6 +34,11 @@ use temporal_sdk_core_protos::{
 use tonic::IntoRequest;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+
+pub enum LegacyQueryResult {
+    Succeeded(QueryResult),
+    Failed(workflow_completion::Failure),
+}
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
@@ -197,8 +203,7 @@ pub trait WorkerClient: Sync + Send {
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,
-        query_result: QueryResult,
-        fail_cause: WorkflowTaskFailedCause,
+        query_result: LegacyQueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
     /// Describe the namespace
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
@@ -582,10 +587,20 @@ impl WorkerClient for WorkerClientBag {
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,
-        query_result: QueryResult,
-        fail_cause: WorkflowTaskFailedCause,
+        query_result: LegacyQueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
+        let mut failure = None;
+        let (query_result, cause) = match query_result {
+            LegacyQueryResult::Succeeded(s) => (s, WorkflowTaskFailedCause::Unspecified),
+            #[allow(deprecated)]
+            LegacyQueryResult::Failed(f) => {
+                let cause = f.force_cause();
+                failure = f.failure.clone();
+                (legacy_query_failure(f), cause)
+            }
+        };
         let (_, completed_type, query_result, error_message) = query_result.into_components();
+
         Ok(self
             .cloned_client()
             .respond_query_task_completed(RespondQueryTaskCompletedRequest {
@@ -594,9 +609,8 @@ impl WorkerClient for WorkerClientBag {
                 query_result,
                 error_message,
                 namespace: self.namespace.clone(),
-                // TODO: https://github.com/temporalio/sdk-core/issues/867
-                failure: None,
-                cause: fail_cause.into(),
+                failure,
+                cause: cause.into(),
             })
             .await?
             .into_inner())

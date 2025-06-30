@@ -135,8 +135,7 @@ mockall::mock! {
         fn respond_legacy_query<'a, 'b>(
             &self,
             task_token: TaskToken,
-            query_result: QueryResult,
-            fail_cause: WorkflowTaskFailedCause
+        query_result: LegacyQueryResult,
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

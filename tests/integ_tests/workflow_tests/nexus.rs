@@ -303,6 +303,7 @@ async fn nexus_async(
                         variant: Some(nexus::v1::response::Variant::StartOperation(
                             StartOperationResponse {
                                 variant: Some(start_operation_response::Variant::AsyncSuccess(
+                                    #[allow(deprecated)]
                                     start_operation_response::Async {
                                         operation_id: "op-1".to_string(),
                                         links: vec![],
@@ -644,6 +645,7 @@ async fn nexus_cancellation_types(
                         variant: Some(nexus::v1::response::Variant::StartOperation(
                             StartOperationResponse {
                                 variant: Some(start_operation_response::Variant::AsyncSuccess(
+                                    #[allow(deprecated)]
                                     start_operation_response::Async {
                                         operation_id: "op-1".to_string(),
                                         links: vec![],

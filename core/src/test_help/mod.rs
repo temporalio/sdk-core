@@ -710,7 +710,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     cfg.mock_client
         .expect_respond_legacy_query()
         .times::<TimesRange>(cfg.num_expected_legacy_query_resps.into())
-        .returning(move |tt, _, _| {
+        .returning(move |tt, _| {
             outstanding.release_token(&tt);
             Ok(Default::default())
         });
