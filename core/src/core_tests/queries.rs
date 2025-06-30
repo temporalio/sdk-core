@@ -3,7 +3,10 @@ use crate::{
         MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, canned_histories,
         hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
-    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
+    worker::{
+        LEGACY_QUERY_ID,
+        client::{LegacyQueryResult, mocks::mock_workflow_client},
+    },
 };
 use futures_util::stream;
 use std::{
@@ -25,7 +28,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::Payload,
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
         query::v1::WorkflowQuery,
@@ -300,6 +303,12 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
     }];
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
     if legacy {
+        mock.expect_legacy_query_matcher = Box::new(|_, f| match f {
+            LegacyQueryResult::Failed(f) => {
+                f.force_cause() == WorkflowTaskFailedCause::NonDeterministicError
+            }
+            _ => false,
+        });
         mock.num_expected_legacy_query_resps = 1;
     } else {
         mock.num_expected_fails = 1;

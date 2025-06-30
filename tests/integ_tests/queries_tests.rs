@@ -12,6 +12,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
+    start_timer_cmd,
 };
 use tokio::join;
 
@@ -213,8 +214,11 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     drain_pollers_and_shutdown(core).await;
 }
 
+#[rstest]
+#[case::withou_nde(false)]
+#[case::with_nde(true)]
 #[tokio::test]
-async fn fail_legacy_query() {
+async fn fail_legacy_query(#[case] with_nde: bool) {
     let query_err = "oh no broken";
     let mut starter = CoreWfStarter::new("fail_legacy_query");
     let core = starter.get_worker().await;
@@ -245,28 +249,41 @@ async fn fail_legacy_query() {
     let query_responder = async {
         // Have to replay first since we've evicted
         let task = core.poll_workflow_activation().await.unwrap();
-        core.complete_execution(&task.run_id).await;
-        let task = core.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
-            }] => q
-        );
-        core.complete_workflow_activation(WorkflowActivationCompletion::fail(
-            task.run_id,
-            Failure {
-                message: query_err.to_string(),
-                ..Default::default()
-            },
-            None,
-        ))
-        .await
-        .unwrap();
+        if with_nde {
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                start_timer_cmd(1, Duration::from_millis(1)),
+            ))
+            .await
+            .unwrap();
+        } else {
+            core.complete_execution(&task.run_id).await;
+            let task = core.poll_workflow_activation().await.unwrap();
+            assert_matches!(
+                task.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+                }] => q
+            );
+            core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+                task.run_id,
+                Failure {
+                    message: query_err.to_string(),
+                    ..Default::default()
+                },
+                None,
+            ))
+            .await
+            .unwrap();
+        }
     };
     let (q_resp, _) = join!(query_fut, query_responder);
     // Ensure query response is a failure and has the right message
-    assert_eq!(q_resp.message(), query_err);
+    if with_nde {
+        assert!(q_resp.message().contains("TMPRL1100"));
+    } else {
+        assert_eq!(q_resp.message(), query_err);
+    }
 }
 
 #[tokio::test]
