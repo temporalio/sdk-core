@@ -198,6 +198,7 @@ pub trait WorkerClient: Sync + Send {
         &self,
         task_token: TaskToken,
         query_result: QueryResult,
+        fail_cause: WorkflowTaskFailedCause,
     ) -> Result<RespondQueryTaskCompletedResponse>;
     /// Describe the namespace
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
@@ -267,6 +268,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -303,6 +305,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -335,6 +338,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -579,6 +583,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_token: TaskToken,
         query_result: QueryResult,
+        fail_cause: WorkflowTaskFailedCause,
     ) -> Result<RespondQueryTaskCompletedResponse> {
         let (_, completed_type, query_result, error_message) = query_result.into_components();
         Ok(self
@@ -591,6 +596,7 @@ impl WorkerClient for WorkerClientBag {
                 namespace: self.namespace.clone(),
                 // TODO: https://github.com/temporalio/sdk-core/issues/867
                 failure: None,
+                cause: fail_cause.into(),
             })
             .await?
             .into_inner())
@@ -612,6 +618,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
+            worker_heartbeat: None,
         };
 
         Ok(

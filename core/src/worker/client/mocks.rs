@@ -136,6 +136,7 @@ mockall::mock! {
             &self,
             task_token: TaskToken,
             query_result: QueryResult,
+            fail_cause: WorkflowTaskFailedCause
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

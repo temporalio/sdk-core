@@ -434,7 +434,12 @@ impl Workflows {
                 task_token,
                 action: ActivationAction::RespondLegacyQuery { result },
             } => {
-                self.respond_legacy_query(task_token, *result).await;
+                self.respond_legacy_query(
+                    task_token,
+                    *result,
+                    WorkflowTaskFailedCause::Unspecified,
+                )
+                .await;
                 WFTReportStatus::Reported {
                     reset_last_started_to: None,
                     completion_time,
@@ -465,7 +470,8 @@ impl Workflows {
             }
             FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                 warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
-                self.respond_legacy_query(task_token, legacy_query_failure(failure))
+                let cause = failure.force_cause();
+                self.respond_legacy_query(task_token, legacy_query_failure(failure), cause)
                     .await;
                 WFTReportStatus::Reported {
                     reset_last_started_to: None,
@@ -808,8 +814,13 @@ impl Workflows {
     }
 
     /// Wraps responding to legacy queries. Handles ignore-able failures.
-    async fn respond_legacy_query(&self, tt: TaskToken, res: QueryResult) {
-        match self.client.respond_legacy_query(tt, res).await {
+    async fn respond_legacy_query(
+        &self,
+        tt: TaskToken,
+        res: QueryResult,
+        fail_cause: WorkflowTaskFailedCause,
+    ) {
+        match self.client.respond_legacy_query(tt, res, fail_cause).await {
             Ok(_) => {}
             Err(e) if e.code() == tonic::Code::NotFound => {
                 warn!(error=?e, "Query not found when attempting to respond to it");

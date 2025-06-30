@@ -2890,6 +2890,7 @@ async fn use_compatible_version_flag(
         VersioningIntent::Compatible => true,
         VersioningIntent::Default => false,
     };
+    #[allow(deprecated)]
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {

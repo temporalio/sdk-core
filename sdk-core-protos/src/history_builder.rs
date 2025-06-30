@@ -367,7 +367,6 @@ impl TestHistoryBuilder {
                 run_id: run_id.into(),
             }),
             signal_name: signal_name.into(),
-            control: "".to_string(),
             ..Default::default()
         })
     }

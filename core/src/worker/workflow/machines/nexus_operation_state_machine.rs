@@ -628,8 +628,8 @@ impl NexusOperationMachine {
                     endpoint: self.shared_state.endpoint.clone(),
                     service: self.shared_state.service.clone(),
                     operation: self.shared_state.operation.clone(),
-                    operation_id: "".to_string(),
                     operation_token: operation_token.clone().unwrap_or_default(),
+                    ..Default::default()
                 },
             )),
             ..Default::default()
