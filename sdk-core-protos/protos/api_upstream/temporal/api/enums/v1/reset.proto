@@ -22,9 +22,9 @@ enum ResetReapplyExcludeType {
     RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST = 4 [deprecated=true];
 }
 
-// Event types to include when reapplying events. Deprecated: applications
-// should use ResetReapplyExcludeType to specify exclusions from this set, and
-// new event types should be added to ResetReapplyExcludeType instead of here.
+// Deprecated: applications should use ResetReapplyExcludeType to specify
+// exclusions from this set, and new event types should be added to ResetReapplyExcludeType
+// instead of here.
 enum ResetReapplyType {
     RESET_REAPPLY_TYPE_UNSPECIFIED = 0;
     // Signals are reapplied when workflow is reset.
@@ -35,7 +35,7 @@ enum ResetReapplyType {
     RESET_REAPPLY_TYPE_ALL_ELIGIBLE = 3;
 }
 
-// Reset type options. Deprecated, see temporal.api.common.v1.ResetOptions.
+// Deprecated, see temporal.api.common.v1.ResetOptions.
 enum ResetType {
     RESET_TYPE_UNSPECIFIED = 0;
     // Resets to event of the first workflow task completed, or if it does not exist, the event after task scheduled.

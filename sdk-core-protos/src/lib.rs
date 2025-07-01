@@ -1810,6 +1810,7 @@ pub mod temporal {
                     )
                 }
 
+                #[allow(deprecated)]
                 pub fn start_child_workflow_cmd_to_api(
                     s: workflow_commands::StartChildWorkflowExecution,
                     inherit_build_id: bool,
@@ -1860,6 +1861,7 @@ pub mod temporal {
                     }
                 }
 
+                #[allow(deprecated)]
                 pub fn continue_as_new_cmd_to_api(
                     c: workflow_commands::ContinueAsNewWorkflowExecution,
                     inherit_build_id: bool,
@@ -2427,6 +2429,11 @@ pub mod temporal {
         pub mod version {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.version.v1");
+            }
+        }
+        pub mod worker {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.worker.v1");
             }
         }
         pub mod workflow {

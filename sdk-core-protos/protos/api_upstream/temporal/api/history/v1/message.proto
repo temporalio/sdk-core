@@ -46,7 +46,7 @@ message WorkflowExecutionStartedEventAttributes {
     google.protobuf.Duration workflow_run_timeout = 8;
     // Timeout of a single workflow task.
     google.protobuf.Duration workflow_task_timeout = 9;
-    // Run id of the previous workflow which continued-as-new or retired or cron executed into this
+    // Run id of the previous workflow which continued-as-new or retried or cron executed into this
     // workflow.
     string continued_execution_run_id = 10;
     temporal.api.enums.v1.ContinueAsNewInitiator initiator = 11;
@@ -84,7 +84,7 @@ message WorkflowExecutionStartedEventAttributes {
     // If this workflow intends to use anything other than the current overall default version for
     // the queue, then we include it here.
     // Deprecated. [cleanup-experimental-wv]
-    temporal.api.common.v1.WorkerVersionStamp source_version_stamp = 29;
+    temporal.api.common.v1.WorkerVersionStamp source_version_stamp = 29 [deprecated = true];
     // Completion callbacks attached when this workflow was started.
     repeated temporal.api.common.v1.Callback completion_callbacks = 30;
 
@@ -117,26 +117,40 @@ message WorkflowExecutionStartedEventAttributes {
     temporal.api.common.v1.WorkflowExecution root_workflow_execution = 31;
     // When present, this execution is assigned to the build ID of its parent or previous execution.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    string inherited_build_id = 32;
+    string inherited_build_id = 32 [deprecated = true];
     // Versioning override applied to this workflow when it was started.
+    // Children, crons, retries, and continue-as-new will inherit source run's override if pinned
+    // and if the new workflow's Task Queue belongs to the override version.
     temporal.api.workflow.v1.VersioningOverride versioning_override = 33;
     // When present, it means this is a child workflow of a parent that is Pinned to this Worker
     // Deployment Version. In this case, child workflow will start as Pinned to this Version instead
     // of starting on the Current Version of its Task Queue.
     // This is set only if the child workflow is starting on a Task Queue belonging to the same
     // Worker Deployment Version.
-    // Deprecated. Use `parent_pinned_deployment_version`.
+    // Deprecated. Use `parent_versioning_info`.
     string parent_pinned_worker_deployment_version = 34 [deprecated = true];
-
-    // When present, it means this is a child workflow of a parent that is Pinned to this Worker
-    // Deployment Version. In this case, child workflow will start as Pinned to this Version instead
-    // of starting on the Current Version of its Task Queue.
-    // This is set only if the child workflow is starting on a Task Queue belonging to the same
-    // Worker Deployment Version.
-    temporal.api.deployment.v1.WorkerDeploymentVersion parent_pinned_deployment_version = 36;
 
     // Priority metadata
     temporal.api.common.v1.Priority priority = 35;
+
+    reserved 36;
+    reserved "parent_pinned_deployment_version";
+
+    // If present, the new workflow should start on this version with pinned base behavior.
+    // Child of pinned parent will inherit the parent's version if the Child's Task Queue belongs to that version.
+    //
+    // New run initiated by workflow ContinueAsNew of pinned run, will inherit the previous run's version if the
+    // new run's Task Queue belongs to that version.
+    //
+    // New run initiated by workflow Cron will never inherit.
+    //
+    // New run initiated by workflow Retry will only inherit if the retried run is effectively pinned at the time
+    // of retry, and the retried run inherited a pinned version when it started (ie. it is a child of a pinned
+    // parent, or a CaN of a pinned run, and is running on a Task Queue in the inherited version).
+    //
+    // Pinned override is inherited if Task Queue of new run is compatible with the override version.
+    // Override is inherited separately and takes precedence over inherited base version.
+    temporal.api.deployment.v1.WorkerDeploymentVersion inherited_pinned_version = 37;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -183,7 +197,7 @@ message WorkflowExecutionContinuedAsNewEventAttributes {
     // Deprecated. If a workflow's retry policy would cause a new run to start when the current one
     // has failed, this field would be populated with that failure. Now (when supported by server
     // and sdk) the final event will be `WORKFLOW_EXECUTION_FAILED` with `new_execution_run_id` set.
-    temporal.api.failure.v1.Failure failure = 10;
+    temporal.api.failure.v1.Failure failure = 10 [deprecated = true];
     // TODO: Is this the result of *this* workflow as it continued-as-new?
     temporal.api.common.v1.Payloads last_completion_result = 11;
     temporal.api.common.v1.Header header = 12;
@@ -191,7 +205,8 @@ message WorkflowExecutionContinuedAsNewEventAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
     // If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
     // the assignment rules will be used to independently assign a Build ID to the new execution.
-    bool inherit_build_id = 15;
+    // Deprecated. Only considered for versioning v0.2.
+    bool inherit_build_id = 15 [deprecated = true];
 
     // workflow_execution_timeout is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -301,7 +316,7 @@ message WorkflowTaskFailedEventAttributes {
     string new_run_id = 7;
     // TODO: ?
     int64 fork_event_version = 8;
-    // DEPRECATED since 1.21 - This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     // If a worker explicitly failed this task, its binary id
     string binary_checksum = 9 [deprecated = true];
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
@@ -512,7 +527,7 @@ message WorkflowExecutionSignaledEventAttributes {
     // Headers that were passed by the sender of the signal and copied by temporal
     // server into the workflow task.
     temporal.api.common.v1.Header header = 4;
-    // This field is deprecated and never respected. It should always be set to false.
+    // Deprecated. This field is never respected and should always be set to false.
     bool skip_generate_workflow_task = 5 [deprecated = true];
     // When signal origin is a workflow execution, this field is set.
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 6;
@@ -534,8 +549,8 @@ message RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
     string namespace = 2;
     string namespace_id = 7;
     temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
-    // Deprecated
-    string control = 4;
+    // Deprecated.
+    string control = 4 [deprecated = true];
     // Workers are expected to set this to true if the workflow they are requesting to cancel is
     // a child of the workflow which issued the request
     bool child_workflow_only = 5;
@@ -555,8 +570,8 @@ message RequestCancelExternalWorkflowExecutionFailedEventAttributes {
     // id of the `REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED` event this failure
     // corresponds to
     int64 initiated_event_id = 5;
-    // Deprecated
-    string control = 6;
+    // Deprecated.
+    string control = 6 [deprecated = true];
 }
 
 message ExternalWorkflowExecutionCancelRequestedEventAttributes {
@@ -582,8 +597,8 @@ message SignalExternalWorkflowExecutionInitiatedEventAttributes {
     string signal_name = 4;
     // Serialized arguments to provide to the signal handler
     temporal.api.common.v1.Payloads input = 5;
-    // Deprecated
-    string control = 6;
+    // Deprecated.
+    string control = 6 [deprecated = true];
     // Workers are expected to set this to true if the workflow they are requesting to cancel is
     // a child of the workflow which issued the request
     bool child_workflow_only = 7;
@@ -600,8 +615,8 @@ message SignalExternalWorkflowExecutionFailedEventAttributes {
     string namespace_id = 7;
     temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
     int64 initiated_event_id = 5;
-    // Deprecated
-    string control = 6;
+    // Deprecated.
+    string control = 6 [deprecated = true];
 }
 
 message ExternalWorkflowExecutionSignaledEventAttributes {
@@ -612,8 +627,8 @@ message ExternalWorkflowExecutionSignaledEventAttributes {
     string namespace = 2;
     string namespace_id = 5;
     temporal.api.common.v1.WorkflowExecution workflow_execution = 3;
-    // Deprecated
-    string control = 4;
+    // Deprecated.
+    string control = 4 [deprecated = true];
 }
 
 message UpsertWorkflowSearchAttributesEventAttributes {
@@ -648,8 +663,8 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     google.protobuf.Duration workflow_task_timeout = 8;
     // Default: PARENT_CLOSE_POLICY_TERMINATE.
     temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 9;
-    // Deprecated
-    string control = 10;
+    // Deprecated.
+    string control = 10 [deprecated = true];
     // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
     int64 workflow_task_completed_event_id = 11;
     // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
@@ -662,7 +677,8 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 17;
     // If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
     // rules of the child's Task Queue will be used to independently assign a Build ID to it.
-    bool inherit_build_id = 19;
+    // Deprecated. Only considered for versioning v0.2.
+    bool inherit_build_id = 19 [deprecated = true];
     // Priority metadata
     temporal.api.common.v1.Priority priority = 20;
 }
@@ -675,8 +691,8 @@ message StartChildWorkflowExecutionFailedEventAttributes {
     string workflow_id = 2;
     temporal.api.common.v1.WorkflowType workflow_type = 3;
     temporal.api.enums.v1.StartChildWorkflowExecutionFailedCause cause = 4;
-    // Deprecated
-    string control = 5;
+    // Deprecated.
+    string control = 5 [deprecated = true];
     // Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
     int64 initiated_event_id = 6;
     // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
@@ -893,7 +909,7 @@ message NexusOperationStartedEventAttributes {
     // This ID is used when canceling the operation.
     //
     // Deprecated: Renamed to operation_token.
-    string operation_id = 3;
+    string operation_id = 3 [deprecated = true];
 
     // The request ID allocated at schedule time.
     string request_id = 4;

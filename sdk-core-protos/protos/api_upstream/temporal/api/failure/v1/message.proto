@@ -77,8 +77,8 @@ message NexusOperationFailureInfo {
     string operation = 4;
     // Operation ID - may be empty if the operation completed synchronously.
     //
-    // Deprecated: Renamed to operation_token.
-    string operation_id = 5;
+    // Deprecated. Renamed to operation_token.
+    string operation_id = 5 [deprecated = true];
     // Operation token - may be empty if the operation completed synchronously.
     string operation_token = 6;
 }

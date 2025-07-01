@@ -97,3 +97,12 @@ enum ApplicationErrorCategory {
     // Expected application error with little/no severity.
     APPLICATION_ERROR_CATEGORY_BENIGN = 1;
 }
+
+// (-- api-linter: core::0216::synonyms=disabled
+//     aip.dev/not-precedent: It seems we have both state and status, and status is a better fit for workers. --)
+enum WorkerStatus {
+    WORKER_STATUS_UNSPECIFIED = 0;
+    WORKER_STATUS_RUNNING = 1;
+    WORKER_STATUS_SHUTTING_DOWN = 2;
+    WORKER_STATUS_SHUTDOWN = 3;
+}
