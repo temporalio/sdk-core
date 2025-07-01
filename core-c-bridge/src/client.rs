@@ -354,6 +354,7 @@ async fn call_workflow_service(
         "ListSchedules" => rpc_call!(client, call, list_schedules),
         "ListTaskQueuePartitions" => rpc_call!(client, call, list_task_queue_partitions),
         "ListWorkerDeployments" => rpc_call!(client, call, list_worker_deployments),
+        "ListWorkers" => rpc_call!(client, call, list_workers),
         "ListWorkflowExecutions" => rpc_call!(client, call, list_workflow_executions),
         "ListWorkflowRules" => rpc_call!(client, call, list_workflow_rules),
         "PatchSchedule" => rpc_call!(client, call, patch_schedule),
@@ -367,6 +368,7 @@ async fn call_workflow_service(
         "RecordActivityTaskHeartbeatById" => {
             rpc_call!(client, call, record_activity_task_heartbeat_by_id)
         }
+        "RecordWorkerHeartbeat" => rpc_call!(client, call, record_worker_heartbeat),
         "RegisterNamespace" => rpc_call!(client, call, register_namespace),
         "RequestCancelWorkflowExecution" => {
             rpc_call!(client, call, request_cancel_workflow_execution)

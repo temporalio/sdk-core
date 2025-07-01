@@ -113,13 +113,15 @@ fn list_proto_methods(proto_def_str: &str) -> Vec<&str> {
         .collect()
 }
 
-fn assert_all_rpc_calls_exist(context: &Arc<Context>, service: RpcService, proto: &str) {
+fn all_rpc_calls_exist(context: &Arc<Context>, service: RpcService, proto: &str) -> bool {
+    let mut ret = true;
     for rpc in list_proto_methods(proto) {
-        assert!(
-            rpc_call_exists(context, service, rpc),
-            "RPC method {rpc} does not exist in service {service:?}"
-        );
+        if !rpc_call_exists(context, service, rpc) {
+            eprintln!("RPC method {rpc} does not exist in service {service:?}");
+            ret = false;
+        }
     }
+    ret
 }
 
 #[test]
@@ -135,42 +137,42 @@ fn test_all_rpc_calls_exist() {
             )))
             .unwrap();
 
-        assert_all_rpc_calls_exist(
+        assert!(all_rpc_calls_exist(
             context,
             RpcService::Workflow,
             include_str!(
                 "../../../sdk-core-protos/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
             ),
-        );
+        ));
 
-        assert_all_rpc_calls_exist(
+        assert!(all_rpc_calls_exist(
             context,
             RpcService::Operator,
             include_str!(
                 "../../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
             ),
-        );
+        ));
 
-        assert_all_rpc_calls_exist(
+        assert!(all_rpc_calls_exist(
             context,
             RpcService::Cloud,
             include_str!(
                 "../../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
             ),
-        );
+        ));
 
-        assert_all_rpc_calls_exist(
+        assert!(all_rpc_calls_exist(
             context,
             RpcService::Test,
             include_str!(
                 "../../../sdk-core-protos/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
             ),
-        );
+        ));
 
-        assert_all_rpc_calls_exist(
+        assert!(all_rpc_calls_exist(
             context,
             RpcService::Health,
             include_str!("../../../sdk-core-protos/protos/grpc/health/v1/health.proto"),
-        );
+        ));
     });
 }
