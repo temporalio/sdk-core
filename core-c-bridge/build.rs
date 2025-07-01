@@ -8,7 +8,7 @@ fn main() {
     let changed = cbindgen::Builder::new()
         .with_cpp_compat(true)
         .with_crate(crate_dir)
-        .with_pragma_once(true)
+        .with_pragma_once(false)
         .with_language(cbindgen::Language::C)
         .with_item_prefix("TemporalCore")
         .generate()
