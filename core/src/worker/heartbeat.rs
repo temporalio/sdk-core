@@ -8,10 +8,7 @@ use prost_types::Duration as PbDuration;
 use uuid::Uuid;
 use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
-use crate::worker::client::WorkerClientBag;
 use crate::WorkerClient;
-
-type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// Heartbeat information
 ///
@@ -21,6 +18,8 @@ pub struct WorkerHeartbeatInfo {
     timer_abort: AbortHandle,
     client: Option<Arc<dyn WorkerClient>>,
     interval: Option<Duration>,
+    #[cfg(test)]
+    heartbeats_sent: Arc<Mutex<usize>>,
 }
 
 impl WorkerHeartbeatInfo {
@@ -35,11 +34,12 @@ impl WorkerHeartbeatInfo {
             timer_abort: abort_handle,
             client: None,
             interval: worker_config.heartbeat_interval,
+            #[cfg(test)]
+            heartbeats_sent: Arc::new(Mutex::new(0)),
         };
         heartbeat
     }
 
-    // TODO: This is called by Client when it sends other requests.
     /// Transform heartbeat data into `WorkerHeartbeat` we can send in gRPC request. Some
     /// metrics are also cached for future calls of this function.
     pub(crate) fn capture_heartbeat(&mut self) -> WorkerHeartbeat {
@@ -49,7 +49,6 @@ impl WorkerHeartbeatInfo {
     }
 
     fn create_new_timer(&mut self) {
-        println!("[create_new_timer]");
         self.timer_abort.abort();
 
         let (abort_handle, abort_reg) = AbortHandle::new_pair();
@@ -59,28 +58,33 @@ impl WorkerHeartbeatInfo {
             Duration::from_secs(60)
         };
         let data = self.data.clone();
+        #[cfg(test)]
+        let heartbeats_sent = self.heartbeats_sent.clone();
+        self.timer_abort = abort_handle.clone();
         if let Some(client) = self.client.clone() {
             tokio::spawn(future::Abortable::new(
                 async move {
-                    println!("sleeping for {:?}", interval);
-                    tokio::time::sleep(interval).await;
-                    println!("sleep done");
+                    loop {
+                        tokio::time::sleep(interval).await;
+                        #[cfg(test)]
+                        {
+                            let mut num = heartbeats_sent.lock();
+                            *num += 1;
+                        }
 
-                    if let Err(e) = client.clone().record_worker_heartbeat(data.lock().capture_heartbeat()).await {
-                        warn!(error=?e, "Network error while sending worker heartbeat");
+                        if let Err(e) = client.clone().record_worker_heartbeat(data.lock().capture_heartbeat()).await {
+                            warn!(error=?e, "Network error while sending worker heartbeat");
+                        }
                     }
-
                 },
                 abort_reg,
             ));
         } else {
             warn!("No client attached to heartbeat_info")
         };
-        self.timer_abort = abort_handle;
     }
 
     pub(crate) fn add_client(&mut self, client: Arc<dyn WorkerClient>) {
-        println!("[add_client]");
         self.client = Some(client);
         self.create_new_timer();
     }
@@ -148,7 +152,98 @@ impl WorkerHeartbeatData {
             elapsed_since_last_heartbeat,
             ..Default::default()
         };
-        println!("[hb]: {:#?}", heartbeat);
         heartbeat
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test_help::WorkerExt;
+    use temporal_sdk_core_api::Worker;
+    use std::ops::Deref;
+    use crate::{worker};
+    use std::time::Duration;
+    use crate::worker::WorkerHeartbeatInfo;
+    use crate::worker::client::mocks::mock_worker_client;
+    use std::sync::Arc;
+    use parking_lot::Mutex;
+    use temporal_sdk_core_api::worker::PollerBehavior;
+    use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
+    use temporal_sdk_core_protos::coresdk::ActivityTaskCompletion;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{PollActivityTaskQueueResponse, RecordWorkerHeartbeatResponse, RespondActivityTaskCompletedResponse};
+    use crate::test_help::test_worker_cfg;
+
+    #[rstest::rstest]
+    #[tokio::test]
+    async fn worker_heartbeat(#[values(true, false)]  extra_heartbeat: bool) {
+        let mut mock = mock_worker_client();
+        let record_heartbeat_calls = if extra_heartbeat { 2 } else { 3 };
+        mock
+            .expect_record_worker_heartbeat()
+            .times(record_heartbeat_calls)
+            .returning(|heartbeat| {
+                let host_info = heartbeat.host_info.clone().unwrap();
+                assert!(heartbeat.worker_identity.is_empty());
+                assert!(!heartbeat.worker_instance_key.is_empty());
+                assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
+                assert_eq!(host_info.process_id, std::process::id().to_string());
+                assert_eq!(heartbeat.sdk_name, "test-core");
+                assert_eq!(heartbeat.sdk_version, "0.0.0");
+                assert_eq!(heartbeat.task_queue, "q");
+                assert!(heartbeat.heartbeat_time.is_some());
+                assert!(heartbeat.start_time.is_some());
+
+                Ok(RecordWorkerHeartbeatResponse {})
+            });
+        mock
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| Ok(PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "act1".to_string(),
+                ..Default::default()
+            },));
+        mock
+            .expect_complete_activity_task()
+            .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+        let config = test_worker_cfg()
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .max_outstanding_activities(1_usize)
+            .heartbeat_interval(Duration::from_millis(100))
+            .build()
+            .unwrap();
+
+        let heartbeat_info = Arc::new(Mutex::new(WorkerHeartbeatInfo::new(config.clone())));
+        let client = Arc::new(mock);
+        heartbeat_info.lock().add_client(client.clone());
+        let worker = worker::Worker::new(config, None, client, None, Some(heartbeat_info.clone()));
+        let _ = heartbeat_info.lock().capture_heartbeat();
+
+        // heartbeat timer fires once
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if extra_heartbeat {
+            // reset heartbeat timer
+            heartbeat_info.lock().capture_heartbeat();
+        }
+        // heartbeat timer fires once
+        tokio::time::sleep(Duration::from_millis(180)).await;
+
+        if extra_heartbeat {
+            assert_eq!(2, *heartbeat_info.lock().heartbeats_sent.lock().deref());
+        } else {
+            assert_eq!(3, *heartbeat_info.lock().heartbeats_sent.lock().deref());
+        }
+
+        let task = worker.poll_activity_task().await.unwrap();
+        worker
+            .complete_activity_task(ActivityTaskCompletion {
+                task_token: task.task_token,
+                result: Some(ActivityExecutionResult::ok(vec![1].into())),
+            })
+            .await
+            .unwrap();
+        worker.drain_activity_poller_and_shutdown().await;
+    }
+
 }

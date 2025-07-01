@@ -120,22 +120,8 @@ impl WorkerClientBag {
         }
     }
 
-    // pub(crate) fn add_heartbeat_info(&mut self, heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>) {
-    //     self.heartbeat_info = heartbeat_info;
-    // }
-
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
         Some(self.heartbeat_info.lock().capture_heartbeat())
-    }
-
-    /// Wrap the `record_worker_heartbeat` call to allow mocking of the trait call for testing
-    pub(crate) async fn worker_heartbeat(&self) -> Result<RecordWorkerHeartbeatResponse> {
-        if let Some(heartbeat) = self.capture_heartbeat() {
-            self.record_worker_heartbeat(heartbeat).await
-        } else {
-            // TODO:
-            Ok(RecordWorkerHeartbeatResponse::default())
-        }
     }
 }
 
