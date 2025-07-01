@@ -1777,6 +1777,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "reportTaskQueueStats",
+            "description": "Report stats for task queues which have been polled by this version.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -5378,6 +5385,13 @@
             "in": "query",
             "required": false,
             "type": "string"
+          },
+          {
+            "name": "reportTaskQueueStats",
+            "description": "Report stats for task queues which have been polled by this version.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
           }
         ],
         "tags": [
@@ -6918,6 +6932,21 @@
         }
       }
     },
+    "DescribeWorkerDeploymentVersionResponseVersionTaskQueue": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/definitions/v1TaskQueueType"
+        },
+        "stats": {
+          "$ref": "#/definitions/v1TaskQueueStats",
+          "description": "Only set if `report_task_queue_stats` is set on the request."
+        }
+      }
+    },
     "EndpointTargetExternal": {
       "type": "object",
       "properties": {
@@ -7699,6 +7728,10 @@
             "$ref": "#/definitions/v1PostResetOperation"
           },
           "title": "Operations to perform after the workflow has been reset. These operations will be applied\nto the *new* run of the workflow execution in the order they are provided.\nAll operations are applied to the workflow before the first new workflow task is generated"
+        },
+        "identity": {
+          "type": "string",
+          "title": "The identity of the worker/client"
         }
       }
     },
@@ -10322,6 +10355,14 @@
       "properties": {
         "workerDeploymentVersionInfo": {
           "$ref": "#/definitions/v1WorkerDeploymentVersionInfo"
+        },
+        "versionTaskQueues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DescribeWorkerDeploymentVersionResponseVersionTaskQueue"
+          },
+          "description": "All the Task Queues that have ever polled from this Deployment version."
         }
       }
     },
@@ -14744,6 +14785,11 @@
         "overlapPolicy": {
           "$ref": "#/definitions/v1ScheduleOverlapPolicy",
           "description": "If set, override overlap policy for this one request."
+        },
+        "scheduledTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp used for the identity of the target workflow.\nIf not set the default value is the current time."
         }
       }
     },
@@ -15243,7 +15289,7 @@
             "type": "object",
             "$ref": "#/definitions/WorkerDeploymentVersionInfoVersionTaskQueueInfo"
           },
-          "description": "All the Task Queues that have ever polled from this Deployment version."
+          "description": "All the Task Queues that have ever polled from this Deployment version.\nDeprecated. Use `version_task_queues` in DescribeWorkerDeploymentVersionResponse instead."
         },
         "drainageInfo": {
           "$ref": "#/definitions/v1VersionDrainageInfo",

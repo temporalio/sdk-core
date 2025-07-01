@@ -2528,7 +2528,7 @@ async fn post_terminal_commands_are_retained_when_not_replaying() {
     ]);
     _do_post_terminal_commands_test(
         commands_sent_by_lang,
-        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        [ResponseType::ToTaskNum(1)],
         expected_command_types_emitted,
         t,
     )
@@ -2602,7 +2602,6 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
-    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,
@@ -2610,6 +2609,7 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
+    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollError::ShutDown);
     core.shutdown().await;
@@ -2685,10 +2685,6 @@ async fn history_length_with_fail_and_timeout(
     #[values(true, false)] use_cache: bool,
     #[values(1, 2, 3)] history_responses_case: u8,
 ) {
-    if !use_cache && history_responses_case == 3 {
-        /* disabled for now because this keeps flaking*/
-        return;
-    }
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -2890,6 +2886,7 @@ async fn use_compatible_version_flag(
         VersioningIntent::Compatible => true,
         VersioningIntent::Default => false,
     };
+    #[allow(deprecated)]
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {

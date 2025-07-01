@@ -61,8 +61,8 @@ use crate::{
 };
 use anyhow::bail;
 use futures_util::Stream;
-use std::sync::Arc;
 use parking_lot::Mutex;
+use std::sync::Arc;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
@@ -99,7 +99,9 @@ where
     }
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
-    let heartbeat_info = Arc::new(Mutex::new(worker::WorkerHeartbeatInfo::new(worker_config.clone())));
+    let heartbeat_info = Arc::new(Mutex::new(worker::WorkerHeartbeatInfo::new(
+        worker_config.clone(),
+    )));
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
@@ -110,8 +112,6 @@ where
     ));
     // TODO: Adding this afterwards feels a little clunky
     heartbeat_info.lock().add_client(client_bag.clone());
-
-
 
     Ok(Worker::new(
         worker_config,

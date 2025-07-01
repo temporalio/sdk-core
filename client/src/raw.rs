@@ -592,17 +592,14 @@ proxier! {
             slot
         },
         |resp, slot| {
-            if let Some(mut s) = slot {
-                if let Ok(response) = resp.as_ref() {
-                    if let Some(task) = response.get_ref().clone().eager_workflow_task {
-                        if let Err(e) = s.schedule_wft(task) {
+            if let Some(mut s) = slot
+                && let Ok(response) = resp.as_ref()
+                    && let Some(task) = response.get_ref().clone().eager_workflow_task
+                        && let Err(e) = s.schedule_wft(task) {
                             // This is a latency issue, i.e., the client does not need to handle
                             //  this error, because the WFT will be retried after a timeout.
                             warn!(details = ?e, "Eager workflow task rejected by worker.");
                         }
-                    }
-                }
-            }
             resp
         }
     );
@@ -1334,6 +1331,15 @@ proxier! {
         update_worker_deployment_version_metadata,
         UpdateWorkerDeploymentVersionMetadataRequest,
         UpdateWorkerDeploymentVersionMetadataResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        list_workers,
+        ListWorkersRequest,
+        ListWorkersResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

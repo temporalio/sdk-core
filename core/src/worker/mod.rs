@@ -1,10 +1,10 @@
 mod activities;
 pub(crate) mod client;
+mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
-mod heartbeat;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
@@ -46,6 +46,7 @@ use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
+use std::time::SystemTime;
 use std::{
     convert::TryInto,
     future,
@@ -55,7 +56,6 @@ use std::{
     },
     time::Duration,
 };
-use std::time::SystemTime;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
@@ -80,6 +80,7 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+pub(crate) use crate::worker::heartbeat::WorkerHeartbeatInfo;
 use crate::{
     pollers::{ActivityTaskOptions, LongPollBuffer},
     worker::workflow::wft_poller,
@@ -95,7 +96,6 @@ use {
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
-pub(crate) use crate::worker::heartbeat::WorkerHeartbeatInfo;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -316,7 +316,6 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
         heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
-        // TODO: Use existing MetricsContext or a new meter to record and export these metrics, possibly through the same MetricsCallBuffer
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
                 MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
@@ -501,7 +500,7 @@ impl Worker {
             data.sdk_version = sdk_name_and_ver.1.clone();
             data.start_time = SystemTime::now();
         }
-        
+
         Self {
             worker_key,
             client: client.clone(),
@@ -663,12 +662,12 @@ impl Worker {
             }
             if let Some(ref act_mgr) = self.at_task_mgr {
                 let res = act_mgr.poll().await;
-                if let Err(err) = res.as_ref() {
-                    if matches!(err, PollError::ShutDown) {
-                        self.non_local_activities_complete
-                            .store(true, Ordering::Relaxed);
-                        return Ok(None);
-                    }
+                if let Err(err) = res.as_ref()
+                    && matches!(err, PollError::ShutDown)
+                {
+                    self.non_local_activities_complete
+                        .store(true, Ordering::Relaxed);
+                    return Ok(None);
                 };
                 res.map(Some)
             } else {

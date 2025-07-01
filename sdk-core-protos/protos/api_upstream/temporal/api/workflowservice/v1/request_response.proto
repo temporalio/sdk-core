@@ -826,6 +826,8 @@ message ResetWorkflowExecutionRequest {
     // to the *new* run of the workflow execution in the order they are provided.
     // All operations are applied to the workflow before the first new workflow task is generated
     repeated temporal.api.workflow.v1.PostResetOperation post_reset_operations = 8;
+    // The identity of the worker/client
+    string identity = 9;
 }
 
 message ResetWorkflowExecutionResponse {
@@ -983,6 +985,9 @@ message RespondQueryTaskCompletedRequest {
     // traces.
     // Mutually exclusive with `query_result`. Set when the query fails.
     temporal.api.failure.v1.Failure failure = 7;
+    // Why did the task fail? It's important to note that many of the variants in this enum cannot
+    // apply to worker responses. See the type's doc for more.
+    temporal.api.enums.v1.WorkflowTaskFailedCause cause = 8;
 }
 
 message RespondQueryTaskCompletedResponse {
@@ -2021,10 +2026,22 @@ message DescribeWorkerDeploymentVersionRequest {
     string version = 2 [deprecated = true];
     // Required.
     temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 3;
+    // Report stats for task queues which have been polled by this version.
+    bool report_task_queue_stats = 4;
 }
 
 message DescribeWorkerDeploymentVersionResponse {
     temporal.api.deployment.v1.WorkerDeploymentVersionInfo worker_deployment_version_info = 1;
+
+    // All the Task Queues that have ever polled from this Deployment version.
+    repeated VersionTaskQueue version_task_queues = 2;
+    // (-- api-linter: core::0123::resource-annotation=disabled --)
+    message VersionTaskQueue {
+        string name = 1;
+        temporal.api.enums.v1.TaskQueueType type = 2;
+        // Only set if `report_task_queue_stats` is set on the request.
+        temporal.api.taskqueue.v1.TaskQueueStats stats = 3;
+    }
 }
 
 message DescribeWorkerDeploymentRequest {

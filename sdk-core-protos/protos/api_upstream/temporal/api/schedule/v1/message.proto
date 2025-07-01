@@ -278,6 +278,10 @@ message ScheduleState {
 message TriggerImmediatelyRequest {
     // If set, override overlap policy for this one request.
     temporal.api.enums.v1.ScheduleOverlapPolicy overlap_policy = 1;
+    
+    // Timestamp used for the identity of the target workflow.
+    // If not set the default value is the current time.
+    google.protobuf.Timestamp scheduled_time = 2;
 }
 
 message BackfillRequest {

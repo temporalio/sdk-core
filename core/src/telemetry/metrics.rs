@@ -12,8 +12,9 @@ use temporal_sdk_core_api::telemetry::metrics::{
     MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes,
     NoOpCoreMeter,
 };
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
-use temporal_sdk_core_protos::temporal::api::failure::v1::Failure;
+use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+};
 
 /// Used to track context associated with metrics, and record/update them
 ///

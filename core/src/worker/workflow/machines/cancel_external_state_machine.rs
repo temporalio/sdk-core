@@ -69,10 +69,9 @@ pub(super) fn new_external_cancel(
             namespace: workflow_execution.namespace,
             workflow_id: workflow_execution.workflow_id,
             run_id: workflow_execution.run_id,
-            #[allow(deprecated)]
-            control: "".to_string(),
             child_workflow_only: only_child,
             reason,
+            ..Default::default()
         },
     );
     NewMachineWithCommand {

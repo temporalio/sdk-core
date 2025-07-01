@@ -456,10 +456,10 @@ impl HistoryUpdate {
         use crate::abstractions::dbg_panic;
 
         for win in self.events.as_slice().windows(2) {
-            if let &[e1, e2] = &win {
-                if e2.event_id != e1.event_id + 1 {
-                    dbg_panic!("HistoryUpdate isn't contiguous! {:?} -> {:?}", e1, e2);
-                }
+            if let &[e1, e2] = &win
+                && e2.event_id != e1.event_id + 1
+            {
+                dbg_panic!("HistoryUpdate isn't contiguous! {:?} -> {:?}", e1, e2);
             }
         }
         true
@@ -632,10 +632,10 @@ impl HistoryUpdate {
     pub(crate) fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
         let next_wft_ix =
             find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
-        if let NextWFTSeqEndIndex::Incomplete(_) = next_wft_ix {
-            if !self.has_last_wft {
-                return false;
-            }
+        if let NextWFTSeqEndIndex::Incomplete(_) = next_wft_ix
+            && !self.has_last_wft
+        {
+            return false;
         }
         true
     }

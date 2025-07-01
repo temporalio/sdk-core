@@ -247,13 +247,13 @@ impl ActivityHeartbeatManager {
         self.shutdown_token.cancel();
         if let Some(h) = self.join_handle.take_once() {
             let handle_r = h.await;
-            if let Err(e) = handle_r {
-                if !e.is_cancelled() {
-                    error!(
-                        "Unexpected error joining heartbeating tasks during shutdown: {:?}",
-                        e
-                    )
-                }
+            if let Err(e) = handle_r
+                && !e.is_cancelled()
+            {
+                error!(
+                    "Unexpected error joining heartbeating tasks during shutdown: {:?}",
+                    e
+                )
             }
         }
     }

@@ -7,18 +7,16 @@ use crate::worker::workflow::{
 };
 use itertools::Itertools;
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
-use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
-use temporal_sdk_core_protos::temporal::api::command::v1::command;
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{NexusOperationResult, nexus_operation_result},
+        nexus::{NexusOperationCancellationType, NexusOperationResult, nexus_operation_result},
         workflow_activation::{
             ResolveNexusOperation, ResolveNexusOperationStart, resolve_nexus_operation_start,
         },
         workflow_commands::ScheduleNexusOperation,
     },
     temporal::api::{
-        command::v1::RequestCancelNexusOperationCommandAttributes,
+        command::v1::{RequestCancelNexusOperationCommandAttributes, command},
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::{self as failure, Failure, failure::FailureInfo},
@@ -53,7 +51,7 @@ fsm! {
     ScheduledEventRecorded
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
     ScheduledEventRecorded
-      --(NexusOperationStarted(NexusOperationStartedEventAttributes), on_started)--> Started;
+      --(NexusOperationStarted(NexusOperationStartedEventAttributes), shared on_started)--> Started;
 
     Started --(Cancel, shared on_issue_cancel)--> Started;
     Started --(Cancel, shared on_issue_cancel)--> Cancelled;
@@ -113,6 +111,7 @@ pub(super) struct SharedState {
     cancelled_before_sent: bool,
     cancel_sent: bool,
     cancel_type: NexusOperationCancellationType,
+    operation_token: Option<String>,
 }
 
 impl NexusOperationMachine {
@@ -128,6 +127,7 @@ impl NexusOperationMachine {
                 cancelled_before_sent: false,
                 cancel_sent: false,
                 cancel_type: attribs.cancellation_type(),
+                operation_token: None,
             },
         );
         NewMachineWithCommand {
@@ -246,8 +246,10 @@ impl ScheduledEventRecorded {
 
     pub(super) fn on_started(
         self,
+        ss: &mut SharedState,
         sa: NexusOperationStartedEventAttributes,
     ) -> NexusOperationMachineTransition<Started> {
+        ss.operation_token = Some(sa.operation_token.clone());
         NexusOperationMachineTransition::commands([NexusOperationCommand::Start {
             operation_token: sa.operation_token,
         }])
@@ -496,6 +498,7 @@ impl WFMachinesAdapter for NexusOperationMachine {
                         status: Some(resolve_nexus_operation_start::Status::CancelledBeforeStart(
                             self.cancelled_failure(
                                 "Nexus Operation cancelled before scheduled".to_owned(),
+                                &self.shared_state.operation_token,
                             ),
                         )),
                     }
@@ -506,6 +509,7 @@ impl WFMachinesAdapter for NexusOperationMachine {
                             status: Some(nexus_operation_result::Status::Cancelled(
                                 self.cancelled_failure(
                                     "Nexus Operation cancelled before scheduled".to_owned(),
+                                    &self.shared_state.operation_token,
                                 ),
                             )),
                         }),
@@ -584,6 +588,7 @@ impl WFMachinesAdapter for NexusOperationMachine {
                                 status: Some(nexus_operation_result::Status::Cancelled(
                                     self.cancelled_failure(
                                         "Nexus operation cancelled after starting".to_owned(),
+                                        &self.shared_state.operation_token,
                                     ),
                                 )),
                             }),
@@ -610,7 +615,7 @@ impl TryFrom<CommandType> for NexusOperationMachineEvents {
 }
 
 impl NexusOperationMachine {
-    fn cancelled_failure(&self, message: String) -> Failure {
+    fn cancelled_failure(&self, message: String, operation_token: &Option<String>) -> Failure {
         Failure {
             message,
             cause: Some(Box::new(Failure {
@@ -623,8 +628,8 @@ impl NexusOperationMachine {
                     endpoint: self.shared_state.endpoint.clone(),
                     service: self.shared_state.service.clone(),
                     operation: self.shared_state.operation.clone(),
-                    operation_id: "".to_string(),
-                    operation_token: "".to_string(),
+                    operation_token: operation_token.clone().unwrap_or_default(),
+                    ..Default::default()
                 },
             )),
             ..Default::default()

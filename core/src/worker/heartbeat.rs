@@ -1,14 +1,14 @@
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use crate::WorkerClient;
 use futures_util::future;
 use futures_util::future::AbortHandle;
 use gethostname::gethostname;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
-use uuid::Uuid;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
-use crate::WorkerClient;
+use uuid::Uuid;
 
 /// Heartbeat information
 ///
@@ -26,18 +26,17 @@ impl WorkerHeartbeatInfo {
     /// Create a new WorkerHeartbeatInfo. A timer is immediately started to track the worker
     /// heartbeat interval.
     pub(crate) fn new(worker_config: WorkerConfig) -> Self {
-        // spawn heartbeat things here, then on capture_heartbeat, send signal to thread
+        // unused abort handle, will be replaced with a new one when we start a new timer
         let (abort_handle, _) = AbortHandle::new_pair();
 
-        let heartbeat = Self {
+        Self {
             data: Arc::new(Mutex::new(WorkerHeartbeatData::new(worker_config.clone()))),
             timer_abort: abort_handle,
             client: None,
             interval: worker_config.heartbeat_interval,
             #[cfg(test)]
             heartbeats_sent: Arc::new(Mutex::new(0)),
-        };
-        heartbeat
+        }
     }
 
     /// Transform heartbeat data into `WorkerHeartbeat` we can send in gRPC request. Some
@@ -72,7 +71,8 @@ impl WorkerHeartbeatInfo {
                             *num += 1;
                         }
 
-                        if let Err(e) = client.clone().record_worker_heartbeat(data.lock().capture_heartbeat()).await {
+                        let heartbeat = data.lock().capture_heartbeat();
+                        if let Err(e) = client.clone().record_worker_heartbeat(heartbeat).await {
                             warn!(error=?e, "Network error while sending worker heartbeat");
                         }
                     }
@@ -110,7 +110,10 @@ impl WorkerHeartbeatData {
     fn new(worker_config: WorkerConfig) -> Self {
         Self {
             // TODO: Is this right for worker_identity?
-            worker_identity: worker_config.client_identity_override.clone().unwrap_or_default(),
+            worker_identity: worker_config
+                .client_identity_override
+                .clone()
+                .unwrap_or_default(),
             host_info: WorkerHostInfo {
                 host_name: gethostname().to_string_lossy().to_string(),
                 process_id: std::process::id().to_string(),
@@ -137,9 +140,9 @@ impl WorkerHeartbeatData {
             None
         };
 
-        self.heartbeat_time = Some(now.into());
+        self.heartbeat_time = Some(now);
 
-        let heartbeat = WorkerHeartbeat {
+        WorkerHeartbeat {
             worker_instance_key: self.worker_instance_key.clone(),
             worker_identity: self.worker_identity.clone(),
             host_info: Some(self.host_info.clone()),
@@ -151,41 +154,45 @@ impl WorkerHeartbeatData {
             heartbeat_time: Some(SystemTime::now().into()),
             elapsed_since_last_heartbeat,
             ..Default::default()
-        };
-        heartbeat
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::test_help::WorkerExt;
-    use temporal_sdk_core_api::Worker;
-    use std::ops::Deref;
-    use crate::{worker};
-    use std::time::Duration;
+    use crate::test_help::test_worker_cfg;
+    use crate::worker;
     use crate::worker::WorkerHeartbeatInfo;
     use crate::worker::client::mocks::mock_worker_client;
-    use std::sync::Arc;
     use parking_lot::Mutex;
+    use std::ops::Deref;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_api::worker::PollerBehavior;
-    use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
     use temporal_sdk_core_protos::coresdk::ActivityTaskCompletion;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{PollActivityTaskQueueResponse, RecordWorkerHeartbeatResponse, RespondActivityTaskCompletedResponse};
-    use crate::test_help::test_worker_cfg;
+    use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, RecordWorkerHeartbeatResponse,
+        RespondActivityTaskCompletedResponse,
+    };
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn worker_heartbeat(#[values(true, false)]  extra_heartbeat: bool) {
+    async fn worker_heartbeat(#[values(true, false)] extra_heartbeat: bool) {
         let mut mock = mock_worker_client();
         let record_heartbeat_calls = if extra_heartbeat { 2 } else { 3 };
-        mock
-            .expect_record_worker_heartbeat()
+        mock.expect_record_worker_heartbeat()
             .times(record_heartbeat_calls)
             .returning(|heartbeat| {
                 let host_info = heartbeat.host_info.clone().unwrap();
                 assert!(heartbeat.worker_identity.is_empty());
                 assert!(!heartbeat.worker_instance_key.is_empty());
-                assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
+                assert_eq!(
+                    host_info.host_name,
+                    gethostname::gethostname().to_string_lossy().to_string()
+                );
                 assert_eq!(host_info.process_id, std::process::id().to_string());
                 assert_eq!(heartbeat.sdk_name, "test-core");
                 assert_eq!(heartbeat.sdk_version, "0.0.0");
@@ -195,16 +202,16 @@ mod tests {
 
                 Ok(RecordWorkerHeartbeatResponse {})
             });
-        mock
-            .expect_poll_activity_task()
+        mock.expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| Ok(PollActivityTaskQueueResponse {
-                task_token: vec![1],
-                activity_id: "act1".to_string(),
-                ..Default::default()
-            },));
-        mock
-            .expect_complete_activity_task()
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    ..Default::default()
+                })
+            });
+        mock.expect_complete_activity_task()
             .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
         let config = test_worker_cfg()
@@ -245,5 +252,4 @@ mod tests {
             .unwrap();
         worker.drain_activity_poller_and_shutdown().await;
     }
-
 }

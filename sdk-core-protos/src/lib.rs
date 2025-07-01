@@ -1810,6 +1810,7 @@ pub mod temporal {
                     )
                 }
 
+                #[allow(deprecated)]
                 pub fn start_child_workflow_cmd_to_api(
                     s: workflow_commands::StartChildWorkflowExecution,
                     inherit_build_id: bool,
@@ -1834,7 +1835,6 @@ pub mod temporal {
                             retry_policy: s.retry_policy.map(Into::into),
                             cron_schedule: s.cron_schedule.clone(),
                             parent_close_policy: s.parent_close_policy,
-                            #[allow(deprecated)]
                             inherit_build_id,
                             priority: s.priority,
                         },
@@ -1861,6 +1861,7 @@ pub mod temporal {
                     }
                 }
 
+                #[allow(deprecated)]
                 pub fn continue_as_new_cmd_to_api(
                     c: workflow_commands::ContinueAsNewWorkflowExecution,
                     inherit_build_id: bool,
@@ -1888,7 +1889,6 @@ pub mod temporal {
                             } else {
                                 Some(c.search_attributes.into())
                             },
-                            #[allow(deprecated)]
                             inherit_build_id,
                             ..Default::default()
                         },

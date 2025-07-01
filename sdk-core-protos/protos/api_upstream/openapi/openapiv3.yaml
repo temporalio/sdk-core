@@ -1590,6 +1590,11 @@ paths:
           description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
+        - name: reportTaskQueueStats
+          in: query
+          description: Report stats for task queues which have been polled by this version.
+          schema:
+            type: boolean
       responses:
         "200":
           description: OK
@@ -4823,6 +4828,11 @@ paths:
           description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
+        - name: reportTaskQueueStats
+          in: query
+          description: Report stats for task queues which have been polled by this version.
+          schema:
+            type: boolean
       responses:
         "200":
           description: OK
@@ -7536,6 +7546,28 @@ components:
       properties:
         workerDeploymentVersionInfo:
           $ref: '#/components/schemas/WorkerDeploymentVersionInfo'
+        versionTaskQueues:
+          type: array
+          items:
+            $ref: '#/components/schemas/DescribeWorkerDeploymentVersionResponse_VersionTaskQueue'
+          description: All the Task Queues that have ever polled from this Deployment version.
+    DescribeWorkerDeploymentVersionResponse_VersionTaskQueue:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          enum:
+            - TASK_QUEUE_TYPE_UNSPECIFIED
+            - TASK_QUEUE_TYPE_WORKFLOW
+            - TASK_QUEUE_TYPE_ACTIVITY
+            - TASK_QUEUE_TYPE_NEXUS
+          type: string
+          format: enum
+        stats:
+          allOf:
+            - $ref: '#/components/schemas/TaskQueueStats'
+          description: Only set if `report_task_queue_stats` is set on the request.
     DescribeWorkflowExecutionResponse:
       type: object
       properties:
@@ -10110,6 +10142,9 @@ components:
             Operations to perform after the workflow has been reset. These operations will be applied
              to the *new* run of the workflow execution in the order they are provided.
              All operations are applied to the workflow before the first new workflow task is generated
+        identity:
+          type: string
+          description: The identity of the worker/client
     ResetWorkflowExecutionResponse:
       type: object
       properties:
@@ -11904,6 +11939,12 @@ components:
           type: string
           description: If set, override overlap policy for this one request.
           format: enum
+        scheduledTime:
+          type: string
+          description: |-
+            Timestamp used for the identity of the target workflow.
+             If not set the default value is the current time.
+          format: date-time
     TriggerWorkflowRuleRequest:
       type: object
       properties:
@@ -12628,7 +12669,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkerDeploymentVersionInfo_VersionTaskQueueInfo'
-          description: All the Task Queues that have ever polled from this Deployment version.
+          description: |-
+            All the Task Queues that have ever polled from this Deployment version.
+             Deprecated. Use `version_task_queues` in DescribeWorkerDeploymentVersionResponse instead.
         drainageInfo:
           allOf:
             - $ref: '#/components/schemas/VersionDrainageInfo'

@@ -104,9 +104,8 @@ pub(super) fn new_external_signal(
             },
             signal_name: attrs.signal_name,
             input: attrs.args.into_payloads(),
-            #[allow(deprecated)]
-            control: "".to_string(),
             child_workflow_only: only_child,
+            ..Default::default()
         },
     );
     Ok(NewMachineWithCommand {

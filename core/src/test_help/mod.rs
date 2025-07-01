@@ -9,7 +9,8 @@ use crate::{
     worker::{
         TaskPollers,
         client::{
-            MockWorkerClient, WorkerClient, WorkflowTaskCompletion, mocks::mock_worker_client,
+            LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
+            mocks::mock_worker_client,
         },
     },
 };
@@ -179,7 +180,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
                 .unwrap_or_else(|| mock_poller_from_resps([])),
         },
         None,
-        None, // TODO: set this up properly
+        None,
     )
 }
 
@@ -407,6 +408,9 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub(crate) expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
+    /// All calls to legacy query responses must match this predicate
+    pub(crate) expect_legacy_query_matcher:
+        Box<dyn Fn(&TaskToken, &LegacyQueryResult) -> bool + Send>,
     pub(crate) completion_mock_fn: Option<Box<WFTCompletionMockFn>>,
     pub(crate) num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
@@ -429,6 +433,7 @@ impl MockPollCfg {
             num_expected_legacy_query_resps: 0,
             mock_client: mock_worker_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            expect_legacy_query_matcher: Box::new(|_, _| true),
             completion_mock_fn: None,
             num_expected_completions: None,
             using_rust_sdk: false,
@@ -467,6 +472,7 @@ impl MockPollCfg {
             num_expected_legacy_query_resps: 0,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            expect_legacy_query_matcher: Box::new(|_, _| true),
             completion_mock_fn: None,
             num_expected_completions: None,
             using_rust_sdk: false,
@@ -710,6 +716,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let outstanding = outstanding_wf_task_tokens.clone();
     cfg.mock_client
         .expect_respond_legacy_query()
+        .withf(cfg.expect_legacy_query_matcher)
         .times::<TimesRange>(cfg.num_expected_legacy_query_resps.into())
         .returning(move |tt, _| {
             outstanding.release_token(&tt);
@@ -1069,10 +1076,19 @@ impl WorkerExt for Worker {
                 );
             },
             async {
-                assert_matches!(
-                    self.poll_workflow_activation().await.unwrap_err(),
-                    PollError::ShutDown
-                );
+                loop {
+                    match self.poll_workflow_activation().await {
+                        Err(PollError::ShutDown) => break,
+                        Ok(a) if a.is_only_eviction() => {
+                            self.complete_workflow_activation(WorkflowActivationCompletion::empty(
+                                a.run_id,
+                            ))
+                            .await
+                            .unwrap();
+                        }
+                        o => panic!("Unexpected activation while draining: {o:?}"),
+                    }
+                }
             }
         );
         self.finalize_shutdown().await;

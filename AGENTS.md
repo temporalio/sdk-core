@@ -8,6 +8,7 @@ document as your quick reference when submitting pull requests.
 - `core/` – implementation of the core SDK
 - `client/` – clients for communicating with Temporal clusters
 - `core-api/` – API definitions exposed by core
+- `core-c-bridge/` – C interface for core
 - `sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
 - `sdk-core-protos/` – protobuf definitions shared across crates
 - `fsm/` – state machine implementation and macros
@@ -15,6 +16,7 @@ document as your quick reference when submitting pull requests.
 - `tests/` – integration, heavy, and manual tests
 - `arch_docs/` – architectural design documents
 - Contributor guide: `README.md`
+- `target/` - This contains compiled files. You never need to look in here.
 
 ## Repo Specific Utilities
 
