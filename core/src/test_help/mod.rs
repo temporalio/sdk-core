@@ -1075,10 +1075,19 @@ impl WorkerExt for Worker {
                 );
             },
             async {
-                assert_matches!(
-                    self.poll_workflow_activation().await.unwrap_err(),
-                    PollError::ShutDown
-                );
+                loop {
+                    match self.poll_workflow_activation().await {
+                        Err(PollError::ShutDown) => break,
+                        Ok(a) if a.is_only_eviction() => {
+                            self.complete_workflow_activation(WorkflowActivationCompletion::empty(
+                                a.run_id,
+                            ))
+                            .await
+                            .unwrap();
+                        }
+                        o => panic!("Unexpected activation while draining: {o:?}"),
+                    }
+                }
             }
         );
         self.finalize_shutdown().await;
