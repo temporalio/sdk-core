@@ -13,6 +13,7 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use url::Url;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 
 async fn get_client(client_name: &str) -> RetryClient<Client> {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
@@ -76,8 +77,7 @@ async fn grpc_message_too_large_test() {
     assert!(starter.get_history().await.events.iter().any(|e| {
         e.event_type == EventType::WorkflowTaskFailed as i32
             && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                // TODO tim: Change to custom cause
-                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                attr.cause == GrpcMessageTooLarge as i32
                     && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
             } else {
                 false

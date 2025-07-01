@@ -20,7 +20,7 @@ use temporal_sdk_core_protos::{
         Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
     },
     temporal::api::{
-        enums::v1::{EventType, WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure},
+        enums::v1::EventType,
         failure::v1::Failure as InnerFailure,
         history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     },
@@ -30,6 +30,7 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::sync::Notify;
 use uuid::Uuid;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
@@ -188,8 +189,7 @@ async fn oversize_grpc_message() {
     assert!(starter.get_history().await.events.iter().any(|e| {
         e.event_type == EventType::WorkflowTaskFailed as i32
             && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                // TODO tim: Change to custom cause
-                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                attr.cause == GrpcMessageTooLarge as i32
                     && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
             } else {
                 false
