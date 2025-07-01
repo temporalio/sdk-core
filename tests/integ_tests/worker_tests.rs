@@ -15,13 +15,13 @@ use temporal_sdk_core_api::{
     errors::WorkerValidationError,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
         Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
     },
     temporal::api::{
-        enums::v1::EventType,
-        failure::v1::Failure as InnerFailure,
+        enums::v1::EventType, failure::v1::Failure as InnerFailure,
         history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     },
 };
@@ -30,7 +30,6 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::sync::Notify;
 use uuid::Uuid;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {

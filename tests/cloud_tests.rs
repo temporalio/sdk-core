@@ -7,13 +7,13 @@ use temporal_client::{
     Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
 };
 use temporal_sdk::WfContext;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::{EventType, WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use url::Url;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 
 async fn get_client(client_name: &str) -> RetryClient<Client> {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
