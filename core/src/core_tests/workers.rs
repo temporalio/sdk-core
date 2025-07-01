@@ -7,10 +7,9 @@ use crate::{PollError, prost_dur, test_help::{
         MockWorkerClient,
         mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_worker_client},
     },
-}, advance_fut};
+}};
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
-use mockall::mock;
 use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -24,7 +23,9 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{WorkerTestHelpers, start_timer_cmd};
 use tokio::sync::{Barrier, watch};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{PollActivityTaskQueueResponse, RecordWorkerHeartbeatResponse};
+use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
+use temporal_sdk_core_protos::coresdk::ActivityTaskCompletion;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{PollActivityTaskQueueResponse, RecordWorkerHeartbeatResponse, RespondActivityTaskCompletedResponse};
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
@@ -366,12 +367,10 @@ async fn worker_heartbeat() {
     let mut mock = mock_worker_client(); // mock worker client
     mock
         .expect_record_worker_heartbeat()
-        .times(1)
+        .times(2)
         .returning(|heartbeat| {
             let host_info = heartbeat.host_info.clone().unwrap();
-            println!("heartbeat: {:?}", heartbeat);
-            // TODO
-            assert_eq!(heartbeat.worker_identity, "");
+            assert!(heartbeat.worker_identity.is_empty());
             assert!(!heartbeat.worker_instance_key.is_empty());
             assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
             assert_eq!(host_info.process_id, std::process::id().to_string());
@@ -385,22 +384,103 @@ async fn worker_heartbeat() {
         });
     mock
         .expect_poll_activity_task()
-        // .times(1)
+        .times(1)
         .returning(move |_, _| Ok(PollActivityTaskQueueResponse {
-        task_token: vec![1],
-        ..Default::default()
-    }));
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            ..Default::default()
+        },));
+    mock
+        .expect_complete_activity_task()
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    // or let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
     let worker = worker::Worker::new_test(
         test_worker_cfg()
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .max_outstanding_activities(1_usize)
+            .heartbeat_interval(Duration::from_millis(200))
             .build()
             .unwrap(),
         mock,
     );
     // Give time for worker heartbeat timer to fire
-    tokio::time::sleep(Duration::from_millis(3000)).await;
-    worker.poll_activity_task().await.unwrap();
-    assert!(false);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let task = worker.poll_activity_task().await.unwrap();
+    worker
+        .complete_activity_task(ActivityTaskCompletion {
+            task_token: task.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+    worker.drain_activity_poller_and_shutdown().await;
+    // assert!(false);
+
 }
+
+//
+// #[rstest::rstest]
+// #[tokio::test]
+// async fn worker_heartbeat1(#[values(true, false)] poll_activity: bool) {
+//     let mut mock = mock_worker_client();
+//     let heartbeat_calls = if poll_activity { 1 } else { 2 };
+//     // let heartbeat_calls = if poll_activity { 2 } else { 1 };
+//     let activity_poll_calls = if poll_activity { 1 } else { 0 };
+//     mock
+//         .expect_record_worker_heartbeat()
+//         .returning(|heartbeat| {
+//             println!("expect_record_worker_heartbeatexpect_record_worker_heartbeatexpect_record_worker_heartbeatexpect_record_worker_heartbeatexpect_record_worker_heartbeatexpect_record_worker_heartbeat");
+//             let host_info = heartbeat.host_info.clone().unwrap();
+//             assert!(heartbeat.worker_identity.is_empty());
+//             assert!(!heartbeat.worker_instance_key.is_empty());
+//             assert_eq!(host_info.host_name, gethostname::gethostname().to_string_lossy().to_string());
+//             assert_eq!(host_info.process_id, std::process::id().to_string());
+//             assert_eq!(heartbeat.sdk_name, "test-core");
+//             assert_eq!(heartbeat.sdk_version, "0.0.0");
+//             assert_eq!(heartbeat.task_queue, "q");
+//             assert!(heartbeat.heartbeat_time.is_some());
+//             assert!(heartbeat.start_time.is_some());
+//
+//             Ok(RecordWorkerHeartbeatResponse {})
+//         })
+//         .times(heartbeat_calls);
+//     mock
+//         .expect_poll_activity_task()
+//         .times(activity_poll_calls)
+//         .returning(move |_, _| Ok(PollActivityTaskQueueResponse {
+//             task_token: vec![1],
+//             ..Default::default()
+//         }));
+//     mock // We can end up polling again - just return nothing.
+//         .expect_poll_activity_task()
+//         .returning(|_, _| Ok(Default::default()));
+//     mock
+//         .expect_complete_activity_task()
+//         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+//
+//     let worker = worker::Worker::new_test(
+//         test_worker_cfg()
+//             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+//             .max_outstanding_activities(1_usize)
+//             .heartbeat_interval(Duration::from_millis(200))
+//             .build()
+//             .unwrap(),
+//         mock,
+//     );
+//     // Give time for worker heartbeat timer to fire
+//     println!("// Give time for worker heartbeat timer to fire");
+//     tokio::time::sleep(Duration::from_millis(250)).await;
+//     if poll_activity {
+//         println!("// Poll activity");
+//         let task = worker.poll_activity_task().await.unwrap();
+//         worker
+//             .complete_activity_task(ActivityTaskCompletion {
+//                 task_token: task.task_token,
+//                 result: Some(ActivityExecutionResult::ok(vec![1].into())),
+//             })
+//             .await
+//             .unwrap();
+//     }
+//     tokio::time::sleep(Duration::from_millis(150)).await;
+//     worker.drain_activity_poller_and_shutdown().await;
+// }

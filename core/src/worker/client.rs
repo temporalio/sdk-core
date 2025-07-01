@@ -656,7 +656,6 @@ impl WorkerClient for WorkerClientBag {
     }
 
     async fn record_worker_heartbeat(&self, heartbeat: WorkerHeartbeat) -> Result<RecordWorkerHeartbeatResponse> {
-        println!("[record_worker_heartbeat] received heartbeat {:?}", heartbeat);
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {

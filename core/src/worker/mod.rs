@@ -494,8 +494,8 @@ impl Worker {
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
-        if let Some(heartbeat_info) = heartbeat_info {
-            let mut heartbeat_info = heartbeat_info.lock();
+        if let Some(ref heartbeat_info) = heartbeat_info {
+            let heartbeat_info = heartbeat_info.lock();
             let mut data = heartbeat_info.data.lock();
             data.sdk_name = sdk_name_and_ver.0.clone();
             data.sdk_version = sdk_name_and_ver.1.clone();
