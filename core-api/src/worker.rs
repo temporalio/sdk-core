@@ -162,11 +162,11 @@ pub struct WorkerConfig {
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
 
-    /// The interval in which the worker will send a heartbeat.
+    /// The interval within which the worker will send a heartbeat.
     /// The timer is reset on each existing RPC call that also happens to send this data, like
     /// `PollWorkflowTaskQueueRequest`.
-    #[builder(default)]
-    pub heartbeat_interval: Option<Duration>,
+    #[builder(default = "Duration::from_secs(60)")]
+    pub heartbeat_interval: Duration,
 }
 
 impl WorkerConfig {

@@ -2,7 +2,7 @@
 
 pub(crate) mod mocks;
 use crate::protosext::legacy_query_failure;
-use crate::worker::heartbeat::WorkerHeartbeatInfo;
+use crate::worker::heartbeat::WorkerHeartbeatData;
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
@@ -48,7 +48,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>,
+    heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
 }
 
 impl WorkerClientBag {
@@ -57,14 +57,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>,
+        heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_info,
+            heartbeat_data,
         }
     }
 
@@ -127,7 +127,7 @@ impl WorkerClientBag {
     }
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        Some(self.heartbeat_info.lock().capture_heartbeat())
+        self.heartbeat_data.lock().capture_heartbeat_if_needed()
     }
 }
 
@@ -287,7 +287,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -324,7 +324,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);

@@ -99,7 +99,7 @@ where
     }
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
-    let heartbeat_info = Arc::new(Mutex::new(worker::WorkerHeartbeatInfo::new(
+    let data = Arc::new(Mutex::new(worker::WorkerHeartbeatData::new(
         worker_config.clone(),
     )));
 
@@ -108,17 +108,15 @@ where
         worker_config.namespace.clone(),
         client_ident,
         worker_config.versioning_strategy.clone(),
-        heartbeat_info.clone(),
+        data.clone(),
     ));
-    // TODO: Adding this afterwards feels a little clunky
-    heartbeat_info.lock().add_client(client_bag.clone());
 
     Ok(Worker::new(
         worker_config,
         sticky_q,
         client_bag,
         Some(&runtime.telemetry),
-        Some(heartbeat_info),
+        Some(data),
     ))
 }
 

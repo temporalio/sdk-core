@@ -20,6 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
+pub(crate) use crate::worker::heartbeat::WorkerHeartbeatData;
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -41,6 +42,10 @@ use crate::{
             LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller::make_wft_poller,
         },
     },
+};
+use crate::{
+    pollers::{ActivityTaskOptions, LongPollBuffer},
+    worker::workflow::wft_poller,
 };
 use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
@@ -77,14 +82,9 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::time::MissedTickBehavior;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-
-pub(crate) use crate::worker::heartbeat::WorkerHeartbeatInfo;
-use crate::{
-    pollers::{ActivityTaskOptions, LongPollBuffer},
-    worker::workflow::wft_poller,
-};
 #[cfg(test)]
 use {
     crate::{
@@ -122,6 +122,8 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
+    /// Used to track and shutdown worker heartbeat process
+    worker_heartbeat_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct AllPermitsTracker {
@@ -274,7 +276,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
+        heartbeat_data: Option<Arc<Mutex<WorkerHeartbeatData>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -284,7 +286,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
-            heartbeat_info,
+            heartbeat_data,
         )
     }
 
@@ -302,10 +304,9 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        let heartbeat_info = Arc::new(Mutex::new(WorkerHeartbeatInfo::new(config.clone())));
+        let heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(config.clone())));
         let client = Arc::new(client);
-        heartbeat_info.lock().add_client(client.clone());
-        Self::new(config, None, client, None, Some(heartbeat_info))
+        Self::new(config, None, client, None, Some(heartbeat_data))
     }
 
     pub(crate) fn new_with_pollers(
@@ -314,7 +315,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
+        heartbeat_data: Option<Arc<Mutex<WorkerHeartbeatData>>>,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -493,13 +494,24 @@ impl Worker {
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
-        if let Some(ref heartbeat_info) = heartbeat_info {
-            let heartbeat_info = heartbeat_info.lock();
-            let mut data = heartbeat_info.data.lock();
-            data.sdk_name = sdk_name_and_ver.0.clone();
-            data.sdk_version = sdk_name_and_ver.1.clone();
-            data.start_time = SystemTime::now();
-        }
+
+        let worker_heartbeat_handle = if let Some(heartbeat_data) = heartbeat_data {
+            let (reset_tx, reset_rx) = watch::channel(());
+            {
+                let mut data = heartbeat_data.lock();
+                data.sdk_name = sdk_name_and_ver.0.clone();
+                data.sdk_version = sdk_name_and_ver.1.clone();
+                data.start_time = SystemTime::now();
+                data.set_reset_tx(reset_tx);
+            }
+            Some(create_worker_heartbeat_process(
+                heartbeat_data.clone(),
+                client.clone(),
+                reset_rx,
+            ))
+        } else {
+            None
+        };
 
         Self {
             worker_key,
@@ -557,6 +569,7 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
+            worker_heartbeat_handle,
         }
     }
 
@@ -600,6 +613,9 @@ impl Worker {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
+        }
+        if let Some(jh) = self.worker_heartbeat_handle.as_ref() {
+            jh.abort();
         }
     }
 
@@ -892,6 +908,41 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
     } else {
         config.workflow_task_poller_behavior
     }
+}
+
+fn create_worker_heartbeat_process(
+    data: Arc<Mutex<WorkerHeartbeatData>>,
+    client: Arc<dyn WorkerClient>,
+    reset_rx: watch::Receiver<()>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut reset_rx = reset_rx;
+        let mut ticker = tokio::time::interval(data.lock().heartbeat_interval);
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = ticker.tick() => {
+                    let heartbeat = if let Some(heartbeat) = data.lock().capture_heartbeat_if_needed() {
+                        heartbeat
+                    } else {
+                        continue
+                    };
+                    if let Err(e) = client.clone().record_worker_heartbeat(heartbeat).await {
+                        warn!(error=?e, "Network error while sending worker heartbeat");
+                        if matches!(
+                            e.code(),
+                            tonic::Code::Unimplemented
+                        ) {
+                            return;
+                        }
+                    }
+                }
+                _ = reset_rx.changed() => {
+                    ticker.reset();
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]
