@@ -448,6 +448,8 @@ impl CustomMetricMeterRef {
                 params.unit.as_ref().into(),
                 kind,
             );
+            // Ignore this lint because we want to refcount the pointer
+            #[allow(clippy::arc_with_non_send_sync)]
             CustomMetric {
                 meter_impl: self.meter_impl.clone(),
                 metric: Arc::new(metric),

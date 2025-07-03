@@ -593,7 +593,7 @@ impl CorePrometheusMeter {
 
     fn get_histogram_metric_name(&self, base_name: &str, unit: &str) -> String {
         if self.unit_suffix && !unit.is_empty() {
-            format!("{}_{}", base_name, unit)
+            format!("{base_name}_{unit}")
         } else {
             base_name.to_string()
         }
@@ -747,7 +747,7 @@ mod tests {
 
         let output = output_string(&registry);
 
-        println!("Milliseconds histogram output:\n{}", output);
+        println!("Milliseconds histogram output:\n{output}");
 
         assert!(
             output.contains("le=\"100\""),
@@ -777,7 +777,7 @@ mod tests {
 
         let output_s = output_string(&registry_s);
 
-        println!("Seconds histogram output:\n{}", output_s);
+        println!("Seconds histogram output:\n{output_s}");
 
         assert!(
             output_s.contains("le=\"0.1\""),

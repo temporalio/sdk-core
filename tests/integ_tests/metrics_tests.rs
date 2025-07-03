@@ -1229,7 +1229,7 @@ async fn test_prometheus_endpoint_integration() {
     histogram.records(100);
     gauge.records(10);
 
-    let url = format!("http://{}/metrics", addr);
+    let url = format!("http://{addr}/metrics");
     let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
         .await
         .expect("Request timed out")
@@ -1277,7 +1277,7 @@ async fn test_prometheus_metric_format_consistency() {
     workflow_counter.add(1, &attrs);
     activity_histogram.record(Duration::from_millis(150), &attrs);
 
-    let url = format!("http://{}/metrics", addr);
+    let url = format!("http://{addr}/metrics");
     let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
         .await
         .expect("Request timed out")

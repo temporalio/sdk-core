@@ -187,10 +187,10 @@ impl From<&'static str> for MetricValue {
 impl Display for MetricValue {
     fn fmt(&self, f1: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MetricValue::String(s) => write!(f1, "{}", s),
-            MetricValue::Int(i) => write!(f1, "{}", i),
-            MetricValue::Float(f) => write!(f1, "{}", f),
-            MetricValue::Bool(b) => write!(f1, "{}", b),
+            MetricValue::String(s) => write!(f1, "{s}"),
+            MetricValue::Int(i) => write!(f1, "{i}"),
+            MetricValue::Float(f) => write!(f1, "{f}"),
+            MetricValue::Bool(b) => write!(f1, "{b}"),
         }
     }
 }
