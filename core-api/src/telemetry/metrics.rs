@@ -120,7 +120,7 @@ pub enum MetricAttributes {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
     Prometheus {
-        labels: Arc<OrderedMetricLabelSet>,
+        labels: Arc<OrderedPromLabelSet>,
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
@@ -240,8 +240,13 @@ impl Counter {
         }
     }
     pub fn add(&self, value: u64, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.adds(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.adds(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -254,7 +259,7 @@ impl CounterBase for Counter {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn CounterBase>
                 })
         });
@@ -290,8 +295,13 @@ impl Histogram {
         }
     }
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.records(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.records(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -302,7 +312,7 @@ impl HistogramBase for Histogram {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn HistogramBase>
                 })
         });
@@ -340,8 +350,13 @@ impl HistogramF64 {
         }
     }
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.records(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.records(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -352,7 +367,7 @@ impl HistogramF64Base for HistogramF64 {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn HistogramF64Base>
                 })
         });
@@ -390,8 +405,13 @@ impl HistogramDuration {
         }
     }
     pub fn record(&self, value: Duration, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.records(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.records(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -402,7 +422,7 @@ impl HistogramDurationBase for HistogramDuration {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn HistogramDurationBase>
                 })
         });
@@ -438,8 +458,13 @@ impl Gauge {
         }
     }
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.records(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.records(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -450,7 +475,7 @@ impl GaugeBase for Gauge {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn GaugeBase>
                 })
         });
@@ -486,8 +511,13 @@ impl GaugeF64 {
         }
     }
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
-        if let Ok(base) = self.metric.with_attributes(attributes) {
-            base.records(value);
+        match self.metric.with_attributes(attributes) {
+            Ok(base) => {
+                base.records(value);
+            }
+            Err(e) => {
+                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+            }
         }
     }
 }
@@ -498,7 +528,7 @@ impl GaugeF64Base for GaugeF64 {
                 .with_attributes(&self.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn GaugeF64Base>
                 })
         });
@@ -819,12 +849,17 @@ mod otel_impls {
 }
 
 /// Maintains a mapping of metric labels->values with a defined ordering, used for Prometheus labels
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrderedMetricLabelSet {
-    pub attributes: BTreeMap<String, MetricValue>,
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OrderedPromLabelSet {
+    attributes: BTreeMap<String, MetricValue>,
 }
 
-impl OrderedMetricLabelSet {
+impl OrderedPromLabelSet {
+    pub const fn new() -> Self {
+        Self {
+            attributes: BTreeMap::new(),
+        }
+    }
     pub fn keys_ordered(&self) -> impl Iterator<Item = &str> {
         self.attributes.keys().map(|s| s.as_str())
     }
@@ -835,14 +870,18 @@ impl OrderedMetricLabelSet {
         }
         labels
     }
+    pub fn add_kv(&mut self, kv: MetricKeyValue) {
+        // Replace '-' with '_' per Prom naming requirements
+        self.attributes.insert(kv.key.replace('-', "_"), kv.value);
+    }
 }
 
-impl From<NewAttributes> for OrderedMetricLabelSet {
+impl From<NewAttributes> for OrderedPromLabelSet {
     fn from(n: NewAttributes) -> Self {
-        let mut attributes = BTreeMap::new();
+        let mut me = Self::default();
         for kv in n.attributes {
-            attributes.insert(kv.key.clone(), kv.value);
+            me.add_kv(kv);
         }
-        Self { attributes }
+        me
     }
 }

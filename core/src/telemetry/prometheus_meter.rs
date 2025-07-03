@@ -15,7 +15,7 @@ use std::{
 use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
     HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
-    MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedMetricLabelSet,
+    MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedPromLabelSet,
 };
 
 #[derive(derive_more::From, derive_more::TryInto, Debug, Clone)]
@@ -209,6 +209,8 @@ where
     T: Clone + Into<PromCollector> + TryFrom<PromCollector> + 'static,
 {
     fn new(metric_name: String, metric_description: String, registry: Registry) -> Self {
+        // Prometheus does not allow dashes
+        let metric_name = metric_name.replace('-', "_");
         Self {
             metric_name,
             metric_description,
@@ -218,18 +220,12 @@ where
         }
     }
 
-    /// Generic double-checked locking pattern for vector creation
-    fn get_or_create_vector<F>(
-        &self,
-        kvs: &OrderedMetricLabelSet,
-        create_fn: F,
-    ) -> anyhow::Result<T>
+    fn get_or_create_vector<F>(&self, kvs: &OrderedPromLabelSet, create_fn: F) -> anyhow::Result<T>
     where
-        F: FnOnce(&str, &str, &[&str]) -> T,
+        F: FnOnce(&str, &str, &[&str]) -> anyhow::Result<T>,
     {
         // Just the metric label names
-        let mut schema: Vec<String> = kvs.keys_ordered().map(|kv| kv.to_string()).collect();
-        schema.sort();
+        let schema: Vec<String> = kvs.keys_ordered().map(|kv| kv.to_string()).collect();
 
         {
             let vectors = self.vectors.read();
@@ -251,7 +247,7 @@ where
         };
 
         let boxed: Box<[&str]> = schema.iter().map(String::as_str).collect();
-        let vector = create_fn(&self.metric_name, description, &boxed);
+        let vector = create_fn(&self.metric_name, description, &boxed)?;
 
         let maybe_exists = self.registry.register(vector.clone());
         let vector = if let Some(m) = maybe_exists {
@@ -277,6 +273,8 @@ impl PromMetric<HistogramVec> {
         registry: Registry,
         buckets: Vec<f64>,
     ) -> Self {
+        // Prometheus does not allow dashes
+        let metric_name = metric_name.replace('-', "_");
         Self {
             metric_name,
             metric_description,
@@ -288,21 +286,19 @@ impl PromMetric<HistogramVec> {
 
     fn get_or_create_vector_with_buckets(
         &self,
-        labels: &OrderedMetricLabelSet,
+        labels: &OrderedPromLabelSet,
     ) -> anyhow::Result<HistogramVec> {
         self.get_or_create_vector(labels, |name, desc, label_names| {
             let mut opts = prometheus::HistogramOpts::new(name, desc);
             if let Some(buckets) = &self.histogram_buckets {
                 opts = opts.buckets(buckets.clone());
             }
-            HistogramVec::new(opts, label_names).unwrap()
+            HistogramVec::new(opts, label_names).map_err(Into::into)
         })
     }
 }
 
-static EMPTY_LABEL_SET: OrderedMetricLabelSet = OrderedMetricLabelSet {
-    attributes: BTreeMap::new(),
-};
+static EMPTY_LABEL_SET: OrderedPromLabelSet = OrderedPromLabelSet::new();
 
 impl<T> PromMetric<T>
 where
@@ -311,7 +307,7 @@ where
     fn extract_prometheus_labels<'a>(
         &self,
         attributes: &'a MetricAttributes,
-    ) -> anyhow::Result<&'a OrderedMetricLabelSet, anyhow::Error> {
+    ) -> anyhow::Result<&'a OrderedPromLabelSet, anyhow::Error> {
         if matches!(attributes, MetricAttributes::Empty) {
             return Ok(&EMPTY_LABEL_SET);
         }
@@ -353,7 +349,7 @@ impl MetricAttributable<Box<dyn CounterBase>> for PromMetric<IntCounterVec> {
         let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
-            IntCounterVec::new(opts, label_names).unwrap()
+            IntCounterVec::new(opts, label_names).map_err(Into::into)
         })?;
         if let Ok(c) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromCounter(c)))
@@ -377,7 +373,7 @@ impl MetricAttributable<Box<dyn GaugeBase>> for PromMetric<IntGaugeVec> {
         let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
-            IntGaugeVec::new(opts, label_names).unwrap()
+            IntGaugeVec::new(opts, label_names).map_err(Into::into)
         })?;
         if let Ok(g) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromIntGauge(g)))
@@ -401,7 +397,7 @@ impl MetricAttributable<Box<dyn GaugeF64Base>> for PromMetric<GaugeVec> {
         let labels = self.extract_prometheus_labels(attributes)?;
         let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
             let opts = Opts::new(name, desc);
-            GaugeVec::new(opts, label_names).unwrap()
+            GaugeVec::new(opts, label_names).map_err(Into::into)
         })?;
         if let Ok(g) = vector.get_metric_with(&labels.as_prom_labels()) {
             Ok(Box::new(CorePromGauge(g)))
@@ -525,7 +521,7 @@ impl CoreMeter for CorePrometheusMeter {
         {
             let mut all_labels = Arc::unwrap_or_clone(existing_labels);
             for kv in new.attributes.into_iter() {
-                all_labels.attributes.insert(kv.key, kv.value);
+                all_labels.add_kv(kv);
             }
             MetricAttributes::Prometheus {
                 labels: Arc::new(all_labels),
@@ -839,6 +835,44 @@ mod tests {
         let output = output_string(&registry);
         assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q\"} 2"));
         assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q2\"} 1"));
+    }
+
+    #[test]
+    fn metric_name_dashes() {
+        let registry = Registry::new(HashMap::new());
+        let meter = CorePrometheusMeter::new(
+            registry.clone(),
+            false,
+            false,
+            temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
+        );
+        let dashes = meter.counter(MetricParameters {
+            name: "dash-in-name".into(),
+            description: "Whatever".into(),
+            unit: "".into(),
+        });
+        dashes.adds(1);
+
+        let output = output_string(&registry);
+        assert!(output.contains("dash_in_name 1"));
+    }
+
+    #[test]
+    #[should_panic(expected = "not a valid metric name")]
+    fn invalid_metric_name() {
+        let registry = Registry::new(HashMap::new());
+        let meter = CorePrometheusMeter::new(
+            registry.clone(),
+            false,
+            false,
+            temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
+        );
+        let dashes = meter.counter(MetricParameters {
+            name: "not@permitted:symbols".into(),
+            description: "Whatever".into(),
+            unit: "".into(),
+        });
+        dashes.adds(1);
     }
 
     fn output_string(registry: &Registry) -> String {
