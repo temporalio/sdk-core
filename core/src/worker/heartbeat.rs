@@ -25,13 +25,9 @@ pub struct WorkerHeartbeatData {
 }
 
 impl WorkerHeartbeatData {
-    pub fn new(worker_config: WorkerConfig) -> Self {
+    pub fn new(worker_config: WorkerConfig, worker_identity: String) -> Self {
         Self {
-            // TODO: Is this right for worker_identity?
-            worker_identity: worker_config
-                .client_identity_override
-                .clone()
-                .unwrap_or_default(),
+            worker_identity,
             host_info: WorkerHostInfo {
                 host_name: gethostname().to_string_lossy().to_string(),
                 process_id: std::process::id().to_string(),
@@ -116,7 +112,7 @@ mod tests {
             .times(2)
             .returning(move |heartbeat| {
                 let host_info = heartbeat.host_info.clone().unwrap();
-                assert!(heartbeat.worker_identity.is_empty());
+                assert_eq!("test_identity", heartbeat.worker_identity);
                 assert!(!heartbeat.worker_instance_key.is_empty());
                 assert_eq!(
                     host_info.host_name,
@@ -139,7 +135,10 @@ mod tests {
             .build()
             .unwrap();
 
-        let heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(config.clone())));
+        let heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
+            config.clone(),
+            "test_identity".to_string(),
+        )));
         let client = Arc::new(mock);
         let worker = worker::Worker::new(config, None, client, None, Some(heartbeat_data.clone()));
         let _ = heartbeat_data.lock().capture_heartbeat_if_needed();

@@ -304,8 +304,11 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        let heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(config.clone())));
         let client = Arc::new(client);
+        let heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
+            config.clone(),
+            client.get_identity(),
+        )));
         Self::new(config, None, client, None, Some(heartbeat_data))
     }
 
@@ -335,7 +338,7 @@ impl Worker {
         let shutdown_token = CancellationToken::new();
         let slot_context_data = Arc::new(PermitDealerContextData {
             task_queue: config.task_queue.clone(),
-            worker_identity: config.client_identity_override.clone().unwrap_or_default(),
+            worker_identity: client.get_identity(),
             worker_deployment_version: config.computed_deployment_version(),
         });
         let wft_slots = MeteredPermitDealer::new(

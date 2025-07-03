@@ -234,6 +234,8 @@ pub trait WorkerClient: Sync + Send {
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
+    /// Get worker identity
+    fn get_identity(&self) -> String;
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -694,6 +696,10 @@ impl WorkerClient for WorkerClientBag {
         let lock = self.replaceable_client.read();
         let opts = lock.get_client().inner().options();
         (opts.client_name.clone(), opts.client_version.clone())
+    }
+
+    fn get_identity(&self) -> String {
+        self.identity.clone()
     }
 }
 

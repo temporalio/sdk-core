@@ -101,7 +101,12 @@ where
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
     let data = Arc::new(Mutex::new(worker::WorkerHeartbeatData::new(
         worker_config.clone(),
+        client_ident.clone(),
     )));
+
+    if client_ident == "" {
+        bail!("Client identity cannot be empty. Either lang or user should be setting this value");
+    }
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
