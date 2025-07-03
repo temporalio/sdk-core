@@ -2,13 +2,15 @@
 
 pub(crate) mod mocks;
 use crate::protosext::legacy_query_failure;
-use parking_lot::RwLock;
+use crate::worker::heartbeat::WorkerHeartbeatData;
+use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SlotManager, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{workflow_commands::QueryResult, workflow_completion},
@@ -46,6 +48,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
 }
 
 impl WorkerClientBag {
@@ -54,12 +57,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
+        heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
+            heartbeat_data,
         }
     }
 
@@ -119,6 +124,10 @@ impl WorkerClientBag {
         } else {
             None
         }
+    }
+
+    fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
+        self.heartbeat_data.lock().capture_heartbeat_if_needed()
     }
 }
 
@@ -209,6 +218,11 @@ pub trait WorkerClient: Sync + Send {
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
+    /// Record a worker heartbeat
+    async fn record_worker_heartbeat(
+        &self,
+        heartbeat: WorkerHeartbeat,
+    ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
     fn replace_client(&self, new_client: RetryClient<Client>);
@@ -220,6 +234,8 @@ pub trait WorkerClient: Sync + Send {
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
+    /// Get worker identity
+    fn get_identity(&self) -> String;
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -343,7 +359,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -632,7 +648,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: None,
+            worker_heartbeat: self.capture_heartbeat(),
         };
 
         Ok(
@@ -645,6 +661,21 @@ impl WorkerClient for WorkerClientBag {
     fn replace_client(&self, new_client: RetryClient<Client>) {
         let mut replaceable_client = self.replaceable_client.write();
         *replaceable_client = new_client;
+    }
+
+    async fn record_worker_heartbeat(
+        &self,
+        heartbeat: WorkerHeartbeat,
+    ) -> Result<RecordWorkerHeartbeatResponse> {
+        Ok(self
+            .cloned_client()
+            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
+                namespace: self.namespace.clone(),
+                identity: self.identity.clone(),
+                worker_heartbeat: Some(heartbeat),
+            })
+            .await?
+            .into_inner())
     }
 
     fn capabilities(&self) -> Option<Capabilities> {
@@ -665,6 +696,10 @@ impl WorkerClient for WorkerClientBag {
         let lock = self.replaceable_client.read();
         let opts = lock.get_client().inner().options();
         (opts.client_name.clone(), opts.client_version.clone())
+    }
+
+    fn get_identity(&self) -> String {
+        self.identity.clone()
     }
 }
 

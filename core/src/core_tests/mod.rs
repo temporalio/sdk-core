@@ -13,7 +13,7 @@ use crate::{
     Worker,
     errors::PollError,
     test_help::{MockPollCfg, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg},
-    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+    worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
@@ -24,7 +24,7 @@ use tokio::{sync::Barrier, time::sleep};
 #[tokio::test]
 async fn after_shutdown_server_is_not_polled() {
     let t = canned_histories::single_timer("fake_timer");
-    let mh = MockPollCfg::from_resp_batches("fake_wf_id", t, [1], mock_workflow_client());
+    let mh = MockPollCfg::from_resp_batches("fake_wf_id", t, [1], mock_worker_client());
     let mut mock = build_mock_pollers(mh);
     // Just so we don't have to deal w/ cache overflow
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
@@ -49,7 +49,7 @@ static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(3));
 
 #[tokio::test]
 async fn shutdown_interrupts_both_polls() {
-    let mut mock_client = mock_manual_workflow_client();
+    let mut mock_client = mock_manual_worker_client();
     mock_client
         .expect_poll_activity_task()
         .times(1)

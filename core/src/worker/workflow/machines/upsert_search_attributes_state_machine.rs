@@ -183,7 +183,7 @@ mod tests {
         replay::TestHistoryBuilder,
         test_help::{MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, mock_worker},
         worker::{
-            client::mocks::mock_workflow_client,
+            client::mocks::mock_worker_client,
             workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
         },
     };
@@ -328,7 +328,7 @@ mod tests {
             "fakeid",
             t,
             [ResponseType::ToTaskNum(1), ResponseType::ToTaskNum(2)],
-            mock_workflow_client(),
+            mock_worker_client(),
         );
         // Ensure the upsert command has an empty map when not using the patched command
         if !with_patched_cmd {

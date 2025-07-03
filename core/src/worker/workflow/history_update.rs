@@ -803,7 +803,7 @@ mod tests {
     use crate::{
         replay::{HistoryInfo, TestHistoryBuilder},
         test_help::{MockPollCfg, ResponseType, canned_histories, hist_to_poll_resp, mock_sdk_cfg},
-        worker::client::mocks::mock_workflow_client,
+        worker::client::mocks::mock_worker_client,
     };
     use futures_util::{StreamExt, TryStreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -965,7 +965,7 @@ mod tests {
         let wft_started = hinfo.workflow_task_started_event_id();
         let full_hist = hinfo.into_events();
         let initial_hist = full_hist.chunks(chunk_size).next().unwrap().to_vec();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         let mut npt = 1;
         mock_client
@@ -1162,7 +1162,7 @@ mod tests {
         // Chop off the last event, which is WFT started, which server doesn't return in get
         // history
         history_from_get.history.as_mut().map(|h| h.events.pop());
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(history_from_get.clone()));
@@ -1220,7 +1220,7 @@ mod tests {
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
         let wft_started_id = partial_task.workflow_task_started_event_id();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(Default::default()));
@@ -1247,7 +1247,7 @@ mod tests {
         let wft_started_id = partial_task.workflow_task_started_event_id();
         let full_resp: GetWorkflowExecutionHistoryResponse =
             timer_hist.get_full_history_info().unwrap().into();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| {
@@ -1296,7 +1296,7 @@ mod tests {
             timer_hist.get_full_history_info().unwrap().into();
         full_resp_with_npt.next_page_token = vec![1];
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(full_resp_with_npt.clone()))
@@ -1375,7 +1375,7 @@ mod tests {
         resp_1.next_page_token = vec![1];
         resp_1.history.as_mut().unwrap().events.truncate(4);
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(resp_1.clone()))
@@ -1486,7 +1486,7 @@ mod tests {
         t.add_we_signaled("hi", vec![]);
         t.add_workflow_task_scheduled_and_started();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
         let first_event = events[0].clone();
@@ -1602,7 +1602,7 @@ mod tests {
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
         let first_event = events[0].clone();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         for (i, event) in events.into_iter().enumerate() {
             // Add an empty page
@@ -1722,7 +1722,7 @@ mod tests {
             t.get_full_history_info().unwrap().into();
         resp_1.next_page_token = vec![2];
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(resp_1.clone()))
@@ -1765,7 +1765,7 @@ mod tests {
         let workflow_task = t.get_full_history_info().unwrap();
         let prev_started_wft_id = workflow_task.previous_started_event_id();
         let wft_started_id = workflow_task.workflow_task_started_event_id();
-        let mock_client = mock_workflow_client();
+        let mock_client = mock_worker_client();
         let mut paginator = HistoryPaginator::new(
             workflow_task.into(),
             prev_started_wft_id,
@@ -1802,7 +1802,7 @@ mod tests {
         let full_resp: GetWorkflowExecutionHistoryResponse =
             t.get_full_history_info().unwrap().into();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(full_resp.clone()))
@@ -1839,7 +1839,7 @@ mod tests {
         let incremental_task =
             hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::OneTask(3)).resp;
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         let mut one_task_resp: GetWorkflowExecutionHistoryResponse =
             t.get_history_info(1).unwrap().into();
         one_task_resp.next_page_token = vec![1];

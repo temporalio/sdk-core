@@ -6,7 +6,7 @@ use crate::{
     Worker,
     worker::{
         PostActivateHookData,
-        client::mocks::{MockManualWorkerClient, mock_manual_workflow_client},
+        client::mocks::{MockManualWorkerClient, mock_manual_worker_client},
     },
 };
 use futures_util::{FutureExt, Stream, StreamExt};
@@ -73,7 +73,7 @@ where
         let mut client = if let Some(c) = self.client_override {
             c
         } else {
-            mock_manual_workflow_client()
+            mock_manual_worker_client()
         };
 
         let hist_allow_tx = historator.replay_done_tx.clone();
@@ -114,7 +114,7 @@ where
                 hist_allow_tx.send("Failed".to_string()).unwrap();
                 async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
             });
-        let mut worker = Worker::new(self.config, None, Arc::new(client), None);
+        let mut worker = Worker::new(self.config, None, Arc::new(client), None, None);
         worker.set_post_activate_hook(post_activate);
         shutdown_tok(worker.shutdown_token());
         Ok(worker)
