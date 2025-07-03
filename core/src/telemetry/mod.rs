@@ -5,18 +5,25 @@ mod log_export;
 pub(crate) mod metrics;
 #[cfg(feature = "otel")]
 mod otel;
-#[cfg(feature = "otel")]
+#[cfg(feature = "prom")]
+mod prometheus_meter;
+#[cfg(feature = "prom")]
 mod prometheus_server;
+
+// Always export bucket configuration function since it's used by both OTel and Prometheus
+pub use metrics::default_buckets_for;
 
 #[cfg(feature = "otel")]
 pub use metrics::{
     ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     MetricsCallBuffer, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
     WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
-    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, default_buckets_for,
+    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
 };
 #[cfg(feature = "otel")]
-pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
+pub use otel::build_otlp_metric_exporter;
+#[cfg(feature = "prom")]
+pub use prometheus_server::start_prometheus_metric_exporter;
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 

@@ -293,6 +293,8 @@ typedef void (*TemporalCoreCustomMetricMeterMeterFreeCallback)(const struct Temp
  * callbacks unless they are pointers to things that were created lang-side
  * originally. There are no guarantees on which thread these calls may be
  * invoked on.
+ *
+ * Attribute pointers may be null when recording if no attributes are associated with the metric.
  */
 typedef struct TemporalCoreCustomMetricMeter {
   TemporalCoreCustomMetricMeterMetricNewCallback metric_new;

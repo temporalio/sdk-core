@@ -7,6 +7,7 @@ use temporal_client::{
     Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
 };
 use temporal_sdk::WfContext;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::{EventType, WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
@@ -76,8 +77,7 @@ async fn grpc_message_too_large_test() {
     assert!(starter.get_history().await.events.iter().any(|e| {
         e.event_type == EventType::WorkflowTaskFailed as i32
             && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                // TODO tim: Change to custom cause
-                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                attr.cause == GrpcMessageTooLarge as i32
                     && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
             } else {
                 false

@@ -13,9 +13,10 @@ categories = ["development-tools"]
 [lib]
 
 [features]
-default = ["otel"]
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp",
-    "dep:opentelemetry-prometheus", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
+default = ["otel", "prom"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:hyper",
+    "dep:hyper-util", "dep:http-body-util"]
+prom = ["dep:prometheus"]
 tokio-console = ["console-subscriber"]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest"]
@@ -44,13 +45,12 @@ itertools = "0.14"
 lru = "0.13"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.29", features = ["rt-tokio", "metrics", "spec_unstable_metrics_views"], optional = true }
-opentelemetry-otlp = { version = "0.29", features = ["tokio", "metrics", "tls", "http-proto", "grpc-tonic"], optional = true }
-opentelemetry-prometheus = { version = "0.29", optional = true }
+opentelemetry_sdk = { version = "0.30", features = ["rt-tokio", "metrics", "spec_unstable_metrics_views"], optional = true }
+opentelemetry-otlp = { version = "0.30", features = ["tokio", "metrics", "tls", "http-proto", "grpc-tonic"], optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
 pin-project = "1.0"
-prometheus = "0.14"
+prometheus = { version = "0.14", optional = true }
 prost = { workspace = true }
 prost-types = { version = "0.6", package = "prost-wkt-types" }
 rand = "0.9"
@@ -66,7 +66,7 @@ thiserror = { workspace = true }
 tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
-tonic = { workspace = true, features = ["tls", "tls-roots"] }
+tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["parking_lot", "env-filter", "registry", "ansi"] }
 url = "2.2"
@@ -92,7 +92,7 @@ path = "../fsm"
 assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
-criterion = "0.5"
+criterion = { version = "0.6", features = ["async", "async_tokio"] }
 rstest = "0.25"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }

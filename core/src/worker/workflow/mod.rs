@@ -405,10 +405,9 @@ impl Workflows {
                                 ),
                                 force_cause: 0,
                             };
-                            // TODO: tim - Update workflow cause when API is ready
                             let new_outcome = FailedActivationWFTReport::Report(
                                 task_token,
-                                WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+                                WorkflowTaskFailedCause::GrpcMessageTooLarge,
                                 failure,
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
