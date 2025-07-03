@@ -1,8 +1,6 @@
-use std::{any::Any, sync::Arc, time::Duration};
-
-use temporal_sdk_core_api::telemetry::metrics;
-
 use crate::{ByteArrayRef, runtime::Runtime};
+use std::{any::Any, error::Error, sync::Arc, time::Duration};
+use temporal_sdk_core_api::telemetry::metrics;
 
 pub struct MetricMeter {
     core: metrics::TemporalMeter,
@@ -144,12 +142,12 @@ pub enum MetricKind {
 }
 
 pub enum Metric {
-    CounterInteger(Arc<dyn metrics::Counter>),
-    HistogramInteger(Arc<dyn metrics::Histogram>),
-    HistogramFloat(Arc<dyn metrics::HistogramF64>),
-    HistogramDuration(Arc<dyn metrics::HistogramDuration>),
-    GaugeInteger(Arc<dyn metrics::Gauge>),
-    GaugeFloat(Arc<dyn metrics::GaugeF64>),
+    CounterInteger(metrics::Counter),
+    HistogramInteger(metrics::Histogram),
+    HistogramFloat(metrics::HistogramF64),
+    HistogramDuration(metrics::HistogramDuration),
+    GaugeInteger(metrics::Gauge),
+    GaugeFloat(metrics::GaugeF64),
 }
 
 #[unsafe(no_mangle)]
@@ -278,6 +276,8 @@ pub type CustomMetricMeterMeterFreeCallback = unsafe extern "C" fn(meter: *const
 /// callbacks unless they are pointers to things that were created lang-side
 /// originally. There are no guarantees on which thread these calls may be
 /// invoked on.
+///
+/// Attribute pointers may be null when recording if no attributes are associated with the metric.
 #[repr(C)]
 pub struct CustomMetricMeter {
     pub metric_new: CustomMetricMeterMetricNewCallback,
@@ -334,31 +334,36 @@ impl metrics::CoreMeter for CustomMetricMeterRef {
         self.build_attributes(Some(existing), attribs)
     }
 
-    fn counter(&self, params: metrics::MetricParameters) -> Arc<dyn metrics::Counter> {
-        Arc::new(self.new_metric(params, MetricKind::CounterInteger))
+    fn counter(&self, params: metrics::MetricParameters) -> metrics::Counter {
+        metrics::Counter::new(Arc::new(
+            self.new_metric(params, MetricKind::CounterInteger),
+        ))
     }
 
-    fn histogram(&self, params: metrics::MetricParameters) -> Arc<dyn metrics::Histogram> {
-        Arc::new(self.new_metric(params, MetricKind::HistogramInteger))
+    fn histogram(&self, params: metrics::MetricParameters) -> metrics::Histogram {
+        metrics::Histogram::new(Arc::new(
+            self.new_metric(params, MetricKind::HistogramInteger),
+        ))
     }
 
-    fn histogram_f64(&self, params: metrics::MetricParameters) -> Arc<dyn metrics::HistogramF64> {
-        Arc::new(self.new_metric(params, MetricKind::HistogramFloat))
+    fn histogram_f64(&self, params: metrics::MetricParameters) -> metrics::HistogramF64 {
+        metrics::HistogramF64::new(Arc::new(
+            self.new_metric(params, MetricKind::HistogramFloat),
+        ))
     }
 
-    fn histogram_duration(
-        &self,
-        params: metrics::MetricParameters,
-    ) -> Arc<dyn metrics::HistogramDuration> {
-        Arc::new(self.new_metric(params, MetricKind::HistogramDuration))
+    fn histogram_duration(&self, params: metrics::MetricParameters) -> metrics::HistogramDuration {
+        metrics::HistogramDuration::new(Arc::new(
+            self.new_metric(params, MetricKind::HistogramDuration),
+        ))
     }
 
-    fn gauge(&self, params: metrics::MetricParameters) -> Arc<dyn metrics::Gauge> {
-        Arc::new(self.new_metric(params, MetricKind::GaugeInteger))
+    fn gauge(&self, params: metrics::MetricParameters) -> metrics::Gauge {
+        metrics::Gauge::new(Arc::new(self.new_metric(params, MetricKind::GaugeInteger)))
     }
 
-    fn gauge_f64(&self, params: metrics::MetricParameters) -> Arc<dyn metrics::GaugeF64> {
-        Arc::new(self.new_metric(params, MetricKind::GaugeFloat))
+    fn gauge_f64(&self, params: metrics::MetricParameters) -> metrics::GaugeF64 {
+        metrics::GaugeF64::new(Arc::new(self.new_metric(params, MetricKind::GaugeFloat)))
     }
 }
 
@@ -445,7 +450,8 @@ impl CustomMetricMeterRef {
             );
             CustomMetric {
                 meter_impl: self.meter_impl.clone(),
-                metric,
+                metric: Arc::new(metric),
+                bound_attributes: None,
             }
         }
     }
@@ -493,86 +499,159 @@ impl Drop for CustomMetricAttributes {
 
 struct CustomMetric {
     meter_impl: Arc<CustomMetricMeterImpl>,
-    metric: *const libc::c_void,
+    metric: Arc<*const libc::c_void>,
+    bound_attributes: Option<metrics::MetricAttributes>,
+}
+impl CustomMetric {
+    fn attr_ptr(&self) -> *const libc::c_void {
+        match &self.bound_attributes {
+            Some(ptr) => raw_custom_metric_attributes(ptr),
+            None => std::ptr::null(),
+        }
+    }
 }
 
 unsafe impl Send for CustomMetric {}
 unsafe impl Sync for CustomMetric {}
 
-impl metrics::Counter for CustomMetric {
-    fn add(&self, value: u64, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::CounterBase>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::CounterBase>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::CounterBase for CustomMetric {
+    fn adds(&self, value: u64) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_record_integer)(
-                self.metric,
-                value,
-                raw_custom_metric_attributes(attributes),
-            );
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_integer)(*self.metric, value, attr_ptr);
         }
     }
 }
 
-impl metrics::Histogram for CustomMetric {
-    fn record(&self, value: u64, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::HistogramBase>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::HistogramBase>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::HistogramBase for CustomMetric {
+    fn records(&self, value: u64) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_record_integer)(
-                self.metric,
-                value,
-                raw_custom_metric_attributes(attributes),
-            );
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_integer)(*self.metric, value, attr_ptr);
         }
     }
 }
 
-impl metrics::HistogramF64 for CustomMetric {
-    fn record(&self, value: f64, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::HistogramF64Base>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::HistogramF64Base>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::HistogramF64Base for CustomMetric {
+    fn records(&self, value: f64) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_record_float)(
-                self.metric,
-                value,
-                raw_custom_metric_attributes(attributes),
-            );
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_float)(*self.metric, value, attr_ptr);
         }
     }
 }
 
-impl metrics::HistogramDuration for CustomMetric {
-    fn record(&self, value: Duration, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::HistogramDurationBase>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::HistogramDurationBase>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::HistogramDurationBase for CustomMetric {
+    fn records(&self, value: Duration) {
         unsafe {
             let meter = &*(self.meter_impl.0);
+            let attr_ptr = self.attr_ptr();
             (meter.metric_record_duration)(
-                self.metric,
+                *self.metric,
                 value.as_millis().try_into().unwrap_or(u64::MAX),
-                raw_custom_metric_attributes(attributes),
+                attr_ptr,
             );
         }
     }
 }
 
-impl metrics::Gauge for CustomMetric {
-    fn record(&self, value: u64, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::GaugeBase>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::GaugeBase>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::GaugeBase for CustomMetric {
+    fn records(&self, value: u64) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_record_integer)(
-                self.metric,
-                value,
-                raw_custom_metric_attributes(attributes),
-            );
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_integer)(*self.metric, value, attr_ptr);
         }
     }
 }
 
-impl metrics::GaugeF64 for CustomMetric {
-    fn record(&self, value: f64, attributes: &metrics::MetricAttributes) {
+impl metrics::MetricAttributable<Box<dyn metrics::GaugeF64Base>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::GaugeF64Base>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::GaugeF64Base for CustomMetric {
+    fn records(&self, value: f64) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_record_float)(
-                self.metric,
-                value,
-                raw_custom_metric_attributes(attributes),
-            );
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_float)(*self.metric, value, attr_ptr);
         }
     }
 }
@@ -593,7 +672,9 @@ impl Drop for CustomMetric {
     fn drop(&mut self) {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            (meter.metric_free)(self.metric);
+            if let Some(mptr) = Arc::get_mut(&mut self.metric) {
+                (meter.metric_free)(*mptr);
+            }
         }
     }
 }
