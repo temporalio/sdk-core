@@ -1,7 +1,13 @@
 use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::{collections::HashMap, env, string::ToString, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    string::ToString,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use temporal_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
@@ -19,7 +25,10 @@ use temporal_sdk_core_api::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
-        metrics::{CoreMeter, MetricAttributes, MetricParameters},
+        metrics::{
+            CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
+            MetricParameters, MetricParametersBuilder, NewAttributes,
+        },
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
@@ -72,6 +81,7 @@ async fn prometheus_metrics_exported(
 ) {
     let mut opts_builder = PrometheusExporterOptionsBuilder::default();
     opts_builder
+        .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
         .socket_addr(ANY_PORT.parse().unwrap())
         .use_seconds_for_durations(use_seconds_latency);
     if custom_buckets {
@@ -99,25 +109,25 @@ async fn prometheus_metrics_exported(
 
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains(
-        "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\",global=\"hi!\"} 1"
     ));
     assert!(body.contains(
-        "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\"} 1"
     ));
     if custom_buckets {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"1337\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"1337\"}"
         ));
     } else if use_seconds_latency {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"0.05\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"0.05\"}"
         ));
     } else {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"50\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"50\"}"
         ));
     }
     // Verify counter names are appropriate (don't end w/ '_total')
@@ -125,15 +135,10 @@ async fn prometheus_metrics_exported(
     // Verify non-temporal metrics meter does not prefix
     let mm = rt.telemetry().get_metric_meter().unwrap();
     let g = mm.inner.gauge(MetricParameters::from("mygauge"));
-    g.record(
-        42,
-        &MetricAttributes::OTel {
-            kvs: Arc::new(vec![]),
-        },
-    );
+    let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
+    g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
-    println!("{}", &body);
-    assert!(body.contains("\nmygauge 42"));
+    assert!(body.contains("\nmygauge{global=\"hi!\"} 42"));
 }
 
 #[tokio::test]
@@ -688,7 +693,7 @@ async fn docker_metrics_with_prometheus(
     )]
     otel_collector: (&str, OtlpProtocol),
 ) {
-    if std::env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+    if env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
         return;
     }
     let (otel_collector_addr, otel_protocol) = otel_collector;
@@ -730,7 +735,7 @@ async fn docker_metrics_with_prometheus(
     client.list_namespaces().await.unwrap();
 
     // Give Prometheus time to scrape metrics
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Query Prometheus API for metrics
     let client = reqwest::Client::new();
@@ -767,6 +772,9 @@ async fn activity_metrics() {
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter
+        .worker_config
+        .graceful_shutdown_period(Duration::from_secs(1));
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
@@ -777,11 +785,6 @@ async fn activity_metrics() {
             start_to_close_timeout: Some(Duration::from_secs(1)),
             ..Default::default()
         });
-        let local_act_pass = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        });
         let normal_act_fail = ctx.activity(ActivityOptions {
             activity_type: "pass_fail_act".to_string(),
             input: "fail".as_json_payload().expect("serializes fine"),
@@ -790,6 +793,12 @@ async fn activity_metrics() {
                 maximum_attempts: 1,
                 ..Default::default()
             }),
+            ..Default::default()
+        });
+        join!(normal_act_pass, normal_act_fail);
+        let local_act_pass = ctx.local_activity(LocalActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "pass".as_json_payload().expect("serializes fine"),
             ..Default::default()
         });
         let local_act_fail = ctx.local_activity(LocalActivityOptions {
@@ -810,12 +819,8 @@ async fn activity_metrics() {
             },
             ..Default::default()
         });
-        join!(
-            normal_act_pass,
-            local_act_pass,
-            normal_act_fail,
-            local_act_fail
-        );
+        join!(local_act_pass, local_act_fail);
+        // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
         local_act_cancel.cancel(&ctx);
         local_act_cancel.await;
         Ok(().into())
@@ -824,7 +829,6 @@ async fn activity_metrics() {
         match i.as_str() {
             "pass" => Ok("pass"),
             "cancel" => {
-                // TODO: Cancel is taking until shutdown to come through :|
                 ctx.cancelled().await;
                 Err(ActivityError::cancelled())
             }
@@ -1111,6 +1115,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
 
 struct MetricRecordingSlotSupplier<SK> {
     inner: FixedSizeSlotSupplier<SK>,
+    metrics: OnceLock<(Gauge, Gauge, Gauge)>,
 }
 
 #[async_trait::async_trait]
@@ -1121,16 +1126,18 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
-        let g = ctx
+        let (g, _, _) = self.metrics.get_or_init(|| {
+            let meter = ctx.get_metrics_meter().unwrap();
+            let g1 = meter.gauge(MetricParameters::from("custom_reserve"));
+            let g2 = meter.gauge(MetricParameters::from("custom_mark_used"));
+            let g3 = meter.gauge(MetricParameters::from("custom_release"));
+            (g1, g2, g3)
+        });
+        let attrs = ctx
             .get_metrics_meter()
             .unwrap()
-            .gauge(MetricParameters::from("custom_reserve"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+            .new_attributes(NewAttributes::new(vec![]));
+        g.record(1, &attrs);
         self.inner.reserve_slot(ctx).await
     }
 
@@ -1139,30 +1146,18 @@ where
     }
 
     fn mark_slot_used(&self, ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {
-        let g = ctx
-            .get_metrics_meter()
-            .unwrap()
-            .gauge(MetricParameters::from("custom_mark_used"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+        let meter = ctx.get_metrics_meter().unwrap();
+        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        let (_, g, _) = self.metrics.get().unwrap();
+        g.record(1, &attrs);
         self.inner.mark_slot_used(ctx);
     }
 
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
-        let g = ctx
-            .get_metrics_meter()
-            .unwrap()
-            .gauge(MetricParameters::from("custom_release"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+        let meter = ctx.get_metrics_meter().unwrap();
+        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        let (_, _, g) = self.metrics.get().unwrap();
+        g.record(1, &attrs);
         self.inner.release_slot(ctx);
     }
 
@@ -1182,6 +1177,7 @@ async fn metrics_available_from_custom_slot_supplier() {
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
         inner: FixedSizeSlotSupplier::new(5),
+        metrics: OnceLock::new(),
     }));
     starter.worker_config.tuner(Arc::new(tb.build()));
     let mut worker = starter.worker().await;
@@ -1202,9 +1198,124 @@ async fn metrics_available_from_custom_slot_supplier() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("custom_reserve"));
     assert!(body.contains("custom_mark_used"));
     assert!(body.contains("custom_release"));
+}
+
+#[tokio::test]
+async fn test_prometheus_endpoint_integration() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let meter = telemopts.metrics.unwrap();
+
+    let counter = meter.counter(MetricParameters {
+        name: "test_requests_total".into(),
+        description: "Total number of test requests".into(),
+        unit: "".into(),
+    });
+    let histogram = meter.histogram(MetricParameters {
+        name: "test_request_duration_ms".into(),
+        description: "Duration of test requests in milliseconds".into(),
+        unit: "ms".into(),
+    });
+    let gauge = meter.gauge(MetricParameters {
+        name: "test_active_connections".into(),
+        description: "Number of active test connections".into(),
+        unit: "".into(),
+    });
+
+    counter.adds(5);
+    histogram.records(100);
+    gauge.records(10);
+
+    let url = format!("http://{addr}/metrics");
+    let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
+        .await
+        .expect("Request timed out")
+        .expect("Request failed");
+
+    assert!(response.status().is_success());
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(content_type.contains("text/plain"));
+
+    let body = response.text().await.expect("Failed to read response body");
+
+    assert!(body.contains("test_requests_total"),);
+    assert!(body.contains("test_request_duration_ms"),);
+    assert!(body.contains("test_active_connections"),);
+    assert!(body.contains("test_requests_total 5"),);
+    assert!(body.contains("test_active_connections 10"),);
+    assert!(body.contains("test_request_duration_ms_count 1"),);
+    assert!(body.contains("test_request_duration_ms_sum 100"),);
+}
+
+#[tokio::test]
+async fn test_prometheus_metric_format_consistency() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let meter = telemopts.metrics.unwrap();
+
+    let workflow_counter = meter.counter(MetricParameters {
+        name: "temporal_workflow_completed_total".into(),
+        description: "Total number of completed workflows".into(),
+        unit: "".into(),
+    });
+    let activity_histogram = meter.histogram_duration(MetricParameters {
+        name: "temporal_activity_execution_latency".into(),
+        description: "Duration of activity execution".into(),
+        unit: "ms".into(),
+    });
+
+    let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+
+    workflow_counter.add(1, &attrs);
+    activity_histogram.record(Duration::from_millis(150), &attrs);
+
+    let url = format!("http://{addr}/metrics");
+    let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
+        .await
+        .expect("Request timed out")
+        .expect("Request failed");
+
+    let body = response.text().await.expect("Failed to read response body");
+
+    assert!(body.contains("# HELP temporal_workflow_completed_total"),);
+    assert!(body.contains("# TYPE temporal_workflow_completed_total counter"),);
+    assert!(body.contains("# HELP temporal_activity_execution_latency"),);
+    assert!(body.contains("# TYPE temporal_activity_execution_latency histogram"),);
+    assert!(body.contains("temporal_workflow_completed_total 1"),);
+    assert!(body.contains("temporal_activity_execution_latency_count 1"),);
+    assert!(body.contains("temporal_activity_execution_latency_bucket"),);
+    assert!(body.contains("le=\""));
+}
+
+#[tokio::test]
+async fn prometheus_label_nonsense() {
+    let mut opts_builder = PrometheusExporterOptionsBuilder::default();
+    opts_builder.socket_addr(ANY_PORT.parse().unwrap());
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
+    let meter = telemopts.metrics.clone().unwrap();
+
+    let ctr = meter.counter(
+        MetricParametersBuilder::default()
+            .name("some_counter")
+            .build()
+            .unwrap(),
+    );
+    let a1 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("thing", "foo")]));
+    let a2 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("blerp", "baz")]));
+    ctr.add(1, &a1);
+    ctr.add(1, &a2);
+    ctr.add(1, &a2);
+    ctr.add(1, &a1);
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    assert!(body.contains("some_counter{thing=\"foo\"} 2"));
+    assert!(body.contains("some_counter{blerp=\"baz\"} 2"));
 }

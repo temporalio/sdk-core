@@ -7,19 +7,17 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
-    HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer,
-    MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes,
-    NoOpCoreMeter,
+    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, CounterBase, Gauge, GaugeBase,
+    GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
+    HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
+    MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal,
+    NewAttributes, NoOpCoreMeter,
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
 };
 
 /// Used to track context associated with metrics, and record/update them
-///
-/// Possible improvement: make generic over some type tag so that methods are only exposed if the
-/// appropriate k/vs have already been set.
 #[derive(Clone)]
 pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
@@ -27,50 +25,53 @@ pub(crate) struct MetricsContext {
     instruments: Arc<Instruments>,
 }
 
+#[derive(Clone)]
 struct Instruments {
-    wf_completed_counter: Arc<dyn Counter>,
-    wf_canceled_counter: Arc<dyn Counter>,
-    wf_failed_counter: Arc<dyn Counter>,
-    wf_cont_counter: Arc<dyn Counter>,
-    wf_e2e_latency: Arc<dyn HistogramDuration>,
-    wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
-    wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
-    wf_task_execution_failure_counter: Arc<dyn Counter>,
-    wf_task_sched_to_start_latency: Arc<dyn HistogramDuration>,
-    wf_task_replay_latency: Arc<dyn HistogramDuration>,
-    wf_task_execution_latency: Arc<dyn HistogramDuration>,
-    act_poll_no_task: Arc<dyn Counter>,
-    act_task_received_counter: Arc<dyn Counter>,
-    act_execution_failed: Arc<dyn Counter>,
-    act_sched_to_start_latency: Arc<dyn HistogramDuration>,
-    act_exec_latency: Arc<dyn HistogramDuration>,
-    act_exec_succeeded_latency: Arc<dyn HistogramDuration>,
-    la_execution_cancelled: Arc<dyn Counter>,
-    la_execution_failed: Arc<dyn Counter>,
-    la_exec_latency: Arc<dyn HistogramDuration>,
-    la_exec_succeeded_latency: Arc<dyn HistogramDuration>,
-    la_total: Arc<dyn Counter>,
-    nexus_poll_no_task: Arc<dyn Counter>,
-    nexus_task_schedule_to_start_latency: Arc<dyn HistogramDuration>,
-    nexus_task_e2e_latency: Arc<dyn HistogramDuration>,
-    nexus_task_execution_latency: Arc<dyn HistogramDuration>,
-    nexus_task_execution_failed: Arc<dyn Counter>,
-    worker_registered: Arc<dyn Counter>,
-    num_pollers: Arc<dyn Gauge>,
-    task_slots_available: Arc<dyn Gauge>,
-    task_slots_used: Arc<dyn Gauge>,
-    sticky_cache_hit: Arc<dyn Counter>,
-    sticky_cache_miss: Arc<dyn Counter>,
-    sticky_cache_size: Arc<dyn Gauge>,
-    sticky_cache_forced_evictions: Arc<dyn Counter>,
+    wf_completed_counter: Counter,
+    wf_canceled_counter: Counter,
+    wf_failed_counter: Counter,
+    wf_cont_counter: Counter,
+    wf_e2e_latency: HistogramDuration,
+    wf_task_queue_poll_empty_counter: Counter,
+    wf_task_queue_poll_succeed_counter: Counter,
+    wf_task_execution_failure_counter: Counter,
+    wf_task_sched_to_start_latency: HistogramDuration,
+    wf_task_replay_latency: HistogramDuration,
+    wf_task_execution_latency: HistogramDuration,
+    act_poll_no_task: Counter,
+    act_task_received_counter: Counter,
+    act_execution_failed: Counter,
+    act_sched_to_start_latency: HistogramDuration,
+    act_exec_latency: HistogramDuration,
+    act_exec_succeeded_latency: HistogramDuration,
+    la_execution_cancelled: Counter,
+    la_execution_failed: Counter,
+    la_exec_latency: HistogramDuration,
+    la_exec_succeeded_latency: HistogramDuration,
+    la_total: Counter,
+    nexus_poll_no_task: Counter,
+    nexus_task_schedule_to_start_latency: HistogramDuration,
+    nexus_task_e2e_latency: HistogramDuration,
+    nexus_task_execution_latency: HistogramDuration,
+    nexus_task_execution_failed: Counter,
+    worker_registered: Counter,
+    num_pollers: Gauge,
+    task_slots_available: Gauge,
+    task_slots_used: Gauge,
+    sticky_cache_hit: Counter,
+    sticky_cache_miss: Counter,
+    sticky_cache_size: Gauge,
+    sticky_cache_forced_evictions: Counter,
 }
 
 impl MetricsContext {
     pub(crate) fn no_op() -> Self {
         let meter = Arc::new(NoOpCoreMeter);
+        let kvs = meter.new_attributes(Default::default());
+        let instruments = Arc::new(Instruments::new(meter.as_ref()));
         Self {
-            kvs: meter.new_attributes(Default::default()),
-            instruments: Arc::new(Instruments::new(meter.as_ref())),
+            kvs,
+            instruments,
             meter,
         }
     }
@@ -83,9 +84,11 @@ impl MetricsContext {
                 .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
             meter.default_attribs.attributes.push(task_queue(tq));
             let kvs = meter.inner.new_attributes(meter.default_attribs);
+            let mut instruments = Instruments::new(meter.inner.as_ref());
+            instruments.update_attributes(&kvs);
             Self {
                 kvs,
-                instruments: Arc::new(Instruments::new(meter.inner.as_ref())),
+                instruments: Arc::new(instruments),
                 meter: meter.inner,
             }
         } else {
@@ -101,212 +104,186 @@ impl MetricsContext {
         let kvs = self
             .meter
             .extend_attributes(self.kvs.clone(), new_attrs.into());
+        let mut instruments = (*self.instruments).clone();
+        instruments.update_attributes(&kvs);
         Self {
+            instruments: Arc::new(instruments),
             kvs,
-            instruments: self.instruments.clone(),
             meter: self.meter.clone(),
         }
     }
 
     /// A workflow task queue poll succeeded
     pub(crate) fn wf_tq_poll_ok(&self) {
-        self.instruments
-            .wf_task_queue_poll_succeed_counter
-            .add(1, &self.kvs);
+        self.instruments.wf_task_queue_poll_succeed_counter.adds(1);
     }
 
     /// A workflow task queue poll timed out / had empty response
     pub(crate) fn wf_tq_poll_empty(&self) {
-        self.instruments
-            .wf_task_queue_poll_empty_counter
-            .add(1, &self.kvs);
+        self.instruments.wf_task_queue_poll_empty_counter.adds(1);
     }
 
     /// A workflow task execution failed
     pub(crate) fn wf_task_failed(&self) {
-        self.instruments
-            .wf_task_execution_failure_counter
-            .add(1, &self.kvs);
+        self.instruments.wf_task_execution_failure_counter.adds(1);
     }
 
     /// A workflow completed successfully
     pub(crate) fn wf_completed(&self) {
-        self.instruments.wf_completed_counter.add(1, &self.kvs);
+        self.instruments.wf_completed_counter.adds(1);
     }
 
     /// A workflow ended cancelled
     pub(crate) fn wf_canceled(&self) {
-        self.instruments.wf_canceled_counter.add(1, &self.kvs);
+        self.instruments.wf_canceled_counter.adds(1);
     }
 
     /// A workflow ended failed
     pub(crate) fn wf_failed(&self) {
-        self.instruments.wf_failed_counter.add(1, &self.kvs);
+        self.instruments.wf_failed_counter.adds(1);
     }
 
     /// A workflow continued as new
     pub(crate) fn wf_continued_as_new(&self) {
-        self.instruments.wf_cont_counter.add(1, &self.kvs);
+        self.instruments.wf_cont_counter.adds(1);
     }
 
     /// Record workflow total execution time in milliseconds
     pub(crate) fn wf_e2e_latency(&self, dur: Duration) {
-        self.instruments.wf_e2e_latency.record(dur, &self.kvs);
+        self.instruments.wf_e2e_latency.records(dur);
     }
 
     /// Record workflow task schedule to start time in millis
     pub(crate) fn wf_task_sched_to_start_latency(&self, dur: Duration) {
-        self.instruments
-            .wf_task_sched_to_start_latency
-            .record(dur, &self.kvs);
+        self.instruments.wf_task_sched_to_start_latency.records(dur);
     }
 
     /// Record workflow task execution time in milliseconds
     pub(crate) fn wf_task_latency(&self, dur: Duration) {
-        self.instruments
-            .wf_task_execution_latency
-            .record(dur, &self.kvs);
+        self.instruments.wf_task_execution_latency.records(dur);
     }
 
     /// Record time it takes to catch up on replaying a WFT
     pub(crate) fn wf_task_replay_latency(&self, dur: Duration) {
-        self.instruments
-            .wf_task_replay_latency
-            .record(dur, &self.kvs);
+        self.instruments.wf_task_replay_latency.records(dur);
     }
 
     /// An activity long poll timed out
     pub(crate) fn act_poll_timeout(&self) {
-        self.instruments.act_poll_no_task.add(1, &self.kvs);
+        self.instruments.act_poll_no_task.adds(1);
     }
 
     /// A count of activity tasks received
     pub(crate) fn act_task_received(&self) {
-        self.instruments.act_task_received_counter.add(1, &self.kvs);
+        self.instruments.act_task_received_counter.adds(1);
     }
 
     /// An activity execution failed
     pub(crate) fn act_execution_failed(&self) {
-        self.instruments.act_execution_failed.add(1, &self.kvs);
+        self.instruments.act_execution_failed.adds(1);
     }
 
     /// Record end-to-end (sched-to-complete) time for successful activity executions
     pub(crate) fn act_execution_succeeded(&self, dur: Duration) {
-        self.instruments
-            .act_exec_succeeded_latency
-            .record(dur, &self.kvs);
+        self.instruments.act_exec_succeeded_latency.records(dur);
     }
 
     /// Record activity task schedule to start time in millis
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
-        self.instruments
-            .act_sched_to_start_latency
-            .record(dur, &self.kvs);
+        self.instruments.act_sched_to_start_latency.records(dur);
     }
 
     /// Record time it took to complete activity execution, from the time core generated the
     /// activity task, to the time lang responded with a completion (failure or success).
     pub(crate) fn act_execution_latency(&self, dur: Duration) {
-        self.instruments.act_exec_latency.record(dur, &self.kvs);
+        self.instruments.act_exec_latency.records(dur);
     }
 
     pub(crate) fn la_execution_cancelled(&self) {
-        self.instruments.la_execution_cancelled.add(1, &self.kvs);
+        self.instruments.la_execution_cancelled.adds(1);
     }
 
     pub(crate) fn la_execution_failed(&self) {
-        self.instruments.la_execution_failed.add(1, &self.kvs);
+        self.instruments.la_execution_failed.adds(1);
     }
 
     pub(crate) fn la_exec_latency(&self, dur: Duration) {
-        self.instruments.la_exec_latency.record(dur, &self.kvs);
+        self.instruments.la_exec_latency.records(dur);
     }
 
     pub(crate) fn la_exec_succeeded_latency(&self, dur: Duration) {
-        self.instruments
-            .la_exec_succeeded_latency
-            .record(dur, &self.kvs);
+        self.instruments.la_exec_succeeded_latency.records(dur);
     }
 
     pub(crate) fn la_executed(&self) {
-        self.instruments.la_total.add(1, &self.kvs);
+        self.instruments.la_total.adds(1);
     }
 
     /// A nexus long poll timed out
     pub(crate) fn nexus_poll_timeout(&self) {
-        self.instruments.nexus_poll_no_task.add(1, &self.kvs);
+        self.instruments.nexus_poll_no_task.adds(1);
     }
 
     /// Record nexus task schedule to start time
     pub(crate) fn nexus_task_sched_to_start_latency(&self, dur: Duration) {
         self.instruments
             .nexus_task_schedule_to_start_latency
-            .record(dur, &self.kvs);
+            .records(dur);
     }
 
     /// Record nexus task end-to-end time
     pub(crate) fn nexus_task_e2e_latency(&self, dur: Duration) {
-        self.instruments
-            .nexus_task_e2e_latency
-            .record(dur, &self.kvs);
+        self.instruments.nexus_task_e2e_latency.records(dur);
     }
 
     /// Record nexus task execution time
     pub(crate) fn nexus_task_execution_latency(&self, dur: Duration) {
-        self.instruments
-            .nexus_task_execution_latency
-            .record(dur, &self.kvs);
+        self.instruments.nexus_task_execution_latency.records(dur);
     }
 
     /// Record a nexus task execution failure
     pub(crate) fn nexus_task_execution_failed(&self) {
-        self.instruments
-            .nexus_task_execution_failed
-            .add(1, &self.kvs);
+        self.instruments.nexus_task_execution_failed.adds(1);
     }
 
     /// A worker was registered
     pub(crate) fn worker_registered(&self) {
-        self.instruments.worker_registered.add(1, &self.kvs);
+        self.instruments.worker_registered.adds(1);
     }
 
     /// Record current number of available task slots. Context should have worker type set.
     pub(crate) fn available_task_slots(&self, num: usize) {
-        self.instruments
-            .task_slots_available
-            .record(num as u64, &self.kvs)
+        self.instruments.task_slots_available.records(num as u64)
     }
 
     /// Record current number of used task slots. Context should have worker type set.
     pub(crate) fn task_slots_used(&self, num: u64) {
-        self.instruments.task_slots_used.record(num, &self.kvs)
+        self.instruments.task_slots_used.records(num)
     }
 
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
-        self.instruments.num_pollers.record(num as u64, &self.kvs);
+        self.instruments.num_pollers.records(num as u64);
     }
 
     /// A workflow task found a cached workflow to run against
     pub(crate) fn sticky_cache_hit(&self) {
-        self.instruments.sticky_cache_hit.add(1, &self.kvs);
+        self.instruments.sticky_cache_hit.adds(1);
     }
 
     /// A workflow task did not find a cached workflow
     pub(crate) fn sticky_cache_miss(&self) {
-        self.instruments.sticky_cache_miss.add(1, &self.kvs);
+        self.instruments.sticky_cache_miss.adds(1);
     }
 
     /// Record current cache size (in number of wfs, not bytes)
     pub(crate) fn cache_size(&self, size: u64) {
-        self.instruments.sticky_cache_size.record(size, &self.kvs);
+        self.instruments.sticky_cache_size.records(size);
     }
 
     /// Count a workflow being evicted from the cache
     pub(crate) fn forced_cache_eviction(&self) {
-        self.instruments
-            .sticky_cache_forced_evictions
-            .add(1, &self.kvs);
+        self.instruments.sticky_cache_forced_evictions.adds(1);
     }
 }
 
@@ -496,6 +473,77 @@ impl Instruments {
                 unit: "".into(),
             }),
         }
+    }
+
+    fn update_attributes(&mut self, new_attributes: &MetricAttributes) {
+        self.wf_completed_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_canceled_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_failed_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_cont_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_e2e_latency
+            .update_attributes(new_attributes.clone());
+        self.wf_task_queue_poll_empty_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_task_queue_poll_succeed_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_task_execution_failure_counter
+            .update_attributes(new_attributes.clone());
+        self.wf_task_sched_to_start_latency
+            .update_attributes(new_attributes.clone());
+        self.wf_task_replay_latency
+            .update_attributes(new_attributes.clone());
+        self.wf_task_execution_latency
+            .update_attributes(new_attributes.clone());
+        self.act_poll_no_task
+            .update_attributes(new_attributes.clone());
+        self.act_task_received_counter
+            .update_attributes(new_attributes.clone());
+        self.act_execution_failed
+            .update_attributes(new_attributes.clone());
+        self.act_sched_to_start_latency
+            .update_attributes(new_attributes.clone());
+        self.act_exec_latency
+            .update_attributes(new_attributes.clone());
+        self.act_exec_succeeded_latency
+            .update_attributes(new_attributes.clone());
+        self.la_execution_cancelled
+            .update_attributes(new_attributes.clone());
+        self.la_execution_failed
+            .update_attributes(new_attributes.clone());
+        self.la_exec_latency
+            .update_attributes(new_attributes.clone());
+        self.la_exec_succeeded_latency
+            .update_attributes(new_attributes.clone());
+        self.la_total.update_attributes(new_attributes.clone());
+        self.nexus_poll_no_task
+            .update_attributes(new_attributes.clone());
+        self.nexus_task_schedule_to_start_latency
+            .update_attributes(new_attributes.clone());
+        self.nexus_task_e2e_latency
+            .update_attributes(new_attributes.clone());
+        self.nexus_task_execution_latency
+            .update_attributes(new_attributes.clone());
+        self.nexus_task_execution_failed
+            .update_attributes(new_attributes.clone());
+        self.worker_registered
+            .update_attributes(new_attributes.clone());
+        self.num_pollers.update_attributes(new_attributes.clone());
+        self.task_slots_available
+            .update_attributes(new_attributes.clone());
+        self.task_slots_used
+            .update_attributes(new_attributes.clone());
+        self.sticky_cache_hit
+            .update_attributes(new_attributes.clone());
+        self.sticky_cache_miss
+            .update_attributes(new_attributes.clone());
+        self.sticky_cache_size
+            .update_attributes(new_attributes.clone());
+        self.sticky_cache_forced_evictions
+            .update_attributes(new_attributes.clone());
     }
 }
 
@@ -757,28 +805,30 @@ where
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(self.new_instrument(params, MetricKind::Counter))
+    fn counter(&self, params: MetricParameters) -> Counter {
+        Counter::new(Arc::new(self.new_instrument(params, MetricKind::Counter)))
     }
 
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(self.new_instrument(params, MetricKind::Histogram))
+    fn histogram(&self, params: MetricParameters) -> Histogram {
+        Histogram::new(Arc::new(self.new_instrument(params, MetricKind::Histogram)))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(self.new_instrument(params, MetricKind::HistogramF64))
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
+        HistogramF64::new(Arc::new(self.new_instrument(params, MetricKind::Histogram)))
     }
 
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(self.new_instrument(params, MetricKind::HistogramDuration))
+    fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration {
+        HistogramDuration::new(Arc::new(
+            self.new_instrument(params, MetricKind::HistogramDuration),
+        ))
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(self.new_instrument(params, MetricKind::Gauge))
+    fn gauge(&self, params: MetricParameters) -> Gauge {
+        Gauge::new(Arc::new(self.new_instrument(params, MetricKind::Gauge)))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(self.new_instrument(params, MetricKind::GaugeF64))
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
+        GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::Gauge)))
     }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
@@ -790,6 +840,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct BufferInstrument<I: BufferInstrumentRef> {
     instrument_ref: LazyBufferInstrument<I>,
     tx: LogErrOnFullSender<MetricEvent<I>>,
@@ -801,7 +852,7 @@ where
     fn send(&self, value: MetricUpdateVal, attributes: &MetricAttributes) {
         let attributes = match attributes {
             MetricAttributes::Buffer(l) => l.clone(),
-            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
+            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Buffer"),
         };
         self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),
@@ -810,52 +861,154 @@ where
         });
     }
 }
-impl<I> Counter for BufferInstrument<I>
+
+#[derive(Clone)]
+struct InstrumentWithAttributes<I> {
+    inner: I,
+    attributes: MetricAttributes,
+}
+
+impl<I> MetricAttributable<Box<dyn CounterBase>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn add(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::Delta(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
     }
 }
-impl<I> Gauge for BufferInstrument<I>
+
+impl<I> MetricAttributable<Box<dyn HistogramBase>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::Value(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
     }
 }
-impl<I> GaugeF64 for BufferInstrument<I>
+
+impl<I> MetricAttributable<Box<dyn HistogramF64Base>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: f64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::ValueF64(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
     }
 }
-impl<I> Histogram for BufferInstrument<I>
+
+impl<I> MetricAttributable<Box<dyn HistogramDurationBase>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::Value(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
     }
 }
-impl<I> HistogramF64 for BufferInstrument<I>
+
+impl<I> MetricAttributable<Box<dyn GaugeBase>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: f64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::ValueF64(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
     }
 }
-impl<I> HistogramDuration for BufferInstrument<I>
+
+impl<I> MetricAttributable<Box<dyn GaugeF64Base>> for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn record(&self, value: Duration, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::Duration(value), attributes)
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
+    }
+}
+impl<I> CounterBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn adds(&self, value: u64) {
+        self.inner
+            .send(MetricUpdateVal::Delta(value), &self.attributes)
+    }
+}
+impl<I> GaugeBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn records(&self, value: u64) {
+        self.inner
+            .send(MetricUpdateVal::Value(value), &self.attributes)
+    }
+}
+impl<I> GaugeF64Base for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn records(&self, value: f64) {
+        self.inner
+            .send(MetricUpdateVal::ValueF64(value), &self.attributes)
+    }
+}
+impl<I> HistogramBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn records(&self, value: u64) {
+        self.inner
+            .send(MetricUpdateVal::Value(value), &self.attributes)
+    }
+}
+impl<I> HistogramF64Base for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn records(&self, value: f64) {
+        self.inner
+            .send(MetricUpdateVal::ValueF64(value), &self.attributes)
+    }
+}
+impl<I> HistogramDurationBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn records(&self, value: Duration) {
+        self.inner
+            .send(MetricUpdateVal::Duration(value), &self.attributes)
     }
 }
 
@@ -877,32 +1030,32 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
         self.meter.extend_attributes(existing, attribs)
     }
 
-    fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
+    fn counter(&self, mut params: MetricParameters) -> Counter {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.counter(params)
     }
 
-    fn histogram(&self, mut params: MetricParameters) -> Arc<dyn Histogram> {
+    fn histogram(&self, mut params: MetricParameters) -> Histogram {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram(params)
     }
 
-    fn histogram_f64(&self, mut params: MetricParameters) -> Arc<dyn HistogramF64> {
+    fn histogram_f64(&self, mut params: MetricParameters) -> HistogramF64 {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram_f64(params)
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
+    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram_duration(params)
     }
 
-    fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
+    fn gauge(&self, mut params: MetricParameters) -> Gauge {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge(params)
     }
 
-    fn gauge_f64(&self, mut params: MetricParameters) -> Arc<dyn GaugeF64> {
+    fn gauge_f64(&self, mut params: MetricParameters) -> GaugeF64 {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge_f64(params)
     }
@@ -1003,6 +1156,7 @@ mod tests {
             => populate_into
         );
         a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
+        dbg!(&events);
         assert_matches!(
             &events[1],
             MetricEvent::Update {

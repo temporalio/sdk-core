@@ -69,7 +69,7 @@ pub enum ConfigError {
     InvalidConfig(String),
 
     #[error("Configuration loading error: {0}")]
-    LoadError(anyhow::Error),
+    LoadError(Box<dyn std::error::Error>),
 }
 
 impl From<std::str::Utf8Error> for ConfigError {

@@ -18,6 +18,7 @@ use parking_lot::Mutex;
 use prost::Message;
 use rand::Rng;
 use std::{
+    cell::Cell,
     convert::TryFrom,
     env,
     future::Future,
@@ -171,9 +172,16 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
     Ok(History::decode(&*bytes)?)
 }
 
+thread_local! {
+    /// Can be set true to disable auto-initialization of integ-test telemetry.
+    pub static DONT_AUTO_INIT_INTEG_TELEM: Cell<bool> = const { Cell::new(false) };
+}
 static INTEG_TESTS_RT: std::sync::OnceLock<CoreRuntime> = std::sync::OnceLock::new();
-pub fn init_integ_telem() -> &'static CoreRuntime {
-    INTEG_TESTS_RT.get_or_init(|| {
+pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
+    if DONT_AUTO_INIT_INTEG_TELEM.get() {
+        return None;
+    }
+    Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
         let rt =
             CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
@@ -181,7 +189,7 @@ pub fn init_integ_telem() -> &'static CoreRuntime {
             let _ = tracing::subscriber::set_global_default(sub);
         }
         rt
-    })
+    }))
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
