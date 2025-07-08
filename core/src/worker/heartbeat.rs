@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
 use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
-use tokio::sync::watch;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
@@ -26,17 +26,16 @@ impl WorkerHeartbeatManager {
         client: Arc<dyn WorkerClient>,
     ) -> Self {
         let sdk_name_and_ver = client.sdk_name_and_version();
-        let (reset_tx, reset_rx) = watch::channel(());
+        let reset_notify = Arc::new(Notify::new());
         let data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
             config,
             identity,
             sdk_name_and_ver,
-            reset_tx,
+            reset_notify.clone(),
         )));
         let data_clone = data.clone();
 
         let heartbeat_handle = tokio::spawn(async move {
-            let mut reset_rx = reset_rx;
             let mut ticker = tokio::time::interval(data_clone.lock().heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
@@ -57,7 +56,7 @@ impl WorkerHeartbeatManager {
                             }
                         }
                     }
-                    _ = reset_rx.changed() => {
+                    _ = reset_notify.notified() => {
                         ticker.reset();
                     }
                 }
@@ -99,7 +98,7 @@ struct WorkerHeartbeatData {
     /// Worker start time
     start_time: SystemTime,
     heartbeat_interval: Duration,
-    reset_tx: watch::Sender<()>,
+    reset_notify: Arc<Notify>,
 }
 
 impl WorkerHeartbeatData {
@@ -107,7 +106,7 @@ impl WorkerHeartbeatData {
         worker_config: WorkerConfig,
         worker_identity: String,
         sdk_name_and_ver: (String, String),
-        reset_tx: watch::Sender<()>,
+        reset_notify: Arc<Notify>,
     ) -> Self {
         Self {
             worker_identity,
@@ -123,7 +122,7 @@ impl WorkerHeartbeatData {
             heartbeat_time: None,
             worker_instance_key: Uuid::new_v4().to_string(),
             heartbeat_interval: worker_config.heartbeat_interval,
-            reset_tx,
+            reset_notify,
         }
     }
 
@@ -148,7 +147,7 @@ impl WorkerHeartbeatData {
 
         self.heartbeat_time = Some(now);
 
-        let _ = self.reset_tx.send(());
+        self.reset_notify.notify_one();
 
         Some(WorkerHeartbeat {
             worker_instance_key: self.worker_instance_key.clone(),
