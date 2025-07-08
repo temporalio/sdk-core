@@ -35,6 +35,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use crate::worker::heartbeat::HeartbeatFn;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -49,7 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>,
+    heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
 }
 
 impl WorkerClientBag {
@@ -58,7 +59,7 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>,
+        heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),

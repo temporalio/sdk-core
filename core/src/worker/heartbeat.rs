@@ -12,6 +12,8 @@ use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
+pub(crate) type HeartbeatFn = Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>;
+
 pub(crate) struct WorkerHeartbeatManager {
     heartbeat_handle: JoinHandle<()>,
 }
@@ -20,7 +22,7 @@ impl WorkerHeartbeatManager {
     pub(crate) fn new(
         config: WorkerConfig,
         identity: String,
-        heartbeat_fn: Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>,
+        heartbeat_fn: Arc<OnceLock<HeartbeatFn>>,
         client: Arc<dyn WorkerClient>,
     ) -> Self {
         let sdk_name_and_ver = client.sdk_name_and_version();
@@ -63,9 +65,9 @@ impl WorkerHeartbeatManager {
         });
 
         let data_clone = data.clone();
-        if let Err(_) = heartbeat_fn.set(Box::new(move || {
+        if heartbeat_fn.set(Box::new(move || {
             data_clone.lock().capture_heartbeat_if_needed()
-        })) {
+        })).is_err() {
             dbg_panic!(
                 "Failed to set heartbeat_fn, heartbeat_fn should only be set once, when a singular WorkerHeartbeatInfo is created"
             );

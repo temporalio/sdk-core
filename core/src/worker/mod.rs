@@ -20,7 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::WorkerHeartbeatManager;
+use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -66,7 +66,6 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -276,7 +275,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>>,
+        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -315,7 +314,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>>,
+        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -495,16 +494,12 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat = if let Some(heartbeat_fn) = heartbeat_fn {
-            Some(WorkerHeartbeatManager::new(
-                config.clone(),
-                client.get_identity(),
-                heartbeat_fn,
-                client.clone(),
-            ))
-        } else {
-            None
-        };
+        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| WorkerHeartbeatManager::new(
+            config.clone(),
+            client.get_identity(),
+            heartbeat_fn,
+            client.clone(),
+        ));
 
         Self {
             worker_key,
