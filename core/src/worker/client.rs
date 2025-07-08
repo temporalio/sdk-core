@@ -1,9 +1,10 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
+use crate::abstractions::dbg_panic;
 use crate::protosext::legacy_query_failure;
-use crate::worker::heartbeat::WorkerHeartbeatData;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
+use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
@@ -48,7 +49,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
+    heartbeat_data: Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>,
 }
 
 impl WorkerClientBag {
@@ -57,7 +58,7 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
+        heartbeat_data: Arc<OnceLock<Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
@@ -127,7 +128,12 @@ impl WorkerClientBag {
     }
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        self.heartbeat_data.lock().capture_heartbeat_if_needed()
+        if let Some(hb) = self.heartbeat_data.get() {
+            hb()
+        } else {
+            dbg_panic!("Heartbeat function never set");
+            None
+        }
     }
 }
 
