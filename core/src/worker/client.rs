@@ -3,6 +3,7 @@
 pub(crate) mod mocks;
 use crate::abstractions::dbg_panic;
 use crate::protosext::legacy_query_failure;
+use crate::worker::heartbeat::HeartbeatFn;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
@@ -35,7 +36,6 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
-use crate::worker::heartbeat::HeartbeatFn;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 

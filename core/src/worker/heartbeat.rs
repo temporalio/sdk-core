@@ -65,9 +65,12 @@ impl WorkerHeartbeatManager {
         });
 
         let data_clone = data.clone();
-        if heartbeat_fn.set(Box::new(move || {
-            data_clone.lock().capture_heartbeat_if_needed()
-        })).is_err() {
+        if heartbeat_fn
+            .set(Box::new(move || {
+                data_clone.lock().capture_heartbeat_if_needed()
+            }))
+            .is_err()
+        {
             dbg_panic!(
                 "Failed to set heartbeat_fn, heartbeat_fn should only be set once, when a singular WorkerHeartbeatInfo is created"
             );

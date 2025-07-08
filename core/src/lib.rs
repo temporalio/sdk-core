@@ -99,7 +99,7 @@ where
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
 
-    if client_ident.is_empty(){
+    if client_ident.is_empty() {
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 

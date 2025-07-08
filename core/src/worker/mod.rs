@@ -494,12 +494,14 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| WorkerHeartbeatManager::new(
-            config.clone(),
-            client.get_identity(),
-            heartbeat_fn,
-            client.clone(),
-        ));
+        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| {
+            WorkerHeartbeatManager::new(
+                config.clone(),
+                client.get_identity(),
+                heartbeat_fn,
+                client.clone(),
+            )
+        });
 
         Self {
             worker_key,
