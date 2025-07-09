@@ -368,6 +368,7 @@ impl Future for WorkflowFuture {
             }
 
             let mut activation_cmds = vec![];
+            let mut init_activation_cmds = vec![];
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
             if activation
@@ -382,7 +383,7 @@ impl Future for WorkflowFuture {
                 })
             {
                 // Poll the workflow future once to get things registered
-                if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
+                if self.poll_wf_future(cx, &run_id, &mut init_activation_cmds)? {
                     continue;
                 }
             }
@@ -428,6 +429,7 @@ impl Future for WorkflowFuture {
                 )
                 .collect();
 
+            activation_cmds.extend(init_activation_cmds);
             if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                 continue;
             }

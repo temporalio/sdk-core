@@ -4,7 +4,7 @@ use futures_util::{StreamExt, future, future::join_all};
 use std::{
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -1220,4 +1220,113 @@ async fn update_lost_on_activity_mismatch() {
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn update_wft_timeout_nde() {
+    let wf_name = "update_wft_timeout_nde";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    static SHOULD_TIME_OUT: AtomicBool = AtomicBool::new(true);
+    static SHOULD_FAIL_2: AtomicBool = AtomicBool::new(true);
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let count = Arc::new(AtomicI32::new(0));
+        let should_complete = Arc::new(AtomicBool::new(false));
+
+        ctx.update_handler(
+            "fetchAdd",
+            |_: &_, arg: i32| {
+                if arg < 0 {
+                    return Err(anyhow!("bad arg"));
+                }
+                Ok(())
+            },
+            move |_: UpdateContext, arg: i32| {
+                let prev_ct = count.load(Ordering::Relaxed);
+                count.fetch_add(arg, Ordering::Relaxed);
+                async move { Ok(prev_ct) }
+            },
+        );
+
+        let sc = should_complete.clone();
+        ctx.update_handler(
+            "beDone",
+            |_: &_, _: ()| Ok(()),
+            move |_: UpdateContext, _: ()| {
+                sc.store(true, Ordering::Relaxed);
+                async move { Ok(()) }
+            },
+        );
+        // generate wft fail
+        if SHOULD_TIME_OUT.load(Ordering::Relaxed) {
+            SHOULD_TIME_OUT.store(false, Ordering::Release);
+            ctx.force_task_fail(anyhow!("wft fail"));
+        }
+        ctx.activity(ActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(2)),
+            ..Default::default()
+        })
+        .await
+        .unwrap_ok_payload();
+        // if SHOULD_FAIL_2.load(Ordering::Relaxed) {
+        //     SHOULD_FAIL_2.store(false, Ordering::Release);
+        //     ctx.force_task_fail(anyhow!("wft fail 2"));
+        // }
+        ctx.wait_condition(move || should_complete.load(Ordering::Relaxed))
+            .await;
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+        Ok(echo_me)
+    });
+
+    let core_worker = worker.core_worker.clone();
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        // Need time to get to wft fail
+        // tokio::time::sleep(Duration::from_millis(200)).await;
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "fetchAdd".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [1.as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+        // Evict wf
+        core_worker.request_workflow_eviction(handle.info().run_id.as_ref().unwrap());
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "beDone".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [1.as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        dbg!(&res);
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, runner);
+    // handle
+    //     .fetch_history_and_replay(worker.inner_mut())
+    //     .await
+    //     .unwrap();
 }
