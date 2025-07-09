@@ -149,10 +149,12 @@ impl ActContext {
 
     /// RecordHeartbeat sends heartbeat for the currently executing activity
     pub fn record_heartbeat(&self, details: Vec<Payload>) {
-        self.worker.record_activity_heartbeat(ActivityHeartbeat {
-            task_token: self.info.task_token.clone(),
-            details,
-        })
+        if !self.info.is_local {
+            self.worker.record_activity_heartbeat(ActivityHeartbeat {
+                task_token: self.info.task_token.clone(),
+                details,
+            })
+        }
     }
 
     /// Get activity info of the executing activity
