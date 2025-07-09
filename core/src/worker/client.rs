@@ -366,7 +366,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -679,7 +679,7 @@ impl WorkerClient for WorkerClientBag {
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
                 namespace: self.namespace.clone(),
                 identity: self.identity.clone(),
-                worker_heartbeat: Some(heartbeat),
+                worker_heartbeat: vec![heartbeat],
             })
             .await?
             .into_inner())

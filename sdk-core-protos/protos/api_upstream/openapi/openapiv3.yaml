@@ -9723,7 +9723,9 @@ components:
           type: string
           description: The identity of the client who initiated this request.
         workerHeartbeat:
-          $ref: '#/components/schemas/WorkerHeartbeat'
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkerHeartbeat'
     RecordWorkerHeartbeatResponse:
       type: object
       properties: {}
@@ -12797,9 +12799,19 @@ components:
         hostName:
           type: string
           description: Worker host identifier.
+        processKey:
+          type: string
+          description: |-
+            Worker process identifier. This id should be unique for all _processes_
+             running workers in the namespace, and should be shared by all workers
+             in the same process.
+             This will be used to build the worker command nexus task queue name:
+             "temporal-sys/worker-commands/{process_key}"
         processId:
           type: string
-          description: Worker process identifier, should be unique for the host.
+          description: |-
+            Worker process identifier. Unlike process_key, this id only needs to be unique
+             within one host (so using e.g. a unix pid would be appropriate).
         currentHostCpuUsage:
           type: number
           description: |-
