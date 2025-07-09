@@ -35,8 +35,11 @@ use tonic::IntoRequest;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
+/// Legacy-version of [QueryResult] containing a seperate failure case
 pub enum LegacyQueryResult {
+    /// Success case containing the [QueryResult]
     Succeeded(QueryResult),
+    /// Failure case containing the [workflow_completion::Failure]
     Failed(workflow_completion::Failure),
 }
 

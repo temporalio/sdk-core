@@ -202,7 +202,7 @@ impl Drop for ByteArray {
         // drop-but-not-freed situation though we don't expect any), the bytes
         // remain non-null so we re-own them here. See "byte_array_free" in
         // runtime.rs.
-        if !self.data.is_null() {
+        if !self.data.is_null() && !self.disable_free {
             unsafe { Vec::from_raw_parts(self.data as *mut u8, self.size, self.cap) };
         }
     }

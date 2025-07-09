@@ -153,7 +153,7 @@ impl WorkflowActivationExt for WorkflowActivation {
 }
 
 /// Create a legacy query failure result
-pub(crate) fn legacy_query_failure(fail: workflow_completion::Failure) -> QueryResult {
+pub fn legacy_query_failure(fail: workflow_completion::Failure) -> QueryResult {
     QueryResult {
         query_id: LEGACY_QUERY_ID.to_string(),
         variant: Some(query_result::Variant::Failed(
