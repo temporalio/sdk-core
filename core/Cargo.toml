@@ -96,6 +96,7 @@ criterion = { version = "0.6", features = ["async", "async_tokio"] }
 rstest = "0.25"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process", "test-util"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 [[test]]

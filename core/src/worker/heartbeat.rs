@@ -47,13 +47,13 @@ impl WorkerHeartbeatManager {
                             continue
                         };
                         if let Err(e) = client.clone().record_worker_heartbeat(heartbeat).await {
-                            warn!(error=?e, "Network error while sending worker heartbeat");
                             if matches!(
                                 e.code(),
                                 tonic::Code::Unimplemented
                             ) {
                                 return;
                             }
+                            warn!(error=?e, "Network error while sending worker heartbeat");
                         }
                     }
                     _ = reset_notify.notified() => {
@@ -134,7 +134,6 @@ impl WorkerHeartbeatData {
             // Only send poll data if it's nearly been a full interval since this data has been sent
             // In this case, "nearly" is 90% of the interval
             if dur.as_secs_f64() < 0.9 * self.heartbeat_interval.as_secs_f64() {
-                println!("Heartbeat interval not yet elapsed, not sending poll data");
                 return None;
             }
             Some(PbDuration {
@@ -213,12 +212,18 @@ mod tests {
         heartbeat_fn.get().unwrap()();
 
         // heartbeat timer fires once
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        advance_time(Duration::from_millis(300)).await;
         // it hasn't been >90% of the interval since the last heartbeat, so no data should be returned here
         assert_eq!(None, heartbeat_fn.get().unwrap()());
         // heartbeat timer fires once
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        advance_time(Duration::from_millis(300)).await;
 
         worker.drain_activity_poller_and_shutdown().await;
+    }
+
+    async fn advance_time(dur: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(dur).await;
+        tokio::time::resume();
     }
 }
