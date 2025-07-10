@@ -1,10 +1,7 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
 use crate::client::{
     Client, ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
-    ClientTlsOptions, RpcCallOptions, RpcService, temporal_core_client_connect,
-    temporal_core_client_free, temporal_core_client_rpc_call,
+    ClientTlsOptions, RpcCallOptions, temporal_core_client_connect, temporal_core_client_free,
+    temporal_core_client_rpc_call,
 };
 use crate::runtime::{
     Runtime, RuntimeOptions, RuntimeOrFail, temporal_core_byte_array_free,
@@ -19,22 +16,17 @@ use crate::tests::utils::{
     MetadataMap, OwnedRpcCallOptions, RpcCallError, byte_array_to_string, byte_array_to_vec,
     pointer_or_null,
 };
-use crate::{ByteArray, ByteArrayRef, CancellationToken, UserDataHandle};
+use crate::{ByteArray, ByteArrayRef};
 use anyhow::anyhow;
 use std::any::Any;
-use std::cell::Cell;
-use std::collections::HashMap;
-use std::ops::Deref;
 use std::panic::{AssertUnwindSafe, UnwindSafe};
 use std::ptr::NonNull;
-use std::sync::{Arc, Condvar, LockResult, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::Duration;
 use temporal_client::ClientOptions;
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfig,
 };
-use tokio::io::AsyncWriteExt;
-use tokio::sync::oneshot;
 
 #[derive(Debug)]
 enum ContextOperationState {
@@ -90,10 +82,12 @@ impl Context {
         }
     }
 
+    #[allow(dead_code)]
     pub fn runtime(&self) -> anyhow::Result<Option<NonNull<Runtime>>> {
         Ok(NonNull::new(self.wait_for_available()?.runtime))
     }
 
+    #[allow(dead_code)]
     pub fn ephemeral_server(&self) -> anyhow::Result<Option<NonNull<EphemeralServer>>> {
         Ok(NonNull::new(self.wait_for_available()?.ephemeral_server))
     }
@@ -103,6 +97,7 @@ impl Context {
         Ok((!guard.ephemeral_server.is_null()).then(|| guard.ephemeral_server_target.clone()))
     }
 
+    #[allow(dead_code)]
     pub fn client(&self) -> anyhow::Result<Option<NonNull<Client>>> {
         Ok(NonNull::new(self.wait_for_available()?.client))
     }
