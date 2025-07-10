@@ -8,7 +8,7 @@ use crate::{
         self,
         client::{
             MockWorkerClient,
-            mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_workflow_client},
+            mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_worker_client},
         },
     },
 };
@@ -106,7 +106,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
         ))
     });
     let mw = MockWorkerInputs::new(stream.boxed());
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
@@ -126,7 +126,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
 #[tokio::test]
 async fn can_shutdown_local_act_only_worker_when_act_polling() {
     let t = canned_histories::single_timer("1");
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|w| {
@@ -166,7 +166,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
 #[tokio::test]
 async fn complete_with_task_not_found_during_shutdown() {
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Err(tonic::Status::not_found("Workflow task not found.")));
@@ -209,7 +209,7 @@ async fn complete_eviction_after_shutdown_doesnt_panic() {
         "fakeid",
         t,
         [1],
-        mock_workflow_client(),
+        mock_worker_client(),
     ));
     mh.make_wft_stream_interminable();
     let core = mock_worker(mh);
@@ -236,7 +236,7 @@ async fn complete_eviction_after_shutdown_doesnt_panic() {
 #[tokio::test]
 async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
     let t = canned_histories::single_timer("1");
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     // Return a failure that counts as retryable, and hence we want to be swallowed
     mock.expect_complete_workflow_task()
         .times(1)
@@ -264,7 +264,7 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
 #[rstest::rstest]
 #[tokio::test]
 async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_workflow: bool) {
-    let mut mock = mock_workflow_client();
+    let mut mock = mock_worker_client();
     mock.expect_poll_activity_task()
         .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
     if poll_workflow {
@@ -314,6 +314,8 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
     mock.expect_is_mock().returning(|| true);
     mock.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
+    mock.expect_get_identity()
+        .returning(|| "test-identity".to_string());
     if use_cache {
         if api_success {
             mock.expect_shutdown_worker()

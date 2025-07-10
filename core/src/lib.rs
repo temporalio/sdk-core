@@ -61,7 +61,7 @@ use crate::{
 };
 use anyhow::bail;
 use futures_util::Stream;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
@@ -98,11 +98,19 @@ where
     }
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
+
+    if client_ident.is_empty() {
+        bail!("Client identity cannot be empty. Either lang or user should be setting this value");
+    }
+
+    let heartbeat_fn = Arc::new(OnceLock::new());
+
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
         client_ident,
         worker_config.versioning_strategy.clone(),
+        heartbeat_fn.clone(),
     ));
 
     Ok(Worker::new(
@@ -110,6 +118,7 @@ where
         sticky_q,
         client_bag,
         Some(&runtime.telemetry),
+        Some(heartbeat_fn),
     ))
 }
 
