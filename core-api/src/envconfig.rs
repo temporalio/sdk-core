@@ -210,13 +210,23 @@ fn read_path_bytes(path: &str) -> Result<Option<Vec<u8>>, ConfigError> {
     }
 }
 
-/// Load client configuration from TOML. Does not load values from environment variables
-/// (but may use environment variables to get which config file to load). This will not fail
-/// if the file does not exist.
+/// Load client configuration from TOML. This function uses environment variables (which are
+/// taken from the system if not provided) to locate the configuration file. It does not apply
+/// other environment variable values; that is handled by [load_client_config_profile]. This will
+/// not fail if the file does not exist.
 pub fn load_client_config(
     options: LoadClientConfigOptions,
     env_vars: Option<&HashMap<String, String>>,
 ) -> Result<ClientConfig, ConfigError> {
+    // If env_vars is None, fall back to system env vars.
+    let owned_vars;
+    let env_vars = if let Some(vars) = env_vars {
+        Some(vars)
+    } else {
+        owned_vars = std::env::vars().collect::<HashMap<_, _>>();
+        Some(&owned_vars)
+    };
+
     // Get which bytes to load from TOML
     let toml_data = match options.config_source {
         Some(DataSource::Data(d)) => Some(d),
@@ -254,6 +264,16 @@ pub fn load_client_config_profile(
             "Cannot disable both file and environment loading".to_string(),
         ));
     }
+
+    let owned_vars;
+    let env_vars = if options.disable_env {
+        None
+    } else if let Some(vars) = env_vars {
+        Some(vars)
+    } else {
+        owned_vars = std::env::vars().collect::<HashMap<_, _>>();
+        Some(&owned_vars)
+    };
 
     let mut profile = if options.disable_file {
         ClientConfigProfile::default()
@@ -1540,5 +1560,30 @@ address = "some-address"
 
         // TLS should not be enabled
         assert!(profile.tls.is_none());
+    }
+
+    #[test]
+    fn test_load_client_config_profile_from_system_env() {
+        // Set up system env vars. These tests can't be run in parallel.
+        unsafe {
+            std::env::set_var("TEMPORAL_ADDRESS", "system-address");
+            std::env::set_var("TEMPORAL_NAMESPACE", "system-namespace");
+        }
+
+        let options = LoadClientConfigProfileOptions {
+            disable_file: true, // Don't load from any files
+            ..Default::default()
+        };
+
+        // Pass None for env_vars to trigger system env var loading
+        let profile = load_client_config_profile(options, None).unwrap();
+        assert_eq!(profile.address.as_ref().unwrap(), "system-address");
+        assert_eq!(profile.namespace.as_ref().unwrap(), "system-namespace");
+
+        // Clean up
+        unsafe {
+            std::env::remove_var("TEMPORAL_ADDRESS");
+            std::env::remove_var("TEMPORAL_NAMESPACE");
+        }
     }
 }
