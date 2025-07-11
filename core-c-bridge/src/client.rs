@@ -5,14 +5,21 @@ use crate::MetadataRef;
 use crate::UserDataHandle;
 use crate::runtime::Runtime;
 
+use futures_util::FutureExt;
+use http::HeaderMap;
+use prost::bytes::Bytes;
+use std::cell::OnceCell;
+use std::collections::HashMap;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use temporal_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
     ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
     OperatorService, RetryClient, RetryConfig, TemporalServiceClientWithMetrics, TestService,
-    TlsConfig, WorkflowService,
+    TlsConfig, WorkflowService, callback_based,
 };
+use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;
 use url::Url;
 
@@ -28,6 +35,8 @@ pub struct ClientOptions {
     pub retry_options: *const ClientRetryOptions,
     pub keep_alive_options: *const ClientKeepAliveOptions,
     pub http_connect_proxy_options: *const ClientHttpConnectProxyOptions,
+    // TODO(cretz): Document that this will be invoked _before_ returned in most cases
+    pub grpc_override_callback: ClientGrpcOverrideCallback,
 }
 
 #[repr(C)]
@@ -106,12 +115,22 @@ pub extern "C" fn temporal_core_client_connect(
             return;
         }
     };
+    // Create override if present
+    let service_override =
+        options
+            .grpc_override_callback
+            .map(|callback| callback_based::CallbackBasedGrpcService {
+                callback: Arc::new(|req| async { todo!() }.boxed()),
+            });
     // Spawn async call
     let user_data = UserDataHandle(user_data);
     let core = runtime.core.clone();
     runtime.core.tokio_handle().spawn(async move {
         match core_options
-            .connect_no_namespace(core.telemetry().get_temporal_metric_meter())
+            .connect_no_namespace_with_service_override(
+                core.telemetry().get_temporal_metric_meter(),
+                service_override,
+            )
             .await
         {
             Ok(core) => {
@@ -162,6 +181,113 @@ pub extern "C" fn temporal_core_client_update_api_key(client: *mut Client, api_k
         .core
         .get_client()
         .set_api_key(api_key.to_option_string());
+}
+
+pub type ClientGrpcOverrideCallback =
+    Option<unsafe extern "C" fn(request: *const ClientGrpcOverrideRequest)>;
+
+pub struct ClientGrpcOverrideRequest<'a> {
+    core: callback_based::GrpcRequest<'a>,
+    built_headers: OnceCell<String>,
+    response_sender: oneshot::Sender<Result<callback_based::GrpcSuccessResponse, tonic::Status>>,
+}
+
+#[repr(C)]
+pub struct ClientGrpcOverrideResponse {
+    pub status_code: i32, // 0 for success
+    pub headers: MetadataRef,
+    pub success_proto: ByteArrayRef, // Ignored if status non-0
+    pub fail_message: ByteArrayRef,  // Ignored if status 0
+    pub fail_details: ByteArrayRef,  // Ignored if status 0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_grpc_override_request_service(
+    req: *const ClientGrpcOverrideRequest,
+) -> ByteArrayRef {
+    let req = unsafe { &*req };
+    req.core.service.into()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_grpc_override_request_rpc(
+    req: *const ClientGrpcOverrideRequest,
+) -> ByteArrayRef {
+    let req = unsafe { &*req };
+    req.core.rpc.into()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_grpc_override_request_headers(
+    req: *const ClientGrpcOverrideRequest,
+) -> MetadataRef {
+    let req = unsafe { &*req };
+    // Lazily create the headers on first access
+    let headers = req.built_headers.get_or_init(|| {
+        req.core
+            .headers
+            .iter()
+            .filter_map(|(name, value)| value.to_str().ok().map(|val| (name.as_str(), val)))
+            .flat_map(|(k, v)| [k, v])
+            .collect::<Vec<_>>()
+            .join("\n")
+    });
+    headers.as_str().into()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_grpc_override_request_proto(
+    req: *const ClientGrpcOverrideRequest,
+) -> ByteArrayRef {
+    let req = unsafe { &*req };
+    (&*req.core.proto).into()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_grpc_override_request_respond(
+    req: *mut ClientGrpcOverrideRequest,
+    resp: ClientGrpcOverrideResponse,
+) {
+    let req = unsafe { Box::from_raw(req) };
+    // Ignore failure if receiver no longer around (e.g. maybe a cancellation)
+    let _ = req
+        .response_sender
+        .send(resp.build_grpc_override_response());
+}
+
+impl ClientGrpcOverrideResponse {
+    fn build_grpc_override_response(
+        self,
+    ) -> Result<callback_based::GrpcSuccessResponse, tonic::Status> {
+        let headers = Self::client_headers_from_metadata_ref(self.headers)
+            .map_err(|err| tonic::Status::internal(err))?;
+        if self.status_code == 0 {
+            Ok(callback_based::GrpcSuccessResponse {
+                headers,
+                proto: self.success_proto.to_vec(),
+            })
+        } else {
+            Err(tonic::Status::with_details_and_metadata(
+                tonic::Code::from_i32(self.status_code),
+                self.fail_message.to_string(),
+                Bytes::copy_from_slice(self.fail_details.to_slice()),
+                tonic::metadata::MetadataMap::from_headers(headers),
+            ))
+        }
+    }
+
+    fn client_headers_from_metadata_ref(headers: MetadataRef) -> Result<http::HeaderMap, String> {
+        let key_values = headers.to_str_map_on_newlines();
+        let mut header_map = http::HeaderMap::with_capacity(key_values.len());
+        for (k, v) in key_values.into_iter() {
+            let name = http::HeaderName::try_from(k)
+                .map_err(|e| format!("Invalid header name '{}': {}", k, e))?;
+            let value = http::HeaderValue::from_str(v)
+                .map_err(|e| format!("Invalid header value '{}': {}", v, e))?;
+            header_map.insert(name, value);
+        }
+        Ok(header_map)
+    }
 }
 
 #[repr(C)]

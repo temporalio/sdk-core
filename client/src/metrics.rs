@@ -1,6 +1,8 @@
-use crate::{AttachMetricLabels, CallType, dbg_panic};
+use crate::{AttachMetricLabels, CallType, callback_based, dbg_panic};
+use futures_util::TryFutureExt;
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
+    fmt,
     sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
@@ -205,19 +207,37 @@ fn code_as_screaming_snake(code: &Code) -> &'static str {
 /// Implements metrics functionality for gRPC (really, any http) calls
 #[derive(Debug, Clone)]
 pub struct GrpcMetricSvc {
-    pub(crate) inner: Channel,
+    pub(crate) inner: ChannelOrGrpcOverride,
     // If set to none, metrics are a no-op
     pub(crate) metrics: Option<MetricsContext>,
     pub(crate) disable_errcode_label: bool,
 }
 
+#[derive(Clone)]
+pub(crate) enum ChannelOrGrpcOverride {
+    Channel(Channel),
+    GrpcOverride(callback_based::CallbackBasedGrpcService),
+}
+
+impl fmt::Debug for ChannelOrGrpcOverride {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ChannelOrGrpcOverride::Channel(inner) => fmt::Debug::fmt(inner, f),
+            ChannelOrGrpcOverride::GrpcOverride(_) => f.write_str("<callback-based-grpc-service>"),
+        }
+    }
+}
+
 impl Service<http::Request<Body>> for GrpcMetricSvc {
     type Response = http::Response<Body>;
-    type Error = tonic::transport::Error;
+    type Error = Box<dyn std::error::Error + Send + Sync>;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
+        match &mut self.inner {
+            ChannelOrGrpcOverride::Channel(inner) => inner.poll_ready(cx).map_err(Into::into),
+            ChannelOrGrpcOverride::GrpcOverride(inner) => inner.poll_ready(cx).map_err(Into::into),
+        }
     }
 
     fn call(&mut self, mut req: http::Request<Body>) -> Self::Future {
@@ -245,7 +265,12 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
                     metrics
                 })
             });
-        let callfut = self.inner.call(req);
+        let callfut: Self::Future = match &mut self.inner {
+            ChannelOrGrpcOverride::Channel(inner) => inner.call(req).map_err(Into::into).boxed(),
+            ChannelOrGrpcOverride::GrpcOverride(inner) => {
+                inner.call(req).map_err(Into::into).boxed()
+            }
+        };
         let errcode_label_disabled = self.disable_errcode_label;
         async move {
             let started = Instant::now();

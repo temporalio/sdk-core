@@ -58,6 +58,8 @@ typedef struct TemporalCoreCancellationToken TemporalCoreCancellationToken;
 
 typedef struct TemporalCoreClient TemporalCoreClient;
 
+typedef struct TemporalCoreClientGrpcOverrideRequest TemporalCoreClientGrpcOverrideRequest;
+
 typedef struct TemporalCoreEphemeralServer TemporalCoreEphemeralServer;
 
 typedef struct TemporalCoreForwardedLog TemporalCoreForwardedLog;
@@ -114,6 +116,8 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
   struct TemporalCoreByteArrayRef password;
 } TemporalCoreClientHttpConnectProxyOptions;
 
+typedef void (*TemporalCoreClientGrpcOverrideCallback)(const struct TemporalCoreClientGrpcOverrideRequest *request);
+
 typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
@@ -125,6 +129,7 @@ typedef struct TemporalCoreClientOptions {
   const struct TemporalCoreClientRetryOptions *retry_options;
   const struct TemporalCoreClientKeepAliveOptions *keep_alive_options;
   const struct TemporalCoreClientHttpConnectProxyOptions *http_connect_proxy_options;
+  TemporalCoreClientGrpcOverrideCallback grpc_override_callback;
 } TemporalCoreClientOptions;
 
 typedef struct TemporalCoreByteArray {
@@ -146,6 +151,14 @@ typedef struct TemporalCoreByteArray {
 typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
                                                   struct TemporalCoreClient *success,
                                                   const struct TemporalCoreByteArray *fail);
+
+typedef struct TemporalCoreClientGrpcOverrideResponse {
+  int32_t status_code;
+  TemporalCoreMetadataRef headers;
+  struct TemporalCoreByteArrayRef success_proto;
+  struct TemporalCoreByteArrayRef fail_message;
+  struct TemporalCoreByteArrayRef fail_details;
+} TemporalCoreClientGrpcOverrideResponse;
 
 typedef struct TemporalCoreRpcCallOptions {
   enum TemporalCoreRpcService service;
@@ -655,6 +668,17 @@ void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
 
 void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
                                          struct TemporalCoreByteArrayRef api_key);
+
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_service(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_rpc(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+TemporalCoreMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_proto(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+void temporal_core_client_grpc_override_request_respond(struct TemporalCoreClientGrpcOverrideRequest *req,
+                                                        struct TemporalCoreClientGrpcOverrideResponse resp);
 
 /**
  * Client, options, and user data must live through callback.
