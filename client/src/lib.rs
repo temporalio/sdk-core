@@ -7,6 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
+mod callback_based;
 mod metrics;
 mod proxy;
 mod raw;
@@ -525,6 +526,60 @@ impl ClientOptions {
             return channel.tls_config(tls).map_err(Into::into);
         }
         Ok(channel)
+    }
+
+    /// Uses the given gRPC callback-based service instead of making an actual connection. The
+    /// following option fields are ignored: target_url (can be "about:blank" or something),
+    /// tls_cfg, override_origin, keep_alive, and http_connect_proxy. Other future connection-only
+    /// options may also be ignored. Metrics will are not recorded with this implementation.
+    pub async fn connect_with_service_override(
+        &self,
+        service: callback_based::CallbackBasedGrpcService,
+    ) -> Result<
+        RetryClient<
+            ConfiguredClient<
+                TemporalServiceClient<
+                    InterceptedService<
+                        callback_based::CallbackBasedGrpcService,
+                        ServiceCallInterceptor,
+                    >,
+                >,
+            >,
+        >,
+        ClientInitError,
+    > {
+        let headers = Arc::new(RwLock::new(ClientHeaders {
+            user_headers: self.headers.clone().unwrap_or_default(),
+            api_key: self.api_key.clone(),
+        }));
+        let interceptor = ServiceCallInterceptor {
+            opts: self.clone(),
+            headers: headers.clone(),
+        };
+        let svc = InterceptedService::new(service, interceptor);
+
+        let mut client = ConfiguredClient {
+            headers,
+            client: TemporalServiceClient::new(svc),
+            options: Arc::new(self.clone()),
+            capabilities: None,
+            workers: Arc::new(SlotManager::new()),
+        };
+        if !self.skip_get_system_info {
+            match client
+                .get_system_info(GetSystemInfoRequest::default())
+                .await
+            {
+                Ok(sysinfo) => {
+                    client.capabilities = sysinfo.into_inner().capabilities;
+                }
+                Err(status) => match status.code() {
+                    Code::Unimplemented => {}
+                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
+                },
+            };
+        }
+        Ok(RetryClient::new(client, self.retry_config.clone()))
     }
 }
 
