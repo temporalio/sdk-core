@@ -58,6 +58,15 @@ typedef struct TemporalCoreCancellationToken TemporalCoreCancellationToken;
 
 typedef struct TemporalCoreClient TemporalCoreClient;
 
+/**
+ * Representation of gRPC request for the callback.
+ *
+ * Note, temporal_core_client_grpc_override_request_respond is effectively the "free" call for
+ * each request. Each request _must_ call that and the request can no longer be valid after that
+ * call.
+ */
+typedef struct TemporalCoreClientGrpcOverrideRequest TemporalCoreClientGrpcOverrideRequest;
+
 typedef struct TemporalCoreEphemeralServer TemporalCoreEphemeralServer;
 
 typedef struct TemporalCoreForwardedLog TemporalCoreForwardedLog;
@@ -114,6 +123,16 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
   struct TemporalCoreByteArrayRef password;
 } TemporalCoreClientHttpConnectProxyOptions;
 
+/**
+ * Callback that is invoked for every gRPC call if set on the client options.
+ *
+ * Note, temporal_core_client_grpc_override_request_respond is effectively the "free" call for
+ * each request. Each request _must_ call that and the request can no longer be valid after that
+ * call. However, all of that work and the respond call may be done well after this callback
+ * returns. No data lifetime is related to the callback invocation itself.
+ */
+typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request);
+
 typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
@@ -125,6 +144,12 @@ typedef struct TemporalCoreClientOptions {
   const struct TemporalCoreClientRetryOptions *retry_options;
   const struct TemporalCoreClientKeepAliveOptions *keep_alive_options;
   const struct TemporalCoreClientHttpConnectProxyOptions *http_connect_proxy_options;
+  /**
+   * If this is set, all gRPC calls go through it and no connection is made to server. The client
+   * connection call usually calls this for "GetSystemInfo" before the connect is complete. See
+   * the callback documentation for more important information about usage and data lifetimes.
+   */
+  TemporalCoreClientGrpcOverrideCallback grpc_override_callback;
 } TemporalCoreClientOptions;
 
 typedef struct TemporalCoreByteArray {
@@ -146,6 +171,14 @@ typedef struct TemporalCoreByteArray {
 typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
                                                   struct TemporalCoreClient *success,
                                                   const struct TemporalCoreByteArray *fail);
+
+typedef struct TemporalCoreClientGrpcOverrideResponse {
+  int32_t status_code;
+  TemporalCoreMetadataRef headers;
+  struct TemporalCoreByteArrayRef success_proto;
+  struct TemporalCoreByteArrayRef fail_message;
+  struct TemporalCoreByteArrayRef fail_details;
+} TemporalCoreClientGrpcOverrideResponse;
 
 typedef struct TemporalCoreRpcCallOptions {
   enum TemporalCoreRpcService service;
@@ -655,6 +688,43 @@ void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
 
 void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
                                          struct TemporalCoreByteArrayRef api_key);
+
+/**
+ * Get a reference to the service name.
+ *
+ * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
+ */
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_service(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+/**
+ * Get a reference to the RPC name.
+ *
+ * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
+ */
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_rpc(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+/**
+ * Get a reference to the service headers.
+ *
+ * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
+ */
+TemporalCoreMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+/**
+ * Get a reference to the request protobuf bytes.
+ *
+ * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
+ */
+struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_proto(const struct TemporalCoreClientGrpcOverrideRequest *req);
+
+/**
+ * Complete the request, freeing all request data.
+ *
+ * The data referenced in the response must live until this function returns. Once this call is
+ * made, none of the request data should be considered valid.
+ */
+void temporal_core_client_grpc_override_request_respond(struct TemporalCoreClientGrpcOverrideRequest *req,
+                                                        struct TemporalCoreClientGrpcOverrideResponse resp);
 
 /**
  * Client, options, and user data must live through callback.
