@@ -99,6 +99,8 @@ impl TemporalDevServerConfig {
             "frontend.enableUpdateWorkflowExecution=true".to_owned(),
             "--dynamic-config-value".to_owned(),
             "frontend.enableUpdateWorkflowExecutionAsyncAccepted=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "history.enableRequestIdRefLinks=true".to_owned(),
         ];
         if let Some(db_filename) = &self.db_filename {
             args.push("--db-filename".to_owned());
