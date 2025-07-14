@@ -19,10 +19,12 @@ pub mod ephemeral_server;
 mod internal_flags;
 mod pollers;
 mod protosext;
+pub use protosext::legacy_query_failure;
 pub mod replay;
 pub(crate) mod retry_logic;
 pub mod telemetry;
 mod worker;
+pub use worker::client::LegacyQueryResult;
 
 #[cfg(test)]
 mod core_tests;

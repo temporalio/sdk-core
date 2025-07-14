@@ -391,8 +391,8 @@ pub struct ResourceBasedTunerOptions {
 
 #[derive(Clone)]
 pub struct Worker {
-    worker: Option<Arc<temporal_sdk_core::Worker>>,
-    runtime: Runtime,
+    pub(crate) worker: Option<Arc<temporal_sdk_core::Worker>>,
+    pub(crate) runtime: Runtime,
 }
 
 /// Only runtime or fail will be non-null. Whichever is must be freed when done.
@@ -418,6 +418,7 @@ pub struct WorkerReplayPushResult {
     pub fail: *const ByteArray,
 }
 
+#[macro_export]
 macro_rules! enter_sync {
     ($runtime:expr) => {
         if let Some(subscriber) = $runtime.core.telemetry().trace_subscriber() {

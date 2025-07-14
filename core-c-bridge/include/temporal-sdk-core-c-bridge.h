@@ -5,6 +5,29 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/**
+ * Interop mirror of the Rust tonic [tonic::Code] enum
+ */
+typedef enum TemporalCoreCallbackBasedWorkerClientGRPCCode {
+  Ok = 0,
+  Cancelled = 1,
+  Unknown = 2,
+  InvalidArgument = 3,
+  DeadlineExceeded = 4,
+  NotFound = 5,
+  AlreadyExists = 6,
+  PermissionDenied = 7,
+  ResourceExhausted = 8,
+  FailedPrecondition = 9,
+  Aborted = 10,
+  OutOfRange = 11,
+  Unimplemented = 12,
+  Internal = 13,
+  Unavailable = 14,
+  DataLoss = 15,
+  Unauthenticated = 16,
+} TemporalCoreCallbackBasedWorkerClientGRPCCode;
+
 typedef enum TemporalCoreForwardedLogLevel {
   Trace = 0,
   Debug,
@@ -629,6 +652,130 @@ typedef struct TemporalCoreWorkerReplayPushResult {
   const struct TemporalCoreByteArray *fail;
 } TemporalCoreWorkerReplayPushResult;
 
+/**
+ * Interop function pointer signature of the retry predicate of [CallbackBasedWorkerClientPollOptions]
+ */
+typedef bool (*TemporalCoreCallbackBasedWorkerClientNoRetryPredicate)(void *user_data,
+                                                                      enum TemporalCoreCallbackBasedWorkerClientGRPCCode code);
+
+/**
+ * Interop mirror of [temporal_sdk_core::PollOptions]
+ */
+typedef struct TemporalCoreCallbackBasedWorkerClientPollOptions {
+  /**
+   * always non-null (could be empty)
+   */
+  struct TemporalCoreByteArrayRef task_queue;
+  /**
+   * true if `no_retry_predicate` is valid
+   */
+  bool has_no_retry;
+  /**
+   * Decide short‐circuit GRPC error
+   */
+  TemporalCoreCallbackBasedWorkerClientNoRetryPredicate no_retry_predicate;
+  /**
+   * Opaque context pointer passed back to your predicate thunk
+   */
+  void *no_retry_user_data;
+  /**
+   * true if `timeout_override.is_some()`
+   */
+  bool has_timeout_ms;
+  /**
+   * timeout in milliseconds
+   */
+  uint64_t timeout_ms;
+} TemporalCoreCallbackBasedWorkerClientPollOptions;
+
+/**
+ * Function pointer for RPC callbacks delivering a `(success, failure)`
+ * pair as non-owning `ByteArrayRef`s to Rust.
+ */
+typedef void (*TemporalCoreWorkerClientCallbackTrampoline)(void *user_data,
+                                                           struct TemporalCoreByteArrayRef success,
+                                                           struct TemporalCoreByteArrayRef failure);
+
+/**
+ * Interop function pointer table implementing the RPC logic of the [temporal_sdk_core::WorkerClient] trait via callbacks.
+ */
+typedef struct TemporalCoreCallbackBasedWorkerClientRPCs {
+  void *user_data;
+  void (*poll_workflow_task)(void *user_data,
+                             struct TemporalCoreByteArrayRef request,
+                             const struct TemporalCoreCallbackBasedWorkerClientPollOptions *poll_opts,
+                             TemporalCoreWorkerClientCallbackTrampoline callback,
+                             void *callback_ud);
+  void (*poll_activity_task)(void *user_data,
+                             struct TemporalCoreByteArrayRef request,
+                             const struct TemporalCoreCallbackBasedWorkerClientPollOptions *poll_opts,
+                             TemporalCoreWorkerClientCallbackTrampoline callback,
+                             void *callback_ud);
+  void (*poll_nexus_task)(void *user_data,
+                          struct TemporalCoreByteArrayRef request,
+                          const struct TemporalCoreCallbackBasedWorkerClientPollOptions *poll_opts,
+                          TemporalCoreWorkerClientCallbackTrampoline callback,
+                          void *callback_ud);
+  void (*complete_workflow_task)(void *user_data,
+                                 struct TemporalCoreByteArrayRef request,
+                                 TemporalCoreWorkerClientCallbackTrampoline callback,
+                                 void *callback_ud);
+  void (*complete_activity_task)(void *user_data,
+                                 struct TemporalCoreByteArrayRef request,
+                                 TemporalCoreWorkerClientCallbackTrampoline callback,
+                                 void *callback_ud);
+  void (*complete_nexus_task)(void *user_data,
+                              struct TemporalCoreByteArrayRef request,
+                              TemporalCoreWorkerClientCallbackTrampoline callback,
+                              void *callback_ud);
+  void (*record_activity_heartbeat)(void *user_data,
+                                    struct TemporalCoreByteArrayRef request,
+                                    TemporalCoreWorkerClientCallbackTrampoline callback,
+                                    void *callback_ud);
+  void (*cancel_activity_task)(void *user_data,
+                               struct TemporalCoreByteArrayRef request,
+                               TemporalCoreWorkerClientCallbackTrampoline callback,
+                               void *callback_ud);
+  void (*fail_activity_task)(void *user_data,
+                             struct TemporalCoreByteArrayRef request,
+                             TemporalCoreWorkerClientCallbackTrampoline callback,
+                             void *callback_ud);
+  void (*fail_workflow_task)(void *user_data,
+                             struct TemporalCoreByteArrayRef request,
+                             TemporalCoreWorkerClientCallbackTrampoline callback,
+                             void *callback_ud);
+  void (*fail_nexus_task)(void *user_data,
+                          struct TemporalCoreByteArrayRef request,
+                          TemporalCoreWorkerClientCallbackTrampoline callback,
+                          void *callback_ud);
+  void (*get_workflow_execution_history)(void *user_data,
+                                         struct TemporalCoreByteArrayRef request,
+                                         TemporalCoreWorkerClientCallbackTrampoline callback,
+                                         void *callback_ud);
+  void (*respond_legacy_query)(void *user_data,
+                               struct TemporalCoreByteArrayRef request,
+                               TemporalCoreWorkerClientCallbackTrampoline callback,
+                               void *callback_ud);
+  void (*describe_namespace)(void *user_data,
+                             struct TemporalCoreByteArrayRef request,
+                             TemporalCoreWorkerClientCallbackTrampoline callback,
+                             void *callback_ud);
+  void (*shutdown_worker)(void *user_data,
+                          struct TemporalCoreByteArrayRef request,
+                          TemporalCoreWorkerClientCallbackTrampoline callback,
+                          void *callback_user_data);
+  bool (*is_mock)(void *user_data);
+} TemporalCoreCallbackBasedWorkerClientRPCs;
+
+/**
+ * Interop configuration of the [WorkerClientConfig].
+ */
+typedef struct TemporalCoreCallbackBasedWorkerClientConfig {
+  struct TemporalCoreByteArrayRef client_name;
+  struct TemporalCoreByteArrayRef client_version;
+  struct TemporalCoreByteArrayRef identity;
+} TemporalCoreCallbackBasedWorkerClientConfig;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -811,6 +958,32 @@ void temporal_core_complete_async_reserve(void *sender, uintptr_t permit_id);
 
 void temporal_core_set_reserve_cancel_target(struct TemporalCoreSlotReserveCtx *ctx,
                                              void *token_ptr);
+
+/**
+ * Create a new [Worker] with a custom callback-backed [temporal_sdk_core::WorkerClient] implementation.
+ *
+ * # Safety
+ * - All pointer args (`client_rpcs`, `options`, `client_config`, `runtime`) must be non-null and valid.
+ * - `system_info_ref.data` must point to at least `system_info_ref.size` bytes if non-zero.
+ * - Caller retains ownership; these must outlive the call.
+ *
+ * # Params
+ * - `client_rpcs`: pointer to [CallbackBasedWorkerClientRPCs] implementing Core SDK [temporal_sdk_core::WorkerClient] RPCs.
+ * - `options`:     pointer to [WorkerOptions].
+ * - `client_config`: pointer to [CallbackBasedWorkerClientConfig] (client name, version, identity).
+ * - `system_info_ref`: zero-copy [GetSystemInfoResponse] bytes or empty.
+ * - `runtime`:        pointer to [Runtime].
+ *
+ * # Returns
+ * A [WorkerOrFail] struct containing:
+ * - `worker`: on success, a heap-allocated [Worker] pointer; null on error.
+ * - `fail`: on error, a C string (UTF-8) describing the failure; null on success.
+ */
+struct TemporalCoreWorkerOrFail temporal_core_new_callback_based_worker_client(const struct TemporalCoreCallbackBasedWorkerClientRPCs *client_rpcs,
+                                                                               const struct TemporalCoreWorkerOptions *options,
+                                                                               const struct TemporalCoreCallbackBasedWorkerClientConfig *client_config,
+                                                                               struct TemporalCoreByteArrayRef system_info_ref,
+                                                                               struct TemporalCoreRuntime *runtime);
 
 #ifdef __cplusplus
 }  // extern "C"
