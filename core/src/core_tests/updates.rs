@@ -4,7 +4,7 @@ use crate::{
         MockPollCfg, PollWFTRespExt, ResponseType, build_mock_pollers, hist_to_poll_resp,
         mock_worker,
     },
-    worker::client::mocks::mock_workflow_client,
+    worker::client::mocks::mock_worker_client,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
@@ -108,7 +108,7 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
     let mut poll_resp = hist_to_poll_resp(&t, wfid, ResponseType::AllHistory);
     let upd_req_body = poll_resp.add_update_request(update_id, 1);
 
-    let mut mock_client = mock_workflow_client();
+    let mut mock_client = mock_worker_client();
     mock_client
         .expect_complete_workflow_task()
         .times(1)
@@ -171,7 +171,7 @@ async fn speculative_wft_with_command_event() {
         EventType::ActivityTaskScheduled as i32
     );
 
-    let mock_client = mock_workflow_client();
+    let mock_client = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wfid,
         real_hist,

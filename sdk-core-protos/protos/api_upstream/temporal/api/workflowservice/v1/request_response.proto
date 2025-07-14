@@ -1772,7 +1772,7 @@ message PollNexusTaskQueueRequest {
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 
     // Worker info to be sent to the server.
-    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
+    repeated temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
 }
 
 message PollNexusTaskQueueResponse {
@@ -2384,7 +2384,7 @@ message RecordWorkerHeartbeatRequest {
     // The identity of the client who initiated this request.
     string identity = 2;
 
-    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 3;
+    repeated temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 3;
 }
 
 message RecordWorkerHeartbeatResponse {

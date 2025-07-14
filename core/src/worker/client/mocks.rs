@@ -22,7 +22,7 @@ pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
 
 #[cfg(test)]
 /// Create a mock client primed with basic necessary expectations
-pub(crate) fn mock_workflow_client() -> MockWorkerClient {
+pub(crate) fn mock_worker_client() -> MockWorkerClient {
     let mut r = MockWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
@@ -33,11 +33,13 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
         .returning(|_| Ok(ShutdownWorkerResponse {}));
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
+    r.expect_get_identity()
+        .returning(|| "test-identity".to_string());
     r
 }
 
 /// Create a mock manual client primed with basic necessary expectations
-pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
+pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
@@ -46,6 +48,8 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
     r.expect_is_mock().returning(|| true);
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
+    r.expect_get_identity()
+        .returning(|| "test-identity".to_string());
     r
 }
 
@@ -146,10 +150,13 @@ mockall::mock! {
         fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn record_worker_heartbeat<'a, 'b>(&self, heartbeat: WorkerHeartbeat) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
+
         fn replace_client(&self, new_client: RetryClient<Client>);
         fn capabilities(&self) -> Option<Capabilities>;
         fn workers(&self) -> Arc<SlotManager>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
+        fn get_identity(&self) -> String;
     }
 }

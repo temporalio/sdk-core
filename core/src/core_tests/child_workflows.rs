@@ -4,7 +4,7 @@ use crate::{
         MockPollCfg, ResponseType, build_fake_sdk, canned_histories, mock_sdk, mock_sdk_cfg,
         mock_worker, single_hist_mock_sg,
     },
-    worker::client::mocks::mock_workflow_client,
+    worker::client::mocks::mock_worker_client,
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowResult};
@@ -32,7 +32,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_child_workflow_signaled("child-id-1", SIGNAME);
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut worker = mock_sdk(MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -130,7 +130,7 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is(
         }
         _ => canned_histories::single_child_workflow_cancelled("child-id-1"),
     };
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mock = single_hist_mock_sg("fakeid", t, [ResponseType::AllHistory], mock, true);
     let core = mock_worker(mock);
     let act = core.poll_workflow_activation().await.unwrap();
@@ -179,7 +179,7 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is(
 #[tokio::test]
 async fn cancel_already_complete_child_ignored() {
     let t = canned_histories::single_child_workflow("child-id-1");
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mock = single_hist_mock_sg("fakeid", t, [ResponseType::AllHistory], mock, true);
     let core = mock_worker(mock);
     let act = core.poll_workflow_activation().await.unwrap();
