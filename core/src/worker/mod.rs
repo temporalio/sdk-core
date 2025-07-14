@@ -262,7 +262,11 @@ impl WorkerTrait for Worker {
 }
 
 impl Worker {
-    pub(crate) fn new(
+    /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional telemetry.
+    ///
+    /// This is a convenience constructor that logs initialization and delegates to
+    /// [Worker::new_with_pollers()] using [TaskPollers::Real].
+    pub fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
@@ -641,12 +645,12 @@ impl Worker {
             }
             if let Some(ref act_mgr) = self.at_task_mgr {
                 let res = act_mgr.poll().await;
-                if let Err(err) = res.as_ref() {
-                    if matches!(err, PollError::ShutDown) {
-                        self.non_local_activities_complete
-                            .store(true, Ordering::Relaxed);
-                        return Ok(None);
-                    }
+                if let Err(err) = res.as_ref()
+                    && matches!(err, PollError::ShutDown)
+                {
+                    self.non_local_activities_complete
+                        .store(true, Ordering::Relaxed);
+                    return Ok(None);
                 };
                 res.map(Some)
             } else {
@@ -863,9 +867,10 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
                 config.nonsticky_to_sticky_poll_ratio,
             ))
         } else {
-            PollerBehavior::SimpleMaximum(m.saturating_sub(
-                calc_max_nonsticky(m, config.nonsticky_to_sticky_poll_ratio).max(1),
-            ))
+            PollerBehavior::SimpleMaximum(
+                m.saturating_sub(calc_max_nonsticky(m, config.nonsticky_to_sticky_poll_ratio))
+                    .max(1),
+            )
         }
     } else {
         config.workflow_task_poller_behavior

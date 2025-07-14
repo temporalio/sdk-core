@@ -173,7 +173,7 @@ impl UpdateMachine {
         msg: UpdateMsg,
     ) -> Result<MachineResponse, WFMachinesError> {
         let accept_body = msg.pack().map_err(|e| {
-            WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
+            WFMachinesError::Fatal(format!("Failed to serialize update response: {e:?}"))
         })?;
         Ok(MachineResponse::IssueNewMessage(ProtocolMessage {
             id: outgoing_id.clone(),

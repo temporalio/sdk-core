@@ -190,10 +190,10 @@ struct PidControllers {
 }
 struct MetricInstruments {
     attribs: MetricAttributes,
-    mem_usage: Arc<dyn GaugeF64>,
-    cpu_usage: Arc<dyn GaugeF64>,
-    mem_pid_output: Arc<dyn GaugeF64>,
-    cpu_pid_output: Arc<dyn GaugeF64>,
+    mem_usage: GaugeF64,
+    cpu_usage: GaugeF64,
+    mem_pid_output: GaugeF64,
+    cpu_pid_output: GaugeF64,
 }
 #[derive(Clone, Copy, Default)]
 struct LastMetricVals {
@@ -509,7 +509,6 @@ impl RealSysInfo {
         let mut lock = self.sys.lock();
         lock.refresh_memory();
         lock.refresh_cpu_usage();
-        let mem = lock.used_memory();
         let cpu = lock.global_cpu_usage() as f64 / 100.;
         if let Some(cgroup_limits) = lock.cgroup_limits() {
             self.total_mem
@@ -518,8 +517,10 @@ impl RealSysInfo {
                 cgroup_limits.total_memory - cgroup_limits.free_memory,
                 Ordering::Release,
             );
+        } else {
+            let mem = lock.used_memory();
+            self.cur_mem_usage.store(mem, Ordering::Release);
         }
-        self.cur_mem_usage.store(mem, Ordering::Release);
         self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         self.last_refresh.store(Instant::now());
     }

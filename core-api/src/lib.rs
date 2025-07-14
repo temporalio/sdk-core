@@ -1,3 +1,5 @@
+#[cfg(feature = "envconfig")]
+pub mod envconfig;
 pub mod errors;
 pub mod telemetry;
 pub mod worker;
@@ -136,3 +138,12 @@ pub trait Worker: Send + Sync {
     /// functions have returned `ShutDown` errors.
     async fn finalize_shutdown(self);
 }
+
+macro_rules! dbg_panic {
+  ($($arg:tt)*) => {
+      use tracing::error;
+      error!($($arg)*);
+      debug_assert!(false, $($arg)*);
+  };
+}
+pub(crate) use dbg_panic;

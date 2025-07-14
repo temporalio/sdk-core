@@ -106,7 +106,7 @@ message RequestCancelExternalWorkflowExecutionCommandAttributes {
     string workflow_id = 2;
     string run_id = 3;
     // Deprecated.
-    string control = 4;
+    string control = 4 [deprecated = true];
     // Set this to true if the workflow being cancelled is a child of the workflow originating this
     // command. The request will be rejected if it is set to true and the target workflow is *not*
     // a child of the requesting workflow.
@@ -123,7 +123,7 @@ message SignalExternalWorkflowExecutionCommandAttributes {
     // Serialized value(s) to provide with the signal.
     temporal.api.common.v1.Payloads input = 4;
     // Deprecated
-    string control = 5;
+    string control = 5 [deprecated = true];
     // Set this to true if the workflow being cancelled is a child of the workflow originating this
     // command. The request will be rejected if it is set to true and the target workflow is *not*
     // a child of the requesting workflow.
@@ -176,7 +176,8 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
     // If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
     // the assignment rules will be used to independently assign a Build ID to the new execution.
-    bool inherit_build_id = 15;
+    // Deprecated. Only considered for versioning v0.2.
+    bool inherit_build_id = 15 [deprecated = true];
 
     // `workflow_execution_timeout` is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -206,7 +207,8 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 16;
     // If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
     // rules of the child's Task Queue will be used to independently assign a Build ID to it.
-    bool inherit_build_id = 17;
+    // Deprecated. Only considered for versioning v0.2.
+    bool inherit_build_id = 17 [deprecated = true];
     // Priority metadata. If this message is not present, or any fields are not
     // present, they inherit the values from the workflow.
     temporal.api.common.v1.Priority priority = 18;

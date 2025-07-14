@@ -24,7 +24,7 @@ use temporal_sdk_core_protos::{
 };
 use tonic::{
     Request, Response, Status,
-    body::BoxBody,
+    body::Body,
     client::GrpcService,
     metadata::{AsciiMetadataValue, KeyAndValueRef},
 };
@@ -166,7 +166,7 @@ where
 impl<T> RawClientLike for TemporalServiceClient<T>
 where
     T: Send + Sync + Clone + 'static,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -221,7 +221,7 @@ where
 impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
 where
     T: Send + Sync + Clone + 'static,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -373,7 +373,7 @@ pub(super) struct IsUserLongPoll;
 impl<RC, T> WorkflowService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -383,7 +383,7 @@ where
 impl<RC, T> OperatorService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -393,7 +393,7 @@ where
 impl<RC, T> CloudService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -403,7 +403,7 @@ where
 impl<RC, T> TestService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -413,7 +413,7 @@ where
 impl<RC, T> HealthService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T: GrpcService<Body> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -483,13 +483,13 @@ macro_rules! proxier {
         pub trait $trait_name: RawClientLike
         where
             // Yo this is wild
-            <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
-            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
+            <Self as RawClientLike>::SvcType: GrpcService<Body> + Send + Clone + 'static,
+            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody:
                 tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
+            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Error:
                 Into<tonic::codegen::StdError>,
-            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
-            <<<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody
+            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Future: Send,
+            <<<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
@@ -592,17 +592,14 @@ proxier! {
             slot
         },
         |resp, slot| {
-            if let Some(mut s) = slot {
-                if let Ok(response) = resp.as_ref() {
-                    if let Some(task) = response.get_ref().clone().eager_workflow_task {
-                        if let Err(e) = s.schedule_wft(task) {
+            if let Some(mut s) = slot
+                && let Ok(response) = resp.as_ref()
+                    && let Some(task) = response.get_ref().clone().eager_workflow_task
+                        && let Err(e) = s.schedule_wft(task) {
                             // This is a latency issue, i.e., the client does not need to handle
                             //  this error, because the WFT will be retried after a timeout.
                             warn!(details = ?e, "Eager workflow task rejected by worker.");
                         }
-                    }
-                }
-            }
             resp
         }
     );
@@ -1339,6 +1336,24 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        list_workers,
+        ListWorkersRequest,
+        ListWorkersResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        record_worker_heartbeat,
+        RecordWorkerHeartbeatRequest,
+        RecordWorkerHeartbeatResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -1394,6 +1409,7 @@ proxier! {
     );
     (failover_namespace_region, cloudreq::FailoverNamespaceRegionRequest, cloudreq::FailoverNamespaceRegionResponse);
     (add_namespace_region, cloudreq::AddNamespaceRegionRequest, cloudreq::AddNamespaceRegionResponse);
+    (delete_namespace_region, cloudreq::DeleteNamespaceRegionRequest, cloudreq::DeleteNamespaceRegionResponse);
     (get_regions, cloudreq::GetRegionsRequest, cloudreq::GetRegionsResponse);
     (get_region, cloudreq::GetRegionRequest, cloudreq::GetRegionResponse);
     (get_api_keys, cloudreq::GetApiKeysRequest, cloudreq::GetApiKeysResponse);
@@ -1411,6 +1427,9 @@ proxier! {
     (create_user_group, cloudreq::CreateUserGroupRequest, cloudreq::CreateUserGroupResponse);
     (update_user_group, cloudreq::UpdateUserGroupRequest, cloudreq::UpdateUserGroupResponse);
     (delete_user_group, cloudreq::DeleteUserGroupRequest, cloudreq::DeleteUserGroupResponse);
+    (add_user_group_member, cloudreq::AddUserGroupMemberRequest, cloudreq::AddUserGroupMemberResponse);
+    (remove_user_group_member, cloudreq::RemoveUserGroupMemberRequest, cloudreq::RemoveUserGroupMemberResponse);
+    (get_user_group_members, cloudreq::GetUserGroupMembersRequest, cloudreq::GetUserGroupMembersResponse);
     (set_user_group_namespace_access, cloudreq::SetUserGroupNamespaceAccessRequest, cloudreq::SetUserGroupNamespaceAccessResponse);
     (create_service_account, cloudreq::CreateServiceAccountRequest, cloudreq::CreateServiceAccountResponse);
     (get_service_account, cloudreq::GetServiceAccountRequest, cloudreq::GetServiceAccountResponse);

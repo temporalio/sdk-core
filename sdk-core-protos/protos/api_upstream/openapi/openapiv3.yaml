@@ -1418,8 +1418,8 @@ paths:
         - name: taskQueueType
           in: query
           description: |-
-            Deprecated. Use `ENHANCED` mode with `task_queue_types`. Ignored in `ENHANCED` mode.
-             If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
+            If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
+             Only supported in default mode (use `task_queue_types` in ENHANCED mode instead).
           schema:
             enum:
               - TASK_QUEUE_TYPE_UNSPECIFIED
@@ -1428,14 +1428,24 @@ paths:
               - TASK_QUEUE_TYPE_NEXUS
             type: string
             format: enum
+        - name: reportStats
+          in: query
+          description: Report stats for the requested task queue type(s).
+          schema:
+            type: boolean
         - name: includeTaskQueueStatus
           in: query
-          description: Deprecated. Ignored in `ENHANCED` mode.
+          description: |-
+            Deprecated, use `report_stats` instead.
+             If true, the task queue status will be included in the response.
           schema:
             type: boolean
         - name: apiMode
           in: query
-          description: All options except `task_queue_type` and `include_task_queue_status` are only available in the `ENHANCED` mode.
+          description: |-
+            Deprecated. ENHANCED mode is also being deprecated.
+             Select the API mode to use for this request: DEFAULT mode (if unset) or ENHANCED mode.
+             Consult the documentation for each field to understand which mode it is supported in.
           schema:
             enum:
               - DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED
@@ -1463,7 +1473,9 @@ paths:
             type: boolean
         - name: taskQueueTypes
           in: query
-          description: Task queue types to report info about. If not specified, all types are considered.
+          description: |-
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Task queue types to report info about. If not specified, all types are considered.
           schema:
             type: array
             items:
@@ -1474,20 +1486,18 @@ paths:
                 - TASK_QUEUE_TYPE_NEXUS
               type: string
               format: enum
-        - name: reportStats
-          in: query
-          description: Report stats for the requested task queue types and versions
-          schema:
-            type: boolean
         - name: reportPollers
           in: query
-          description: Report list of pollers for requested task queue types and versions
+          description: |-
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Report list of pollers for requested task queue types and versions.
           schema:
             type: boolean
         - name: reportTaskReachability
           in: query
           description: |-
-            Report task reachability for the requested versions and all task types (task reachability is not reported
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Report task reachability for the requested versions and all task types (task reachability is not reported
              per task type).
           schema:
             type: boolean
@@ -1580,6 +1590,11 @@ paths:
           description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
+        - name: reportTaskQueueStats
+          in: query
+          description: Report stats for task queues which have been polled by this version.
+          schema:
+            type: boolean
       responses:
         "200":
           description: OK
@@ -1966,6 +1981,92 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetWorkerTaskReachabilityResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workers:
+    get:
+      tags:
+        - WorkflowService
+      description: ListWorkers is a visibility API to list worker status information in a specific namespace.
+      operationId: ListWorkers
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: |-
+            `query` in ListWorkers is used to filter workers based on worker status info.
+             The following worker status attributes are expected are supported as part of the query:
+            * WorkerInstanceKey
+            * WorkerIdentity
+            * HostName
+            * TaskQueue
+            * DeploymentName
+            * BuildId
+            * SdkName
+            * SdkVersion
+            * StartTime
+            * LastHeartbeatTime
+            * Status
+             Currently metrics are not supported as a part of ListWorkers query.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkersResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workers/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: WorkerHeartbeat receive heartbeat request from the worker.
+      operationId: RecordWorkerHeartbeat
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWorkerHeartbeatRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordWorkerHeartbeatResponse'
         default:
           description: Default error response
           content:
@@ -4588,8 +4689,8 @@ paths:
         - name: taskQueueType
           in: query
           description: |-
-            Deprecated. Use `ENHANCED` mode with `task_queue_types`. Ignored in `ENHANCED` mode.
-             If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
+            If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
+             Only supported in default mode (use `task_queue_types` in ENHANCED mode instead).
           schema:
             enum:
               - TASK_QUEUE_TYPE_UNSPECIFIED
@@ -4598,14 +4699,24 @@ paths:
               - TASK_QUEUE_TYPE_NEXUS
             type: string
             format: enum
+        - name: reportStats
+          in: query
+          description: Report stats for the requested task queue type(s).
+          schema:
+            type: boolean
         - name: includeTaskQueueStatus
           in: query
-          description: Deprecated. Ignored in `ENHANCED` mode.
+          description: |-
+            Deprecated, use `report_stats` instead.
+             If true, the task queue status will be included in the response.
           schema:
             type: boolean
         - name: apiMode
           in: query
-          description: All options except `task_queue_type` and `include_task_queue_status` are only available in the `ENHANCED` mode.
+          description: |-
+            Deprecated. ENHANCED mode is also being deprecated.
+             Select the API mode to use for this request: DEFAULT mode (if unset) or ENHANCED mode.
+             Consult the documentation for each field to understand which mode it is supported in.
           schema:
             enum:
               - DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED
@@ -4633,7 +4744,9 @@ paths:
             type: boolean
         - name: taskQueueTypes
           in: query
-          description: Task queue types to report info about. If not specified, all types are considered.
+          description: |-
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Task queue types to report info about. If not specified, all types are considered.
           schema:
             type: array
             items:
@@ -4644,20 +4757,18 @@ paths:
                 - TASK_QUEUE_TYPE_NEXUS
               type: string
               format: enum
-        - name: reportStats
-          in: query
-          description: Report stats for the requested task queue types and versions
-          schema:
-            type: boolean
         - name: reportPollers
           in: query
-          description: Report list of pollers for requested task queue types and versions
+          description: |-
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Report list of pollers for requested task queue types and versions.
           schema:
             type: boolean
         - name: reportTaskReachability
           in: query
           description: |-
-            Report task reachability for the requested versions and all task types (task reachability is not reported
+            Deprecated (as part of the ENHANCED mode deprecation).
+             Report task reachability for the requested versions and all task types (task reachability is not reported
              per task type).
           schema:
             type: boolean
@@ -4717,6 +4828,11 @@ paths:
           description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
+        - name: reportTaskQueueStats
+          in: query
+          description: Report stats for task queues which have been polled by this version.
+          schema:
+            type: boolean
       responses:
         "200":
           description: OK
@@ -5103,6 +5219,92 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetWorkerTaskReachabilityResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workers:
+    get:
+      tags:
+        - WorkflowService
+      description: ListWorkers is a visibility API to list worker status information in a specific namespace.
+      operationId: ListWorkers
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: |-
+            `query` in ListWorkers is used to filter workers based on worker status info.
+             The following worker status attributes are expected are supported as part of the query:
+            * WorkerInstanceKey
+            * WorkerIdentity
+            * HostName
+            * TaskQueue
+            * DeploymentName
+            * BuildId
+            * SdkName
+            * SdkVersion
+            * StartTime
+            * LastHeartbeatTime
+            * Status
+             Currently metrics are not supported as a part of ListWorkers query.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkersResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workers/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: WorkerHeartbeat receive heartbeat request from the worker.
+      operationId: RecordWorkerHeartbeat
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordWorkerHeartbeatRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordWorkerHeartbeatResponse'
         default:
           description: Default error response
           content:
@@ -6399,7 +6601,7 @@ components:
             - RESET_TYPE_FIRST_WORKFLOW_TASK
             - RESET_TYPE_LAST_WORKFLOW_TASK
           type: string
-          description: Reset type (deprecated, use `options`).
+          description: Deprecated. Use `options`.
           format: enum
         resetReapplyType:
           enum:
@@ -6408,7 +6610,7 @@ components:
             - RESET_REAPPLY_TYPE_NONE
             - RESET_REAPPLY_TYPE_ALL_ELIGIBLE
           type: string
-          description: History event reapply options (deprecated, use `options`).
+          description: Deprecated. Use `options`.
           format: enum
         postResetOperations:
           type: array
@@ -7296,20 +7498,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PollerInfo'
-          description: |-
-            Deprecated. Use `versions_info.types_info.pollers` with `ENHANCED` mode instead.
-             Not set in `ENHANCED` mode.
-        taskQueueStatus:
+        stats:
           allOf:
-            - $ref: '#/components/schemas/TaskQueueStatus'
-          description: Deprecated. Not set in `ENHANCED` mode.
-        versionsInfo:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/TaskQueueVersionInfo'
-          description: |-
-            This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
-             Only set in `ENHANCED` mode.
+            - $ref: '#/components/schemas/TaskQueueStats'
+          description: Statistics for the task queue. Only populated when `report_stats` is set to true in the request.
         versioningInfo:
           allOf:
             - $ref: '#/components/schemas/TaskQueueVersioningInfo'
@@ -7323,6 +7515,20 @@ components:
              they are always routed to their Pinned Deployment Version. However, new workflow executions
              are typically not Pinned until they complete their first task (unless they are started with
              a Pinned VersioningOverride or are Child Workflows of a Pinned parent).
+        taskQueueStatus:
+          allOf:
+            - $ref: '#/components/schemas/TaskQueueStatus'
+          description: |-
+            Deprecated.
+             Status of the task queue. Only populated when `include_task_queue_status` is set to true in the request.
+        versionsInfo:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TaskQueueVersionInfo'
+          description: |-
+            Deprecated.
+             Only returned in ENHANCED mode.
+             This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
     DescribeWorkerDeploymentResponse:
       type: object
       properties:
@@ -7340,6 +7546,28 @@ components:
       properties:
         workerDeploymentVersionInfo:
           $ref: '#/components/schemas/WorkerDeploymentVersionInfo'
+        versionTaskQueues:
+          type: array
+          items:
+            $ref: '#/components/schemas/DescribeWorkerDeploymentVersionResponse_VersionTaskQueue'
+          description: All the Task Queues that have ever polled from this Deployment version.
+    DescribeWorkerDeploymentVersionResponse_VersionTaskQueue:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          enum:
+            - TASK_QUEUE_TYPE_UNSPECIFIED
+            - TASK_QUEUE_TYPE_WORKFLOW
+            - TASK_QUEUE_TYPE_ACTIVITY
+            - TASK_QUEUE_TYPE_NEXUS
+          type: string
+          format: enum
+        stats:
+          allOf:
+            - $ref: '#/components/schemas/TaskQueueStats'
+          description: Only set if `report_task_queue_stats` is set on the request.
     DescribeWorkflowExecutionResponse:
       type: object
       properties:
@@ -7548,7 +7776,7 @@ components:
           $ref: '#/components/schemas/WorkflowExecution'
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
     FailoverStatus:
       type: object
       properties:
@@ -8251,7 +8479,30 @@ components:
           format: date-time
         routingConfig:
           $ref: '#/components/schemas/RoutingConfig'
+        latestVersionSummary:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentInfo_WorkerDeploymentVersionSummary'
+          description: Summary of the version that was added most recently in the Worker Deployment.
+        currentVersionSummary:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentInfo_WorkerDeploymentVersionSummary'
+          description: Summary of the current version of the Worker Deployment.
+        rampingVersionSummary:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentInfo_WorkerDeploymentVersionSummary'
+          description: Summary of the ramping version of the Worker Deployment.
       description: A subset of WorkerDeploymentInfo
+    ListWorkersResponse:
+      type: object
+      properties:
+        workersInfo:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkerInfo'
+        nextPageToken:
+          type: string
+          description: Next page token
+          format: bytes
     ListWorkflowExecutionsResponse:
       type: object
       properties:
@@ -8674,7 +8925,7 @@ components:
           description: |-
             Operation ID - may be empty if the operation completed synchronously.
 
-             Deprecated: Renamed to operation_token.
+             Deprecated. Renamed to operation_token.
         operationToken:
           type: string
           description: Operation token - may be empty if the operation completed synchronously.
@@ -8917,7 +9168,7 @@ components:
         lastIndependentlyAssignedBuildId:
           type: string
           description: |-
-            This means the activity is independently versioned and not bound to the build ID of its workflow.
+            Deprecated. This means the activity is independently versioned and not bound to the build ID of its workflow.
              The activity will use the build id in this field instead.
              If the task fails and is scheduled again, the assigned build ID may change according to the latest versioning
              rules.
@@ -8925,8 +9176,8 @@ components:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
           description: |-
-            The version stamp of the worker to whom this activity was most recently dispatched
-             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+            Deprecated. The version stamp of the worker to whom this activity was most recently dispatched
+             This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         currentRetryInterval:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -9030,7 +9281,7 @@ components:
           description: |-
             Operation ID. Only set for asynchronous operations after a successful StartOperation call.
 
-             Deprecated: Renamed to operation_token.
+             Deprecated. Renamed to operation_token.
         scheduleToCloseTimeout:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -9462,6 +9713,20 @@ components:
           description: |-
             Will be set to true if the activity was reset.
              Applies only to the current run.
+    RecordWorkerHeartbeatRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: Namespace this worker belongs to.
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        workerHeartbeat:
+          $ref: '#/components/schemas/WorkerHeartbeat'
+    RecordWorkerHeartbeatResponse:
+      type: object
+      properties: {}
     RegisterNamespaceRequest:
       type: object
       properties:
@@ -9560,7 +9825,7 @@ components:
              corresponds to
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
     RequestCancelExternalWorkflowExecutionInitiatedEventAttributes:
       type: object
       properties:
@@ -9578,7 +9843,7 @@ components:
           $ref: '#/components/schemas/WorkflowExecution'
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         childWorkflowOnly:
           type: boolean
           description: |-
@@ -9728,6 +9993,12 @@ components:
           description: |-
             If set, and activity is in backoff, the activity will start at a random time within the specified jitter duration.
              (unless it is paused and keep_paused is set)
+        restoreOriginalOptions:
+          type: boolean
+          description: |-
+            If set, the activity options will be restored to the defaults.
+             Default options are then options activity was created with.
+             They are part of the first SCHEDULE event.
     ResetActivityResponse:
       type: object
       properties: {}
@@ -9756,7 +10027,7 @@ components:
             - RESET_REAPPLY_TYPE_ALL_ELIGIBLE
           type: string
           description: |-
-            Event types to be reapplied (deprecated)
+            Deprecated. Use `options`.
              Default: RESET_REAPPLY_TYPE_SIGNAL
           format: enum
         currentRunOnly:
@@ -9787,7 +10058,7 @@ components:
           description: Worker build id.
         binaryChecksum:
           type: string
-          description: A worker binary version identifier (deprecated).
+          description: Deprecated. A worker binary version identifier.
         runId:
           type: string
           description: The first run ID in the execution chain that was touched by this worker build.
@@ -9848,7 +10119,7 @@ components:
             - RESET_REAPPLY_TYPE_ALL_ELIGIBLE
           type: string
           description: |-
-            Event types to be reapplied (deprecated)
+            Deprecated. Use `options`.
              Default: RESET_REAPPLY_TYPE_SIGNAL
           format: enum
         resetReapplyExcludeTypes:
@@ -9871,6 +10142,9 @@ components:
             Operations to perform after the workflow has been reset. These operations will be applied
              to the *new* run of the workflow execution in the order they are provided.
              All operations are applied to the workflow before the first new workflow task is generated
+        identity:
+          type: string
+          description: The identity of the worker/client
     ResetWorkflowExecutionResponse:
       type: object
       properties:
@@ -10278,6 +10552,7 @@ components:
           format: date-time
         invalidScheduleError:
           type: string
+          description: Deprecated.
     ScheduleListEntry:
       type: object
       properties:
@@ -10432,7 +10707,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CalendarSpec'
-          description: Any timestamps matching any of exclude_* will be skipped.
+          description: |-
+            Any timestamps matching any of exclude_* will be skipped.
+             Deprecated. Use exclude_structured_calendar.
         excludeStructuredCalendar:
           type: array
           items:
@@ -10727,7 +11004,7 @@ components:
           type: string
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
     SignalExternalWorkflowExecutionInitiatedEventAttributes:
       type: object
       properties:
@@ -10752,7 +11029,7 @@ components:
           description: Serialized arguments to provide to the signal handler
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         childWorkflowOnly:
           type: boolean
           description: |-
@@ -10832,7 +11109,7 @@ components:
           description: Serialized value(s) to provide with the signal
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         retryPolicy:
           allOf:
             - $ref: '#/components/schemas/RetryPolicy'
@@ -10908,7 +11185,7 @@ components:
           description: Used to de-dupe sent signals
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         header:
           allOf:
             - $ref: '#/components/schemas/Header'
@@ -11001,7 +11278,7 @@ components:
           format: enum
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         initiatedEventId:
           type: string
           description: Id of the `START_CHILD_WORKFLOW_EXECUTION_INITIATED` event which this event corresponds to
@@ -11049,7 +11326,7 @@ components:
           format: enum
         control:
           type: string
-          description: Deprecated
+          description: Deprecated.
         workflowTaskCompletedEventId:
           type: string
           description: The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
@@ -11079,6 +11356,7 @@ components:
           description: |-
             If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
              rules of the child's Task Queue will be used to independently assign a Build ID to it.
+             Deprecated. Only considered for versioning v0.2.
         priority:
           allOf:
             - $ref: '#/components/schemas/Priority'
@@ -11661,6 +11939,12 @@ components:
           type: string
           description: If set, override overlap policy for this one request.
           format: enum
+        scheduledTime:
+          type: string
+          description: |-
+            Timestamp used for the identity of the target workflow.
+             If not set the default value is the current time.
+          format: date-time
     TriggerWorkflowRuleRequest:
       type: object
       properties:
@@ -11747,6 +12031,14 @@ components:
         type:
           type: string
           description: Update all running activities of this type.
+        restoreOriginal:
+          type: boolean
+          description: |-
+            If set, the activity options will be restored to the default.
+             Default options are then options activity was created with.
+             They are part of the first SCHEDULE event.
+             This flag cannot be combined with any other option; if you supply
+             restore_original together with other options, the request will be rejected.
     UpdateActivityOptionsResponse:
       type: object
       properties:
@@ -11914,6 +12206,9 @@ components:
           items:
             type: string
           description: List of keys to remove from the metadata.
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
       description: Used to update the user-defined metadata of a Worker Deployment Version.
     UpdateWorkerDeploymentVersionMetadataResponse:
       type: object
@@ -12145,6 +12440,8 @@ components:
          `WorkflowExecutionInfo.VersioningInfo` for more information. To remove the override, call
          `UpdateWorkflowExecutionOptions` with a null `VersioningOverride`, and use the `update_mask`
          to indicate that it should be mutated.
+         Pinned overrides are automatically inherited by child workflows, continue-as-new workflows,
+         workflow retries, and cron workflows.
     VersioningOverride_PinnedOverride:
       type: object
       properties:
@@ -12208,6 +12505,17 @@ components:
         version:
           type: string
           description: Deprecated. Use `deployment_version`.
+        status:
+          enum:
+            - WORKER_DEPLOYMENT_VERSION_STATUS_UNSPECIFIED
+            - WORKER_DEPLOYMENT_VERSION_STATUS_INACTIVE
+            - WORKER_DEPLOYMENT_VERSION_STATUS_CURRENT
+            - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING
+            - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING
+            - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED
+          type: string
+          description: The status of the Worker Deployment Version.
+          format: enum
         deploymentVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerDeploymentVersion'
@@ -12221,7 +12529,40 @@ components:
             - VERSION_DRAINAGE_STATUS_DRAINING
             - VERSION_DRAINAGE_STATUS_DRAINED
           type: string
+          description: Deprecated. Use `drainage_info` instead.
           format: enum
+        drainageInfo:
+          allOf:
+            - $ref: '#/components/schemas/VersionDrainageInfo'
+          description: |-
+            Information about workflow drainage to help the user determine when it is safe
+             to decommission a Version. Not present while version is current or ramping
+        currentSinceTime:
+          type: string
+          description: |-
+            Unset if not current.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
+          format: date-time
+        rampingSinceTime:
+          type: string
+          description: |-
+            Unset if not ramping. Updated when the version first starts ramping, not on each ramp change.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
+          format: date-time
+        routingUpdateTime:
+          type: string
+          description: Last time `current_since_time`, `ramping_since_time, or `ramp_percentage` of this version changed.
+          format: date-time
+        firstActivationTime:
+          type: string
+          description: Timestamp when this version first became current or ramping.
+          format: date-time
+        lastDeactivationTime:
+          type: string
+          description: Timestamp when this version last stopped being current or ramping.
+          format: date-time
     WorkerDeploymentOptions:
       type: object
       properties:
@@ -12272,6 +12613,17 @@ components:
         version:
           type: string
           description: Deprecated. Use `deployment_version`.
+        status:
+          enum:
+            - WORKER_DEPLOYMENT_VERSION_STATUS_UNSPECIFIED
+            - WORKER_DEPLOYMENT_VERSION_STATUS_INACTIVE
+            - WORKER_DEPLOYMENT_VERSION_STATUS_CURRENT
+            - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING
+            - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING
+            - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED
+          type: string
+          description: The status of the Worker Deployment Version.
+          format: enum
         deploymentVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerDeploymentVersion'
@@ -12290,14 +12642,22 @@ components:
           description: |-
             (-- api-linter: core::0140::prepositions=disabled
                  aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
-             Nil if not current.
+             Unset if not current.
           format: date-time
         rampingSinceTime:
           type: string
           description: |-
             (-- api-linter: core::0140::prepositions=disabled
                  aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
-             Nil if not ramping. Updated when the version first starts ramping, not on each ramp change.
+             Unset if not ramping. Updated when the version first starts ramping, not on each ramp change.
+          format: date-time
+        firstActivationTime:
+          type: string
+          description: Timestamp when this version first became current or ramping.
+          format: date-time
+        lastDeactivationTime:
+          type: string
+          description: Timestamp when this version last stopped being current or ramping.
           format: date-time
         rampPercentage:
           type: number
@@ -12309,7 +12669,9 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkerDeploymentVersionInfo_VersionTaskQueueInfo'
-          description: All the Task Queues that have ever polled from this Deployment version.
+          description: |-
+            All the Task Queues that have ever polled from this Deployment version.
+             Deprecated. Use `version_task_queues` in DescribeWorkerDeploymentVersionResponse instead.
         drainageInfo:
           allOf:
             - $ref: '#/components/schemas/VersionDrainageInfo'
@@ -12345,6 +12707,169 @@ components:
             - TASK_QUEUE_TYPE_NEXUS
           type: string
           format: enum
+    WorkerHeartbeat:
+      type: object
+      properties:
+        workerInstanceKey:
+          type: string
+          description: |-
+            Worker identifier, should be unique for the namespace.
+             It is distinct from worker identity, which is not necessarily namespace-unique.
+        workerIdentity:
+          type: string
+          description: |-
+            Worker identity, set by the client, may not be unique.
+             Usually host_name+(user group name)+process_id, but can be overwritten by the user.
+        hostInfo:
+          allOf:
+            - $ref: '#/components/schemas/WorkerHostInfo'
+          description: Worker host information.
+        taskQueue:
+          type: string
+          description: Task queue this worker is polling for tasks.
+        deploymentVersion:
+          $ref: '#/components/schemas/WorkerDeploymentVersion'
+        sdkName:
+          type: string
+        sdkVersion:
+          type: string
+        status:
+          enum:
+            - WORKER_STATUS_UNSPECIFIED
+            - WORKER_STATUS_RUNNING
+            - WORKER_STATUS_SHUTTING_DOWN
+            - WORKER_STATUS_SHUTDOWN
+          type: string
+          description: Worker status. Defined by SDK.
+          format: enum
+        startTime:
+          type: string
+          description: |-
+            Worker start time.
+             It can be used to determine worker uptime. (current time - start time)
+          format: date-time
+        heartbeatTime:
+          type: string
+          description: |-
+            Timestamp of this heartbeat, coming from the worker. Worker should set it to "now".
+             Note that this timestamp comes directly from the worker and is subject to workers' clock skew.
+          format: date-time
+        elapsedSinceLastHeartbeat:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Elapsed time since the last heartbeat from the worker.
+        workflowTaskSlotsInfo:
+          $ref: '#/components/schemas/WorkerSlotsInfo'
+        activityTaskSlotsInfo:
+          $ref: '#/components/schemas/WorkerSlotsInfo'
+        nexusTaskSlotsInfo:
+          $ref: '#/components/schemas/WorkerSlotsInfo'
+        localActivitySlotsInfo:
+          $ref: '#/components/schemas/WorkerSlotsInfo'
+        workflowPollerInfo:
+          $ref: '#/components/schemas/WorkerPollerInfo'
+        workflowStickyPollerInfo:
+          $ref: '#/components/schemas/WorkerPollerInfo'
+        activityPollerInfo:
+          $ref: '#/components/schemas/WorkerPollerInfo'
+        nexusPollerInfo:
+          $ref: '#/components/schemas/WorkerPollerInfo'
+        totalStickyCacheHit:
+          type: integer
+          description: A Workflow Task found a cached Workflow Execution to run against.
+          format: int32
+        totalStickyCacheMiss:
+          type: integer
+          description: A Workflow Task did not find a cached Workflow execution to run against.
+          format: int32
+        currentStickyCacheSize:
+          type: integer
+          description: Current cache size, expressed in number of Workflow Executions.
+          format: int32
+      description: |-
+        Worker info message, contains information about the worker and its current state.
+         All information is provided by the worker itself.
+         (-- api-linter: core::0140::prepositions=disabled
+             aip.dev/not-precedent: Removing those words make names less clear. --)
+    WorkerHostInfo:
+      type: object
+      properties:
+        hostName:
+          type: string
+          description: Worker host identifier.
+        processId:
+          type: string
+          description: Worker process identifier, should be unique for the host.
+        currentHostCpuUsage:
+          type: number
+          description: |-
+            System used CPU as a float in the range [0.0, 1.0] where 1.0 is defined as all
+             cores on the host pegged.
+          format: float
+        currentHostMemUsage:
+          type: number
+          description: |-
+            System used memory as a float in the range [0.0, 1.0] where 1.0 is defined as
+             all available memory on the host is used.
+          format: float
+      description: Holds everything needed to identify the worker host/process context
+    WorkerInfo:
+      type: object
+      properties:
+        workerHeartbeat:
+          $ref: '#/components/schemas/WorkerHeartbeat'
+    WorkerPollerInfo:
+      type: object
+      properties:
+        currentPollers:
+          type: integer
+          description: Number of polling RPCs that are currently in flight.
+          format: int32
+        lastSuccessfulPollTime:
+          type: string
+          format: date-time
+        isAutoscaling:
+          type: boolean
+          description: Set true if the number of concurrent pollers is auto-scaled
+    WorkerSlotsInfo:
+      type: object
+      properties:
+        currentAvailableSlots:
+          type: integer
+          description: |-
+            Number of slots available for the worker to specific tasks.
+             May be -1 if the upper bound is not known.
+          format: int32
+        currentUsedSlots:
+          type: integer
+          description: Number of slots used by the worker for specific tasks.
+          format: int32
+        slotSupplierKind:
+          type: string
+          description: |-
+            Kind of the slot supplier, which is used to determine how the slots are allocated.
+             Possible values: "Fixed | ResourceBased | Custom String"
+        totalProcessedTasks:
+          type: integer
+          description: |-
+            Total number of tasks processed (completed both successfully and unsuccesfully, or any other way)
+             by the worker since the worker started. This is a cumulative counter.
+          format: int32
+        totalFailedTasks:
+          type: integer
+          description: Total number of failed tasks processed by the worker so far.
+          format: int32
+        lastIntervalProcessedTasks:
+          type: integer
+          description: |-
+            Number of tasks processed in since the last heartbeat from the worker.
+             This is a cumulative counter, and it is reset to 0 each time the worker sends a heartbeat.
+             Contains both successful and failed tasks.
+          format: int32
+        lastIntervalFailureTasks:
+          type: integer
+          description: Number of failed tasks processed since the last heartbeat from the worker.
+          format: int32
     WorkerVersionCapabilities:
       type: object
       properties:
@@ -12640,6 +13165,7 @@ components:
           description: |-
             If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
              the assignment rules will be used to independently assign a Build ID to the new execution.
+             Deprecated. Only considered for versioning v0.2.
     WorkflowExecutionExtendedInfo:
       type: object
       properties:
@@ -12870,10 +13396,12 @@ components:
         header:
           allOf:
             - $ref: '#/components/schemas/Header'
-          description: "Headers that were passed by the sender of the signal and copied by temporal \n server into the workflow task."
+          description: |-
+            Headers that were passed by the sender of the signal and copied by temporal
+             server into the workflow task.
         skipGenerateWorkflowTask:
           type: boolean
-          description: This field is deprecated and never respected. It should always be set to false.
+          description: Deprecated. This field is never respected and should always be set to false.
         externalWorkflowExecution:
           allOf:
             - $ref: '#/components/schemas/WorkflowExecution'
@@ -12920,7 +13448,7 @@ components:
         continuedExecutionRunId:
           type: string
           description: |-
-            Run id of the previous workflow which continued-as-new or retired or cron executed into this
+            Run id of the previous workflow which continued-as-new or retried or cron executed into this
              workflow.
         initiator:
           enum:
@@ -13035,7 +13563,10 @@ components:
         versioningOverride:
           allOf:
             - $ref: '#/components/schemas/VersioningOverride'
-          description: Versioning override applied to this workflow when it was started.
+          description: |-
+            Versioning override applied to this workflow when it was started.
+             Children, crons, retries, and continue-as-new will inherit source run's override if pinned
+             and if the new workflow's Task Queue belongs to the override version.
         parentPinnedWorkerDeploymentVersion:
           type: string
           description: |-
@@ -13044,20 +13575,29 @@ components:
              of starting on the Current Version of its Task Queue.
              This is set only if the child workflow is starting on a Task Queue belonging to the same
              Worker Deployment Version.
-             Deprecated. Use `parent_pinned_deployment_version`.
-        parentPinnedDeploymentVersion:
-          allOf:
-            - $ref: '#/components/schemas/WorkerDeploymentVersion'
-          description: |-
-            When present, it means this is a child workflow of a parent that is Pinned to this Worker
-             Deployment Version. In this case, child workflow will start as Pinned to this Version instead
-             of starting on the Current Version of its Task Queue.
-             This is set only if the child workflow is starting on a Task Queue belonging to the same
-             Worker Deployment Version.
+             Deprecated. Use `parent_versioning_info`.
         priority:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
+        inheritedPinnedVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            If present, the new workflow should start on this version with pinned base behavior.
+             Child of pinned parent will inherit the parent's version if the Child's Task Queue belongs to that version.
+
+             New run initiated by workflow ContinueAsNew of pinned run, will inherit the previous run's version if the
+             new run's Task Queue belongs to that version.
+
+             New run initiated by workflow Cron will never inherit.
+
+             New run initiated by workflow Retry will only inherit if the retried run is effectively pinned at the time
+             of retry, and the retried run inherited a pinned version when it started (ie. it is a child of a pinned
+             parent, or a CaN of a pinned run, and is running on a Task Queue in the inherited version).
+
+             Pinned override is inherited if Task Queue of new run is compatible with the override version.
+             Override is inherited separately and takes precedence over inherited base version.
       description: Always the first event in workflow history
     WorkflowExecutionTerminatedEventAttributes:
       type: object
@@ -13178,7 +13718,7 @@ components:
              behaviors.
              This field is first set after an execution completes its first workflow task on a versioned
              worker, and set again on completion of every subsequent workflow task.
-             For child workflows of Pinned parents, this will be set to Pinned (along with `version`) when
+             For child workflows of Pinned parents, this will be set to Pinned (along with `deployment_version`) when
              the the child starts so that child's first workflow task goes to the same Version as the
              parent. After the first workflow task, it depends on the child workflow itself if it wants
              to stay pinned or become unpinned (according to Versioning Behavior set in the worker).
@@ -13219,7 +13759,8 @@ components:
              precedence over SDK-sent `behavior` (and `version` when override is PINNED). An
              override can be set when starting a new execution, as well as afterwards by calling the
              `UpdateWorkflowExecutionOptions` API.
-             Pinned overrides are automatically inherited by child workflows.
+             Pinned overrides are automatically inherited by child workflows, continue-as-new workflows,
+             workflow retries, and cron workflows.
         deploymentTransition:
           allOf:
             - $ref: '#/components/schemas/DeploymentTransition'
@@ -13260,7 +13801,7 @@ components:
              start a transition to that version and continue execution there.
              A version transition can only exist while there is a pending or started workflow task.
              Once the pending workflow task completes on the transition's target version, the
-             transition completes and the workflow's `behavior`, and `version` fields are updated per the
+             transition completes and the workflow's `behavior`, and `deployment_version` fields are updated per the
              worker's task completion response.
              Pending activities will not start new attempts during a transition. Once the transition is
              completed, pending activities will start their next attempt on the new version.
@@ -13580,6 +14121,7 @@ components:
             - WORKFLOW_TASK_FAILED_CAUSE_PENDING_NEXUS_OPERATIONS_LIMIT_EXCEEDED
             - WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_NEXUS_OPERATION_ATTRIBUTES
             - WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED
+            - WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE
           type: string
           format: enum
         failure:
@@ -13601,7 +14143,7 @@ components:
         binaryChecksum:
           type: string
           description: |-
-            DEPRECATED since 1.21 - This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+            Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
              If a worker explicitly failed this task, its binary id
         workerVersion:
           allOf:

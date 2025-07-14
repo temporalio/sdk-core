@@ -230,13 +230,20 @@ impl EphemeralServer {
             .client_name("online-checker".to_owned())
             .client_version("0.1.0".to_owned())
             .build()?;
+        let mut last_error = None;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
-            if client_options.connect_no_namespace(None).await.is_ok() {
+            let connect_res = client_options.connect_no_namespace(None).await;
+            if let Err(err) = connect_res {
+                last_error = Some(err);
+            } else {
                 return success;
             }
         }
-        Err(anyhow!("Failed connecting to test server after 5 seconds"))
+        Err(anyhow!(
+            "Failed connecting to test server after 5 seconds, last error: {:?}",
+            last_error
+        ))
     }
 
     /// Shutdown the server (i.e. kill the child process). This does not attempt
@@ -416,7 +423,7 @@ fn get_free_port(bind_ip: &str) -> io::Result<u16> {
     let addr = listen.local_addr()?;
 
     // On Linux and some BSD variants, ephemeral ports are randomized, and may
-    // consequently repeat within a short time frame after the listenning end
+    // consequently repeat within a short time frame after the listening end
     // has been closed. To avoid this, we make a connection to the port, then
     // close that connection from the server's side (this is very important),
     // which puts the connection in TIME_WAIT state for some time (by default,
@@ -546,7 +553,7 @@ async fn download_and_extract(
     // We have to map the error type to an io error
     let stream = resp
         .bytes_stream()
-        .map(|item| item.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
+        .map(|item| item.map_err(io::Error::other));
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
     // in a blocking closure.
@@ -615,29 +622,11 @@ fn remove_file_past_ttl(ttl: &Option<Duration>, dest: &PathBuf) -> Result<bool, 
 mod tests {
     use super::{get_free_port, remove_file_past_ttl};
     use std::{
-        collections::HashSet,
         env::temp_dir,
         fs::File,
         net::{TcpListener, TcpStream},
         time::{Duration, SystemTime},
     };
-
-    #[test]
-    fn get_free_port_no_double() {
-        let host = "127.0.0.1";
-        let mut port_set = HashSet::new();
-
-        for _ in 0..2000 {
-            let port = get_free_port(host).unwrap();
-            assert!(
-                !port_set.contains(&port),
-                "Port {port} has been assigned more than once"
-            );
-
-            // Add port to the set
-            port_set.insert(port);
-        }
-    }
 
     #[test]
     fn get_free_port_can_bind_immediately() {

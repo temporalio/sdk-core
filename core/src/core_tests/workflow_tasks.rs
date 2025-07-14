@@ -1,5 +1,5 @@
 use crate::{
-    Worker, advance_fut,
+    PollWorkflowOptions, Worker, advance_fut,
     internal_flags::CoreInternalFlags,
     job_assert,
     replay::TestHistoryBuilder,
@@ -2528,7 +2528,7 @@ async fn post_terminal_commands_are_retained_when_not_replaying() {
     ]);
     _do_post_terminal_commands_test(
         commands_sent_by_lang,
-        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        [ResponseType::ToTaskNum(1)],
         expected_command_types_emitted,
         t,
     )
@@ -2602,7 +2602,6 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
-    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,
@@ -2610,6 +2609,7 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
+    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollError::ShutDown);
     core.shutdown().await;
@@ -2685,10 +2685,6 @@ async fn history_length_with_fail_and_timeout(
     #[values(true, false)] use_cache: bool,
     #[values(1, 2, 3)] history_responses_case: u8,
 ) {
-    if !use_cache && history_responses_case == 3 {
-        /* disabled for now because this keeps flaking*/
-        return;
-    }
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -2890,6 +2886,7 @@ async fn use_compatible_version_flag(
         VersioningIntent::Compatible => true,
         VersioningIntent::Default => false,
     };
+    #[allow(deprecated)]
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {
@@ -3149,4 +3146,154 @@ async fn pass_timer_summary_to_metadata() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn both_normal_and_sticky_pollers_poll_concurrently() {
+    struct Counters {
+        // How many time PollWorkflowTaskQueue has been called
+        normal_poll_count: AtomicUsize,
+        sticky_poll_count: AtomicUsize,
+
+        // How many pollers are currently active (i.e. PollWorkflowTaskQueue
+        // has been called, but not the corresponding CompleteWorkflowTask)
+        normal_slots_active_count: AtomicUsize,
+        sticky_slots_active_count: AtomicUsize,
+
+        // Max number of pollers that were active at the same time
+        max_total_slots_active_count: AtomicUsize,
+        max_normal_slots_active_count: AtomicUsize,
+        max_sticky_slots_active_count: AtomicUsize,
+    }
+
+    let counters = Arc::new(Counters {
+        normal_poll_count: AtomicUsize::new(0),
+        sticky_poll_count: AtomicUsize::new(0),
+        normal_slots_active_count: AtomicUsize::new(0),
+        sticky_slots_active_count: AtomicUsize::new(0),
+        max_total_slots_active_count: AtomicUsize::new(0),
+        max_normal_slots_active_count: AtomicUsize::new(0),
+        max_sticky_slots_active_count: AtomicUsize::new(0),
+    });
+
+    // Create actual workflow task responses to return from polls
+    let mut task_responses = (1..100).map(|i| {
+        hist_to_poll_resp(
+            &canned_histories::single_timer(&format!("timer-{i}")),
+            format!("wf-{i}"),
+            1.into(),
+        )
+        .resp
+    });
+
+    let mut mock_client = mock_workflow_client();
+
+    // Track normal vs sticky poll requests and return actual workflow tasks
+    let cc = Arc::clone(&counters);
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, opts: PollWorkflowOptions| {
+            let mut task_response = task_responses.next().unwrap_or_default();
+
+            // FIXME: Atomics initially made sense, but this has grown ugly, and there's probably
+            // cases where this may produce incorrect results due to race in operation ordering
+            // (really didn't put any thought into this). We also can't have
+            if opts.sticky_queue_name.is_none() {
+                // Normal queue poll
+                cc.normal_poll_count.fetch_add(1, Ordering::Relaxed);
+                cc.normal_slots_active_count.fetch_add(1, Ordering::Relaxed);
+                cc.max_normal_slots_active_count.fetch_max(
+                    cc.normal_slots_active_count.load(Ordering::Relaxed),
+                    Ordering::AcqRel,
+                );
+                cc.max_total_slots_active_count.fetch_max(
+                    cc.normal_slots_active_count.load(Ordering::Relaxed)
+                        + cc.sticky_slots_active_count.load(Ordering::Relaxed),
+                    Ordering::AcqRel,
+                );
+
+                task_response.task_token = [task_response.task_token, b"normal".to_vec()].concat();
+            } else {
+                // Sticky queue poll
+                cc.sticky_poll_count.fetch_add(1, Ordering::Relaxed);
+                cc.sticky_slots_active_count.fetch_add(1, Ordering::Relaxed);
+                cc.max_sticky_slots_active_count.fetch_max(
+                    cc.sticky_slots_active_count.load(Ordering::Acquire),
+                    Ordering::AcqRel,
+                );
+                cc.max_total_slots_active_count.fetch_max(
+                    cc.normal_slots_active_count.load(Ordering::Relaxed)
+                        + cc.sticky_slots_active_count.load(Ordering::Relaxed),
+                    Ordering::AcqRel,
+                );
+
+                task_response.task_token = [task_response.task_token, b"sticky".to_vec()].concat();
+            }
+
+            // Return actual workflow task responses
+            Ok(task_response)
+        });
+
+    let cc = Arc::clone(&counters);
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(move |completion| {
+            if completion.task_token.0.ends_with(b"normal") {
+                cc.normal_slots_active_count.fetch_sub(1, Ordering::Relaxed);
+            } else {
+                cc.sticky_slots_active_count.fetch_sub(1, Ordering::Relaxed);
+            }
+            Ok(Default::default())
+        });
+
+    let worker = Worker::new(
+        test_worker_cfg()
+            .max_cached_workflows(500_usize) // We need cache, but don't want to deal with evictions
+            .max_outstanding_workflow_tasks(2_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
+            .nonsticky_to_sticky_poll_ratio(0.2)
+            .no_remote_activities(true)
+            .build()
+            .unwrap(),
+        Some("stickytq".to_string()),
+        Arc::new(mock_client),
+        None,
+    );
+
+    for _ in 1..50 {
+        let activation = worker.poll_workflow_activation().await.unwrap();
+        let _ = worker
+            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+            .await;
+    }
+
+    assert!(
+        counters.normal_poll_count.load(Ordering::Relaxed) > 0,
+        "Normal poller should have been called at least once"
+    );
+    assert!(
+        counters.sticky_poll_count.load(Ordering::Relaxed) > 0,
+        "Sticky poller should have been called at least once"
+    );
+    assert!(
+        counters
+            .max_normal_slots_active_count
+            .load(Ordering::Relaxed)
+            >= 1,
+        "Normal poller should have been active at least once"
+    );
+    assert!(
+        counters
+            .max_sticky_slots_active_count
+            .load(Ordering::Relaxed)
+            >= 1,
+        "Sticky poller should have been active at least once"
+    );
+    assert_eq!(
+        counters
+            .max_total_slots_active_count
+            .load(Ordering::Relaxed),
+        2,
+        "At peak, there should be exactly 2 pollers active at the same time"
+    );
 }

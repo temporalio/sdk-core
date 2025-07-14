@@ -716,28 +716,28 @@ impl Future for LATimerBackoffFut<'_> {
             };
         }
         let poll_res = self.current_fut.poll_unpin(cx);
-        if let Poll::Ready(ref r) = poll_res {
-            if let Some(activity_resolution::Status::Backoff(b)) = r.status.as_ref() {
-                // If we've already said we want to cancel, don't schedule the backoff timer. Just
-                // return cancel status. This can happen if cancel comes after the LA says it wants
-                // to back off but before we have scheduled the timer.
-                if self.did_cancel.load(Ordering::Acquire) {
-                    return Poll::Ready(ActivityResolution {
-                        status: Some(activity_resolution::Status::Cancelled(Default::default())),
-                    });
-                }
-
-                let timer_f = self.ctx.timer::<Duration>(
-                    b.backoff_duration
-                        .expect("Duration is set")
-                        .try_into()
-                        .expect("duration converts ok"),
-                );
-                self.timer_fut = Some(Box::pin(timer_f));
-                self.next_attempt = b.attempt;
-                self.next_sched_time.clone_from(&b.original_schedule_time);
-                return Poll::Pending;
+        if let Poll::Ready(ref r) = poll_res
+            && let Some(activity_resolution::Status::Backoff(b)) = r.status.as_ref()
+        {
+            // If we've already said we want to cancel, don't schedule the backoff timer. Just
+            // return cancel status. This can happen if cancel comes after the LA says it wants
+            // to back off but before we have scheduled the timer.
+            if self.did_cancel.load(Ordering::Acquire) {
+                return Poll::Ready(ActivityResolution {
+                    status: Some(activity_resolution::Status::Cancelled(Default::default())),
+                });
             }
+
+            let timer_f = self.ctx.timer::<Duration>(
+                b.backoff_duration
+                    .expect("Duration is set")
+                    .try_into()
+                    .expect("duration converts ok"),
+            );
+            self.timer_fut = Some(Box::pin(timer_f));
+            self.next_attempt = b.attempt;
+            self.next_sched_time.clone_from(&b.original_schedule_time);
+            return Poll::Pending;
         }
         poll_res
     }
@@ -866,10 +866,10 @@ impl StartedChildWorkflow {
 }
 
 #[derive(derive_more::Debug)]
-#[debug("StartedNexusOperation{{ operation_id: {operation_id:?} }}")]
+#[debug("StartedNexusOperation{{ operation_token: {operation_token:?} }}")]
 pub struct StartedNexusOperation {
-    /// The operation id, if the operation started asynchronously
-    pub operation_id: Option<String>,
+    /// The operation token, if the operation started asynchronously
+    pub operation_token: Option<String>,
     pub(crate) unblock_dat: NexusUnblockData,
 }
 

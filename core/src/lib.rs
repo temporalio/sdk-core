@@ -47,6 +47,10 @@ pub use worker::{
     WorkerConfigBuilder,
 };
 
+/// Expose [WorkerClient] symbols
+pub use crate::worker::client::{
+    PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
+};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{

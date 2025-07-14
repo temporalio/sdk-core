@@ -16,6 +16,7 @@ import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/sdk/core/child_workflow/child_workflow.proto";
+import "temporal/sdk/core/nexus/nexus.proto";
 import "temporal/sdk/core/common/common.proto";
 
 message WorkflowCommand {
@@ -375,6 +376,8 @@ message ScheduleNexusOperation {
     // activities and child workflows, these are transmitted to Nexus operations that may be
     // external and are not traditional payloads.
     map<string, string> nexus_header = 7;
+    // Defines behaviour of the underlying nexus operation when operation cancellation has been requested.
+    nexus.NexusOperationCancellationType cancellation_type = 8;
 }
 
 // Request cancellation of a nexus operation started via `ScheduleNexusOperation`

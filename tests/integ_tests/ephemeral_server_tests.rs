@@ -3,7 +3,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
-    TestServerConfigBuilder,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::{NAMESPACE, default_cached_download};
@@ -84,6 +83,7 @@ async fn temporal_cli_concurrent_starts() -> Result<(), Box<dyn std::error::Erro
 #[cfg(not(all(target_os = "linux", any(target_arch = "arm", target_arch = "aarch64"))))]
 mod test_server {
     use super::*;
+    use temporal_sdk_core::ephemeral_server::TestServerConfigBuilder;
 
     #[tokio::test]
     async fn test_server_default() {

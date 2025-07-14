@@ -260,6 +260,7 @@ pub(crate) struct CompleteLocalActivityData {
     pub(crate) result: Result<Payload, Failure>,
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_activity_completion(
     status: &activity_execution_result::Status,
 ) -> Result<(), CompleteActivityError> {
@@ -373,10 +374,9 @@ impl ValidScheduleLA {
         // Clamp schedule-to-start if larger than schedule-to-close
         if let Some((sched_to_start, sched_to_close)) =
             schedule_to_start_timeout.as_mut().zip(sched_to_close)
+            && *sched_to_start > sched_to_close
         {
-            if *sched_to_start > sched_to_close {
-                *sched_to_start = sched_to_close;
-            }
+            *sched_to_start = sched_to_close;
         }
         let close_timeouts = match (
             sched_to_close,

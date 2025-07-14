@@ -45,8 +45,8 @@ impl HttpConnectProxyOptions {
         // Create CONNECT request
         let mut req_build = hyper::Request::builder().method("CONNECT").uri(uri);
         if let Some((user, pass)) = &self.basic_auth {
-            let creds = BASE64_STANDARD.encode(format!("{}:{}", user, pass));
-            req_build = req_build.header(header::PROXY_AUTHORIZATION, format!("Basic {}", creds));
+            let creds = BASE64_STANDARD.encode(format!("{user}:{pass}"));
+            req_build = req_build.header(header::PROXY_AUTHORIZATION, format!("Basic {creds}"));
         }
         let req = req_build.body(Empty::<Bytes>::new())?;
 

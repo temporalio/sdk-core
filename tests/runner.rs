@@ -69,7 +69,9 @@ async fn main() -> Result<(), anyhow::Error> {
     .map(ToString::to_string)
     .chain(cargo_test_args)
     .collect::<Vec<_>>();
-    let status = Command::new(&cargo)
+    let mut build_cmd = Command::new(&cargo);
+    strip_cargo_env_vars(&mut build_cmd);
+    let status = build_cmd
         .args([test_args_preamble.as_slice(), &["--no-run".to_string()]].concat())
         .status()
         .await?;
@@ -147,6 +149,7 @@ async fn main() -> Result<(), anyhow::Error> {
     };
 
     let mut cmd = Command::new(&cargo);
+    strip_cargo_env_vars(&mut cmd);
     if let Some(srv) = server.as_ref() {
         println!("Running on {}", srv.target);
         cmd.env(
@@ -173,6 +176,15 @@ async fn main() -> Result<(), anyhow::Error> {
         Ok(())
     } else {
         Err(anyhow!("Integ tests failed!"))
+    }
+}
+
+/// Some env vars inherited from the fact that this is called with cargo can cause the *nested*
+/// cargo calls to do unnecessary recompiles. Fix that.
+fn strip_cargo_env_vars(build_cmd: &mut Command) {
+    let envs = env::vars().filter(|(k, _)| k.starts_with("CARGO_"));
+    for (k, _) in envs {
+        build_cmd.env_remove(k);
     }
 }
 

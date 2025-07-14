@@ -1,7 +1,12 @@
 use assert_matches::assert_matches;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::Relaxed;
-use std::{cell::Cell, sync::Arc, time::Duration};
+use std::{
+    cell::Cell,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering::Relaxed},
+    },
+    time::Duration,
+};
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
 use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker};
@@ -10,14 +15,15 @@ use temporal_sdk_core_api::{
     errors::WorkerValidationError,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
-use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure;
-use temporal_sdk_core_protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
         Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
     },
-    temporal::api::failure::v1::Failure as InnerFailure,
+    temporal::api::{
+        enums::v1::EventType, failure::v1::Failure as InnerFailure,
+        history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
+    },
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, drain_pollers_and_shutdown, get_integ_server_options, get_integ_telem_options,
@@ -182,8 +188,7 @@ async fn oversize_grpc_message() {
     assert!(starter.get_history().await.events.iter().any(|e| {
         e.event_type == EventType::WorkflowTaskFailed as i32
             && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                // TODO tim: Change to custom cause
-                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                attr.cause == GrpcMessageTooLarge as i32
                     && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
             } else {
                 false

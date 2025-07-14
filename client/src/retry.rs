@@ -211,10 +211,10 @@ where
             return RetryPolicy::ForwardError(e);
         }
 
-        if let Some(sc) = self.retry_short_circuit.as_ref() {
-            if (sc.predicate)(&e) {
-                return RetryPolicy::ForwardError(e);
-            }
+        if let Some(sc) = self.retry_short_circuit.as_ref()
+            && (sc.predicate)(&e)
+        {
+            return RetryPolicy::ForwardError(e);
         }
 
         // Short circuit if message is too large - this is not retryable
@@ -245,18 +245,17 @@ where
         // at most once. Ideally this bit should be removed eventually if we can repro the upstream
         // bug and it is fixed.
         let mut goaway_retry_allowed = false;
-        if !self.have_retried_goaway_cancel && e.code() == Code::Cancelled {
-            if let Some(e) = e
+        if !self.have_retried_goaway_cancel
+            && e.code() == Code::Cancelled
+            && let Some(e) = e
                 .source()
                 .and_then(|e| e.downcast_ref::<tonic::transport::Error>())
                 .and_then(|te| te.source())
                 .and_then(|tec| tec.downcast_ref::<hyper::Error>())
-            {
-                if format!("{e:?}").contains("connection closed") {
-                    goaway_retry_allowed = true;
-                    self.have_retried_goaway_cancel = true;
-                }
-            }
+            && format!("{e:?}").contains("connection closed")
+        {
+            goaway_retry_allowed = true;
+            self.have_retried_goaway_cancel = true;
         }
 
         if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed || goaway_retry_allowed {
