@@ -153,12 +153,14 @@ pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn local_activity_timeout_marker() {
     let wf_name = "local_activity_timeout_marker";
     let mut starter = CoreWfStarter::new(wf_name);
+    // starter.worker_config.graceful_shutdown_period(Duration::from_millis(1));
     let mut worker = starter.worker().await;
     static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let local_activity = ctx.local_activity(LocalActivityOptions {
-            schedule_to_close_timeout: Some(Duration::from_millis(200)),
+            schedule_to_close_timeout: Some(Duration::from_millis(10)),
+            start_to_close_timeout: Some(Duration::from_millis(500)),
             activity_type: "stop_activity".to_string(),
             input: "hi!".as_json_payload().expect("serializes fine"),
             ..Default::default()
@@ -170,6 +172,7 @@ async fn local_activity_timeout_marker() {
     worker.register_activity(
         "stop_activity",
         |_ctx: ActContext, _: String| async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
             ACTS_STARTED.add_permits(1);
             Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
         },
@@ -192,6 +195,7 @@ async fn local_activity_timeout_marker() {
     let shutdowner = async {
         let _ = ACTS_STARTED.acquire().await;
         handle();
+        tokio::time::sleep(Duration::from_millis(1500)).await;
     };
     let runner = async {
         worker.run_until_done().await.unwrap();
@@ -205,11 +209,14 @@ async fn local_activity_timeout_marker() {
         .unwrap()
         .history
         .unwrap();
+    println!("{:#?}", history.events);
     let marker = history
         .events
         .iter()
         .find(|he| he.event_type() == EventType::MarkerRecorded)
         .expect("expected marker recorded event");
+
+    println!("marker: {:?}", marker);
 
     if let Some(history_event::Attributes::MarkerRecordedEventAttributes(attr)) =
         marker.clone().attributes
@@ -224,6 +231,7 @@ async fn local_activity_timeout_marker() {
     } else {
         unreachable!("We already assert MarkerRecorded event type");
     }
+    panic!("fail so i can see prints on pass");
 }
 
 #[tokio::test]

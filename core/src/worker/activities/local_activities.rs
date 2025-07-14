@@ -406,36 +406,21 @@ impl LocalActivityManager {
                         }
                     }
                     CancelOrTimeout::Timeout { run_id, resolution } => {
-                        let mut dat = self.dat.lock();
-                        let exec_id = ExecutingLAId {
-                            run_id: run_id.clone(),
-                            seq_num: resolution.seq,
-                        };
-                        if let Some(lai) = dat.la_info.get(&exec_id) {
-                            let tt = lai.task_token.clone();
-                            if dat.outstanding_activity_tasks.contains_key(&tt) {
-                                Some(NextPendingLAAction::Autocomplete(
-                                    self.complete(&tt, resolution.result),
-                                ))
-                            } else {
-                                // schedule_to_close timeout can sometimes trigger before we add
-                                // TaskToken to dat.outstanding_activity_tasks. We need to report
-                                // timeout result so a marker is recorded.
-                                let lai = dat.la_info.remove(&exec_id).unwrap();
-                                if let Some(bot) = lai.backing_off_task {
-                                    bot.abort();
-                                }
-                                if self.workflows_have_shut_down.is_cancelled() {
-                                    self.set_shutdown_complete_if_ready(&mut dat);
-                                }
-                                Some(NextPendingLAAction::Autocomplete(
-                                    LACompleteAction::Report {
-                                        run_id,
-                                        resolution,
-                                        task: None,
-                                    },
-                                ))
-                            }
+                        let tt = self
+                            .dat
+                            .lock()
+                            .la_info
+                            .get(&ExecutingLAId {
+                                run_id,
+                                seq_num: resolution.seq,
+                            })
+                            .as_ref()
+                            .map(|lai| lai.task_token.clone());
+                        if let Some(task_token) = tt {
+                            Some(NextPendingLAAction::Autocomplete(
+                                self.complete(&task_token, resolution.result),
+                            ))
+
                         } else {
                             // This timeout is for a no-longer-tracked activity, so, whatever
                             None
