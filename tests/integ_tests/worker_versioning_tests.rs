@@ -131,13 +131,9 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         );
     }
     assert_eq!(wft_complete.worker_deployment_name, deploy_name);
-    #[allow(deprecated)] // odd looking hack since can't put attr macro on macro
-    {
-        assert_eq!(
-            wft_complete.worker_deployment_version,
-            format!("{deploy_name}.1.0")
-        );
-    }
+    let dv = wft_complete.deployment_version.unwrap();
+    assert_eq!(dv.deployment_name, deploy_name);
+    assert_eq!(dv.build_id, "1.0");
 }
 
 #[tokio::test]
