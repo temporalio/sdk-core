@@ -2443,10 +2443,13 @@ pub mod temporal {
         }
         pub mod nexus {
             pub mod v1 {
-                use crate::temporal::api::{
-                    common,
-                    common::v1::link::{WorkflowEvent, workflow_event},
-                    enums::v1::EventType,
+                use crate::{
+                    camel_case_to_screaming_snake,
+                    temporal::api::{
+                        common,
+                        common::v1::link::{WorkflowEvent, workflow_event},
+                        enums::v1::EventType,
+                    },
                 };
                 use anyhow::{anyhow, bail};
                 use std::fmt::{Display, Formatter};
@@ -2540,12 +2543,20 @@ pub mod temporal {
                                     })?;
                                 }
                                 "eventType" => {
-                                    eventref.event_type =
-                                        EventType::from_str_name(val).unwrap_or_default().into()
+                                    eventref.event_type = EventType::from_str_name(val)
+                                        .unwrap_or_else(|| {
+                                            EventType::from_str_name(
+                                                &("EVENT_TYPE_".to_string()
+                                                    + &camel_case_to_screaming_snake(val)),
+                                            )
+                                            .unwrap_or_default()
+                                        })
+                                        .into()
                                 }
                                 _ => continue,
                             }
                         }
+                        dbg!(&eventref);
                         Some(workflow_event::Reference::EventRef(eventref))
                     } else {
                         None

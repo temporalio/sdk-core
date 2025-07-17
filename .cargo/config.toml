@@ -1,7 +1,6 @@
 [env]
 # This temporarily overrides the version of the CLI used for integration tests, locally and in CI
-# TODO: Comment out once priority is released
-CLI_VERSION_OVERRIDE = "v1.3.1-priority.0"
+#CLI_VERSION_OVERRIDE = "v1.3.1-priority.0"
 
 [alias]
 integ-test = ["test", "--features", "temporal-sdk-core-protos/serde_serialize", "--package", "temporal-sdk-core", "--test", "integ_runner", "--"]
