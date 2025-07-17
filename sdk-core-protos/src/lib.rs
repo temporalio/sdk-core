@@ -2528,7 +2528,6 @@ pub mod temporal {
                     let reference = if let Some(query) = path.query() {
                         let mut eventref = workflow_event::EventReference::default();
                         let query_parts = query.split('&').collect::<Vec<_>>();
-                        dbg!(&query_parts);
                         for qp in query_parts {
                             let mut kv = qp.split('=');
                             let key = kv.next().ok_or_else(|| {
@@ -2546,10 +2545,10 @@ pub mod temporal {
                                 "eventType" => {
                                     eventref.event_type = EventType::from_str_name(val)
                                         .unwrap_or_else(|| {
-                                            EventType::from_str_name(dbg!(
+                                            EventType::from_str_name(
                                                 &("EVENT_TYPE_".to_string()
-                                                    + &camel_case_to_screaming_snake(val))
-                                            ))
+                                                    + &camel_case_to_screaming_snake(val)),
+                                            )
                                             .unwrap_or_default()
                                         })
                                         .into()
