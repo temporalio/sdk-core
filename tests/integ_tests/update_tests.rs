@@ -4,7 +4,7 @@ use futures_util::{StreamExt, future, future::join_all};
 use std::{
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
