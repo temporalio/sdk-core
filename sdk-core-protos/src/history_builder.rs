@@ -243,12 +243,12 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
-    pub fn add_timer_started(&mut self, timer_id: String) {
+    pub fn add_timer_started(&mut self, timer_id: String) -> i64 {
         self.add(TimerStartedEventAttributes {
             timer_id,
             workflow_task_completed_event_id: self.previous_task_completed_id,
             ..Default::default()
-        });
+        })
     }
 
     pub fn add_timer_fired(&mut self, timer_started_evt_id: i64, timer_id: String) {
@@ -451,7 +451,7 @@ impl TestHistoryBuilder {
         update_name: impl Into<String>,
     ) -> i64 {
         let protocol_instance_id = instance_id.into();
-        let last_wft_started_id = self
+        let last_wft_scheduled_id = self
             .events
             .iter()
             .rev()
@@ -465,7 +465,7 @@ impl TestHistoryBuilder {
             .expect("Must have wft scheduled event");
         let attrs = WorkflowExecutionUpdateAcceptedEventAttributes {
             accepted_request_message_id: format!("{}/request", &protocol_instance_id),
-            accepted_request_sequencing_event_id: last_wft_started_id,
+            accepted_request_sequencing_event_id: last_wft_scheduled_id,
             accepted_request: Some(update::v1::Request {
                 meta: Some(update::v1::Meta {
                     update_id: protocol_instance_id.clone(),

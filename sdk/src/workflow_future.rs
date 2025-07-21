@@ -429,6 +429,11 @@ impl Future for WorkflowFuture {
                 )
                 .collect();
 
+            // The commands from the initial activation should go _after_ the updates run. This
+            // is still a bit of hacky nonsense, as the first poll of the WF future should be able
+            // to observe any state changed by the update handlers - but that's impossible to do
+            // with current handler registration. In the real SDK, this will be obviated by them
+            // being functions on a struct.
             activation_cmds.extend(init_activation_cmds);
             if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                 continue;
