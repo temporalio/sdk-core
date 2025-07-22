@@ -1,59 +1,113 @@
 use crate::WorkerClient;
-use crate::abstractions::dbg_panic;
+use crate::abstractions::{MeteredPermitDealer, dbg_panic};
+use crate::pollers::{BoxedNexusPoller, LongPollBuffer};
+use crate::worker::nexus::NexusManager;
 use gethostname::gethostname;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
+use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime};
-use temporal_sdk_core_api::worker::WorkerConfig;
+use temporal_client::Client;
+use temporal_sdk_core_api::worker::{NexusSlotKind, PollerBehavior, WorkerConfig};
 use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    PollNexusTaskQueueResponse, RecordWorkerHeartbeatRequest,
+};
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-pub(crate) type HeartbeatFn = Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>;
+pub(crate) type HeartbeatFn = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
+pub(crate) type HeartbeatMap = HashMap<ClientIdentity, HeartbeatNexusManager>;
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ClientIdentity {
+    pub(crate) endpoint: String,
+    pub(crate) namespace: String,
+    pub(crate) task_queue: String,
+}
+
+pub(crate) struct HeartbeatNexusManager {
+    pub(crate) heartbeats: Vec<HeartbeatFn>,
+    pub(crate) poller: LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind>,
+}
+
+impl HeartbeatNexusManager {
+    pub(crate) fn new(
+        client: Arc<dyn WorkerClient>,
+        key: ClientIdentity,
+        poller_behavior: PollerBehavior,
+        permit_dealer: MeteredPermitDealer<NexusSlotKind>,
+        shutdown: CancellationToken,
+    ) -> Self {
+        let poller = LongPollBuffer::new_nexus_task(
+            client,
+            key.task_queue.clone(),
+            poller_behavior,
+            permit_dealer,
+            shutdown,
+            None,
+        );
+        Self {
+            heartbeats: Vec::new(),
+            poller,
+        }
+    }
+
+    pub(crate) fn register_heartbeat(&mut self, heartbeat_fn: HeartbeatFn) {
+        self.heartbeats.push(heartbeat_fn)
+    }
+}
 
 pub(crate) struct WorkerHeartbeatManager {
     heartbeat_handle: JoinHandle<()>,
+    heartbeat_map: Arc<Mutex<HeartbeatMap>>,
 }
 
 impl WorkerHeartbeatManager {
     pub(crate) fn new(
         config: WorkerConfig,
         identity: String,
-        heartbeat_fn: Arc<OnceLock<HeartbeatFn>>,
         client: Arc<dyn WorkerClient>,
+        heartbeat_map: Arc<Mutex<HeartbeatMap>>,
     ) -> Self {
         let sdk_name_and_ver = client.sdk_name_and_version();
         let reset_notify = Arc::new(Notify::new());
-        let data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
-            config,
-            identity,
-            sdk_name_and_ver,
-            reset_notify.clone(),
-        )));
-        let data_clone = data.clone();
-
+        let heartbeat_map_clone = heartbeat_map.clone();
         let heartbeat_handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(data_clone.lock().heartbeat_interval);
+            let mut ticker = tokio::time::interval(config.clone().heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let heartbeat = if let Some(heartbeat) = data_clone.lock().capture_heartbeat_if_needed() {
-                            heartbeat
-                        } else {
-                            continue
-                        };
-                        if let Err(e) = client.clone().record_worker_heartbeat(heartbeat).await {
-                            if matches!(
+                        for (key, heartbeat_mgr) in heartbeat_map_clone.lock().iter() {
+                            let heartbeats = &heartbeat_mgr.heartbeats;
+                            let mut hb_to_send = Vec::new();
+                            for hb in heartbeats.iter() {
+                                if let Some(heartbeat) = hb.get() {
+                                    hb_to_send.push(heartbeat());
+                                } else {
+                                    dbg_panic!("Heartbeat function should never be missing in key {:?}", key);
+                                }
+                            }
+                            // TODO: send heartbeat per client or per namespace or what?
+                            //  or can I send a single heartbeat request, covering EVERYTHING?
+                            // I believe it has to be per task queue, see pub(crate) fn new_nexus_task(
+                            if let Err(e) = client.record_worker_heartbeat(key.namespace.clone(), key.endpoint.clone(), hb_to_send
+                            ).await {
+                                if matches!(
                                 e.code(),
                                 tonic::Code::Unimplemented
                             ) {
                                 return;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
+                        }
+
+
                         }
                     }
                     _ = reset_notify.notified() => {
@@ -63,28 +117,31 @@ impl WorkerHeartbeatManager {
             }
         });
 
-        let data_clone = data.clone();
-        if heartbeat_fn
-            .set(Box::new(move || {
-                data_clone.lock().capture_heartbeat_if_needed()
-            }))
-            .is_err()
-        {
-            dbg_panic!(
-                "Failed to set heartbeat_fn, heartbeat_fn should only be set once, when a singular WorkerHeartbeatInfo is created"
-            );
+        Self {
+            heartbeat_handle,
+            heartbeat_map,
         }
-
-        Self { heartbeat_handle }
     }
 
     pub(crate) fn shutdown(&self) {
         self.heartbeat_handle.abort()
     }
+
+    pub(crate) fn register_heartbeat(&self, key: ClientIdentity, heartbeat: HeartbeatFn) {
+        if self.heartbeat_map.lock().contains_key(&key) {}
+        self.heartbeat_map
+            .lock()
+            .entry(key.clone())
+            .and_modify(|mgr| mgr.register_heartbeat(heartbeat))
+            .or_insert_with(|| {
+                // TODO: create the nexus poller
+                HeartbeatNexusManager::new(key)
+            });
+    }
 }
 
 #[derive(Debug, Clone)]
-struct WorkerHeartbeatData {
+pub(crate) struct WorkerHeartbeatData {
     worker_instance_key: String,
     worker_identity: String,
     host_info: WorkerHostInfo,
@@ -98,15 +155,13 @@ struct WorkerHeartbeatData {
     /// Worker start time
     start_time: SystemTime,
     heartbeat_interval: Duration,
-    reset_notify: Arc<Notify>,
 }
 
 impl WorkerHeartbeatData {
-    fn new(
+    pub(crate) fn new(
         worker_config: WorkerConfig,
         worker_identity: String,
         sdk_name_and_ver: (String, String),
-        reset_notify: Arc<Notify>,
     ) -> Self {
         Self {
             worker_identity,
@@ -122,20 +177,13 @@ impl WorkerHeartbeatData {
             heartbeat_time: None,
             worker_instance_key: Uuid::new_v4().to_string(),
             heartbeat_interval: worker_config.heartbeat_interval,
-            reset_notify,
         }
     }
 
-    fn capture_heartbeat_if_needed(&mut self) -> Option<WorkerHeartbeat> {
+    pub(crate) fn capture_heartbeat(&mut self) -> WorkerHeartbeat {
         let now = SystemTime::now();
         let elapsed_since_last_heartbeat = if let Some(heartbeat_time) = self.heartbeat_time {
             let dur = now.duration_since(heartbeat_time).unwrap_or(Duration::ZERO);
-
-            // Only send poll data if it's nearly been a full interval since this data has been sent
-            // In this case, "nearly" is 90% of the interval
-            if dur.as_secs_f64() < 0.9 * self.heartbeat_interval.as_secs_f64() {
-                return None;
-            }
             Some(PbDuration {
                 seconds: dur.as_secs() as i64,
                 nanos: dur.subsec_nanos() as i32,
@@ -146,9 +194,7 @@ impl WorkerHeartbeatData {
 
         self.heartbeat_time = Some(now);
 
-        self.reset_notify.notify_one();
-
-        Some(WorkerHeartbeat {
+        WorkerHeartbeat {
             worker_instance_key: self.worker_instance_key.clone(),
             worker_identity: self.worker_identity.clone(),
             host_info: Some(self.host_info.clone()),
@@ -160,7 +206,7 @@ impl WorkerHeartbeatData {
             heartbeat_time: Some(SystemTime::now().into()),
             elapsed_since_last_heartbeat,
             ..Default::default()
-        })
+        }
     }
 }
 

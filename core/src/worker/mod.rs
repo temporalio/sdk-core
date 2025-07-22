@@ -1,6 +1,6 @@
 mod activities;
 pub(crate) mod client;
-mod heartbeat;
+pub(crate) mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
@@ -20,7 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
+use crate::worker::heartbeat::{ClientIdentity, HeartbeatFn, HeartbeatMap, WorkerHeartbeatManager};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -51,6 +51,7 @@ use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::{
     convert::TryInto,
@@ -81,7 +82,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
 };
-use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::sync::{Notify, mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 #[cfg(test)]
@@ -123,6 +124,8 @@ pub struct Worker {
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
     /// Used to shutdown the worker heartbeat task
     worker_heartbeat: Option<WorkerHeartbeatManager>,
+    // /// Used for process-wide Nexus worker TODO
+    // client_worker_map: Option<Arc<Mutex<HashMap<String, Vec<Arc<HeartbeatFn>>>>>>,
 }
 
 struct AllPermitsTracker {
@@ -275,7 +278,8 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        heartbeat_fn: Option<OnceLock<HeartbeatFn>>,
+        heartbeat_map: Option<Arc<Mutex<HeartbeatMap>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -286,6 +290,7 @@ impl Worker {
             TaskPollers::Real,
             telem_instance,
             heartbeat_fn,
+            heartbeat_map,
         )
     }
 
@@ -304,8 +309,8 @@ impl Worker {
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
         let client = Arc::new(client);
-        let heartbeat_fn = Arc::new(OnceLock::new());
-        Self::new(config, None, client, None, Some(heartbeat_fn))
+        let heartbeat_fn = OnceLock::new();
+        Self::new(config, None, client, None, Some(heartbeat_fn), None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -314,7 +319,8 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        heartbeat_fn: Option<OnceLock<HeartbeatFn>>,
+        heartbeat_map: Option<Arc<Mutex<HeartbeatMap>>>,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -369,6 +375,7 @@ impl Worker {
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
+                // TODO: Do we not poll workflows for activity only workers? Same question for activities
                 let wft_stream = make_wft_poller(
                     &config,
                     &sticky_queue_name,
@@ -406,6 +413,7 @@ impl Worker {
                 };
 
                 let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                // This starts the poller thread.
                 let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
                     client.clone(),
                     config.task_queue.clone(),
@@ -478,6 +486,7 @@ impl Worker {
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
 
+        // TODO: How do we get nexus only worker to handle these requests?
         let nexus_mgr = NexusManager::new(
             nexus_poller,
             metrics.clone(),
@@ -494,14 +503,38 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| {
-            WorkerHeartbeatManager::new(
+        // Process-wide nexus worker
+        let worker_heartbeat = match heartbeat_map {
+            Some(hb_map) => Some(WorkerHeartbeatManager::new(
                 config.clone(),
                 client.get_identity(),
-                heartbeat_fn,
                 client.clone(),
-            )
-        });
+                hb_map,
+            )),
+            None => {
+                let data = Arc::new(Mutex::new(heartbeat::WorkerHeartbeatData::new(
+                    config.clone(),
+                    client.get_identity(),
+                    sdk_name_and_ver.clone(),
+                )));
+
+                match heartbeat_fn {
+                    Some(hb_fn) => {
+                        if hb_fn
+                            .set(Arc::new(move || data.lock().capture_heartbeat()))
+                            .is_err()
+                        {
+                            dbg_panic!(
+                                "Failed to set heartbeat_fn, heartbeat_fn should only be set once, when a singular WorkerHeartbeatInfo is created"
+                            );
+                        }
+                    }
+                    None => dbg_panic!("heartbeat_fn and heartbeat_map should not both be None"), // TODO: better message
+                }
+
+                None
+            }
+        };
 
         Self {
             worker_key,
@@ -860,6 +893,14 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn add_heartbeat_fn(&self, key: ClientIdentity, hb: HeartbeatFn) {
+        if let Some(ref manager) = self.worker_heartbeat {
+            manager.register_heartbeat(key, hb)
+        } else {
+            dbg_panic!("No heartbeat manager to register heartbeat to");
+        }
     }
 }
 

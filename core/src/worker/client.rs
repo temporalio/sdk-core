@@ -50,7 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
+    heartbeat_data: OnceLock<HeartbeatFn>,
 }
 
 impl WorkerClientBag {
@@ -59,7 +59,7 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
+        heartbeat_data: OnceLock<HeartbeatFn>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
@@ -130,7 +130,7 @@ impl WorkerClientBag {
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
         if let Some(hb) = self.heartbeat_data.get() {
-            hb()
+            Some(hb())
         } else {
             dbg_panic!("Heartbeat function never set");
             None
@@ -228,7 +228,9 @@ pub trait WorkerClient: Sync + Send {
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
@@ -672,14 +674,16 @@ impl WorkerClient for WorkerClientBag {
 
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: vec![heartbeat],
+                namespace,
+                identity,
+                worker_heartbeat,
             })
             .await?
             .into_inner())

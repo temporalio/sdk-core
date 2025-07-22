@@ -1,3 +1,4 @@
+use crate::worker::heartbeat::HeartbeatFn;
 use crate::{
     abstractions::UsedMeteredSemPermit,
     pollers::{BoxedNexusPoller, NexusPollItem, new_nexus_task_poller},
@@ -53,7 +54,8 @@ pub(super) struct NexusManager {
     outstanding_task_map: OutstandingTaskMap,
     /// Notified every time a task in the map is completed
     task_completed_notify: Arc<Notify>,
-
+    /// If this is set, the worker used here is a process-wide nexus-only worker
+    // client_worker_map: Option<Arc<parking_lot::Mutex<HashMap<String, Vec<Arc<HeartbeatFn>>>>>>,
     ever_polled: AtomicBool,
     metrics: MetricsContext,
 }
@@ -64,6 +66,7 @@ impl NexusManager {
         metrics: MetricsContext,
         graceful_shutdown: Option<Duration>,
         shutdown_initiated_token: CancellationToken,
+        // client_worker_map: Option<Arc<parking_lot::Mutex<HashMap<String, Vec<Arc<HeartbeatFn>>>>>>,
     ) -> Self {
         let source_stream =
             new_nexus_task_poller(poller, metrics.clone(), shutdown_initiated_token);
@@ -91,6 +94,7 @@ impl NexusManager {
             task_completed_notify,
             ever_polled: AtomicBool::new(false),
             metrics,
+            // client_worker_map,
         }
     }
 
@@ -204,6 +208,8 @@ impl NexusManager {
         }
         self.poll_returned_shutdown_token.cancelled().await;
     }
+
+    async fn worker_heartbeat(&self) {}
 }
 
 struct NexusTaskStream<S> {

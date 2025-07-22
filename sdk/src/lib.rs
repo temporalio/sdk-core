@@ -287,31 +287,36 @@ impl Worker {
         tokio::try_join!(
             // Workflow polling loop
             async {
-                loop {
-                    let activation = match common.worker.poll_workflow_activation().await {
-                        Err(PollError::ShutDown) => {
-                            break;
+                // TODO: This is at the SDK level, don't think this is relevant
+                if !wf_half.workflow_fns.borrow().is_empty() {
+                    loop {
+                        let activation = match common.worker.poll_workflow_activation().await {
+                            Err(PollError::ShutDown) => {
+                                break;
+                            }
+                            o => o?,
+                        };
+                        if let Some(ref i) = common.worker_interceptor {
+                            i.on_workflow_activation(&activation).await?;
                         }
-                        o => o?,
-                    };
-                    if let Some(ref i) = common.worker_interceptor {
-                        i.on_workflow_activation(&activation).await?;
+                        if let Some(wf_fut) = wf_half
+                            .workflow_activation_handler(
+                                common,
+                                shutdown_token.clone(),
+                                activation,
+                                &completions_tx,
+                            )
+                            .await?
+                            && wf_future_tx.send(wf_fut).is_err()
+                        {
+                            panic!(
+                                "Receive half of completion processor channel cannot be dropped"
+                            );
+                        }
                     }
-                    if let Some(wf_fut) = wf_half
-                        .workflow_activation_handler(
-                            common,
-                            shutdown_token.clone(),
-                            activation,
-                            &completions_tx,
-                        )
-                        .await?
-                        && wf_future_tx.send(wf_fut).is_err()
-                    {
-                        panic!("Receive half of completion processor channel cannot be dropped");
-                    }
+                    // Tell still-alive workflows to evict themselves
+                    shutdown_token.cancel();
                 }
-                // Tell still-alive workflows to evict themselves
-                shutdown_token.cancel();
                 // It's important to drop these so the future and completion processors will
                 // terminate.
                 drop(wf_future_tx);
