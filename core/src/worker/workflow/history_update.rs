@@ -8,7 +8,7 @@ use crate::{
 use futures_util::{FutureExt, Stream, TryFutureExt, future::BoxFuture};
 use itertools::Itertools;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     fmt::Debug,
     future::Future,
     mem,
