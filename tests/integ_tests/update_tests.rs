@@ -155,12 +155,6 @@ async fn reapplied_updates_due_to_reset() {
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
 
     let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
-    // Init workflow comes by itself
-    let act = replay_worker.poll_workflow_activation().await.unwrap();
-    replay_worker
-        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
-        .await
-        .unwrap();
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
@@ -168,7 +162,7 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::No,
         replay_worker.as_ref(),
-        1,
+        2,
     )
     .await;
     // Then the timer fires
