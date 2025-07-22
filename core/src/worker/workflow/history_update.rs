@@ -698,13 +698,7 @@ fn find_end_index_of_next_wft_seq(
     let mut last_index = 0;
     let mut saw_command_or_started = false;
     let mut saw_command = false;
-    #[derive(Debug)]
-    struct WftStartedInfo {
-        index: usize,
-        was_skipped: bool,
-    }
-    // Maps wft started event id to info about that WFT started
-    let mut wft_started_info = BTreeMap::new();
+    let mut wft_started_event_id_to_index = vec![];
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
 
@@ -726,13 +720,7 @@ fn find_end_index_of_next_wft_seq(
         }
 
         if e.event_type() == EventType::WorkflowTaskStarted {
-            wft_started_info.insert(
-                e.event_id,
-                WftStartedInfo {
-                    index: ix,
-                    was_skipped: false,
-                },
-            );
+            wft_started_event_id_to_index.push((e.event_id, ix));
             if let Some(next_event) = events.get(ix + 1) {
                 let next_event_type = next_event.event_type();
                 // If the next event is WFT timeout or fail, or abrupt WF execution end, that
@@ -745,7 +733,9 @@ fn find_end_index_of_next_wft_seq(
                         | EventType::WorkflowExecutionTerminated
                         | EventType::WorkflowExecutionCanceled
                 ) {
-                    wft_started_info.get_mut(&e.event_id).unwrap().was_skipped = true;
+                    // Since we're skipping this WFT, we don't want to include it in the vec used
+                    // for update accepted sequencing lookups.
+                    wft_started_event_id_to_index.pop();
                     continue;
                 } else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
@@ -776,12 +766,12 @@ fn find_end_index_of_next_wft_seq(
                                 // update was sequenced. If we did, we'll fail to actually include
                                 // the update accepted event and therefore fail to generate the
                                 // request to run the update handler on replay.
-                                if let Some(ret_ix) =
-                                    wft_started_info.iter().find_map(|(eid, info)| {
-                                        if *eid < attr.accepted_request_sequencing_event_id
-                                            && !info.was_skipped
-                                        {
-                                            return Some(info.index);
+                                if let Some(ret_ix) = wft_started_event_id_to_index
+                                    .iter()
+                                    .rev()
+                                    .find_map(|(eid, ix)| {
+                                        if *eid < attr.accepted_request_sequencing_event_id {
+                                            return Some(*ix);
                                         }
                                         None
                                     })
