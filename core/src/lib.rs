@@ -53,7 +53,9 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{ClientIdentity, HeartbeatFn, HeartbeatMap, HeartbeatNexusManager};
+use crate::worker::heartbeat::{
+    ClientIdentity, HeartbeatFn, HeartbeatMap, HeartbeatNamespaceManager,
+};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
