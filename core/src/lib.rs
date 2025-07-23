@@ -53,9 +53,7 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{
-    ClientIdentity, HeartbeatFn, HeartbeatMap, HeartbeatNamespaceManager,
-};
+use crate::worker::heartbeat::{ClientIdentity, HeartbeatFn, HeartbeatMap, HeartbeatNamespaceManager, WorkerHeartbeatDetails};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -130,42 +128,13 @@ where
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
-        // Worker sets heartbeat, and client bag AND runtime both use to heartbeat
-        Some(heartbeat_fn.clone()), // TODO: combine with heartbeat_map into an enum
-        None,
+        Some(WorkerHeartbeatDetails::Fn(heartbeat_fn.clone())),
     );
 
     if runtime.heartbeat_worker.get().is_none() {
         let process_key = Uuid::new_v4();
         // TODO: set max_concurrent_nexus_polls to 1?
         // let nexus_config = WorkerConfig {
-        //     namespace: "".to_string(),
-        //     task_queue: "".to_string(),
-        //     client_identity_override: None,
-        //     max_cached_workflows: 0,
-        //     tuner: None,
-        //     workflow_task_poller_behavior: (),
-        //     nonsticky_to_sticky_poll_ratio: 0.0,
-        //     activity_task_poller_behavior: (),
-        //     nexus_task_poller_behavior: (),
-        //     no_remote_activities: false,
-        //     sticky_queue_schedule_to_start_timeout: Default::default(),
-        //     max_heartbeat_throttle_interval: Default::default(),
-        //     default_heartbeat_throttle_interval: Default::default(),
-        //     max_task_queue_activities_per_second: None,
-        //     max_worker_activities_per_second: None,
-        //     ignore_evicts_on_shutdown: false,
-        //     fetching_concurrency: 0,
-        //     graceful_shutdown_period: None,
-        //     local_timeout_buffer_for_activities: Default::default(),
-        //     workflow_failure_errors: Default::default(),
-        //     workflow_types_to_failure_errors: Default::default(),
-        //     max_outstanding_workflow_tasks: None,
-        //     max_outstanding_activities: None,
-        //     max_outstanding_local_activities: None,
-        //     max_outstanding_nexus_tasks: None,
-        //     versioning_strategy: Default::default(),
-        //     heartbeat_interval: Default::default(),
         // };
         // construct nexus worker
         let nexus_worker = Worker::new(
@@ -173,8 +142,7 @@ where
             None,
             client_bag,
             None,
-            None,
-            Some(runtime.get_heartbeat_map()),
+            Some(WorkerHeartbeatDetails::Map(runtime.get_heartbeat_map())),
         );
         runtime.add_heartbeat_worker(nexus_worker);
     }
@@ -405,28 +373,9 @@ impl CoreRuntime {
     }
 
     pub fn add_heartbeat_worker(&self, worker: Worker) {
-        // if self.heartbeat_worker.set(worker).is_err() { // TODO fix condition
-        if false {
+        if self.heartbeat_worker.set(worker).is_err() { // TODO fix condition
             dbg_panic!("Heartbeat worker already set");
         }
-        // Spawn process-wide nexus thread
-        tokio::spawn(async move {
-            tokio::select! {
-                // Some((key, heartbeat_fn)) = rx.recv() => {
-                //     worker.add_heartbeat_fn(key, heartbeat_fn);
-                // }
-                t = worker.poll_nexus_task() => {
-                    match t {
-                        Ok(task) => {
-                            // TODO: figure out how to handle nexus tasks
-                        }
-                        Err(e) => warn!("failed to poll nexus task: {}", e),
-                    }
-                }
-            }
-
-            // TODO: move heartbeat thing here
-        });
     }
 
     fn add_heartbeat_fn(&self, key: ClientIdentity, heartbeat_fn: HeartbeatFn) {

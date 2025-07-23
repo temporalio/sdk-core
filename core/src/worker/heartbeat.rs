@@ -34,10 +34,8 @@ pub(crate) struct ClientIdentity {
 
 pub(crate) struct HeartbeatNamespaceManager {
     pub(crate) heartbeats: Arc<Mutex<Vec<HeartbeatFn>>>,
-    // pub(crate) manager: NexusManager,
     heartbeat_handle: JoinHandle<()>,
-    nexus_handle: JoinHandle<()>,
-    task_tx: UnboundedSender<()>,
+\    task_tx: UnboundedSender<()>,
 }
 
 impl HeartbeatNamespaceManager {
@@ -75,8 +73,6 @@ impl HeartbeatNamespaceManager {
         let sdk_name_and_ver = client.sdk_name_and_version();
         let reset_notify = Arc::new(Notify::new());
         let heartbeats_clone = heartbeats.clone();
-        // TODO: This client is just the client of the first worker registered to the process, seems
-        //  okay to give it the whole responsibility to worker heartbeat on timer
         let client_clone = client.clone();
 
         let heartbeat_handle = tokio::spawn(async move {
@@ -103,27 +99,23 @@ impl HeartbeatNamespaceManager {
                     _ = reset_notify.notified() => {
                         ticker.reset();
                     }
-                    // task = self.task_rx
+                    // TODO: handle nexus tasks
+                    res = manager.next_nexus_task() => {
+                        match res {
+                            Ok(task) => todo!(),
+                            Err(e) => todo!("log error"),
+                        }
+                    }
                 }
             }
         });
 
         let task_tx_clone = task_tx.clone();
-        let nexus_handle = tokio::spawn(async move {
-            loop {
-                let t = manager.next_nexus_task().await.unwrap(); // TODO: unwrap
-                // TODO: How do I go from NexusTask to FetchWorkerConfigRequest or UpdateWorkerConfigRequest
-
-                // TODO: pass to task_tx to let main task handle incoming requests
-            }
-        });
 
         Self {
             heartbeats,
             task_tx,
             heartbeat_handle,
-            nexus_handle,
-            // manager,
         }
     }
 
@@ -258,6 +250,11 @@ impl WorkerHeartbeatData {
             ..Default::default()
         }
     }
+}
+
+pub(crate) enum WorkerHeartbeatDetails {
+    Fn(OnceLock<HeartbeatFn>),
+    Map(Arc<Mutex<HeartbeatMap>>),
 }
 
 // #[cfg(test)]

@@ -54,6 +54,7 @@ pub(super) struct NexusManager {
     outstanding_task_map: OutstandingTaskMap,
     /// Notified every time a task in the map is completed
     task_completed_notify: Arc<Notify>,
+
     ever_polled: AtomicBool,
     metrics: MetricsContext,
 }
@@ -91,7 +92,6 @@ impl NexusManager {
             task_completed_notify,
             ever_polled: AtomicBool::new(false),
             metrics,
-            // client_worker_map,
         }
     }
 
@@ -205,8 +205,6 @@ impl NexusManager {
         }
         self.poll_returned_shutdown_token.cancelled().await;
     }
-
-    async fn worker_heartbeat(&self) {}
 }
 
 struct NexusTaskStream<S> {
