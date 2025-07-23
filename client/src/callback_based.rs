@@ -43,6 +43,7 @@ pub struct GrpcSuccessResponse {
 #[derive(Clone)]
 pub struct CallbackBasedGrpcService {
     /// Callback to invoke on each RPC call.
+    #[allow(clippy::type_complexity)] // Signature is not that complex
     pub callback: Arc<
         dyn for<'a> Fn(GrpcRequest<'a>) -> BoxFuture<'a, Result<GrpcSuccessResponse, Status>>
             + Send
