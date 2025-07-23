@@ -510,6 +510,9 @@ impl Worker {
                 client.get_identity(),
                 client.clone(),
                 hb_map,
+                nexus_slots.clone(),
+                metrics.clone(),
+                shutdown_token.child_token(),
             )),
             None => {
                 let data = Arc::new(Mutex::new(heartbeat::WorkerHeartbeatData::new(

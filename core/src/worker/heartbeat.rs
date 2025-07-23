@@ -1,6 +1,7 @@
 use crate::WorkerClient;
 use crate::abstractions::{MeteredPermitDealer, dbg_panic};
 use crate::pollers::{BoxedNexusPoller, LongPollBuffer};
+use crate::telemetry::metrics::{MetricsContext, nexus_poller};
 use crate::worker::nexus::NexusManager;
 use gethostname::gethostname;
 use parking_lot::Mutex;
@@ -15,6 +16,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollNexusTaskQueueResponse, RecordWorkerHeartbeatRequest,
 };
 use tokio::sync::Notify;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +34,7 @@ pub(crate) struct ClientIdentity {
 
 pub(crate) struct HeartbeatNexusManager {
     pub(crate) heartbeats: Vec<HeartbeatFn>,
-    pub(crate) poller: LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind>,
+    // pub(crate) manager: NexusManager,
 }
 
 impl HeartbeatNexusManager {
@@ -41,19 +43,41 @@ impl HeartbeatNexusManager {
         key: ClientIdentity,
         poller_behavior: PollerBehavior,
         permit_dealer: MeteredPermitDealer<NexusSlotKind>,
-        shutdown: CancellationToken,
+        shutdown: CancellationToken, // TODO: duplicate with shutdown_initiated_token?
+        metrics: MetricsContext,
+        graceful_shutdown: Option<Duration>,
+        shutdown_initiated_token: CancellationToken,
     ) -> Self {
-        let poller = LongPollBuffer::new_nexus_task(
+        let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+        let poller = Box::new(LongPollBuffer::new_nexus_task(
             client,
             key.task_queue.clone(),
             poller_behavior,
             permit_dealer,
             shutdown,
-            None,
+            Some(move |np| np_metrics.record_num_pollers(np)),
+        )) as BoxedNexusPoller;
+
+        let manager = NexusManager::new(
+            poller,
+            metrics.clone(),
+            graceful_shutdown,
+            shutdown_initiated_token,
         );
+
+        tokio::spawn(async move {
+            loop {
+                let t = manager.next_nexus_task().await.unwrap(); // TODO: unwrap
+                // TODO: How do I go from NexusTask to FetchWorkerConfigRequest or UpdateWorkerConfigRequest
+                
+                // TODO: pass to task_tx to let main task handle incoming requests
+            }
+        });
+
+
         Self {
             heartbeats: Vec::new(),
-            poller,
+            // manager,
         }
     }
 
@@ -63,8 +87,15 @@ impl HeartbeatNexusManager {
 }
 
 pub(crate) struct WorkerHeartbeatManager {
+    config: WorkerConfig,
+    client: Arc<dyn WorkerClient>,
     heartbeat_handle: JoinHandle<()>,
     heartbeat_map: Arc<Mutex<HeartbeatMap>>,
+    permit_dealer: MeteredPermitDealer<NexusSlotKind>,
+    shutdown_initiated_token: CancellationToken,
+    metrics: MetricsContext,
+    task_tx: UnboundedSender<()>,
+    task_rx: UnboundedReceiver<()>,
 }
 
 impl WorkerHeartbeatManager {
@@ -73,12 +104,19 @@ impl WorkerHeartbeatManager {
         identity: String,
         client: Arc<dyn WorkerClient>,
         heartbeat_map: Arc<Mutex<HeartbeatMap>>,
+        permit_dealer: MeteredPermitDealer<NexusSlotKind>,
+        metrics: MetricsContext,
+        shutdown_initiated_token: CancellationToken,
     ) -> Self {
         let sdk_name_and_ver = client.sdk_name_and_version();
         let reset_notify = Arc::new(Notify::new());
         let heartbeat_map_clone = heartbeat_map.clone();
+        let config_clone = config.clone();
+        // TODO: This client is just the client of the first worker registered to the process, seems
+        //  okay to give it the whole responsibility to worker heartbeat on timer
+        let client_clone = client.clone();
         let heartbeat_handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(config.clone().heartbeat_interval);
+            let mut ticker = tokio::time::interval(config_clone.heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
                 tokio::select! {
@@ -87,39 +125,40 @@ impl WorkerHeartbeatManager {
                             let heartbeats = &heartbeat_mgr.heartbeats;
                             let mut hb_to_send = Vec::new();
                             for hb in heartbeats.iter() {
-                                if let Some(heartbeat) = hb.get() {
-                                    hb_to_send.push(heartbeat());
-                                } else {
-                                    dbg_panic!("Heartbeat function should never be missing in key {:?}", key);
-                                }
+                                hb_to_send.push(hb());
                             }
-                            // TODO: send heartbeat per client or per namespace or what?
-                            //  or can I send a single heartbeat request, covering EVERYTHING?
-                            // I believe it has to be per task queue, see pub(crate) fn new_nexus_task(
-                            if let Err(e) = client.record_worker_heartbeat(key.namespace.clone(), key.endpoint.clone(), hb_to_send
+                            if let Err(e) = client_clone.record_worker_heartbeat(key.namespace.clone(), key.endpoint.clone(), hb_to_send
                             ).await {
                                 if matches!(
                                 e.code(),
                                 tonic::Code::Unimplemented
-                            ) {
-                                return;
+                                ) {
+                                    return;
+                                }
+                                warn!(error=?e, "Network error while sending worker heartbeat");
                             }
-                            warn!(error=?e, "Network error while sending worker heartbeat");
-                        }
-
-
                         }
                     }
                     _ = reset_notify.notified() => {
                         ticker.reset();
                     }
+                    task = self.task_rx.
                 }
             }
         });
 
+        let (task_tx, task_rx) = unbounded_channel();
+
         Self {
             heartbeat_handle,
             heartbeat_map,
+            config,
+            client,
+            permit_dealer,
+            shutdown_initiated_token,
+            metrics,
+            task_tx,
+            task_rx,
         }
     }
 
@@ -134,8 +173,17 @@ impl WorkerHeartbeatManager {
             .entry(key.clone())
             .and_modify(|mgr| mgr.register_heartbeat(heartbeat))
             .or_insert_with(|| {
-                // TODO: create the nexus poller
-                HeartbeatNexusManager::new(key)
+                // TODO: params need to be fixed, this is just a placeholder
+                HeartbeatNexusManager::new(
+                    self.client.clone(),
+                    key,
+                    self.config.nexus_task_poller_behavior,
+                    self.permit_dealer.clone(),
+                    self.shutdown_initiated_token.clone(),
+                    self.metrics.clone(),
+                    self.config.graceful_shutdown_period,
+                    self.shutdown_initiated_token.clone(),
+                )
             });
     }
 }
