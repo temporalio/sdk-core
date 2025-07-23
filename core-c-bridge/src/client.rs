@@ -191,7 +191,7 @@ fn create_callback_based_grpc_service(
                     })
                     .await;
                 if let Err(err) = spawn_ret {
-                    return Err(tonic::Status::internal(format!("{}", err)));
+                    return Err(tonic::Status::internal(format!("{err}")));
                 }
 
                 // Wait result and return. The receiver failure in theory can never happen. If it
@@ -338,11 +338,12 @@ pub extern "C" fn temporal_core_client_grpc_override_request_respond(
 }
 
 impl ClientGrpcOverrideResponse {
+    #[allow(clippy::result_large_err)] // Tonic status, even though big, is reasonable as an Err
     fn build_grpc_override_response(
         self,
     ) -> Result<callback_based::GrpcSuccessResponse, tonic::Status> {
         let headers = Self::client_headers_from_metadata_ref(self.headers)
-            .map_err(|err| tonic::Status::internal(err))?;
+            .map_err(tonic::Status::internal)?;
         if self.status_code == 0 {
             Ok(callback_based::GrpcSuccessResponse {
                 headers,
@@ -363,9 +364,9 @@ impl ClientGrpcOverrideResponse {
         let mut header_map = http::HeaderMap::with_capacity(key_values.len());
         for (k, v) in key_values.into_iter() {
             let name = http::HeaderName::try_from(k)
-                .map_err(|e| format!("Invalid header name '{}': {}", k, e))?;
+                .map_err(|e| format!("Invalid header name '{k}': {e}"))?;
             let value = http::HeaderValue::from_str(v)
-                .map_err(|e| format!("Invalid header value '{}': {}", v, e))?;
+                .map_err(|e| format!("Invalid header value '{v}': {e}"))?;
             header_map.insert(name, value);
         }
         Ok(header_map)

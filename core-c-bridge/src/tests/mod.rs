@@ -220,7 +220,7 @@ unsafe extern "C" fn callback_override<'a>(req: *mut ClientGrpcOverrideRequest<'
                 ..Default::default()
             }
             .encode_to_vec()),
-            Err(err) => Err(ClientOverrideError::new(format!("Bad bytes: {}", err))),
+            Err(err) => Err(ClientOverrideError::new(format!("Bad bytes: {err}"))),
         },
         "QueryWorkflow" => match QueryWorkflowRequest::decode(
             temporal_core_client_grpc_override_request_proto(req).to_slice(),
@@ -236,9 +236,9 @@ unsafe extern "C" fn callback_override<'a>(req: *mut ClientGrpcOverrideRequest<'
                     .encode_to_vec(),
                 ),
             }),
-            Err(err) => Err(ClientOverrideError::new(format!("Bad bytes: {}", err))),
+            Err(err) => Err(ClientOverrideError::new(format!("Bad bytes: {err}"))),
         },
-        v => Err(ClientOverrideError::new(format!("Unknown RPC: {}", v))),
+        v => Err(ClientOverrideError::new(format!("Unknown RPC: {v}"))),
     };
     // It is very important that we borrow not move resp_raw here. If this were a "match resp_raw"
     // without the &, ownership of bytes moves into the match arm and can drop bytes after the
