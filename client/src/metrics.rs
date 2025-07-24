@@ -1,5 +1,6 @@
 use crate::{AttachMetricLabels, CallType, callback_based, dbg_panic};
 use futures_util::TryFutureExt;
+use futures_util::future::Either;
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
     fmt,
@@ -265,10 +266,12 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
                     metrics
                 })
             });
-        let callfut: Self::Future = match &mut self.inner {
-            ChannelOrGrpcOverride::Channel(inner) => inner.call(req).map_err(Into::into).boxed(),
+        let callfut = match &mut self.inner {
+            ChannelOrGrpcOverride::Channel(inner) => {
+                Either::Left(inner.call(req).map_err(Into::into))
+            }
             ChannelOrGrpcOverride::GrpcOverride(inner) => {
-                inner.call(req).map_err(Into::into).boxed()
+                Either::Right(inner.call(req).map_err(Into::into))
             }
         };
         let errcode_label_disabled = self.disable_errcode_label;

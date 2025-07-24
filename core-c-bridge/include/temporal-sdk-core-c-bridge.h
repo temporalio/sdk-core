@@ -130,6 +130,9 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
  * each request. Each request _must_ call that and the request can no longer be valid after that
  * call. However, all of that work and the respond call may be done well after this callback
  * returns. No data lifetime is related to the callback invocation itself.
+ *
+ * Implementers should return as soon as possible and perform the network request in the
+ * background.
  */
 typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request);
 
@@ -172,11 +175,32 @@ typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
                                                   struct TemporalCoreClient *success,
                                                   const struct TemporalCoreByteArray *fail);
 
+/**
+ * Response provided to temporal_core_client_grpc_override_request_respond. All values referenced
+ * inside here must live until that call returns.
+ */
 typedef struct TemporalCoreClientGrpcOverrideResponse {
+  /**
+   * Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+   * is failure.
+   */
   int32_t status_code;
+  /**
+   * Headers for the response if any.
+   */
   TemporalCoreMetadataRef headers;
+  /**
+   * Protobuf bytes for a successful response. Ignored if status_code is non-0.
+   */
   struct TemporalCoreByteArrayRef success_proto;
+  /**
+   * UTF-8 failure message. Ignored if status_code is 0.
+   */
   struct TemporalCoreByteArrayRef fail_message;
+  /**
+   * Optional details for the gRPC failure. If non-empty, this should be a protobuf-serialized
+   * google.rpc.Status. Ignored if status_code is 0.
+   */
   struct TemporalCoreByteArrayRef fail_details;
 } TemporalCoreClientGrpcOverrideResponse;
 

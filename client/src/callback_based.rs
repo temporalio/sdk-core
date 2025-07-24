@@ -1,5 +1,5 @@
 //! This module implements support for callback-based gRPC service that has a callback invoked for
-//! every gRPC call instead of using network.
+//! every gRPC call instead of directly using the network.
 
 use anyhow::anyhow;
 use bytes::{BufMut, BytesMut};
@@ -26,7 +26,7 @@ pub struct GrpcRequest<'a> {
     /// Reference to the gRPC request headers.
     pub headers: &'a HeaderMap,
 
-    /// Reference to the gRPC protobuf bytes of the request.
+    /// The gRPC protobuf bytes of the request.
     pub proto: Bytes,
 }
 

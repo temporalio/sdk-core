@@ -239,6 +239,9 @@ pub extern "C" fn temporal_core_client_update_api_key(client: *mut Client, api_k
 /// each request. Each request _must_ call that and the request can no longer be valid after that
 /// call. However, all of that work and the respond call may be done well after this callback
 /// returns. No data lifetime is related to the callback invocation itself.
+///
+/// Implementers should return as soon as possible and perform the network request in the
+/// background.
 pub type ClientGrpcOverrideCallback =
     Option<unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest)>;
 
@@ -257,13 +260,26 @@ pub struct ClientGrpcOverrideRequest<'a> {
 unsafe impl<'a> Send for ClientGrpcOverrideRequest<'a> {}
 unsafe impl<'a> Sync for ClientGrpcOverrideRequest<'a> {}
 
+/// Response provided to temporal_core_client_grpc_override_request_respond. All values referenced
+/// inside here must live until that call returns.
 #[repr(C)]
 pub struct ClientGrpcOverrideResponse {
-    pub status_code: i32, // 0 for success
+    /// Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+    /// is failure.
+    pub status_code: i32,
+
+    /// Headers for the response if any.
     pub headers: MetadataRef,
-    pub success_proto: ByteArrayRef, // Ignored if status non-0
-    pub fail_message: ByteArrayRef,  // Ignored if status 0
-    pub fail_details: ByteArrayRef,  // Ignored if status 0
+
+    /// Protobuf bytes for a successful response. Ignored if status_code is non-0.
+    pub success_proto: ByteArrayRef,
+
+    /// UTF-8 failure message. Ignored if status_code is 0.
+    pub fail_message: ByteArrayRef,
+
+    /// Optional details for the gRPC failure. If non-empty, this should be a protobuf-serialized
+    /// google.rpc.Status. Ignored if status_code is 0.
+    pub fail_details: ByteArrayRef,
 }
 
 /// Get a reference to the service name.
