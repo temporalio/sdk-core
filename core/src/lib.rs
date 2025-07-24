@@ -53,7 +53,7 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{ClientIdentity, HeartbeatFn, HeartbeatMap, HeartbeatNamespaceManager, WorkerHeartbeatDetails};
+use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -113,14 +113,14 @@ where
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 
-    let heartbeat_fn = OnceLock::new();
+    let heartbeat_callback = OnceLock::new();
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
         client_ident,
         worker_config.versioning_strategy.clone(),
-        heartbeat_fn.clone(),
+        heartbeat_callback.clone(),
     ));
 
     let worker = Worker::new(
@@ -128,41 +128,26 @@ where
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
-        Some(WorkerHeartbeatDetails::Fn(heartbeat_fn.clone())),
     );
 
-    if runtime.heartbeat_worker.get().is_none() {
-        let process_key = Uuid::new_v4();
-        // TODO: set max_concurrent_nexus_polls to 1?
-        // let nexus_config = WorkerConfig {
-        // };
-        // construct nexus worker
-        let nexus_worker = Worker::new(
-            worker_config.clone(), // TODO: use nexus_config
-            None,
-            client_bag,
-            None,
-            Some(WorkerHeartbeatDetails::Map(runtime.get_heartbeat_map())),
-        );
-        runtime.add_heartbeat_worker(nexus_worker);
-    }
-    let namespace = worker_config.namespace.clone();
-    if let Some(heartbeat_fn) = heartbeat_fn.get() {
-        runtime.add_heartbeat_fn(
+    if let Some(heartbeat_interval) = runtime.heartbeat_interval {
+        runtime.add_heartbeat_callback(
             ClientIdentity {
                 endpoint: endpoint.to_string(),
-                namespace: namespace.clone(),
+                namespace: worker_config.namespace.clone(),
                 task_queue: format!(
                     "temporal-sys/worker-commands/{}/{}",
-                    namespace,
-                    runtime.process_key()
+                    worker_config.namespace,
+                    runtime.task_queue_key()
                 ),
             },
-            heartbeat_fn.clone(),
+            worker.capture_heartbeat_details(),
+            client_bag,
+            heartbeat_interval,
         );
-    } else {
-        dbg_panic!("Heartbeat fn should be set earlier in init_worker, on worker creation")
     }
+
+
 
     Ok(worker)
 }
@@ -263,9 +248,14 @@ pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
     runtime_handle: tokio::runtime::Handle,
-    heartbeat_worker: OnceLock<Worker>,
-    heartbeat_fn_map: Arc<Mutex<HeartbeatMap>>,
-    process_key: Uuid,
+    shared_namespace_map: Arc<Mutex<SharedNamespaceMap>>,
+    task_queue_key: Uuid,
+    heartbeat_interval: Option<Duration>,
+}
+
+pub struct RuntimeOptions {
+    telemetry_options: TelemetryOptions,
+    heartbeat_interval: Option<Duration>,
 }
 
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions
@@ -300,13 +290,13 @@ impl CoreRuntime {
     /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
     /// [CoreRuntime::new_assume_tokio].
     pub fn new<F>(
-        telemetry_options: TelemetryOptions,
+        runtime_options: RuntimeOptions,
         mut tokio_builder: TokioRuntimeBuilder<F>,
     ) -> Result<Self, anyhow::Error>
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let telemetry = telemetry_init(telemetry_options)?;
+        let telemetry = telemetry_init(runtime_options.telemetry_options)?;
         let subscriber = telemetry.trace_subscriber();
         let runtime = tokio_builder
             .inner
@@ -321,7 +311,7 @@ impl CoreRuntime {
             })
             .build()?;
         let _rg = runtime.enter();
-        let mut me = Self::new_assume_tokio_initialized_telem(telemetry);
+        let mut me = Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval);
         me.runtime = Some(runtime);
         Ok(me)
     }
@@ -331,9 +321,9 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio(telemetry_options: TelemetryOptions) -> Result<Self, anyhow::Error> {
-        let telemetry = telemetry_init(telemetry_options)?;
-        Ok(Self::new_assume_tokio_initialized_telem(telemetry))
+    pub fn new_assume_tokio(runtime_options: RuntimeOptions) -> Result<Self, anyhow::Error> {
+        let telemetry = telemetry_init(runtime_options.telemetry_options)?;
+        Ok(Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval))
     }
 
     /// Construct a runtime from an already-initialized telemetry instance, assuming a tokio runtime
@@ -341,19 +331,18 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance) -> Self {
+    pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance, heartbeat_duration: Option<Duration>) -> Self {
         let runtime_handle = tokio::runtime::Handle::current();
         if let Some(sub) = telemetry.trace_subscriber() {
             set_trace_subscriber_for_current_thread(sub);
         }
-        let heartbeat_worker = OnceLock::new();
         Self {
             telemetry,
             runtime: None,
             runtime_handle,
-            heartbeat_worker,
-            heartbeat_fn_map: Arc::new(Mutex::new(HashMap::new())),
-            process_key: Uuid::new_v4(),
+            shared_namespace_map: Arc::new(Mutex::new(HashMap::new())),
+            task_queue_key: Uuid::new_v4(),
+            heartbeat_interval: heartbeat_duration,
         }
     }
 
@@ -372,26 +361,34 @@ impl CoreRuntime {
         &mut self.telemetry
     }
 
-    pub fn add_heartbeat_worker(&self, worker: Worker) {
-        if self.heartbeat_worker.set(worker).is_err() { // TODO fix condition
-            dbg_panic!("Heartbeat worker already set");
-        }
-    }
-
-    fn add_heartbeat_fn(&self, key: ClientIdentity, heartbeat_fn: HeartbeatFn) {
-        if let Some(ref heartbeat_worker) = self.heartbeat_worker.get() {
-            heartbeat_worker.add_heartbeat_fn(key, heartbeat_fn);
+    fn add_heartbeat_callback(&self, client_identity: ClientIdentity, heartbeat_callback: HeartbeatCallback, client: Arc<dyn WorkerClient>, heartbeat_interval: Duration) {
+        if let Some(ref heartbeat_duration) = self.heartbeat_interval {
+            self.shared_namespace_map
+                .lock()
+                .entry(client_identity.clone())
+                .and_modify(|w| w.add_callback(heartbeat_callback.clone()))
+                .or_insert_with(|| {
+                    let mut worker = SharedNamespaceWorker::new(
+                        client,
+                        client_identity,
+                        heartbeat_duration.clone(),
+                        Some(&self.telemetry),
+                    );
+                    worker.add_callback(heartbeat_callback);
+                    worker
+                });
         } else {
-            dbg_panic!("Heartbeat worker not set");
+            dbg_panic!("Worker heartbeat disabled for this runtime");
         }
+
     }
 
-    fn get_heartbeat_map(&self) -> Arc<Mutex<HeartbeatMap>> {
-        self.heartbeat_fn_map.clone()
+    fn get_heartbeat_map(&self) -> Arc<Mutex<SharedNamespaceMap>> {
+        self.shared_namespace_map.clone()
     }
 
-    fn process_key(&self) -> Uuid {
-        self.process_key.clone()
+    fn task_queue_key(&self) -> Uuid {
+        self.task_queue_key.clone()
     }
 }
 

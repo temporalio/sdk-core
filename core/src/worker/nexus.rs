@@ -1,4 +1,4 @@
-use crate::worker::heartbeat::HeartbeatFn;
+use crate::worker::heartbeat::HeartbeatCallback;
 use crate::{
     abstractions::UsedMeteredSemPermit,
     pollers::{BoxedNexusPoller, NexusPollItem, new_nexus_task_poller},

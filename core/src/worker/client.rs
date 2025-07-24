@@ -3,7 +3,7 @@
 pub(crate) mod mocks;
 use crate::abstractions::dbg_panic;
 use crate::protosext::legacy_query_failure;
-use crate::worker::heartbeat::HeartbeatFn;
+use crate::worker::heartbeat::HeartbeatCallback;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
@@ -50,7 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: OnceLock<HeartbeatFn>,
+    heartbeat_data: OnceLock<HeartbeatCallback>,
 }
 
 impl WorkerClientBag {
@@ -59,7 +59,7 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: OnceLock<HeartbeatFn>,
+        heartbeat_data: OnceLock<HeartbeatCallback>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
