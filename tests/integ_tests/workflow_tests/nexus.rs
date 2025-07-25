@@ -16,7 +16,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::{Callback, callback},
         enums::v1::NexusHandlerErrorRetryBehavior,
-        failure::v1::failure::FailureInfo,
+        failure::v1::{Failure, failure::FailureInfo},
         nexus,
         nexus::v1::{
             CancelOperationResponse, HandlerError, StartOperationResponse, request,
@@ -55,7 +55,7 @@ async fn nexus_basic(
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
         async move {
-            let started = ctx
+            match ctx
                 .start_nexus_operation(NexusOperationOptions {
                     endpoint,
                     service: "svc".to_string(),
@@ -64,10 +64,14 @@ async fn nexus_basic(
                     ..Default::default()
                 })
                 .await
-                .unwrap();
-            assert_eq!(started.operation_token, None);
-            let res = started.result().await;
-            Ok(res.into())
+            {
+                Ok(started) => {
+                    assert_eq!(started.operation_token, None);
+                    let res = started.result().await;
+                    Ok(Ok(res).into())
+                }
+                Err(failure) => Ok(Err(failure).into()),
+            }
         }
     });
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
@@ -140,29 +144,30 @@ async fn nexus_basic(
         .get_workflow_result(Default::default())
         .await
         .unwrap();
-    let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
+    let res = Result::<NexusOperationResult, Failure>::from_json_payload(&res.unwrap_success()[0])
+        .unwrap();
     match outcome {
         Outcome::Succeed => {
             let p = assert_matches!(
-                res.status,
+                res.unwrap().status,
                 Some(nexus_operation_result::Status::Completed(p)) => p
             );
             assert_eq!(p.data, b"yay");
         }
         Outcome::Fail => {
-            let f = assert_matches!(
-                res.status,
-                Some(nexus_operation_result::Status::Failed(f)) => f
-            );
+            let f = res.unwrap_err();
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
         }
         Outcome::Timeout => {
-            let f = assert_matches!(
-                res.status,
-                Some(nexus_operation_result::Status::TimedOut(f)) => f
-            );
+            let f = res.unwrap_err();
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            assert_eq!(f.cause.unwrap().message, "operation timed out");
+            let cause = f.cause.unwrap();
+            assert_eq!(cause.message, "operation timed out");
+            assert_matches!(
+                f.failure_info,
+                Some(FailureInfo::NexusOperationExecutionFailureInfo(_))
+            );
+            assert_matches!(cause.failure_info, Some(FailureInfo::TimeoutFailureInfo(_)));
         }
         _ => unreachable!(),
     }

@@ -350,10 +350,9 @@ message ResolveNexusOperationStart {
         // If true the operation "started" but only because it's also already resolved. A
         // `ResolveNexusOperation` job will be in the same activation.
         bool started_sync = 3;
-        // The operation was cancelled before it was ever sent to server (same WFT).
-        // Note that core will still send a `ResolveNexusOperation` job in the same activation, so
-        // there does not need to be an exceptional case for this in lang.
-        temporal.api.failure.v1.Failure cancelled_before_start = 4;
+        // The operation either failed to start, was cancelled before it started, timed out, or
+        // failed synchronously. Details are included inside the message.
+        temporal.api.failure.v1.Failure failed = 4;
     }
 }
 

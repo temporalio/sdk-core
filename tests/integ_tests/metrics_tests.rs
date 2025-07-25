@@ -929,35 +929,29 @@ async fn nexus_metrics() {
                         .await
                 },
                 async {
-                    ctx.start_nexus_operation(NexusOperationOptions {
-                        input: Some("fail".into()),
-                        ..partial_op.clone()
-                    })
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+                    let _ = ctx
+                        .start_nexus_operation(NexusOperationOptions {
+                            input: Some("fail".into()),
+                            ..partial_op.clone()
+                        })
+                        .await;
                 },
                 async {
-                    ctx.start_nexus_operation(NexusOperationOptions {
-                        input: Some("handler-fail".into()),
-                        ..partial_op.clone()
-                    })
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+                    let _ = ctx
+                        .start_nexus_operation(NexusOperationOptions {
+                            input: Some("handler-fail".into()),
+                            ..partial_op.clone()
+                        })
+                        .await;
                 },
                 async {
-                    ctx.start_nexus_operation(NexusOperationOptions {
-                        input: Some("timeout".into()),
-                        schedule_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..partial_op.clone()
-                    })
-                    .await
-                    .unwrap()
-                    .result()
-                    .await
+                    let _ = ctx
+                        .start_nexus_operation(NexusOperationOptions {
+                            input: Some("timeout".into()),
+                            schedule_to_close_timeout: Some(Duration::from_secs(2)),
+                            ..partial_op.clone()
+                        })
+                        .await;
                 }
             );
             Ok(().into())

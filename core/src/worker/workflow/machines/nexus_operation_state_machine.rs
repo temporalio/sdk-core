@@ -86,8 +86,8 @@ pub(super) enum NexusOperationCommand {
     Start { operation_token: String },
     #[display("StartSync")]
     StartSync,
-    #[display("CancelBeforeStart")]
-    CancelBeforeStart,
+    #[display("FailBeforeStart")]
+    FailBeforeStart(Failure),
     #[display("Complete")]
     Complete(Option<Payload>),
     #[display("Fail")]
@@ -174,7 +174,9 @@ impl ScheduleCommandCreated {
         state: &mut SharedState,
     ) -> NexusOperationMachineTransition<Cancelled> {
         state.cancelled_before_sent = true;
-        NexusOperationMachineTransition::commands([NexusOperationCommand::CancelBeforeStart])
+        NexusOperationMachineTransition::commands([NexusOperationCommand::FailBeforeStart(
+            state.cancelled_failure("Nexus Operation cancelled before scheduled".to_owned()),
+        )])
     }
 }
 
@@ -208,40 +210,37 @@ impl ScheduledEventRecorded {
         self,
         fa: NexusOperationFailedEventAttributes,
     ) -> NexusOperationMachineTransition<Failed> {
-        NexusOperationMachineTransition::commands([
-            NexusOperationCommand::StartSync,
-            NexusOperationCommand::Fail(fa.failure.unwrap_or_else(|| Failure {
+        NexusOperationMachineTransition::commands([NexusOperationCommand::FailBeforeStart(
+            fa.failure.unwrap_or_else(|| Failure {
                 message: "Nexus operation failed but failure field was not populated".to_owned(),
                 ..Default::default()
-            })),
-        ])
+            }),
+        )])
     }
 
     pub(super) fn on_canceled(
         self,
         ca: NexusOperationCanceledEventAttributes,
     ) -> NexusOperationMachineTransition<Cancelled> {
-        NexusOperationMachineTransition::commands([
-            NexusOperationCommand::StartSync,
-            NexusOperationCommand::Cancel(ca.failure.unwrap_or_else(|| Failure {
-                message:
-                    "Nexus operation was cancelled but failure field was not populated".to_owned(),
+        NexusOperationMachineTransition::commands([NexusOperationCommand::FailBeforeStart(
+            ca.failure.unwrap_or_else(|| Failure {
+                message: "Nexus operation was cancelled but failure field was not populated"
+                    .to_owned(),
                 ..Default::default()
-            })),
-        ])
+            }),
+        )])
     }
 
     pub(super) fn on_timed_out(
         self,
         toa: NexusOperationTimedOutEventAttributes,
     ) -> NexusOperationMachineTransition<TimedOut> {
-        NexusOperationMachineTransition::commands([
-            NexusOperationCommand::StartSync,
-            NexusOperationCommand::TimedOut(toa.failure.unwrap_or_else(|| Failure {
+        NexusOperationMachineTransition::commands([NexusOperationCommand::FailBeforeStart(
+            toa.failure.unwrap_or_else(|| Failure {
                 message: "Nexus operation timed out but failure field was not populated".to_owned(),
                 ..Default::default()
-            })),
-        ])
+            }),
+        )])
     }
 
     pub(super) fn on_started(
@@ -491,27 +490,19 @@ impl WFMachinesAdapter for NexusOperationMachine {
                     .into(),
                 ]
             }
-            NexusOperationCommand::CancelBeforeStart => {
+            NexusOperationCommand::FailBeforeStart(failure) => {
                 vec![
                     ResolveNexusOperationStart {
                         seq: self.shared_state.lang_seq_num,
-                        status: Some(resolve_nexus_operation_start::Status::CancelledBeforeStart(
-                            self.cancelled_failure(
-                                "Nexus Operation cancelled before scheduled".to_owned(),
-                                &self.shared_state.operation_token,
-                            ),
+                        status: Some(resolve_nexus_operation_start::Status::Failed(
+                            failure.clone(),
                         )),
                     }
                     .into(),
                     ResolveNexusOperation {
                         seq: self.shared_state.lang_seq_num,
                         result: Some(NexusOperationResult {
-                            status: Some(nexus_operation_result::Status::Cancelled(
-                                self.cancelled_failure(
-                                    "Nexus Operation cancelled before scheduled".to_owned(),
-                                    &self.shared_state.operation_token,
-                                ),
-                            )),
+                            status: Some(nexus_operation_result::Status::Cancelled(failure)),
                         }),
                     }
                     .into(),
@@ -586,9 +577,8 @@ impl WFMachinesAdapter for NexusOperationMachine {
                             seq: self.shared_state.lang_seq_num,
                             result: Some(NexusOperationResult {
                                 status: Some(nexus_operation_result::Status::Cancelled(
-                                    self.cancelled_failure(
+                                    self.shared_state.cancelled_failure(
                                         "Nexus operation cancelled after starting".to_owned(),
-                                        &self.shared_state.operation_token,
                                     ),
                                 )),
                             }),
@@ -614,8 +604,8 @@ impl TryFrom<CommandType> for NexusOperationMachineEvents {
     }
 }
 
-impl NexusOperationMachine {
-    fn cancelled_failure(&self, message: String, operation_token: &Option<String>) -> Failure {
+impl SharedState {
+    fn cancelled_failure(&self, message: String) -> Failure {
         Failure {
             message,
             cause: Some(Box::new(Failure {
@@ -624,11 +614,11 @@ impl NexusOperationMachine {
             })),
             failure_info: Some(FailureInfo::NexusOperationExecutionFailureInfo(
                 failure::NexusOperationFailureInfo {
-                    scheduled_event_id: self.shared_state.scheduled_event_id,
-                    endpoint: self.shared_state.endpoint.clone(),
-                    service: self.shared_state.service.clone(),
-                    operation: self.shared_state.operation.clone(),
-                    operation_token: operation_token.clone().unwrap_or_default(),
+                    scheduled_event_id: self.scheduled_event_id,
+                    endpoint: self.endpoint.clone(),
+                    service: self.service.clone(),
+                    operation: self.operation.clone(),
+                    operation_token: self.operation_token.clone().unwrap_or_default(),
                     ..Default::default()
                 },
             )),
