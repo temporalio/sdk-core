@@ -351,7 +351,8 @@ message ResolveNexusOperationStart {
         // `ResolveNexusOperation` job will be in the same activation.
         bool started_sync = 3;
         // The operation either failed to start, was cancelled before it started, timed out, or
-        // failed synchronously. Details are included inside the message.
+        // failed synchronously. Details are included inside the message. In this case, the
+        // subsequent ResolveNexusOperation will never be sent.
         temporal.api.failure.v1.Failure failed = 4;
     }
 }

@@ -499,13 +499,6 @@ impl WFMachinesAdapter for NexusOperationMachine {
                         )),
                     }
                     .into(),
-                    ResolveNexusOperation {
-                        seq: self.shared_state.lang_seq_num,
-                        result: Some(NexusOperationResult {
-                            status: Some(nexus_operation_result::Status::Cancelled(failure)),
-                        }),
-                    }
-                    .into(),
                 ]
             }
             NexusOperationCommand::Complete(c) => {
