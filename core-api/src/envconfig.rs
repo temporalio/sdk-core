@@ -319,7 +319,8 @@ pub fn load_client_config_profile(
     };
 
     let mut profile = if options.disable_file {
-        ClientConfigProfile::default()
+        // Create a default profile that connects to localhost.
+        ClientConfigProfile::default_localhost_profile()
     } else {
         // Load the full config
         let config = load_client_config(
@@ -349,7 +350,9 @@ pub fn load_client_config_profile(
         } else if !profile_unset {
             Err(ConfigError::ProfileNotFound(profile_name))
         } else {
-            Ok(ClientConfigProfile::default())
+            // If no profile was requested and the default one doesn't exist,
+            // create a default profile that connects to localhost.
+            Ok(ClientConfigProfile::default_localhost_profile())
         }?
     };
 
@@ -397,6 +400,14 @@ impl ClientConfig {
 }
 
 impl ClientConfigProfile {
+    /// Returns a client config profile with default values for connecting to localhost.
+    pub fn default_localhost_profile() -> Self {
+        Self {
+            address: Some("localhost:7233".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        }
+    }
     /// Apply environment variable overrides to this profile.
     /// If `env_vars` is `None`, the system's environment variables will be used as the source.
     pub fn load_from_env(
@@ -1518,9 +1529,9 @@ address = "localhost:7233"
             ..Default::default()
         };
 
-        // Should not error, just returns an empty profile
+        // Should not error, just returns a default localhost profile
         let profile = load_client_config_profile(options, None).unwrap();
-        assert_eq!(profile, ClientConfigProfile::default());
+        assert_eq!(profile, ClientConfigProfile::default_localhost_profile());
     }
 
     #[test]
@@ -1580,6 +1591,17 @@ address = "localhost:7233"
         let profile = load_client_config_profile(options, Some(&vars)).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "env-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "env-namespace");
+    }
+
+    #[test]
+    fn test_load_client_config_profile_disable_file_no_env_uses_default() {
+        let options = LoadClientConfigProfileOptions {
+            disable_file: true,
+            ..Default::default()
+        };
+
+        let profile = load_client_config_profile(options, None).unwrap();
+        assert_eq!(profile, ClientConfigProfile::default_localhost_profile());
     }
 
     #[test]
