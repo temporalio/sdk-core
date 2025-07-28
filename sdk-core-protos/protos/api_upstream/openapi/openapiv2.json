@@ -1530,6 +1530,13 @@
             "type": "boolean"
           },
           {
+            "name": "reportConfig",
+            "description": "Report Task Queue Config",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
             "name": "includeTaskQueueStatus",
             "description": "Deprecated, use `report_stats` instead.\nIf true, the task queue status will be included in the response.",
             "in": "query",
@@ -1603,6 +1610,52 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue}/update-config": {
+      "post": {
+        "summary": "Updates task queue configuration.\nFor the overall queue rate limit: the rate limit set by this api overrides the worker-set rate limit,\nwhich uncouples the rate limit from the worker lifecycle.\nIf the overall queue rate limit is unset, the worker-set rate limit takes effect.",
+        "operationId": "UpdateTaskQueueConfig2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateTaskQueueConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue",
+            "description": "Selects the task queue to update.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateTaskQueueConfigBody"
+            }
           }
         ],
         "tags": [
@@ -2243,6 +2296,85 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/workers/describe/{workerInstanceKey}": {
+      "get": {
+        "summary": "DescribeWorker returns information about the specified worker.",
+        "operationId": "DescribeWorker2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workerInstanceKey",
+            "description": "Worker instance key to describe.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workers/fetch-config": {
+      "post": {
+        "summary": "FetchWorkerConfig returns the worker configuration for a specific worker.",
+        "operationId": "FetchWorkerConfig2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FetchWorkerConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceFetchWorkerConfigBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/workers/heartbeat": {
       "post": {
         "summary": "WorkerHeartbeat receive heartbeat request from the worker.",
@@ -2275,6 +2407,46 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceRecordWorkerHeartbeatBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workers/update-config": {
+      "post": {
+        "summary": "UpdateWorkerConfig updates the worker configuration of one or more workers.\nCan be used to partially update the worker configuration.\nCan be used to update the configuration of multiple workers.",
+        "operationId": "UpdateWorkerConfig2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkerConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkerConfigBody"
             }
           }
         ],
@@ -5177,6 +5349,13 @@
             "type": "boolean"
           },
           {
+            "name": "reportConfig",
+            "description": "Report Task Queue Config",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
             "name": "includeTaskQueueStatus",
             "description": "Deprecated, use `report_stats` instead.\nIf true, the task queue status will be included in the response.",
             "in": "query",
@@ -5250,6 +5429,52 @@
             "in": "query",
             "required": false,
             "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/task-queues/{taskQueue}/update-config": {
+      "post": {
+        "summary": "Updates task queue configuration.\nFor the overall queue rate limit: the rate limit set by this api overrides the worker-set rate limit,\nwhich uncouples the rate limit from the worker lifecycle.\nIf the overall queue rate limit is unset, the worker-set rate limit takes effect.",
+        "operationId": "UpdateTaskQueueConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateTaskQueueConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue",
+            "description": "Selects the task queue to update.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateTaskQueueConfigBody"
+            }
           }
         ],
         "tags": [
@@ -5851,6 +6076,85 @@
         ]
       }
     },
+    "/namespaces/{namespace}/workers/describe/{workerInstanceKey}": {
+      "get": {
+        "summary": "DescribeWorker returns information about the specified worker.",
+        "operationId": "DescribeWorker",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workerInstanceKey",
+            "description": "Worker instance key to describe.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workers/fetch-config": {
+      "post": {
+        "summary": "FetchWorkerConfig returns the worker configuration for a specific worker.",
+        "operationId": "FetchWorkerConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1FetchWorkerConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceFetchWorkerConfigBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/workers/heartbeat": {
       "post": {
         "summary": "WorkerHeartbeat receive heartbeat request from the worker.",
@@ -5883,6 +6187,46 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceRecordWorkerHeartbeatBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workers/update-config": {
+      "post": {
+        "summary": "UpdateWorkerConfig updates the worker configuration of one or more workers.\nCan be used to partially update the worker configuration.\nCan be used to update the configuration of multiple workers.",
+        "operationId": "UpdateWorkerConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkerConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkerConfigBody"
             }
           }
         ],
@@ -6932,6 +7276,20 @@
         }
       }
     },
+    "DescribeTaskQueueResponseEffectiveRateLimit": {
+      "type": "object",
+      "properties": {
+        "requestsPerSecond": {
+          "type": "number",
+          "format": "float",
+          "description": "The effective rate limit for the task queue."
+        },
+        "rateLimitSource": {
+          "$ref": "#/definitions/v1RateLimitSource",
+          "title": "Source of the RateLimit Configuration,which can be one of the following values:\n- SOURCE_API: The rate limit that is set via the TaskQueueConfig api.\n- SOURCE_WORKER: The rate limit is the value set using the workerOptions in TaskQueueActivitiesPerSecond.\n- SOURCE_SYSTEM: The rate limit is the default value set by the system"
+        }
+      }
+    },
     "DescribeWorkerDeploymentVersionResponseVersionTaskQueue": {
       "type": "object",
       "properties": {
@@ -6944,6 +7302,13 @@
         "stats": {
           "$ref": "#/definitions/v1TaskQueueStats",
           "description": "Only set if `report_task_queue_stats` is set on the request."
+        },
+        "statsByPriorityKey": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1TaskQueueStats"
+          },
+          "description": "Task queue stats breakdown by priority key. Only contains actively used priority keys.\nOnly set if `report_task_queue_stats` is set to true in the request."
         }
       }
     },
@@ -7178,6 +7543,19 @@
       },
       "description": "An operation completed successfully."
     },
+    "UpdateTaskQueueConfigRequestRateLimitUpdate": {
+      "type": "object",
+      "properties": {
+        "rateLimit": {
+          "$ref": "#/definitions/v1RateLimit",
+          "title": "Rate Limit to be updated"
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for why the rate limit was set."
+        }
+      }
+    },
     "UpdateWorkerBuildIdCompatibilityRequestAddNewCompatibleVersion": {
       "type": "object",
       "properties": {
@@ -7312,6 +7690,35 @@
       ],
       "default": "PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED",
       "description": "Used to specify different sub-types of Pinned override that we plan to add in the future.\n\n - PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED: Unspecified.\n - PINNED_OVERRIDE_BEHAVIOR_PINNED: Override workflow behavior to be Pinned."
+    },
+    "WorkerConfigAutoscalingPollerBehavior": {
+      "type": "object",
+      "properties": {
+        "minPollers": {
+          "type": "integer",
+          "format": "int32",
+          "description": "At least this many poll calls will always be attempted (assuming slots are available).\nCannot be zero."
+        },
+        "maxPollers": {
+          "type": "integer",
+          "format": "int32",
+          "description": "At most this many poll calls will ever be open at once. Must be >= `minimum`."
+        },
+        "initialPollers": {
+          "type": "integer",
+          "format": "int32",
+          "description": "This many polls will be attempted initially before scaling kicks in. Must be between\n `minimum` and `maximum`."
+        }
+      }
+    },
+    "WorkerConfigSimplePollerBehavior": {
+      "type": "object",
+      "properties": {
+        "maxPollers": {
+          "type": "integer",
+          "format": "int32"
+        }
+      }
     },
     "WorkerDeploymentInfoWorkerDeploymentVersionSummary": {
       "type": "object",
@@ -7479,6 +7886,23 @@
             "$ref": "#/definitions/ExecuteMultiOperationRequestOperation"
           },
           "description": "List of operations to execute within a single workflow.\n\nPreconditions:\n- The list of operations must not be empty.\n- The workflow ids must match across operations.\n- The only valid list of operations at this time is [StartWorkflow, UpdateWorkflow], in this order.\n\nNote that additional operation-specific restrictions have to be considered."
+        }
+      }
+    },
+    "WorkflowServiceFetchWorkerConfigBody": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for sending worker command, can be used for audit purpose."
+        },
+        "selector": {
+          "$ref": "#/definitions/v1WorkerSelector",
+          "description": "Defines which workers should receive this command.\nonly single worker is supported at this time."
         }
       }
     },
@@ -7671,13 +8095,17 @@
           "type": "string",
           "description": "Reset all running activities with of this type."
         },
+        "matchAll": {
+          "type": "boolean",
+          "description": "Reset all running activities."
+        },
         "resetHeartbeat": {
           "type": "boolean",
           "description": "Indicates that activity should reset heartbeat details.\nThis flag will be applied only to the new instance of the activity."
         },
         "keepPaused": {
           "type": "boolean",
-          "title": "if activity is paused, it will remain paused after reset"
+          "title": "If activity is paused, it will remain paused after reset"
         },
         "jitter": {
           "type": "string",
@@ -7687,7 +8115,8 @@
           "type": "boolean",
           "description": "If set, the activity options will be restored to the defaults.\nDefault options are then options activity was created with.\nThey are part of the first SCHEDULE event."
         }
-      }
+      },
+      "title": "NOTE: keep in sync with temporal.api.batch.v1.BatchOperationResetActivities"
     },
     "WorkflowServiceResetWorkflowExecutionBody": {
       "type": "object",
@@ -8179,6 +8608,12 @@
         },
         "unpauseActivitiesOperation": {
           "$ref": "#/definitions/v1BatchOperationUnpauseActivities"
+        },
+        "resetActivitiesOperation": {
+          "$ref": "#/definitions/v1BatchOperationResetActivities"
+        },
+        "updateActivityOptionsOperation": {
+          "$ref": "#/definitions/v1BatchOperationUpdateActivityOptions"
         }
       }
     },
@@ -8428,11 +8863,16 @@
           "type": "string",
           "description": "Update all running activities of this type."
         },
+        "matchAll": {
+          "type": "boolean",
+          "description": "Update all running activities."
+        },
         "restoreOriginal": {
           "type": "boolean",
           "description": "If set, the activity options will be restored to the default.\nDefault options are then options activity was created with.\nThey are part of the first SCHEDULE event.\nThis flag cannot be combined with any other option; if you supply\nrestore_original together with other options, the request will be rejected."
         }
-      }
+      },
+      "title": "NOTE: keep in sync with temporal.api.batch.v1.BatchOperationUpdateActivityOptions"
     },
     "WorkflowServiceUpdateNamespaceBody": {
       "type": "object",
@@ -8481,6 +8921,50 @@
         "searchAttributes": {
           "$ref": "#/definitions/v1SearchAttributes",
           "description": "Schedule search attributes to be updated.\nDo not set this field if you do not want to update the search attributes.\nA non-null empty object will set the search attributes to an empty map.\nNote: you cannot only update the search attributes with `UpdateScheduleRequest`,\nyou must also set the `schedule` field; otherwise, it will unset the schedule."
+        }
+      }
+    },
+    "WorkflowServiceUpdateTaskQueueConfigBody": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string"
+        },
+        "taskQueueType": {
+          "$ref": "#/definitions/v1TaskQueueType"
+        },
+        "updateQueueRateLimit": {
+          "$ref": "#/definitions/UpdateTaskQueueConfigRequestRateLimitUpdate",
+          "description": "Update to queue-wide rate limit.\nIf not set, this configuration is unchanged.\nNOTE: A limit set by the worker is overriden; and restored again when reset.\nIf the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit."
+        },
+        "updateFairnessKeyRateLimitDefault": {
+          "$ref": "#/definitions/UpdateTaskQueueConfigRequestRateLimitUpdate",
+          "description": "Update to the default fairness key rate limit.\nIf not set, this configuration is unchanged.\nIf the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit."
+        }
+      }
+    },
+    "WorkflowServiceUpdateWorkerConfigBody": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for sending worker command, can be used for audit purpose."
+        },
+        "workerConfig": {
+          "$ref": "#/definitions/v1WorkerConfig",
+          "description": "Partial updates are accepted and controlled by update_mask.\nThe worker configuration to set."
+        },
+        "updateMask": {
+          "type": "string",
+          "title": "Controls which fields from `worker_config` will be applied"
+        },
+        "selector": {
+          "$ref": "#/definitions/v1WorkerSelector",
+          "description": "Defines which workers should receive this command."
         }
       }
     },
@@ -9225,6 +9709,42 @@
       },
       "description": "BatchOperationReset sends reset requests to batch workflows.\nKeep the parameter in sync with temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest."
     },
+    "v1BatchOperationResetActivities": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the worker/client."
+        },
+        "type": {
+          "type": "string"
+        },
+        "matchAll": {
+          "type": "boolean"
+        },
+        "resetAttempts": {
+          "type": "boolean",
+          "description": "Setting this flag will also reset the number of attempts."
+        },
+        "resetHeartbeat": {
+          "type": "boolean",
+          "description": "Setting this flag will also reset the heartbeat details."
+        },
+        "keepPaused": {
+          "type": "boolean",
+          "title": "If activity is paused, it will remain paused after reset"
+        },
+        "jitter": {
+          "type": "string",
+          "description": "If set, the activity will start at a random time within the specified jitter\nduration, introducing variability to the start time."
+        },
+        "restoreOriginalOptions": {
+          "type": "boolean",
+          "description": "If set, the activity options will be restored to the defaults.\nDefault options are then options activity was created with.\nThey are part of the first ActivityTaskScheduled event."
+        }
+      },
+      "title": "BatchOperationResetActivities sends activity reset requests in a batch.\nNOTE: keep in sync with temporal.api.workflowservice.v1.ResetActivityRequest"
+    },
     "v1BatchOperationSignal": {
       "type": "object",
       "properties": {
@@ -9280,7 +9800,10 @@
         "BATCH_OPERATION_TYPE_SIGNAL",
         "BATCH_OPERATION_TYPE_DELETE",
         "BATCH_OPERATION_TYPE_RESET",
-        "BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS"
+        "BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS",
+        "BATCH_OPERATION_TYPE_UNPAUSE_ACTIVITY",
+        "BATCH_OPERATION_TYPE_UPDATE_ACTIVITY_OPTIONS",
+        "BATCH_OPERATION_TYPE_RESET_ACTIVITY"
       ],
       "default": "BATCH_OPERATION_TYPE_UNSPECIFIED"
     },
@@ -9299,11 +9822,11 @@
         },
         "resetAttempts": {
           "type": "boolean",
-          "description": "Providing this flag will also reset the number of attempts."
+          "description": "Setting this flag will also reset the number of attempts."
         },
         "resetHeartbeat": {
           "type": "boolean",
-          "description": "Providing this flag will also reset the heartbeat details."
+          "description": "Setting this flag will also reset the heartbeat details."
         },
         "jitter": {
           "type": "string",
@@ -9311,6 +9834,34 @@
         }
       },
       "description": "BatchOperationUnpauseActivities sends unpause requests to batch workflows."
+    },
+    "v1BatchOperationUpdateActivityOptions": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the worker/client."
+        },
+        "type": {
+          "type": "string"
+        },
+        "matchAll": {
+          "type": "boolean"
+        },
+        "activityOptions": {
+          "$ref": "#/definitions/v1ActivityOptions",
+          "description": "Update Activity options. Partial updates are accepted and controlled by update_mask."
+        },
+        "updateMask": {
+          "type": "string",
+          "title": "Controls which fields from `activity_options` will be applied"
+        },
+        "restoreOriginal": {
+          "type": "boolean",
+          "description": "If set, the activity options will be restored to the default.\nDefault options are then options activity was created with.\nThey are part of the first ActivityTaskScheduled event.\nThis flag cannot be combined with any other option; if you supply\nrestore_original together with other options, the request will be rejected."
+        }
+      },
+      "title": "BatchOperationUpdateActivityOptions sends an update-activity-options requests in a batch.\nNOTE: keep in sync with temporal.api.workflowservice.v1.UpdateActivityRequest"
     },
     "v1BatchOperationUpdateWorkflowExecutionOptions": {
       "type": "object",
@@ -9921,6 +10472,24 @@
         }
       }
     },
+    "v1ConfigMetadata": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Reason for why the config was set."
+        },
+        "updateIdentity": {
+          "type": "string",
+          "description": "Identity of the last updater.\nSet by the request's identity field."
+        },
+        "updateTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time of the last update."
+        }
+      }
+    },
     "v1ContinueAsNewInitiator": {
       "type": "string",
       "enum": [
@@ -10322,11 +10891,25 @@
         },
         "stats": {
           "$ref": "#/definitions/v1TaskQueueStats",
-          "description": "Statistics for the task queue. Only populated when `report_stats` is set to true in the request."
+          "description": "Statistics for the task queue.\nOnly set if `report_stats` is set on the request."
+        },
+        "statsByPriorityKey": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1TaskQueueStats"
+          },
+          "description": "Task queue stats breakdown by priority key. Only contains actively used priority keys.\nOnly set if `report_stats` is set on the request."
         },
         "versioningInfo": {
           "$ref": "#/definitions/v1TaskQueueVersioningInfo",
           "description": "Specifies which Worker Deployment Version(s) Server routes this Task Queue's tasks to.\nWhen not present, it means the tasks are routed to Unversioned workers (workers with\nUNVERSIONED or unspecified WorkerVersioningMode.)\nTask Queue Versioning info is updated indirectly by calling SetWorkerDeploymentCurrentVersion\nand SetWorkerDeploymentRampingVersion on Worker Deployments.\nNote: This information is not relevant to Pinned workflow executions and their activities as\nthey are always routed to their Pinned Deployment Version. However, new workflow executions\nare typically not Pinned until they complete their first task (unless they are started with\na Pinned VersioningOverride or are Child Workflows of a Pinned parent)."
+        },
+        "config": {
+          "$ref": "#/definitions/v1TaskQueueConfig",
+          "description": "Only populated if report_task_queue_config is set to true."
+        },
+        "effectiveRateLimit": {
+          "$ref": "#/definitions/DescribeTaskQueueResponseEffectiveRateLimit"
         },
         "taskQueueStatus": {
           "$ref": "#/definitions/v1TaskQueueStatus",
@@ -10367,6 +10950,14 @@
             "$ref": "#/definitions/DescribeWorkerDeploymentVersionResponseVersionTaskQueue"
           },
           "description": "All the Task Queues that have ever polled from this Deployment version."
+        }
+      }
+    },
+    "v1DescribeWorkerResponse": {
+      "type": "object",
+      "properties": {
+        "workerInfo": {
+          "$ref": "#/definitions/v1WorkerInfo"
         }
       }
     },
@@ -10653,6 +11244,15 @@
       },
       "title": "Represents a historical replication status of a Namespace"
     },
+    "v1FetchWorkerConfigResponse": {
+      "type": "object",
+      "properties": {
+        "workerConfig": {
+          "$ref": "#/definitions/v1WorkerConfig",
+          "description": "The worker configuration."
+        }
+      }
+    },
     "v1GetClusterInfoResponse": {
       "type": "object",
       "properties": {
@@ -10684,6 +11284,14 @@
         },
         "visibilityStore": {
           "type": "string"
+        },
+        "initialFailoverVersion": {
+          "type": "string",
+          "format": "int64"
+        },
+        "failoverVersionIncrement": {
+          "type": "string",
+          "format": "int64"
         }
       },
       "description": "GetClusterInfoResponse contains information about Temporal cluster."
@@ -11653,6 +12261,10 @@
         "asyncUpdate": {
           "type": "boolean",
           "title": "True if the namespace supports async update"
+        },
+        "workerHeartbeats": {
+          "type": "boolean",
+          "title": "True if the namespace supports worker heartbeats"
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -12372,6 +12984,19 @@
       ],
       "default": "PENDING_WORKFLOW_TASK_STATE_UNSPECIFIED"
     },
+    "v1PluginInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the plugin, required."
+        },
+        "version": {
+          "type": "string",
+          "description": "The version of the plugin, may be empty."
+        }
+      }
+    },
     "v1PollActivityTaskQueueResponse": {
       "type": "object",
       "properties": {
@@ -12627,10 +13252,19 @@
         "priorityKey": {
           "type": "integer",
           "format": "int32",
-          "description": "Priority key is a positive integer from 1 to n, where smaller integers\ncorrespond to higher priorities (tasks run sooner). In general, tasks in\na queue should be processed in close to priority order, although small\ndeviations are possible.\n\nThe maximum priority value (minimum priority) is determined by server\nconfiguration, and defaults to 5.\n\nThe default priority is (min+max)/2. With the default max of 5 and min of\n1, that comes out to 3."
+          "description": "Priority key is a positive integer from 1 to n, where smaller integers\ncorrespond to higher priorities (tasks run sooner). In general, tasks in\na queue should be processed in close to priority order, although small\ndeviations are possible.\n\nThe maximum priority value (minimum priority) is determined by server\nconfiguration, and defaults to 5.\n\nIf priority is not present (or zero), then the effective priority will be\nthe default priority, which is is calculated by (min+max)/2. With the\ndefault max of 5, and min of 1, that comes out to 3."
+        },
+        "fairnessKey": {
+          "type": "string",
+          "description": "Fairness key is a short string that's used as a key for a fairness\nbalancing mechanism. It may correspond to a tenant id, or to a fixed\nstring like \"high\" or \"low\". The default is the empty string.\n\nThe fairness mechanism attempts to dispatch tasks for a given key in\nproportion to its weight. For example, using a thousand distinct tenant\nids, each with a weight of 1.0 (the default) will result in each tenant\ngetting a roughly equal share of task dispatch throughput.\n\n(Note: this does not imply equal share of worker capacity! Fairness\ndecisions are made based on queue statistics, not\ncurrent worker load.)\n\nAs another example, using keys \"high\" and \"low\" with weight 9.0 and 1.0\nrespectively will prefer dispatching \"high\" tasks over \"low\" tasks at a\n9:1 ratio, while allowing either key to use all worker capacity if the\nother is not present.\n\nAll fairness mechanisms, including rate limits, are best-effort and\nprobabilistic. The results may not match what a \"perfect\" algorithm with\ninfinite resources would produce. The more unique keys are used, the less\naccurate the results will be.\n\nFairness keys are limited to 64 bytes."
+        },
+        "fairnessWeight": {
+          "type": "number",
+          "format": "float",
+          "description": "Fairness weight for a task can come from multiple sources for\nflexibility. From highest to lowest precedence:\n1. Weights for a small set of keys can be overridden in task queue\n   configuration with an API.\n2. It can be attached to the workflow/activity in this field.\n3. The default weight of 1.0 will be used.\n\nWeight values are clamped to the range [0.001, 1000]."
         }
       },
-      "description": "Priority contains metadata that controls relative ordering of task processing\nwhen tasks are backlogged in a queue. Initially, Priority will be used in\nactivity and workflow task queues, which are typically where backlogs exist.\nOther queues in the server (such as transfer and timer queues) and rate\nlimiting decisions do not use Priority, but may in the future.\n\nPriority is attached to workflows and activities. Activities and child\nworkflows inherit Priority from the workflow that created them, but may\noverride fields when they are started or modified. For each field of a\nPriority on an activity/workflow, not present or equal to zero/empty string\nmeans to inherit the value from the calling workflow, or if there is no\ncalling workflow, then use the default (documented below).\n\nDespite being named \"Priority\", this message will also contains fields that\ncontrol \"fairness\" mechanisms.\n\nThe overall semantics of Priority are:\n1. First, consider \"priority_key\": lower number goes first.\n(more will be added here later)"
+      "description": "Priority contains metadata that controls relative ordering of task processing\nwhen tasks are backed up in a queue. Initially, Priority will be used in\nmatching (workflow and activity) task queues. Later it may be used in history\ntask queues and in rate limiting decisions.\n\nPriority is attached to workflows and activities. By default, activities\ninherit Priority from the workflow that created them, but may override fields\nwhen an activity is started or modified.\n\nDespite being named \"Priority\", this message also contains fields that\ncontrol \"fairness\" mechanisms.\n\nFor all fields, the field not present or equal to zero/empty string means to\ninherit the value from the calling workflow, or if there is no calling\nworkflow, then use the default value.\n\nFor all fields other than fairness_key, the zero value isn't meaningful so\nthere's no confusion between inherit/default and a meaningful value. For\nfairness_key, the empty string will be interpreted as \"inherit\". This means\nthat if a workflow has a non-empty fairness key, you can't override the\nfairness key of its activity to the empty string.\n\nThe overall semantics of Priority are:\n1. First, consider \"priority\": higher priority (lower number) goes first.\n2. Then, consider fairness: try to dispatch tasks for different fairness keys\n   in proportion to their weight.\n\nApplications may use any subset of mechanisms that are useful to them and\nleave the other fields to use default values.\n\nNot all queues in the system may support the \"full\" semantics of all priority\nfields. (Currently only support in matching task queues is planned.)"
     },
     "v1ProtocolMessageCommandAttributes": {
       "type": "object",
@@ -12710,6 +13344,38 @@
         }
       },
       "description": "Range represents a set of integer values, used to match fields of a calendar\ntime in StructuredCalendarSpec. If end < start, then end is interpreted as\nequal to start. This means you can use a Range with start set to a value, and\nend and step unset (defaulting to 0) to represent a single value."
+    },
+    "v1RateLimit": {
+      "type": "object",
+      "properties": {
+        "requestsPerSecond": {
+          "type": "number",
+          "format": "float",
+          "description": "Zero is a valid rate limit."
+        }
+      }
+    },
+    "v1RateLimitConfig": {
+      "type": "object",
+      "properties": {
+        "rateLimit": {
+          "$ref": "#/definitions/v1RateLimit"
+        },
+        "metadata": {
+          "$ref": "#/definitions/v1ConfigMetadata"
+        }
+      }
+    },
+    "v1RateLimitSource": {
+      "type": "string",
+      "enum": [
+        "RATE_LIMIT_SOURCE_UNSPECIFIED",
+        "RATE_LIMIT_SOURCE_API",
+        "RATE_LIMIT_SOURCE_WORKER",
+        "RATE_LIMIT_SOURCE_SYSTEM"
+      ],
+      "default": "RATE_LIMIT_SOURCE_UNSPECIFIED",
+      "description": "Source for the effective rate limit.\n\n - RATE_LIMIT_SOURCE_API: The value was set by the API.\n - RATE_LIMIT_SOURCE_WORKER: The value was set by a worker.\n - RATE_LIMIT_SOURCE_SYSTEM: The value was set as the system default."
     },
     "v1RecordActivityTaskHeartbeatByIdResponse": {
       "type": "object",
@@ -14469,6 +15135,19 @@
       },
       "title": "See https://docs.temporal.io/docs/concepts/task-queues/"
     },
+    "v1TaskQueueConfig": {
+      "type": "object",
+      "properties": {
+        "queueRateLimit": {
+          "$ref": "#/definitions/v1RateLimitConfig",
+          "description": "Unless modified, this is the system-defined rate limit."
+        },
+        "fairnessKeysRateLimitDefault": {
+          "$ref": "#/definitions/v1RateLimitConfig",
+          "description": "If set, each individual fairness key will be limited to this rate, scaled by the weight of the fairness key."
+        }
+      }
+    },
     "v1TaskQueueKind": {
       "type": "string",
       "enum": [
@@ -14872,7 +15551,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "A key-value map for any customized purpose.\nIf data already exists on the namespace, \nthis will merge with the existing key values."
+          "description": "A key-value map for any customized purpose.\nIf data already exists on the namespace,\nthis will merge with the existing key values."
         },
         "state": {
           "$ref": "#/definitions/v1NamespaceState",
@@ -14925,9 +15604,26 @@
     "v1UpdateScheduleResponse": {
       "type": "object"
     },
+    "v1UpdateTaskQueueConfigResponse": {
+      "type": "object",
+      "properties": {
+        "config": {
+          "$ref": "#/definitions/v1TaskQueueConfig"
+        }
+      }
+    },
     "v1UpdateWorkerBuildIdCompatibilityResponse": {
       "type": "object",
       "title": "[cleanup-wv-pre-release]"
+    },
+    "v1UpdateWorkerConfigResponse": {
+      "type": "object",
+      "properties": {
+        "workerConfig": {
+          "$ref": "#/definitions/v1WorkerConfig",
+          "description": "The worker configuration. Will be returned if the command was sent to a single worker."
+        }
+      }
     },
     "v1UpdateWorkerDeploymentVersionMetadataResponse": {
       "type": "object",
@@ -15174,6 +15870,21 @@
       },
       "description": "Specifies client's intent to wait for Update results."
     },
+    "v1WorkerConfig": {
+      "type": "object",
+      "properties": {
+        "workflowCacheSize": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "simplePollerBehavior": {
+          "$ref": "#/definitions/WorkerConfigSimplePollerBehavior"
+        },
+        "autoscalingPollerBehavior": {
+          "$ref": "#/definitions/WorkerConfigAutoscalingPollerBehavior"
+        }
+      }
+    },
     "v1WorkerDeploymentInfo": {
       "type": "object",
       "properties": {
@@ -15403,6 +16114,14 @@
           "type": "integer",
           "format": "int32",
           "description": "Current cache size, expressed in number of Workflow Executions."
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1PluginInfo"
+          },
+          "description": "Plugins currently in use by this SDK."
         }
       },
       "description": "Worker info message, contains information about the worker and its current state.\nAll information is provided by the worker itself."
@@ -15460,6 +16179,16 @@
           "title": "Set true if the number of concurrent pollers is auto-scaled"
         }
       }
+    },
+    "v1WorkerSelector": {
+      "type": "object",
+      "properties": {
+        "workerInstanceKey": {
+          "type": "string",
+          "description": "Worker instance key to which the command should be sent."
+        }
+      },
+      "description": "This is used to send commands to a specific worker or a group of workers.\nRight now, it is used to send commands to a specific worker instance.\nWill be extended to be able to send command to multiple workers."
     },
     "v1WorkerSlotsInfo": {
       "type": "object",
@@ -16068,6 +16797,10 @@
         "inheritedPinnedVersion": {
           "$ref": "#/definitions/v1WorkerDeploymentVersion",
           "description": "If present, the new workflow should start on this version with pinned base behavior.\nChild of pinned parent will inherit the parent's version if the Child's Task Queue belongs to that version.\n\nNew run initiated by workflow ContinueAsNew of pinned run, will inherit the previous run's version if the\nnew run's Task Queue belongs to that version.\n\nNew run initiated by workflow Cron will never inherit.\n\nNew run initiated by workflow Retry will only inherit if the retried run is effectively pinned at the time\nof retry, and the retried run inherited a pinned version when it started (ie. it is a child of a pinned\nparent, or a CaN of a pinned run, and is running on a Task Queue in the inherited version).\n\nPinned override is inherited if Task Queue of new run is compatible with the override version.\nOverride is inherited separately and takes precedence over inherited base version."
+        },
+        "eagerExecutionAccepted": {
+          "type": "boolean",
+          "description": "A boolean indicating whether the SDK has asked to eagerly execute the first workflow task for this workflow and\neager execution was accepted by the server.\nOnly populated by server with version >= 1.29.0."
         }
       },
       "title": "Always the first event in workflow history"

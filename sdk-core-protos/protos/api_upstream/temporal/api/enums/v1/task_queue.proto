@@ -89,3 +89,14 @@ enum DescribeTaskQueueMode {
     // Enhanced mode reports aggregated results for all partitions, supports Build IDs, and reports richer info.
     DESCRIBE_TASK_QUEUE_MODE_ENHANCED = 1;
 }
+
+// Source for the effective rate limit.
+enum RateLimitSource {
+    RATE_LIMIT_SOURCE_UNSPECIFIED = 0;
+    // The value was set by the API.
+    RATE_LIMIT_SOURCE_API = 1;
+    // The value was set by a worker.
+    RATE_LIMIT_SOURCE_WORKER = 2;
+    // The value was set as the system default.
+    RATE_LIMIT_SOURCE_SYSTEM = 3;
+}

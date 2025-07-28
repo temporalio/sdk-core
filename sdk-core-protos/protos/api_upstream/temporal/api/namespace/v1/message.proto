@@ -34,6 +34,8 @@ message NamespaceInfo {
         bool sync_update = 2;
         // True if the namespace supports async update
         bool async_update = 3;
+        // True if the namespace supports worker heartbeats
+        bool worker_heartbeats = 4;
     }
 
     // Whether scheduled workflows are supported on this namespace. This is only needed
@@ -68,8 +70,8 @@ message UpdateNamespaceInfo {
     string description = 1;
     string owner_email = 2;
     // A key-value map for any customized purpose.
-    // If data already exists on the namespace, 
-    // this will merge with the existing key values. 
+    // If data already exists on the namespace,
+    // this will merge with the existing key values.
     map<string, string> data = 3;
     // New namespace state, server will reject if transition is not allowed.
     // Allowed transitions are:

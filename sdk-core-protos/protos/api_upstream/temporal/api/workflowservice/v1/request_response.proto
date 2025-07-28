@@ -32,6 +32,7 @@ import "temporal/api/namespace/v1/message.proto";
 import "temporal/api/query/v1/message.proto";
 import "temporal/api/replication/v1/message.proto";
 import "temporal/api/rules/v1/message.proto";
+import "temporal/api/sdk/v1/worker_config.proto";
 import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
@@ -1058,6 +1059,9 @@ message DescribeTaskQueueRequest {
     // Report stats for the requested task queue type(s).
     bool report_stats = 8;
 
+    // Report Task Queue Config
+    bool report_config = 11;
+
     // Deprecated, use `report_stats` instead.
     // If true, the task queue status will be included in the response.
     bool include_task_queue_status = 4 [deprecated = true];
@@ -1091,8 +1095,15 @@ message DescribeTaskQueueRequest {
 message DescribeTaskQueueResponse {
     repeated temporal.api.taskqueue.v1.PollerInfo pollers = 1;
 
-    // Statistics for the task queue. Only populated when `report_stats` is set to true in the request.
+    // Statistics for the task queue.
+    // Only set if `report_stats` is set on the request.
     temporal.api.taskqueue.v1.TaskQueueStats stats = 5;
+
+    // Task queue stats breakdown by priority key. Only contains actively used priority keys.
+    // Only set if `report_stats` is set on the request.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "by" is used to clarify the keys and values. --)
+    map<int32, temporal.api.taskqueue.v1.TaskQueueStats> stats_by_priority_key = 8;
 
     // Specifies which Worker Deployment Version(s) Server routes this Task Queue's tasks to.
     // When not present, it means the tasks are routed to Unversioned workers (workers with
@@ -1104,6 +1115,22 @@ message DescribeTaskQueueResponse {
     // are typically not Pinned until they complete their first task (unless they are started with
     // a Pinned VersioningOverride or are Child Workflows of a Pinned parent).
     temporal.api.taskqueue.v1.TaskQueueVersioningInfo versioning_info = 4;
+
+    // Only populated if report_task_queue_config is set to true.
+    temporal.api.taskqueue.v1.TaskQueueConfig config  = 6;
+
+    message EffectiveRateLimit {
+        // The effective rate limit for the task queue.
+        float requests_per_second = 1;
+
+        // Source of the RateLimit Configuration,which can be one of the following values:
+        // - SOURCE_API: The rate limit that is set via the TaskQueueConfig api.
+        // - SOURCE_WORKER: The rate limit is the value set using the workerOptions in TaskQueueActivitiesPerSecond.
+        // - SOURCE_SYSTEM: The rate limit is the default value set by the system
+        temporal.api.enums.v1.RateLimitSource rate_limit_source = 2;
+    }
+
+    EffectiveRateLimit effective_rate_limit = 7;
 
     // Deprecated.
     // Status of the task queue. Only populated when `include_task_queue_status` is set to true in the request.
@@ -1130,6 +1157,8 @@ message GetClusterInfoResponse {
     int32 history_shard_count = 6;
     string persistence_store = 7;
     string visibility_store = 8;
+    int64 initial_failover_version = 9;
+    int64 failover_version_increment = 10;
 }
 
 message GetSystemInfoRequest {
@@ -1659,6 +1688,8 @@ message StartBatchOperationRequest {
         temporal.api.batch.v1.BatchOperationReset reset_operation = 14;
         temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions update_workflow_options_operation = 15;
         temporal.api.batch.v1.BatchOperationUnpauseActivities unpause_activities_operation = 16;
+        temporal.api.batch.v1.BatchOperationResetActivities reset_activities_operation = 17;
+        temporal.api.batch.v1.BatchOperationUpdateActivityOptions update_activity_options_operation = 18;
     }
 }
 
@@ -1856,6 +1887,7 @@ message ExecuteMultiOperationResponse {
     }
 }
 
+// NOTE: keep in sync with temporal.api.batch.v1.BatchOperationUpdateActivityOptions
 message UpdateActivityOptionsRequest {
     // Namespace of the workflow which scheduled this activity
     string namespace = 1;
@@ -1871,12 +1903,14 @@ message UpdateActivityOptionsRequest {
     // Controls which fields from `activity_options` will be applied
     google.protobuf.FieldMask update_mask = 5;
 
-    // either activity id or activity type must be provided
+    // either activity id, activity type or update_all must be provided
     oneof activity {
         // Only activity with this ID will be updated.
         string id = 6;
         // Update all running activities of this type.
         string type = 7;
+        // Update all running activities.
+        bool match_all = 9;
     }
 
     // If set, the activity options will be restored to the default.
@@ -1948,6 +1982,7 @@ message UnpauseActivityRequest {
 message UnpauseActivityResponse {
 }
 
+// NOTE: keep in sync with temporal.api.batch.v1.BatchOperationResetActivities
 message ResetActivityRequest {
     // Namespace of the workflow which scheduled this activity.
     string namespace = 1;
@@ -1957,19 +1992,21 @@ message ResetActivityRequest {
     // The identity of the client who initiated this request.
     string identity = 3;
 
-    // either activity id or activity type must be provided
+    // either activity id, activity type or update_all must be provided
     oneof activity {
         // Only activity with this ID will be reset.
         string id = 4;
         // Reset all running activities with of this type.
         string type = 5;
+        // Reset all running activities.
+        bool match_all = 10;
     }
 
     // Indicates that activity should reset heartbeat details.
     // This flag will be applied only to the new instance of the activity.
     bool reset_heartbeat = 6;
 
-    // if activity is paused, it will remain paused after reset
+    // If activity is paused, it will remain paused after reset
     bool keep_paused = 7;
 
     // If set, and activity is in backoff, the activity will start at a random time within the specified jitter duration.
@@ -2041,6 +2078,11 @@ message DescribeWorkerDeploymentVersionResponse {
         temporal.api.enums.v1.TaskQueueType type = 2;
         // Only set if `report_task_queue_stats` is set on the request.
         temporal.api.taskqueue.v1.TaskQueueStats stats = 3;
+        // Task queue stats breakdown by priority key. Only contains actively used priority keys.
+        // Only set if `report_task_queue_stats` is set to true in the request.
+        // (-- api-linter: core::0140::prepositions=disabled
+        //     aip.dev/not-precedent: "by" is used to clarify the key. --)
+        map<int32, temporal.api.taskqueue.v1.TaskQueueStats> stats_by_priority_key = 4;
     }
 }
 
@@ -2418,4 +2460,94 @@ message ListWorkersResponse {
 
     // Next page token
     bytes next_page_token = 2;
+}
+
+message UpdateTaskQueueConfigRequest {
+    message RateLimitUpdate {
+        // Rate Limit to be updated
+        temporal.api.taskqueue.v1.RateLimit rate_limit = 1;
+        // Reason for why the rate limit was set.
+        string reason = 2;
+    }
+
+    string namespace = 1;
+    string identity = 2;
+    // Selects the task queue to update.
+    string task_queue = 3;
+    temporal.api.enums.v1.TaskQueueType task_queue_type = 4;
+    // Update to queue-wide rate limit.
+    // If not set, this configuration is unchanged.
+    // NOTE: A limit set by the worker is overriden; and restored again when reset.
+    // If the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit.
+    RateLimitUpdate update_queue_rate_limit = 5;
+    // Update to the default fairness key rate limit.
+    // If not set, this configuration is unchanged.
+    // If the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit.
+    RateLimitUpdate update_fairness_key_rate_limit_default = 6;
+}
+
+message UpdateTaskQueueConfigResponse {
+    temporal.api.taskqueue.v1.TaskQueueConfig config = 1;
+}
+
+message FetchWorkerConfigRequest {
+    // Namespace this worker belongs to.
+    string namespace = 1;
+
+    // The identity of the client who initiated this request.
+    string identity = 2;
+
+    // Reason for sending worker command, can be used for audit purpose.
+    string reason = 3;
+
+    // Defines which workers should receive this command.
+    // only single worker is supported at this time.
+    temporal.api.common.v1.WorkerSelector selector = 6;
+}
+
+message FetchWorkerConfigResponse {
+    // The worker configuration.
+    temporal.api.sdk.v1.WorkerConfig worker_config = 1;
+}
+
+message UpdateWorkerConfigRequest {
+    // Namespace this worker belongs to.
+    string namespace = 1;
+
+    // The identity of the client who initiated this request.
+    string identity = 2;
+
+    // Reason for sending worker command, can be used for audit purpose.
+    string reason = 3;
+
+    // Partial updates are accepted and controlled by update_mask.
+    // The worker configuration to set.
+    temporal.api.sdk.v1.WorkerConfig worker_config = 4;
+
+    // Controls which fields from `worker_config` will be applied
+    google.protobuf.FieldMask update_mask = 5;
+
+    // Defines which workers should receive this command.
+    temporal.api.common.v1.WorkerSelector selector = 6;
+}
+
+message UpdateWorkerConfigResponse {
+    oneof response {
+        // The worker configuration. Will be returned if the command was sent to a single worker.
+        temporal.api.sdk.v1.WorkerConfig worker_config = 1;
+
+        // Once we support sending update to a multiple workers - it will be converted into a batch job, and job id will be returned.
+    }
+}
+
+message DescribeWorkerRequest {
+    // Namespace this worker belongs to.
+    string namespace = 1;
+
+    // Worker instance key to describe.
+    string worker_instance_key = 2;
+}
+
+message DescribeWorkerResponse {
+    temporal.api.worker.v1.WorkerInfo worker_info = 1;
 }

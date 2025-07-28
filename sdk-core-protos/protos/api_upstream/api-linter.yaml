@@ -13,6 +13,11 @@
     - "core::0123::resource-annotation" # We don't require resource annotations on all messages -- https://linter.aip.dev/123/resource-annotation
 
 - included_paths:
+    - "**/worker/v1/worker_nexus_service_commands.proto"
+  disabled_rules:
+    - "core::0134::request-unknown-fields" # Same rationale as `core::0131::request-unknown-fields`, but for Update RPCs -- https://linter.aip.dev/134/request-unknown-fields
+
+- included_paths:
     - "**/workflowservice/v1/request_response.proto"
     - "**/operatorservice/v1/request_response.proto"
   disabled_rules:
