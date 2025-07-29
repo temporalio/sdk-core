@@ -53,7 +53,9 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker};
+use crate::worker::heartbeat::{
+    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
+};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -66,6 +68,7 @@ use anyhow::bail;
 use futures_util::Stream;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
@@ -131,6 +134,7 @@ where
     );
 
     if let Some(heartbeat_interval) = runtime.heartbeat_interval {
+        // TODO: add in heartbeatData or use trait to expose what's needed
         runtime.add_heartbeat_callback(
             ClientIdentity {
                 endpoint: endpoint.to_string(),
@@ -143,11 +147,8 @@ where
             },
             worker.capture_heartbeat_details(),
             client_bag,
-            heartbeat_interval,
         );
     }
-
-
 
     Ok(worker)
 }
@@ -186,7 +187,7 @@ pub(crate) fn sticky_q_name_for_worker(
     process_identity: &str,
     config: &WorkerConfig,
 ) -> Option<String> {
-    if config.max_cached_workflows > 0 {
+    if config.max_cached_workflows.load(Ordering::Relaxed) > 0 {
         Some(format!(
             "{}-{}",
             &process_identity,
@@ -311,7 +312,8 @@ impl CoreRuntime {
             })
             .build()?;
         let _rg = runtime.enter();
-        let mut me = Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval);
+        let mut me =
+            Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval);
         me.runtime = Some(runtime);
         Ok(me)
     }
@@ -323,7 +325,10 @@ impl CoreRuntime {
     /// If there is no currently active Tokio runtime
     pub fn new_assume_tokio(runtime_options: RuntimeOptions) -> Result<Self, anyhow::Error> {
         let telemetry = telemetry_init(runtime_options.telemetry_options)?;
-        Ok(Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval))
+        Ok(Self::new_assume_tokio_initialized_telem(
+            telemetry,
+            runtime_options.heartbeat_interval,
+        ))
     }
 
     /// Construct a runtime from an already-initialized telemetry instance, assuming a tokio runtime
@@ -331,7 +336,10 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance, heartbeat_duration: Option<Duration>) -> Self {
+    pub fn new_assume_tokio_initialized_telem(
+        telemetry: TelemetryInstance,
+        heartbeat_duration: Option<Duration>,
+    ) -> Self {
         let runtime_handle = tokio::runtime::Handle::current();
         if let Some(sub) = telemetry.trace_subscriber() {
             set_trace_subscriber_for_current_thread(sub);
@@ -361,7 +369,12 @@ impl CoreRuntime {
         &mut self.telemetry
     }
 
-    fn add_heartbeat_callback(&self, client_identity: ClientIdentity, heartbeat_callback: HeartbeatCallback, client: Arc<dyn WorkerClient>, heartbeat_interval: Duration) {
+    fn add_heartbeat_callback(
+        &self,
+        client_identity: ClientIdentity,
+        heartbeat_callback: HeartbeatCallback,
+        client: Arc<dyn WorkerClient>,
+    ) {
         if let Some(ref heartbeat_duration) = self.heartbeat_interval {
             self.shared_namespace_map
                 .lock()
@@ -380,7 +393,6 @@ impl CoreRuntime {
         } else {
             dbg_panic!("Worker heartbeat disabled for this runtime");
         }
-
     }
 
     fn get_heartbeat_map(&self) -> Arc<Mutex<SharedNamespaceMap>> {

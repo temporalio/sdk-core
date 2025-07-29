@@ -1,31 +1,51 @@
-use crate::{WorkerClient};
+use crate::WorkerClient;
+use crate::WorkerTrait;
 use crate::abstractions::{MeteredPermitDealer, dbg_panic};
 use crate::pollers::{BoxedNexusPoller, LongPollBuffer};
+use crate::telemetry::TelemetryInstance;
 use crate::telemetry::metrics::{MetricsContext, nexus_poller};
 use crate::worker::nexus::NexusManager;
 use gethostname::gethostname;
-use parking_lot::{Mutex};
-use prost_types::Duration as PbDuration;
+use parking_lot::Mutex;
+use prost_types::{Duration as PbDuration, FieldMask};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::task::Poll;
 use std::time::{Duration, SystemTime};
 use temporal_client::Client;
-use temporal_sdk_core_api::worker::{NexusSlotKind, PollerBehavior, WorkerConfig, WorkerConfigBuilder, WorkerVersioningStrategy};
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::worker::{
+    NexusSlotKind, PollerBehavior, WorkerConfig, WorkerConfigBuilder, WorkerVersioningStrategy,
+};
+use temporal_sdk_core_protos::coresdk::nexus::{
+    NexusTask, NexusTaskCompletion, nexus_task, nexus_task_completion,
+};
+use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk_core_protos::temporal::api::common::v1::WorkerSelector;
+use temporal_sdk_core_protos::temporal::api::nexus::v1::request::Variant::StartOperation;
+use temporal_sdk_core_protos::temporal::api::nexus::v1::{
+    StartOperationResponse, start_operation_response,
+};
+use temporal_sdk_core_protos::temporal::api::sdk::v1::worker_config;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerInfo;
+use temporal_sdk_core_protos::temporal::api::worker::v1::{
+    WorkerHeartbeat, WorkerHostInfo, fetch_worker_config_response,
+};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollNexusTaskQueueResponse, RecordWorkerHeartbeatRequest,
 };
-use tokio::sync::{RwLock, Notify};
+use temporal_sdk_core_protos::temporal::api::{nexus, sdk, worker};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 use tokio::time::{Interval, MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use temporal_sdk_core_api::Worker;
-use crate::telemetry::TelemetryInstance;
 
 pub(crate) type HeartbeatCallback = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 pub(crate) type SharedNamespaceMap = HashMap<ClientIdentity, SharedNamespaceWorker>;
+type WorkerDataMap = HashMap<String, Arc<Mutex<WorkerHeartbeatData>>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ClientIdentity {
@@ -38,7 +58,9 @@ pub(crate) struct ClientIdentity {
 /// to the server. This communicates with all workers in the same process that share the same
 /// namespace.
 pub(crate) struct SharedNamespaceWorker {
+    // TODO: should be able to remove this once hashmap is set up
     pub(crate) heartbeat_callbacks: Arc<Mutex<Vec<HeartbeatCallback>>>,
+    worker_data: Arc<Mutex<WorkerDataMap>>,
     join_handle: JoinHandle<()>,
     heartbeat_interval: Duration,
 }
@@ -52,13 +74,12 @@ impl SharedNamespaceWorker {
     ) -> Self {
         let config = WorkerConfigBuilder::default()
             .namespace(client_identity.namespace.clone())
-            .task_queue(client_identity.task_queue
-            )
+            .task_queue(client_identity.task_queue)
             .no_remote_activities(true)
             .max_outstanding_nexus_tasks(5_usize) // TODO: arbitrary low number, feel free to change when needed
             .versioning_strategy(WorkerVersioningStrategy::None {
-                        build_id: "1.0".to_owned(),
-                    })
+                build_id: "1.0".to_owned(),
+            })
             .build()
             .unwrap(); // TODO: Unwrap
         // let config = WorkerConfig {
@@ -77,7 +98,7 @@ impl SharedNamespaceWorker {
         //     nonsticky_to_sticky_poll_ratio: 0.0,
         //     activity_task_poller_behavior: PollerBehavior::SimpleMaximum(1_usize),
         //     nexus_task_poller_behavior: PollerBehavior::SimpleMaximum(1_usize),
-        // 
+        //
         //     sticky_queue_schedule_to_start_timeout: Default::default(),
         //     max_heartbeat_throttle_interval: Default::default(),
         //     default_heartbeat_throttle_interval: Default::default(),
@@ -107,6 +128,9 @@ impl SharedNamespaceWorker {
         let hb_callbacks_clone = hb_callbacks.clone();
         let client_clone = client.clone();
 
+        let worker_data = Arc::new(Mutex::new(WorkerDataMap::new()));
+        let worker_data_clone = worker_data.clone();
+
         // runtime have option to turn off worker heartbeat,
         // set at runtime,
         let join_handle = tokio::spawn(async move {
@@ -116,6 +140,7 @@ impl SharedNamespaceWorker {
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
+                        // TODO: switch to using worker_data
                         for heartbeat_callback in hb_callbacks_clone.lock().iter() {
                             hb_to_send.push(heartbeat_callback.as_ref()());
                         }
@@ -136,7 +161,97 @@ impl SharedNamespaceWorker {
                     // TODO: handle nexus tasks
                     res = worker.poll_nexus_task() => {
                         match res {
-                            Ok(task) => todo!(),
+                            Ok(task) => {
+                                // handle_worker_command(task, worker_data_clone.clone());
+                                match task.variant.unwrap() {
+                                    nexus_task::Variant::Task(res) => {
+                                        let task_token = res.task_token;
+                                        let _poller_scaling_decision = res.poller_scaling_decision;
+                                        let req = res.request.unwrap();
+                                        let variant = req.variant.unwrap();
+                                        match variant {
+                                            nexus::v1::request::Variant::StartOperation(start_op) => {
+                                                let _req_id = start_op.request_id;
+                                                if start_op.service.as_str() != "sys-worker-service" {
+                                                    dbg_panic!("Unexpected service name");
+                                                }
+
+                                                match start_op.operation.as_str() {
+                                                    "FetchWorkerConfig" => {
+                                                        match worker::v1::FetchWorkerConfigRequest::from_json_payload(&start_op.payload.unwrap()) {
+                                                            Ok(req) => {
+                                                                let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety to check this is valid
+                                                                let worker_data_map = worker_data_clone.lock();
+                                                                if let Some(worker_heartbeat_data) = worker_data_map.get(&worker_instance_key) {
+                                                                    let worker_data_from_map = worker_heartbeat_data.lock();
+
+                                                                    let config = worker_data_from_map.fetch_config();
+                                                                    let config_resp = worker::v1::FetchWorkerConfigResponse {
+                                                                        worker_configs: vec![config],
+                                                                    };
+                                                                    WorkerTrait::complete_nexus_task(&worker, NexusTaskCompletion {
+                                                                        task_token,
+                                                                        status: Some(nexus_task_completion::Status::Completed(nexus::v1::Response{
+                                                                            variant: Some(nexus::v1::response::Variant::StartOperation(StartOperationResponse {
+                                                                                variant: Some(start_operation_response::Variant::SyncSuccess(start_operation_response::Sync {
+                                                                                    payload: Some(config_resp.as_json_payload().unwrap()),
+                                                                                    links: Vec::new(), // TODO: add links?
+                                                                                }))
+                                                                            })),
+                                                                        }))
+                                                                    }).await.unwrap();
+                                                                } else {
+                                                                    warn!("Worker {} not found", worker_instance_key);
+                                                                }
+
+
+                                                            }
+                                                            Err(e) => dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
+                                                        }
+                                                    }
+                                                    "UpdateWorkerConfig" => {
+                                                        match worker::v1::UpdateWorkerConfigRequest::from_json_payload(&start_op.payload.unwrap()) {
+                                                            Ok(req) => {
+                                                                let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety check this is valid
+                                                                let worker_data_map = worker_data_clone.lock();
+                                                                    if let Some(worker_heartbeat_data) = worker_data_map.get(&worker_instance_key) {
+                                                                        let worker_data_from_map = worker_heartbeat_data.lock();
+                                                                    for path in &req.update_mask.unwrap().paths {
+                                                                        match path.as_str() {
+                                                                            "workflow_cache_size" => {
+                                                                                worker_data_from_map.workflow_cache_size.store(req.worker_config.unwrap().workflow_cache_size as usize, Ordering::Relaxed);
+                                                                            }
+                                                                        _ => todo!("unknown path"),
+                                                                        }
+                                                                    WorkerTrait::complete_nexus_task(&worker, NexusTaskCompletion {
+                                                                            task_token: task_token.clone(),
+                                                                            status: Some(nexus_task_completion::Status::Completed(nexus::v1::Response{
+                                                                                variant: Some(nexus::v1::response::Variant::StartOperation(StartOperationResponse {
+                                                                                    variant: Some(start_operation_response::Variant::SyncSuccess(start_operation_response::Sync {
+                                                                                        payload: None,
+                                                                                        links: Vec::new(),
+                                                                                    }))
+                                                                                })),
+                                                                            }))
+                                                                        }).await.unwrap();
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
+                                                        }
+                                                    }
+                                                    _ => todo!("unknown operation"),
+                                                }
+                                            }
+                                            nexus::v1::request::Variant::CancelOperation(cancel_op) => todo!("cancel op")
+                                        }
+
+                                    },
+                                    nexus_task::Variant::CancelTask(cancel) => todo!("handle cancel task"),
+                                }
+
+
+                            }
                             Err(e) => todo!("log error"),
                         }
                     }
@@ -146,6 +261,7 @@ impl SharedNamespaceWorker {
 
         Self {
             heartbeat_callbacks: hb_callbacks,
+            worker_data,
             join_handle,
             heartbeat_interval,
         }
@@ -162,6 +278,69 @@ impl SharedNamespaceWorker {
     }
 }
 
+fn handle_worker_command(task: NexusTask, worker_data: Arc<Mutex<WorkerDataMap>>) {
+    match task.variant.unwrap() {
+        nexus_task::Variant::Task(res) => {
+            let _task_token = res.task_token;
+            let _poller_scaling_decision = res.poller_scaling_decision;
+            let req = res.request.unwrap();
+            let variant = req.variant.unwrap();
+            match variant {
+                nexus::v1::request::Variant::StartOperation(start_op) => {
+                    let _req_id = start_op.request_id;
+                    if start_op.service.as_str() != "sys-worker-service" {
+                        dbg_panic!("Unexpected service name");
+                    }
+
+                    match start_op.operation.as_str() {
+                        "FetchWorkerConfig" => {
+                            match worker::v1::FetchWorkerConfigRequest::from_json_payload(
+                                &start_op.payload.unwrap(),
+                            ) {
+                                Ok(req) => {
+                                    let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety to check this is valid
+                                    let worker_data_map = worker_data.lock();
+                                    if let Some(worker_heartbeat_data) =
+                                        worker_data_map.get(&worker_instance_key)
+                                    {
+                                        let worker_data = worker_heartbeat_data.lock();
+
+                                        let config = worker_data.fetch_config();
+                                        // TODO: send response
+                                        let config_resp = worker::v1::FetchWorkerConfigResponse {
+                                            worker_configs: vec![config],
+                                        };
+                                    } else {
+                                        warn!("Worker {} not found", worker_instance_key);
+                                    }
+                                }
+                                Err(e) => {
+                                    dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
+                                }
+                            }
+                        }
+                        "UpdateWorkerConfig" => {
+                            match worker::v1::UpdateWorkerConfigRequest::from_json_payload(
+                                &start_op.payload.unwrap(),
+                            ) {
+                                Ok(req) => {}
+                                Err(e) => {
+                                    dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
+                                }
+                            }
+                        }
+                        _ => todo!("unknown operation"),
+                    }
+                }
+                nexus::v1::request::Variant::CancelOperation(cancel_op) => todo!("cancel op"),
+            }
+        }
+        nexus_task::Variant::CancelTask(cancel) => todo!("handle cancel task"),
+    }
+}
+
+// TODO: rename
+// TODO: impl trait so entire struct doesn't need to be passed to Worker and SharedNamespaceWorker
 #[derive(Debug, Clone)]
 pub(crate) struct WorkerHeartbeatData {
     worker_instance_key: String,
@@ -176,6 +355,10 @@ pub(crate) struct WorkerHeartbeatData {
     sdk_version: String,
     /// Worker start time
     start_time: SystemTime,
+
+    // Worker commands
+    workflow_cache_size: Arc<AtomicUsize>,
+    workflow_poller_behavior: PollerBehavior,
 }
 
 impl WorkerHeartbeatData {
@@ -197,6 +380,8 @@ impl WorkerHeartbeatData {
             start_time: SystemTime::now(),
             heartbeat_time: None,
             worker_instance_key: Uuid::new_v4().to_string(),
+            workflow_cache_size: worker_config.max_cached_workflows.clone(),
+            workflow_poller_behavior: worker_config.workflow_task_poller_behavior,
         }
     }
 
@@ -226,6 +411,36 @@ impl WorkerHeartbeatData {
             heartbeat_time: Some(SystemTime::now().into()),
             elapsed_since_last_heartbeat,
             ..Default::default()
+        }
+    }
+
+    fn fetch_config(&self) -> fetch_worker_config_response::WorkerConfigEntry {
+        let poller_behavior = match self.workflow_poller_behavior {
+            PollerBehavior::Autoscaling {
+                minimum,
+                maximum,
+                initial,
+            } => worker_config::PollerBehavior::AutoscalingPollerBehavior(
+                worker_config::AutoscalingPollerBehavior {
+                    min_pollers: minimum as i32,
+                    max_pollers: maximum as i32,
+                    initial_pollers: initial as i32,
+                },
+            ),
+            PollerBehavior::SimpleMaximum(max) => {
+                worker_config::PollerBehavior::SimplePollerBehavior(
+                    worker_config::SimplePollerBehavior {
+                        max_pollers: max as i32,
+                    },
+                )
+            }
+        };
+        fetch_worker_config_response::WorkerConfigEntry {
+            worker_instance_key: self.worker_instance_key.clone(),
+            worker_config: Some(sdk::v1::WorkerConfig {
+                poller_behavior: Some(poller_behavior),
+                workflow_cache_size: self.workflow_cache_size.load(Ordering::Relaxed) as i32,
+            }),
         }
     }
 }

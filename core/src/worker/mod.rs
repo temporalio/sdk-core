@@ -20,7 +20,10 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker, WorkerHeartbeatData};
+use crate::worker::heartbeat::{
+    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
+    WorkerHeartbeatData,
+};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -67,6 +70,7 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -96,7 +100,6 @@ use {
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -337,10 +340,11 @@ impl Worker {
         let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
-            if config.max_cached_workflows > 0 {
+            // TODO: handle when max_cached_workflows goes from 0 to a number
+            if config.max_cached_workflows.load(Ordering::Relaxed) > 0 {
                 // Since we always need to be able to poll the normal task queue as well as the
                 // sticky queue, we need a value of at least 2 here.
-                Some(std::cmp::max(2, config.max_cached_workflows))
+                Some(std::cmp::max(2, config.max_cached_workflows.load(Ordering::Relaxed)))
             } else {
                 None
             },
@@ -492,7 +496,7 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat_data = Arc::new(Mutex::new(heartbeat::WorkerHeartbeatData::new(
+        let worker_heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
             config.clone(),
             client.get_identity(),
             sdk_name_and_ver.clone(),

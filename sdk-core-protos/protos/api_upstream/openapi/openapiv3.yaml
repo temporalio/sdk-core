@@ -8264,28 +8264,27 @@ components:
     FetchWorkerConfigRequest:
       type: object
       properties:
-        namespace:
-          type: string
-          description: Namespace this worker belongs to.
-        identity:
-          type: string
-          description: The identity of the client who initiated this request.
-        reason:
-          type: string
-          description: Reason for sending worker command, can be used for audit purpose.
-        selector:
-          allOf:
-            - $ref: '#/components/schemas/WorkerSelector'
-          description: |-
-            Defines which workers should receive this command.
-             only single worker is supported at this time.
+        workerInstanceKey:
+          type: array
+          items:
+            type: string
+          description: List of worker identifiers. For now only a single worker instance key is supported.
+      description: Will be sent to the worker as a payload of the FetchWorkerConfig command.
     FetchWorkerConfigResponse:
       type: object
       properties:
+        workerConfigs:
+          type: array
+          items:
+            $ref: '#/components/schemas/FetchWorkerConfigResponse_WorkerConfigEntry'
+    FetchWorkerConfigResponse_WorkerConfigEntry:
+      type: object
+      properties:
+        workerInstanceKey:
+          type: string
+          description: Worker instance key the config is for.
         workerConfig:
-          allOf:
-            - $ref: '#/components/schemas/WorkerConfig'
-          description: The worker configuration.
+          $ref: '#/components/schemas/WorkerConfig'
     GetClusterInfoResponse:
       type: object
       properties:
@@ -12794,36 +12793,26 @@ components:
     UpdateWorkerConfigRequest:
       type: object
       properties:
-        namespace:
-          type: string
-          description: Namespace this worker belongs to.
-        identity:
-          type: string
-          description: The identity of the client who initiated this request.
-        reason:
-          type: string
-          description: Reason for sending worker command, can be used for audit purpose.
+        workerInstanceKey:
+          type: array
+          items:
+            type: string
+          description: |-
+            (-- api-linter: core::0134::request-unknown-fields=disabled
+                 aip.dev/not-precedent: FetchWorkerConfigRequest uses instance keys instead of a name field. --)
+             List of worker identifiers.
         workerConfig:
           allOf:
             - $ref: '#/components/schemas/WorkerConfig'
-          description: |-
-            Partial updates are accepted and controlled by update_mask.
-             The worker configuration to set.
+          description: The new worker config to be applied.
         updateMask:
           type: string
           description: Controls which fields from `worker_config` will be applied
           format: field-mask
-        selector:
-          allOf:
-            - $ref: '#/components/schemas/WorkerSelector'
-          description: Defines which workers should receive this command.
+      description: Will be sent to the worker as a payload of the UpdateWorkerConfig command.
     UpdateWorkerConfigResponse:
       type: object
-      properties:
-        workerConfig:
-          allOf:
-            - $ref: '#/components/schemas/WorkerConfig'
-          description: The worker configuration. Will be returned if the command was sent to a single worker.
+      properties: {}
     UpdateWorkerDeploymentVersionMetadataRequest:
       type: object
       properties:
@@ -13520,16 +13509,6 @@ components:
         isAutoscaling:
           type: boolean
           description: Set true if the number of concurrent pollers is auto-scaled
-    WorkerSelector:
-      type: object
-      properties:
-        workerInstanceKey:
-          type: string
-          description: Worker instance key to which the command should be sent.
-      description: |-
-        This is used to send commands to a specific worker or a group of workers.
-         Right now, it is used to send commands to a specific worker instance.
-         Will be extended to be able to send command to multiple workers.
     WorkerSlotsInfo:
       type: object
       properties:

@@ -80,7 +80,8 @@ features = ["otel_impls"]
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
-features = ["history_builders"]
+features = ["history_builders", "serde_serialize"]
+#features = ["history_builders"]
 
 [dependencies.temporal-client]
 path = "../client"

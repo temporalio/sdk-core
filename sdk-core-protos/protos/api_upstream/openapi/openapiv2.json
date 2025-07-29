@@ -2343,7 +2343,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1FetchWorkerConfigResponse"
+              "$ref": "#/definitions/apiworkflowservicev1FetchWorkerConfigResponse"
             }
           },
           "default": {
@@ -2423,7 +2423,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1UpdateWorkerConfigResponse"
+              "$ref": "#/definitions/apiworkflowservicev1UpdateWorkerConfigResponse"
             }
           },
           "default": {
@@ -6123,7 +6123,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1FetchWorkerConfigResponse"
+              "$ref": "#/definitions/apiworkflowservicev1FetchWorkerConfigResponse"
             }
           },
           "default": {
@@ -6203,7 +6203,7 @@
           "200": {
             "description": "A successful response.",
             "schema": {
-              "$ref": "#/definitions/v1UpdateWorkerConfigResponse"
+              "$ref": "#/definitions/apiworkflowservicev1UpdateWorkerConfigResponse"
             }
           },
           "default": {
@@ -9214,6 +9214,24 @@
       },
       "description": "The client request that triggers a Workflow Update."
     },
+    "apiworkflowservicev1FetchWorkerConfigResponse": {
+      "type": "object",
+      "properties": {
+        "workerConfig": {
+          "$ref": "#/definitions/v1WorkerConfig",
+          "description": "The worker configuration."
+        }
+      }
+    },
+    "apiworkflowservicev1UpdateWorkerConfigResponse": {
+      "type": "object",
+      "properties": {
+        "workerConfig": {
+          "$ref": "#/definitions/v1WorkerConfig",
+          "description": "The worker configuration. Will be returned if the command was sent to a single worker."
+        }
+      }
+    },
     "protobufAny": {
       "type": "object",
       "properties": {
@@ -11243,15 +11261,6 @@
         }
       },
       "title": "Represents a historical replication status of a Namespace"
-    },
-    "v1FetchWorkerConfigResponse": {
-      "type": "object",
-      "properties": {
-        "workerConfig": {
-          "$ref": "#/definitions/v1WorkerConfig",
-          "description": "The worker configuration."
-        }
-      }
     },
     "v1GetClusterInfoResponse": {
       "type": "object",
@@ -15615,15 +15624,6 @@
     "v1UpdateWorkerBuildIdCompatibilityResponse": {
       "type": "object",
       "title": "[cleanup-wv-pre-release]"
-    },
-    "v1UpdateWorkerConfigResponse": {
-      "type": "object",
-      "properties": {
-        "workerConfig": {
-          "$ref": "#/definitions/v1WorkerConfig",
-          "description": "The worker configuration. Will be returned if the command was sent to a single worker."
-        }
-      }
     },
     "v1UpdateWorkerDeploymentVersionMetadataResponse": {
       "type": "object",
