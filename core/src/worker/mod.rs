@@ -20,10 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{
-    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
-    WorkerHeartbeatData,
-};
+use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker, WorkerDataMap, WorkerHeartbeatData, WorkerType};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -126,7 +123,7 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
-    worker_heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>, // TODO: Does this still need to be arc<mutex?
+    shared_worker_map: Option<Arc<Mutex<WorkerDataMap>>>,
 }
 
 struct AllPermitsTracker {
@@ -142,6 +139,8 @@ impl AllPermitsTracker {
         let _ = self.la_permits.wait_for(|x| *x == 0).await;
     }
 }
+
+
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
@@ -279,6 +278,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
+        shared_worker_map: Option<Arc<Mutex<WorkerDataMap>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -288,6 +288,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
+            shared_worker_map,
         )
     }
 
@@ -306,7 +307,7 @@ impl Worker {
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
         let client = Arc::new(client);
-        Self::new(config, None, client, None)
+        Self::new(config, None, client, None, None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -315,6 +316,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
+        shared_worker_map: Option<Arc<Mutex<WorkerDataMap>>>,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -496,11 +498,16 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat_data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
-            config.clone(),
-            client.get_identity(),
-            sdk_name_and_ver.clone(),
-        )));
+        let worker_type = if let Some(shared_worker_map) = shared_worker_map {
+            WorkerType::SharedNamespace(shared_worker_map.clone())
+        } else {
+
+            WorkerType::Regular(Arc::new(Mutex::new(WorkerHeartbeatData::new(
+                config.clone(),
+                client.get_identity(),
+                sdk_name_and_ver.clone(),
+            ))))
+        };
 
         Self {
             worker_key,
@@ -558,7 +565,7 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
-            worker_heartbeat_data,
+            worker_type,
         }
     }
 
@@ -602,6 +609,10 @@ impl Worker {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
+        }
+        // TODO:
+        if let WorkerType::Regular(ref data) = self.worker_type {
+            let data = data.lock()
         }
     }
 
@@ -858,9 +869,12 @@ impl Worker {
         Ok(())
     }
 
-    pub(crate) fn capture_heartbeat_details(&self) -> HeartbeatCallback {
-        let data = self.worker_heartbeat_data.clone();
-        Arc::new(move || data.lock().capture_heartbeat())
+    pub(crate) fn get_heartbeat_data(&self) -> Arc<Mutex<WorkerHeartbeatData>> {
+        // TODO: compile time check to prevent getting heartbeat_data for SharedNamespaceWorker
+        match self.worker_type {
+            WorkerType::Regular(ref data) => data.clone(),
+            WorkerType::SharedNamespace(_) => unreachable!("SharedNamespaceWorker should not have heartbeat data")
+        }
     }
 }
 

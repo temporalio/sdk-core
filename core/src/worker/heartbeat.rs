@@ -44,8 +44,9 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub(crate) type HeartbeatCallback = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
+/// Used by runtime to map Client identity to SharedNamespaceWorker
 pub(crate) type SharedNamespaceMap = HashMap<ClientIdentity, SharedNamespaceWorker>;
-type WorkerDataMap = HashMap<String, Arc<Mutex<WorkerHeartbeatData>>>;
+pub(crate) type WorkerDataMap = HashMap<String, Arc<Mutex<WorkerHeartbeatData>>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ClientIdentity {
@@ -54,13 +55,18 @@ pub(crate) struct ClientIdentity {
     pub(crate) task_queue: String,
 }
 
+
+
+pub(crate) enum WorkerType {
+    SharedNamespace(Arc<Mutex<WorkerDataMap>>),
+    Regular(Arc<Mutex<WorkerHeartbeatData>>),
+}
+
 /// SharedNamespaceWorker is responsible for polling worker commands and sending worker heartbeat
 /// to the server. This communicates with all workers in the same process that share the same
 /// namespace.
 pub(crate) struct SharedNamespaceWorker {
-    // TODO: should be able to remove this once hashmap is set up
-    pub(crate) heartbeat_callbacks: Arc<Mutex<Vec<HeartbeatCallback>>>,
-    worker_data: Arc<Mutex<WorkerDataMap>>,
+    worker_data_map: Arc<Mutex<WorkerDataMap>>,
     join_handle: JoinHandle<()>,
     heartbeat_interval: Duration,
 }
@@ -81,7 +87,7 @@ impl SharedNamespaceWorker {
                 build_id: "1.0".to_owned(),
             })
             .build()
-            .unwrap(); // TODO: Unwrap
+            .unwrap();
         // let config = WorkerConfig {
         //     namespace: client_identity.namespace.clone(),
         //     task_queue: client_identity.task_queue,
@@ -114,25 +120,24 @@ impl SharedNamespaceWorker {
         //     max_outstanding_activities: None,
         //     max_outstanding_local_activities: None,
         // }
+        let worker_data_map = Arc::new(Mutex::new(WorkerDataMap::new()));
+
         let worker = crate::worker::Worker::new(
             config,
             None, // TODO: want sticky queue?
             client.clone(),
             telemetry,
+            Some(worker_data_map.clone()),
         );
 
-        let hb_callbacks = Arc::new(Mutex::new(Vec::<HeartbeatCallback>::new()));
         // heartbeat task
         let sdk_name_and_ver = client.sdk_name_and_version();
         let reset_notify = Arc::new(Notify::new());
-        let hb_callbacks_clone = hb_callbacks.clone();
         let client_clone = client.clone();
 
-        let worker_data = Arc::new(Mutex::new(WorkerDataMap::new()));
-        let worker_data_clone = worker_data.clone();
 
-        // runtime have option to turn off worker heartbeat,
-        // set at runtime,
+        let worker_data_map_clone = worker_data_map.clone();
+
         let join_handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -140,9 +145,8 @@ impl SharedNamespaceWorker {
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
-                        // TODO: switch to using worker_data
-                        for heartbeat_callback in hb_callbacks_clone.lock().iter() {
-                            hb_to_send.push(heartbeat_callback.as_ref()());
+                        for data in worker_data_map_clone.lock().values() {
+                            hb_to_send.push(data.lock().capture_heartbeat());
                         }
                         if let Err(e) = client_clone.record_worker_heartbeat(client_identity.namespace.clone(), client_identity.endpoint.clone(), hb_to_send
                             ).await {
@@ -158,11 +162,9 @@ impl SharedNamespaceWorker {
                     _ = reset_notify.notified() => {
                         ticker.reset();
                     }
-                    // TODO: handle nexus tasks
                     res = worker.poll_nexus_task() => {
                         match res {
                             Ok(task) => {
-                                // handle_worker_command(task, worker_data_clone.clone());
                                 match task.variant.unwrap() {
                                     nexus_task::Variant::Task(res) => {
                                         let task_token = res.task_token;
@@ -170,7 +172,7 @@ impl SharedNamespaceWorker {
                                         let req = res.request.unwrap();
                                         let variant = req.variant.unwrap();
                                         match variant {
-                                            nexus::v1::request::Variant::StartOperation(start_op) => {
+                                            StartOperation(start_op) => {
                                                 let _req_id = start_op.request_id;
                                                 if start_op.service.as_str() != "sys-worker-service" {
                                                     dbg_panic!("Unexpected service name");
@@ -180,8 +182,13 @@ impl SharedNamespaceWorker {
                                                     "FetchWorkerConfig" => {
                                                         match worker::v1::FetchWorkerConfigRequest::from_json_payload(&start_op.payload.unwrap()) {
                                                             Ok(req) => {
-                                                                let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety to check this is valid
-                                                                let worker_data_map = worker_data_clone.lock();
+                                                                // today we only support a single worker_instance_key
+                                                                if req.worker_instance_key.len() != 1 {
+                                                                    warn!("Expected 1 worker_instance_key, got {}", req.worker_instance_key.len());
+                                                                    continue
+                                                                }
+                                                                let worker_instance_key = req.worker_instance_key[0].clone();
+                                                                let worker_data_map = worker_data_map_clone.lock();
                                                                 if let Some(worker_heartbeat_data) = worker_data_map.get(&worker_instance_key) {
                                                                     let worker_data_from_map = worker_heartbeat_data.lock();
 
@@ -212,8 +219,13 @@ impl SharedNamespaceWorker {
                                                     "UpdateWorkerConfig" => {
                                                         match worker::v1::UpdateWorkerConfigRequest::from_json_payload(&start_op.payload.unwrap()) {
                                                             Ok(req) => {
-                                                                let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety check this is valid
-                                                                let worker_data_map = worker_data_clone.lock();
+                                                                // today we only support a single worker_instance_key
+                                                                if req.worker_instance_key.len() != 1 {
+                                                                    warn!("Expected 1 worker_instance_key, got {}", req.worker_instance_key.len());
+                                                                    continue
+                                                                }
+                                                                let worker_instance_key = req.worker_instance_key[0].clone();
+                                                                let worker_data_map = worker_data_map_clone.lock();
                                                                     if let Some(worker_heartbeat_data) = worker_data_map.get(&worker_instance_key) {
                                                                         let worker_data_from_map = worker_heartbeat_data.lock();
                                                                     for path in &req.update_mask.unwrap().paths {
@@ -260,8 +272,7 @@ impl SharedNamespaceWorker {
         });
 
         Self {
-            heartbeat_callbacks: hb_callbacks,
-            worker_data,
+            worker_data_map,
             join_handle,
             heartbeat_interval,
         }
@@ -269,76 +280,21 @@ impl SharedNamespaceWorker {
 
     pub(crate) fn shutdown(&self) {
         // TODO: Implement shutdown logic for all namespace managers
-        // TODO: Handle when a single worker on the process shuts down, need a way to remove that callback from the SharedRuntimeWorker
-        //  Spencer suggested using Weak references to Arcs, arcs are dropped when all of the strong references are dropped,
+        // TODO: Handle when a single worker on the process shuts down,
+        //  need a way to remove that callback from the SharedRuntimeWorker
+        //  Spencer suggested using Weak references to Arcs, arcs are
+        //  dropped when all of the strong references are dropped,
+
+        // maybe add channel/something when registering worker with SharedNamespaceWorker
+        // then on shutdown, signal channel and have worker handle signal
     }
 
-    pub(crate) fn add_callback(&mut self, heartbeat_callback: HeartbeatCallback) {
-        self.heartbeat_callbacks.lock().push(heartbeat_callback);
-    }
-}
-
-fn handle_worker_command(task: NexusTask, worker_data: Arc<Mutex<WorkerDataMap>>) {
-    match task.variant.unwrap() {
-        nexus_task::Variant::Task(res) => {
-            let _task_token = res.task_token;
-            let _poller_scaling_decision = res.poller_scaling_decision;
-            let req = res.request.unwrap();
-            let variant = req.variant.unwrap();
-            match variant {
-                nexus::v1::request::Variant::StartOperation(start_op) => {
-                    let _req_id = start_op.request_id;
-                    if start_op.service.as_str() != "sys-worker-service" {
-                        dbg_panic!("Unexpected service name");
-                    }
-
-                    match start_op.operation.as_str() {
-                        "FetchWorkerConfig" => {
-                            match worker::v1::FetchWorkerConfigRequest::from_json_payload(
-                                &start_op.payload.unwrap(),
-                            ) {
-                                Ok(req) => {
-                                    let worker_instance_key = req.worker_instance_key[0].clone(); // TODO: safety to check this is valid
-                                    let worker_data_map = worker_data.lock();
-                                    if let Some(worker_heartbeat_data) =
-                                        worker_data_map.get(&worker_instance_key)
-                                    {
-                                        let worker_data = worker_heartbeat_data.lock();
-
-                                        let config = worker_data.fetch_config();
-                                        // TODO: send response
-                                        let config_resp = worker::v1::FetchWorkerConfigResponse {
-                                            worker_configs: vec![config],
-                                        };
-                                    } else {
-                                        warn!("Worker {} not found", worker_instance_key);
-                                    }
-                                }
-                                Err(e) => {
-                                    dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
-                                }
-                            }
-                        }
-                        "UpdateWorkerConfig" => {
-                            match worker::v1::UpdateWorkerConfigRequest::from_json_payload(
-                                &start_op.payload.unwrap(),
-                            ) {
-                                Ok(req) => {}
-                                Err(e) => {
-                                    dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
-                                }
-                            }
-                        }
-                        _ => todo!("unknown operation"),
-                    }
-                }
-                nexus::v1::request::Variant::CancelOperation(cancel_op) => todo!("cancel op"),
-            }
-        }
-        nexus_task::Variant::CancelTask(cancel) => todo!("handle cancel task"),
+    pub(crate) fn add_data_to_map(&mut self, data: Arc<Mutex<WorkerHeartbeatData>>) {
+        let worker_instance_key = data.lock().worker_instance_key.clone();
+        let mut worker_data_map = self.worker_data_map.lock();
+        worker_data_map.insert(worker_instance_key, data);
     }
 }
-
 // TODO: rename
 // TODO: impl trait so entire struct doesn't need to be passed to Worker and SharedNamespaceWorker
 #[derive(Debug, Clone)]

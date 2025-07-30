@@ -53,9 +53,7 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{
-    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
-};
+use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker, WorkerHeartbeatData};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -131,11 +129,11 @@ where
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
+        None,
     );
 
-    if let Some(heartbeat_interval) = runtime.heartbeat_interval {
-        // TODO: add in heartbeatData or use trait to expose what's needed
-        runtime.add_heartbeat_callback(
+    if let Some(_) = runtime.heartbeat_interval {
+        runtime.register_heartbeat_data(
             ClientIdentity {
                 endpoint: endpoint.to_string(),
                 namespace: worker_config.namespace.clone(),
@@ -145,7 +143,7 @@ where
                     runtime.task_queue_key()
                 ),
             },
-            worker.capture_heartbeat_details(),
+            worker.get_heartbeat_data(),
             client_bag,
         );
     }
@@ -338,7 +336,7 @@ impl CoreRuntime {
     /// If there is no currently active Tokio runtime
     pub fn new_assume_tokio_initialized_telem(
         telemetry: TelemetryInstance,
-        heartbeat_duration: Option<Duration>,
+        heartbeat_interval: Option<Duration>,
     ) -> Self {
         let runtime_handle = tokio::runtime::Handle::current();
         if let Some(sub) = telemetry.trace_subscriber() {
@@ -350,7 +348,7 @@ impl CoreRuntime {
             runtime_handle,
             shared_namespace_map: Arc::new(Mutex::new(HashMap::new())),
             task_queue_key: Uuid::new_v4(),
-            heartbeat_interval: heartbeat_duration,
+            heartbeat_interval,
         }
     }
 
@@ -369,25 +367,24 @@ impl CoreRuntime {
         &mut self.telemetry
     }
 
-    fn add_heartbeat_callback(
-        &self,
-        client_identity: ClientIdentity,
-        heartbeat_callback: HeartbeatCallback,
-        client: Arc<dyn WorkerClient>,
+    fn register_heartbeat_data(&self,
+                               client_identity: ClientIdentity,
+                               heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
+                               client: Arc<dyn WorkerClient>,
     ) {
-        if let Some(ref heartbeat_duration) = self.heartbeat_interval {
+        if let Some(ref heartbeat_interval) = self.heartbeat_interval {
             self.shared_namespace_map
                 .lock()
                 .entry(client_identity.clone())
-                .and_modify(|w| w.add_callback(heartbeat_callback.clone()))
+                .and_modify(|w| w.add_data_to_map(heartbeat_data.clone()))
                 .or_insert_with(|| {
                     let mut worker = SharedNamespaceWorker::new(
                         client,
                         client_identity,
-                        heartbeat_duration.clone(),
+                        heartbeat_interval.clone(),
                         Some(&self.telemetry),
                     );
-                    worker.add_callback(heartbeat_callback);
+                    worker.add_data_to_map(heartbeat_data);
                     worker
                 });
         } else {

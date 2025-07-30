@@ -368,6 +368,9 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            // TODO: Only SharedNamespaceWorker should send heartbeat info here
+            // There needs to be a way for SharedNamespaceWorker's worker to get the
+            // heartbeats of every worker on the namespace
             worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
         }
         .into_request();
