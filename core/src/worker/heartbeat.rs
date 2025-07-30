@@ -9,8 +9,8 @@ use gethostname::gethostname;
 use parking_lot::Mutex;
 use prost_types::{Duration as PbDuration, FieldMask};
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::task::Poll;
 use std::time::{Duration, SystemTime};
 use temporal_client::Client;
@@ -55,13 +55,6 @@ pub(crate) struct ClientIdentity {
     pub(crate) task_queue: String,
 }
 
-
-
-pub(crate) enum WorkerType {
-    SharedNamespace(Arc<Mutex<WorkerDataMap>>),
-    Regular(Arc<Mutex<WorkerHeartbeatData>>),
-}
-
 /// SharedNamespaceWorker is responsible for polling worker commands and sending worker heartbeat
 /// to the server. This communicates with all workers in the same process that share the same
 /// namespace.
@@ -77,6 +70,7 @@ impl SharedNamespaceWorker {
         client_identity: ClientIdentity,
         heartbeat_interval: Duration,
         telemetry: Option<&TelemetryInstance>,
+        shutdown_callback: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
         let config = WorkerConfigBuilder::default()
             .namespace(client_identity.namespace.clone())
@@ -87,39 +81,7 @@ impl SharedNamespaceWorker {
                 build_id: "1.0".to_owned(),
             })
             .build()
-            .unwrap();
-        // let config = WorkerConfig {
-        //     namespace: client_identity.namespace.clone(),
-        //     task_queue: client_identity.task_queue,
-        //     no_remote_activities: false,
-        //     versioning_strategy: WorkerVersioningStrategy::None {
-        //         build_id: "1.0".to_owned(),
-        //     },
-        //     max_outstanding_nexus_tasks: Some(5_usize),
-        //     // The rest are default values
-        //     client_identity_override: None,
-        //     max_cached_workflows: 0,
-        //     tuner: None,
-        //     workflow_task_poller_behavior: PollerBehavior::SimpleMaximum(2_usize),
-        //     nonsticky_to_sticky_poll_ratio: 0.0,
-        //     activity_task_poller_behavior: PollerBehavior::SimpleMaximum(1_usize),
-        //     nexus_task_poller_behavior: PollerBehavior::SimpleMaximum(1_usize),
-        //
-        //     sticky_queue_schedule_to_start_timeout: Default::default(),
-        //     max_heartbeat_throttle_interval: Default::default(),
-        //     default_heartbeat_throttle_interval: Default::default(),
-        //     max_task_queue_activities_per_second: None,
-        //     max_worker_activities_per_second: None,
-        //     ignore_evicts_on_shutdown: false,
-        //     fetching_concurrency: 0,
-        //     graceful_shutdown_period: None,
-        //     local_timeout_buffer_for_activities: Default::default(),
-        //     workflow_failure_errors: Default::default(),
-        //     workflow_types_to_failure_errors: Default::default(),
-        //     max_outstanding_workflow_tasks: None,
-        //     max_outstanding_activities: None,
-        //     max_outstanding_local_activities: None,
-        // }
+            .expect("all required fields should be implemented");
         let worker_data_map = Arc::new(Mutex::new(WorkerDataMap::new()));
 
         let worker = crate::worker::Worker::new(
@@ -127,7 +89,7 @@ impl SharedNamespaceWorker {
             None, // TODO: want sticky queue?
             client.clone(),
             telemetry,
-            Some(worker_data_map.clone()),
+            true,
         );
 
         // heartbeat task
@@ -135,13 +97,17 @@ impl SharedNamespaceWorker {
         let reset_notify = Arc::new(Notify::new());
         let client_clone = client.clone();
 
-
         let worker_data_map_clone = worker_data_map.clone();
 
         let join_handle = tokio::spawn(async move {
             let mut ticker = tokio::time::interval(heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
+                if worker_data_map_clone.lock().is_empty() {
+                    worker.shutdown().await;
+                    // remove this worker from the Runtime map
+                    shutdown_callback();
+                }
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
@@ -278,21 +244,27 @@ impl SharedNamespaceWorker {
         }
     }
 
-    pub(crate) fn shutdown(&self) {
-        // TODO: Implement shutdown logic for all namespace managers
-        // TODO: Handle when a single worker on the process shuts down,
-        //  need a way to remove that callback from the SharedRuntimeWorker
-        //  Spencer suggested using Weak references to Arcs, arcs are
-        //  dropped when all of the strong references are dropped,
-
-        // maybe add channel/something when registering worker with SharedNamespaceWorker
-        // then on shutdown, signal channel and have worker handle signal
-    }
-
-    pub(crate) fn add_data_to_map(&mut self, data: Arc<Mutex<WorkerHeartbeatData>>) {
+    pub(crate) fn add_data_to_map(
+        &mut self,
+        data: Arc<Mutex<WorkerHeartbeatData>>,
+    ) -> Arc<dyn Fn() + Send + Sync> {
         let worker_instance_key = data.lock().worker_instance_key.clone();
         let mut worker_data_map = self.worker_data_map.lock();
-        worker_data_map.insert(worker_instance_key, data);
+        worker_data_map.insert(worker_instance_key.clone(), data);
+
+        let worker_data_map_clone = self.worker_data_map.clone();
+        Arc::new(move || {
+            if worker_data_map_clone
+                .lock()
+                .remove(&worker_instance_key)
+                .is_none()
+            {
+                dbg_panic!(
+                    "Attempted to remove key {} that was already removed",
+                    worker_instance_key
+                );
+            }
+        })
     }
 }
 // TODO: rename

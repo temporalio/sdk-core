@@ -1,4 +1,5 @@
 use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -6,7 +7,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
 use temporal_sdk_core_protos::{
     coresdk,
     coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},

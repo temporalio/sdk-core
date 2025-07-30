@@ -53,7 +53,10 @@ use crate::abstractions::dbg_panic;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker, WorkerHeartbeatData};
+use crate::worker::heartbeat::{
+    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
+    WorkerHeartbeatData,
+};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -65,8 +68,8 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use parking_lot::Mutex;
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
@@ -124,16 +127,16 @@ where
         heartbeat_callback.clone(),
     ));
 
-    let worker = Worker::new(
+    let mut worker = Worker::new(
         worker_config.clone(),
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
-        None,
+        false,
     );
 
     if let Some(_) = runtime.heartbeat_interval {
-        runtime.register_heartbeat_data(
+        let remove_worker_callback = runtime.register_heartbeat_data(
             ClientIdentity {
                 endpoint: endpoint.to_string(),
                 namespace: worker_config.namespace.clone(),
@@ -143,9 +146,12 @@ where
                     runtime.task_queue_key()
                 ),
             },
-            worker.get_heartbeat_data(),
+            worker
+                .get_heartbeat_data()
+                .expect("Worker heartbeat data should exist for non-shared namespace worker"),
             client_bag,
         );
+        worker.register_heartbeat_shutdown_callback(remove_worker_callback)
     }
 
     Ok(worker)
@@ -367,33 +373,36 @@ impl CoreRuntime {
         &mut self.telemetry
     }
 
-    fn register_heartbeat_data(&self,
-                               client_identity: ClientIdentity,
-                               heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
-                               client: Arc<dyn WorkerClient>,
-    ) {
+    fn register_heartbeat_data(
+        &self,
+        client_identity: ClientIdentity,
+        heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
+        client: Arc<dyn WorkerClient>,
+    ) -> Arc<dyn Fn() + Send + Sync> {
         if let Some(ref heartbeat_interval) = self.heartbeat_interval {
-            self.shared_namespace_map
-                .lock()
+            let mut shared_namespace_map = self.shared_namespace_map.lock();
+            let worker = shared_namespace_map
                 .entry(client_identity.clone())
-                .and_modify(|w| w.add_data_to_map(heartbeat_data.clone()))
                 .or_insert_with(|| {
-                    let mut worker = SharedNamespaceWorker::new(
+                    let namespace_map = self.shared_namespace_map.clone();
+                    let client_identity_clone = client_identity.clone();
+                    let remove_namespace_worker_callback = Arc::new(move || {
+                        namespace_map.lock().remove(&client_identity_clone);
+                    });
+
+                    Arc::new(Mutex::new(SharedNamespaceWorker::new(
                         client,
                         client_identity,
                         heartbeat_interval.clone(),
                         Some(&self.telemetry),
-                    );
-                    worker.add_data_to_map(heartbeat_data);
-                    worker
+                        remove_namespace_worker_callback,
+                    )))
                 });
+            worker.lock().add_data_to_map(heartbeat_data)
         } else {
             dbg_panic!("Worker heartbeat disabled for this runtime");
+            Arc::new(|| {})
         }
-    }
-
-    fn get_heartbeat_map(&self) -> Arc<Mutex<SharedNamespaceMap>> {
-        self.shared_namespace_map.clone()
     }
 
     fn task_queue_key(&self) -> Uuid {
