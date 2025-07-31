@@ -1,4 +1,5 @@
 use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -33,8 +34,8 @@ pub struct WorkerConfig {
     /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
     /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
     /// or failures.
-    #[builder(default = "0")]
-    pub max_cached_workflows: usize,
+    #[builder(default = "Arc::new(AtomicUsize::new(0))")]
+    pub max_cached_workflows: Arc<AtomicUsize>,
     /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
     /// fields must be set.
     #[builder(setter(into = false, strip_option), default)]
@@ -161,12 +162,6 @@ pub struct WorkerConfig {
 
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
-
-    /// The interval within which the worker will send a heartbeat.
-    /// The timer is reset on each existing RPC call that also happens to send this data, like
-    /// `PollWorkflowTaskQueueRequest`.
-    #[builder(default = "Duration::from_secs(60)")]
-    pub heartbeat_interval: Duration,
 }
 
 impl WorkerConfig {
@@ -245,7 +240,7 @@ impl WorkerConfigBuilder {
         }
 
         if let Some(cache) = self.max_cached_workflows.as_ref()
-            && *cache > 0
+            && cache.load(Ordering::Relaxed) > 0
         {
             if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref()
                 && *max_wft < 2

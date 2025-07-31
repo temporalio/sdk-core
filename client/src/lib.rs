@@ -1153,12 +1153,17 @@ pub struct Priority {
     /// The default priority is (min+max)/2. With the default max of 5 and min of
     /// 1, that comes out to 3.
     pub priority_key: u32,
+
+    pub fairness_key: String,
+    pub fairness_weight: u32, // TODO: f32 with eq
 }
 
 impl From<Priority> for common::v1::Priority {
     fn from(priority: Priority) -> Self {
         common::v1::Priority {
             priority_key: priority.priority_key as i32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight as f32,
         }
     }
 }
@@ -1167,6 +1172,8 @@ impl From<common::v1::Priority> for Priority {
     fn from(priority: common::v1::Priority) -> Self {
         Self {
             priority_key: priority.priority_key as u32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight as u32,
         }
     }
 }

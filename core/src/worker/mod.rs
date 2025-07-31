@@ -1,6 +1,6 @@
 mod activities;
 pub(crate) mod client;
-mod heartbeat;
+pub(crate) mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
@@ -20,7 +20,10 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
+use crate::worker::heartbeat::{
+    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker, WorkerDataMap,
+    WorkerHeartbeatData,
+};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -51,6 +54,7 @@ use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::{
     convert::TryInto,
@@ -66,6 +70,7 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -81,7 +86,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
 };
-use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::sync::{Notify, OnceCell, mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 #[cfg(test)]
@@ -121,8 +126,10 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
-    /// Used to shutdown the worker heartbeat task
-    worker_heartbeat: Option<WorkerHeartbeatManager>,
+    worker_heartbeat_data: Option<Arc<Mutex<WorkerHeartbeatData>>>,
+    /// Used to remove this worker from the parent map used to track this worker for
+    /// worker heartbeat
+    worker_heartbeat_shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct AllPermitsTracker {
@@ -275,7 +282,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        shared_namespace_worker: bool,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -285,7 +292,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
-            heartbeat_fn,
+            shared_namespace_worker,
         )
     }
 
@@ -304,8 +311,7 @@ impl Worker {
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
         let client = Arc::new(client);
-        let heartbeat_fn = Arc::new(OnceLock::new());
-        Self::new(config, None, client, None, Some(heartbeat_fn))
+        Self::new(config, None, client, None, false)
     }
 
     pub(crate) fn new_with_pollers(
@@ -314,7 +320,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        shared_namespace_worker: bool,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -340,10 +346,14 @@ impl Worker {
         let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
-            if config.max_cached_workflows > 0 {
+            // TODO: handle when max_cached_workflows goes from 0 to a number
+            if config.max_cached_workflows.load(Ordering::Relaxed) > 0 {
                 // Since we always need to be able to poll the normal task queue as well as the
                 // sticky queue, we need a value of at least 2 here.
-                Some(std::cmp::max(2, config.max_cached_workflows))
+                Some(std::cmp::max(
+                    2,
+                    config.max_cached_workflows.load(Ordering::Relaxed),
+                ))
             } else {
                 None
             },
@@ -406,6 +416,7 @@ impl Worker {
                 };
 
                 let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                // This starts the poller thread.
                 let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
                     client.clone(),
                     config.task_queue.clone(),
@@ -494,14 +505,15 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| {
-            WorkerHeartbeatManager::new(
+        let worker_heartbeat_data = if !shared_namespace_worker {
+            Some(Arc::new(Mutex::new(WorkerHeartbeatData::new(
                 config.clone(),
                 client.get_identity(),
-                heartbeat_fn,
-                client.clone(),
-            )
-        });
+                sdk_name_and_ver.clone(),
+            ))))
+        } else {
+            None
+        };
 
         Self {
             worker_key,
@@ -559,7 +571,8 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
-            worker_heartbeat,
+            worker_heartbeat_data,
+            worker_heartbeat_shutdown_callback: OnceCell::new(),
         }
     }
 
@@ -604,8 +617,9 @@ impl Worker {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
         }
-        if let Some(heartbeat) = self.worker_heartbeat.as_ref() {
-            heartbeat.shutdown();
+        // If this worker is tracked by SharedNamespaceWorker, remove entry from SharedNamespaceWorker
+        if let Some(shutdown_callback) = self.worker_heartbeat_shutdown_callback.get() {
+            shutdown_callback();
         }
     }
 
@@ -860,6 +874,19 @@ impl Worker {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn get_heartbeat_data(&self) -> Option<Arc<Mutex<WorkerHeartbeatData>>> {
+        self.worker_heartbeat_data.clone()
+    }
+
+    pub(crate) fn register_heartbeat_shutdown_callback(
+        &mut self,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        if let Err(e) = self.worker_heartbeat_shutdown_callback.set(callback) {
+            dbg_panic!("Unable to set worker heartbeat shutdown callback: {}", e);
+        }
     }
 }
 

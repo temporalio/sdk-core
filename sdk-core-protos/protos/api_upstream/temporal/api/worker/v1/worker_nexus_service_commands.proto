@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package temporal.api.worker.v1;
+
+option go_package = "go.temporal.io/api/worker/v1;worker";
+option java_package = "io.temporal.api.worker.v1";
+option java_multiple_files = true;
+option java_outer_classname = "WorkerNexusServiceCommandsProto";
+option ruby_package = "Temporalio::Api::Worker::V1";
+option csharp_namespace = "Temporalio.Api.Worker.V1";
+
+
+
+// (--
+/////////////////////////////////////////////////////////////////////
+// This file contains:
+// - Conventions between server and worker.
+// - Definitions for commands and payloads for server-worker communication via Nexus
+//
+// WORKER COMMANDS CONVENTIONS:
+//
+// Worker commands are used to manage worker configurations, operations, etc.
+// Command names should match names defined in the server API.
+// Command names are provided in StartOperationRequest.Operation field.
+//
+// PAYLOAD CONVENTIONS:
+//
+// In/out payloads namings follow the same convention as the regular API:
+// - CommandNameRequest (input payload)
+// - CommandNameResponse (output payload).
+// - Empty payload if response is not needed/not expected
+//
+// COMMUNICATION PROTOCOL:
+// - Transport: Nexus tasks on task queue
+// - Server identifier: "sys-worker-service"
+// - Task queue: "temporal-sys/worker-tq/{namespace_name}/{process_key}"
+// --)
+

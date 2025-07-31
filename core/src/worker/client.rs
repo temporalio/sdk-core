@@ -3,7 +3,7 @@
 pub(crate) mod mocks;
 use crate::abstractions::dbg_panic;
 use crate::protosext::legacy_query_failure;
-use crate::worker::heartbeat::HeartbeatFn;
+use crate::worker::heartbeat::HeartbeatCallback;
 use parking_lot::RwLock;
 use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
@@ -50,7 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
+    heartbeat_data: OnceLock<HeartbeatCallback>,
 }
 
 impl WorkerClientBag {
@@ -59,7 +59,7 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
+        heartbeat_data: OnceLock<HeartbeatCallback>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
@@ -130,7 +130,7 @@ impl WorkerClientBag {
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
         if let Some(hb) = self.heartbeat_data.get() {
-            hb()
+            Some(hb())
         } else {
             dbg_panic!("Heartbeat function never set");
             None
@@ -228,7 +228,9 @@ pub trait WorkerClient: Sync + Send {
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
@@ -366,6 +368,9 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            // TODO: Only SharedNamespaceWorker should send heartbeat info here
+            // There needs to be a way for SharedNamespaceWorker's worker to get the
+            // heartbeats of every worker on the namespace
             worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
         }
         .into_request();
@@ -672,14 +677,16 @@ impl WorkerClient for WorkerClientBag {
 
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: vec![heartbeat],
+                namespace,
+                identity,
+                worker_heartbeat,
             })
             .await?
             .into_inner())
