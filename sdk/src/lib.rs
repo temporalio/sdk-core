@@ -741,7 +741,7 @@ impl Unblockable for NexusStartResult {
                         unblock_dat: od,
                     })
                 }
-                resolve_nexus_operation_start::Status::CancelledBeforeStart(f) => Err(f),
+                resolve_nexus_operation_start::Status::Failed(f) => Err(f),
             },
             _ => panic!("Invalid unblock event for nexus operation"),
         }
