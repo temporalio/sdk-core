@@ -567,6 +567,11 @@ impl TestHistoryBuilder {
         self.current_event_id
     }
 
+    /// Get mutable ref to the most recently added event
+    pub fn last_event(&mut self) -> Option<&mut HistoryEvent> {
+        self.events.last_mut()
+    }
+
     fn set_flags<'a>(
         mut events: impl Iterator<Item = &'a mut HistoryEvent>,
         core: &[u32],
