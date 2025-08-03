@@ -1374,6 +1374,7 @@ enum CommandID {
     SignalExternal(u32),
     CancelExternal(u32),
     NexusOperation(u32),
+    CancelNexusOperation(u32),
 }
 
 /// Details remembered from the workflow execution started event that we may need to recall later.

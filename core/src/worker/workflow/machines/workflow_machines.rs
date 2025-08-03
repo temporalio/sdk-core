@@ -3,6 +3,7 @@ mod local_acts;
 use super::{
     Machines, NewMachineWithCommand, TemporalStateMachine,
     cancel_external_state_machine::new_external_cancel,
+    cancel_nexus_op_state_machine::new_nexus_op_cancel,
     cancel_workflow_state_machine::cancel_workflow,
     complete_workflow_state_machine::complete_workflow,
     continue_as_new_workflow_state_machine::continue_as_new,
@@ -879,20 +880,53 @@ impl WorkflowMachines {
             self.continue_as_new_suggested = attrs.suggest_continue_as_new;
         }
 
-        if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
-            let mkey = self
-                .machines_by_event_id
-                .get(&initial_cmd_id)
-                .ok_or_else(|| {
-                    WFMachinesError::Nondeterminism(format!(
-                        "During event handling, this event had an initial command ID but we \
-                         could not find a matching command for it: {event:?}"
-                    ))
-                })?;
-            self.submachine_handle_event(*mkey, event_dat)?;
-        } else {
-            self.handle_non_stateful_event(event_dat)?;
-        };
+        // Special handling for NexusOperationCancelRequestCompleted/Failed events
+        // These events need to be routed based on requested_event_id, not scheduled_event_id
+        match event.event_type() {
+            EventType::NexusOperationCancelRequestCompleted | EventType::NexusOperationCancelRequestFailed => {
+                let requested_event_id = match &event.attributes {
+                    Some(history_event::Attributes::NexusOperationCancelRequestCompletedEventAttributes(attrs)) => {
+                        attrs.requested_event_id
+                    }
+                    Some(history_event::Attributes::NexusOperationCancelRequestFailedEventAttributes(attrs)) => {
+                        attrs.requested_event_id
+                    }
+                    _ => {
+                        return Err(WFMachinesError::Nondeterminism(
+                            "NexusOperationCancelRequest event missing attributes".to_string()
+                        ));
+                    }
+                };
+
+                let mkey = self
+                    .machines_by_event_id
+                    .get(&requested_event_id)
+                    .ok_or_else(|| {
+                        WFMachinesError::Nondeterminism(format!(
+                            "Could not find cancel nexus op machine for requested_event_id {}: {event:?}",
+                            requested_event_id
+                        ))
+                    })?;
+                self.submachine_handle_event(*mkey, event_dat)?;
+            }
+            _ => {
+                // Normal handling for other events
+                if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
+                    let mkey = self
+                        .machines_by_event_id
+                        .get(&initial_cmd_id)
+                        .ok_or_else(|| {
+                            WFMachinesError::Nondeterminism(format!(
+                                "During event handling, this event had an initial command ID but we \
+                                 could not find a matching command for it: {event:?}"
+                            ))
+                        })?;
+                    self.submachine_handle_event(*mkey, event_dat)?;
+                } else {
+                    self.handle_non_stateful_event(event_dat)?;
+                }
+            }
+        }
 
         Ok(EventHandlingOutcome::Normal)
     }
@@ -1529,12 +1563,36 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::RequestCancelNexusOperation(attrs) => {
-                    cancel_machine!(
-                        self,
-                        CommandID::NexusOperation(attrs.seq),
-                        NexusOperationMachine,
-                        cancel
-                    );
+                    // Find the nexus operation machine to get its scheduled event ID
+                    let nexus_op_key = self
+                        .id_to_machine
+                        .get(&CommandID::NexusOperation(attrs.seq))
+                        .ok_or_else(|| {
+                            WFMachinesError::Nondeterminism(format!(
+                                "Nexus operation {} not found when trying to cancel",
+                                attrs.seq
+                            ))
+                        })?;
+
+                    // Get the scheduled event ID from the nexus operation machine
+                    let scheduled_event_id = self
+                        .machines_by_event_id
+                        .iter()
+                        .find_map(|(event_id, machine_key)| {
+                            if machine_key == nexus_op_key {
+                                Some(*event_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            WFMachinesError::Nondeterminism(
+                                "Could not find scheduled event ID for nexus operation".to_string()
+                            )
+                        })?;
+
+                    let cancel_machine = new_nexus_op_cancel(attrs.seq, scheduled_event_id);
+                    self.add_cmd_to_wf_task(cancel_machine, None, CommandID::CancelNexusOperation(attrs.seq).into());
                 }
                 WFCommandVariant::NoCommandsFromLang => (),
             }

@@ -1,15 +1,15 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand,
     WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::ResolveCancelNexusOperation,
     temporal::api::{
         command::v1::{command, RequestCancelNexusOperationCommandAttributes},
         enums::v1::{CommandType, EventType},
+        history::v1::history_event,
     },
 };
 
@@ -25,6 +25,12 @@ fsm! {
 
     RequestCancelNexusOpCommandCreated --(NexusOpCancelRequested, on_cancel_requested)
       --> CancelRequested;
+
+    CancelRequested --(NexusOpCancelRequestCompleted, on_cancel_completed)
+      --> CancelCompleted;
+
+    CancelRequested --(NexusOpCancelRequestFailed(temporal_sdk_core_protos::temporal::api::failure::v1::Failure), on_cancel_failed)
+      --> CancelFailed;
 }
 
 #[derive(Default, Clone)]
@@ -35,6 +41,8 @@ pub(super) struct SharedState {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum CancelNexusOpCommand {
     Requested,
+    Completed,
+    Failed(temporal_sdk_core_protos::temporal::api::failure::v1::Failure),
 }
 
 pub(super) fn new_nexus_op_cancel(
@@ -60,11 +68,30 @@ pub(super) fn new_nexus_op_cancel(
 pub(super) struct CancelRequested {}
 
 #[derive(Default, Clone)]
+pub(super) struct CancelCompleted {}
+
+#[derive(Default, Clone)]
+pub(super) struct CancelFailed {}
+
+#[derive(Default, Clone)]
 pub(super) struct RequestCancelNexusOpCommandCreated {}
 
 impl RequestCancelNexusOpCommandCreated {
     pub(super) fn on_cancel_requested(self) -> CancelNexusOpMachineTransition<CancelRequested> {
         TransitionResult::commands(vec![CancelNexusOpCommand::Requested])
+    }
+}
+
+impl CancelRequested {
+    pub(super) fn on_cancel_completed(self) -> CancelNexusOpMachineTransition<CancelCompleted> {
+        TransitionResult::commands(vec![CancelNexusOpCommand::Completed])
+    }
+
+    pub(super) fn on_cancel_failed(
+        self,
+        failure: temporal_sdk_core_protos::temporal::api::failure::v1::Failure,
+    ) -> CancelNexusOpMachineTransition<CancelFailed> {
+        TransitionResult::commands(vec![CancelNexusOpCommand::Failed(failure)])
     }
 }
 
@@ -75,9 +102,24 @@ impl TryFrom<HistEventData> for CancelNexusOpMachineEvents {
         let e = e.event;
         Ok(match e.event_type() {
             EventType::NexusOperationCancelRequested => Self::NexusOpCancelRequested,
+            EventType::NexusOperationCancelRequestCompleted => Self::NexusOpCancelRequestCompleted,
+            EventType::NexusOperationCancelRequestFailed => {
+                if let Some(history_event::Attributes::NexusOperationCancelRequestFailedEventAttributes(attrs)) = e.attributes {
+                    use temporal_sdk_core_protos::temporal::api::failure::v1::Failure;
+                    let failure = attrs.failure.unwrap_or_else(|| Failure {
+                        message: "Nexus operation cancel request failed but failure field was not populated".to_owned(),
+                        ..Default::default()
+                    });
+                    Self::NexusOpCancelRequestFailed(failure)
+                } else {
+                    return Err(WFMachinesError::Nondeterminism(
+                        "NexusOperationCancelRequestFailed attributes were unset or malformed".to_string(),
+                    ));
+                }
+            }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Cancel external WF machine does not handle this event: {e}"
+                    "Cancel nexus op machine does not handle this event: {e}"
                 )))
             }
         })
@@ -105,13 +147,16 @@ impl WFMachinesAdapter for CancelNexusOpMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             CancelNexusOpCommand::Requested => {
-                vec![ResolveCancelNexusOperation {
-                    seq: self.shared_state.seq,
-                }
-                .into()]
+                vec![]
+            }
+            CancelNexusOpCommand::Completed => {
+                vec![]
+            }
+            CancelNexusOpCommand::Failed(_failure) => {
+                vec![]
             }
         })
     }
 }
 
-impl Cancellable for CancelNexusOpMachine {}
+
