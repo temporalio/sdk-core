@@ -2225,8 +2225,8 @@ pub mod temporal {
                                 Attributes::NexusOperationTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationCanceledEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationCancelRequestedEventAttributes(a) => Some(a.scheduled_event_id),
-                                Attributes::NexusOperationCancelRequestCompletedEventAttributes(a) => Some(a.scheduled_event_id),
-                                Attributes::NexusOperationCancelRequestFailedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCancelRequestCompletedEventAttributes(a) => Some(a.requested_event_id),
+                                Attributes::NexusOperationCancelRequestFailedEventAttributes(a) => Some(a.requested_event_id),
                                 _ => None
                             }
                         })

@@ -880,52 +880,19 @@ impl WorkflowMachines {
             self.continue_as_new_suggested = attrs.suggest_continue_as_new;
         }
 
-        // Special handling for NexusOperationCancelRequestCompleted/Failed events
-        // These events need to be routed based on requested_event_id, not scheduled_event_id
-        match event.event_type() {
-            EventType::NexusOperationCancelRequestCompleted | EventType::NexusOperationCancelRequestFailed => {
-                let requested_event_id = match &event.attributes {
-                    Some(history_event::Attributes::NexusOperationCancelRequestCompletedEventAttributes(attrs)) => {
-                        attrs.requested_event_id
-                    }
-                    Some(history_event::Attributes::NexusOperationCancelRequestFailedEventAttributes(attrs)) => {
-                        attrs.requested_event_id
-                    }
-                    _ => {
-                        return Err(WFMachinesError::Nondeterminism(
-                            "NexusOperationCancelRequest event missing attributes".to_string()
-                        ));
-                    }
-                };
-
-                let mkey = self
-                    .machines_by_event_id
-                    .get(&requested_event_id)
-                    .ok_or_else(|| {
-                        WFMachinesError::Nondeterminism(format!(
-                            "Could not find cancel nexus op machine for requested_event_id {}: {event:?}",
-                            requested_event_id
-                        ))
-                    })?;
-                self.submachine_handle_event(*mkey, event_dat)?;
-            }
-            _ => {
-                // Normal handling for other events
-                if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
-                    let mkey = self
-                        .machines_by_event_id
-                        .get(&initial_cmd_id)
-                        .ok_or_else(|| {
-                            WFMachinesError::Nondeterminism(format!(
-                                "During event handling, this event had an initial command ID but we \
-                                 could not find a matching command for it: {event:?}"
-                            ))
-                        })?;
-                    self.submachine_handle_event(*mkey, event_dat)?;
-                } else {
-                    self.handle_non_stateful_event(event_dat)?;
-                }
-            }
+        if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
+            let mkey = self
+                .machines_by_event_id
+                .get(&initial_cmd_id)
+                .ok_or_else(|| {
+                    WFMachinesError::Nondeterminism(format!(
+                        "During event handling, this event had an initial command ID but we \
+                         could not find a matching command for it: {event:?}"
+                    ))
+                })?;
+            self.submachine_handle_event(*mkey, event_dat)?;
+        } else {
+            self.handle_non_stateful_event(event_dat)?;
         }
 
         Ok(EventHandlingOutcome::Normal)
