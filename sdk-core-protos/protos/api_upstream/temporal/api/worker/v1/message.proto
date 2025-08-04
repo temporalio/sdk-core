@@ -127,8 +127,18 @@ message WorkerHeartbeat {
   int32 total_sticky_cache_miss = 21;
   // Current cache size, expressed in number of Workflow Executions.
   int32 current_sticky_cache_size = 22;
+
+  // Plugins currently in use by this SDK.
+  repeated PluginInfo plugins = 23;
 }
 
 message WorkerInfo {
   WorkerHeartbeat worker_heartbeat = 1;
+}
+
+message PluginInfo {
+    // The name of the plugin, required.
+    string name = 1;
+    // The version of the plugin, may be empty.
+    string version = 2;
 }
