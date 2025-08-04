@@ -1558,7 +1558,19 @@ impl WorkflowMachines {
                             )
                         })?;
 
-                    let cancel_machine = new_nexus_op_cancel(attrs.seq, scheduled_event_id);
+                    // Get the cancel type and lang_seq_num from the nexus operation machine
+                    let (cancel_type, nexus_op_seq) = match self.all_machines.get(*nexus_op_key) {
+                        Some(Machines::NexusOperationMachine(machine)) => {
+                            (machine.cancel_type(), machine.lang_seq_num())
+                        }
+                        _ => {
+                            return Err(WFMachinesError::Nondeterminism(
+                                "Expected nexus operation machine but found different type".to_string()
+                            ))
+                        }
+                    };
+
+                    let cancel_machine = new_nexus_op_cancel(attrs.seq, nexus_op_seq, scheduled_event_id, cancel_type);
                     self.add_cmd_to_wf_task(cancel_machine, None, CommandID::CancelNexusOperation(attrs.seq).into());
                 }
                 WFCommandVariant::NoCommandsFromLang => (),

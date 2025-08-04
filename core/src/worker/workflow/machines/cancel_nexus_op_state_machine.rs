@@ -6,9 +6,14 @@ use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
+    coresdk::{
+        nexus::{NexusOperationCancellationType, NexusOperationResult, nexus_operation_result},
+        workflow_activation::ResolveNexusOperation,
+    },
     temporal::api::{
         command::v1::{command, RequestCancelNexusOperationCommandAttributes},
         enums::v1::{CommandType, EventType},
+        failure::v1::Failure,
         history::v1::history_event,
     },
 };
@@ -36,6 +41,8 @@ fsm! {
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
     seq: u32,
+    nexus_op_seq: u32,
+    cancel_type: NexusOperationCancellationType,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -47,11 +54,13 @@ pub(super) enum CancelNexusOpCommand {
 
 pub(super) fn new_nexus_op_cancel(
     seq: u32,
+    nexus_op_seq: u32,
     nexus_op_scheduled_event_id: i64,
+    cancel_type: NexusOperationCancellationType,
 ) -> NewMachineWithCommand {
     let s = CancelNexusOpMachine::from_parts(
         RequestCancelNexusOpCommandCreated {}.into(),
-        SharedState { seq },
+        SharedState { seq, nexus_op_seq, cancel_type },
     );
     let cmd_attrs = command::Attributes::RequestCancelNexusOperationCommandAttributes(
         RequestCancelNexusOperationCommandAttributes {

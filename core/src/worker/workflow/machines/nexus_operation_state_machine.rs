@@ -136,6 +136,7 @@ impl NexusOperationMachine {
         }
     }
 
+    #[allow(dead_code)]
     pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
         let event = NexusOperationMachineEvents::Cancel;
         let cmds = OnEventWrapper::on_event_mut(self, event)?;
@@ -149,6 +150,14 @@ impl NexusOperationMachine {
 
     pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
         self.shared_state.cancelled_before_sent
+    }
+
+    pub(super) fn cancel_type(&self) -> NexusOperationCancellationType {
+        self.shared_state.cancel_type
+    }
+
+    pub(super) fn lang_seq_num(&self) -> u32 {
+        self.shared_state.lang_seq_num
     }
 }
 
