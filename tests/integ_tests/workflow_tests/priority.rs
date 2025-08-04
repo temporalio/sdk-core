@@ -26,7 +26,7 @@ async fn priority_values_sent_to_server() {
                 priority: Some(Priority {
                     priority_key: 4,
                     fairness_key: "fair-child".to_string(),
-                    fairness_weight: 3.14,
+                    fairness_weight: 1.23,
                 }),
                 ..Default::default()
             },
@@ -61,7 +61,7 @@ async fn priority_values_sent_to_server() {
             Some(common::v1::Priority {
                 priority_key: 4,
                 fairness_key: "fair-child".to_string(),
-                fairness_weight: 3.14
+                fairness_weight: 1.23
             })
         );
         Ok(().into())
