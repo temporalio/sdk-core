@@ -54,8 +54,7 @@ pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
 use crate::worker::heartbeat::{
-    ClientIdentity, HeartbeatCallback, SharedNamespaceMap, SharedNamespaceWorker,
-    WorkerHeartbeatData,
+    ClientIdentity, SharedNamespaceMap, SharedNamespaceWorker, WorkerHeartbeatData,
 };
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
@@ -78,8 +77,6 @@ use temporal_sdk_core_api::{
     telemetry::TelemetryOptions,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
-use tokio::sync::{Notify, mpsc};
-use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 /// Initialize a worker bound to a task queue.
@@ -191,7 +188,7 @@ pub(crate) fn sticky_q_name_for_worker(
     process_identity: &str,
     config: &WorkerConfig,
 ) -> Option<String> {
-    if config.max_cached_workflows.load(Ordering::Relaxed) > 0 {
+    if config.max_cached_workflows > 0 {
         Some(format!(
             "{}-{}",
             &process_identity,
@@ -258,9 +255,28 @@ pub struct CoreRuntime {
     heartbeat_interval: Option<Duration>,
 }
 
+#[non_exhaustive]
 pub struct RuntimeOptions {
     telemetry_options: TelemetryOptions,
     heartbeat_interval: Option<Duration>,
+}
+
+impl RuntimeOptions {
+    pub fn new(telemetry_options: TelemetryOptions, heartbeat_interval: Option<Duration>) -> Self {
+        Self {
+            telemetry_options,
+            heartbeat_interval,
+        }
+    }
+}
+
+impl Default for RuntimeOptions {
+    fn default() -> Self {
+        Self {
+            telemetry_options: Default::default(),
+            heartbeat_interval: Some(Duration::from_secs(60)),
+        }
+    }
 }
 
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions

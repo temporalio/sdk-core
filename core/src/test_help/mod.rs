@@ -1,5 +1,6 @@
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
+use crate::worker::heartbeat::{ClientIdentity, SharedNamespaceWorker};
 use crate::{
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
     pollers::{BoxedPoller, MockManualPoller, MockPoller},
@@ -60,6 +61,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{NAMESPACE, TestWorker};
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use uuid::Uuid;
 
 pub(crate) const TEST_Q: &str = "q";
 
@@ -180,8 +182,35 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
                 .unwrap_or_else(|| mock_poller_from_resps([])),
         },
         None,
-        None,
+        false,
     )
+}
+
+pub(crate) fn mock_worker_with_heartbeat(mocks: MocksHolder) -> Worker {
+    let client = mocks.client.clone();
+    let client_identity = ClientIdentity {
+        endpoint: endpoint.to_string(),
+        namespace: mocks.inputs.config.namespace.clone(),
+        task_queue: format!(
+            "temporal-sys/worker-commands/{}/{}",
+            mocks.inputs.config.namespace,
+            Uuid::new_v4(),
+        ),
+    };
+
+    let worker = mock_worker(mocks);
+
+    // TODO: plumb shutdown?
+    let _shared_worker = SharedNamespaceWorker::new(
+        client,
+        client_identity,
+        Duration::from_millis(200),
+        None,
+        Arc::new(|| {}), // TODO:
+    );
+    // worker.register_heartbeat_handler(Box::new(move ||))
+
+    worker
 }
 
 pub(crate) fn mock_sdk(poll_cfg: MockPollCfg) -> TestWorker {

@@ -34,8 +34,8 @@ pub struct WorkerConfig {
     /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
     /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
     /// or failures.
-    #[builder(default = "Arc::new(AtomicUsize::new(0))")]
-    pub max_cached_workflows: Arc<AtomicUsize>,
+    #[builder(default = "0")]
+    pub max_cached_workflows: usize,
     /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
     /// fields must be set.
     #[builder(setter(into = false, strip_option), default)]
@@ -240,7 +240,7 @@ impl WorkerConfigBuilder {
         }
 
         if let Some(cache) = self.max_cached_workflows.as_ref()
-            && cache.load(Ordering::Relaxed) > 0
+            && *cache > 0
         {
             if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref()
                 && *max_wft < 2

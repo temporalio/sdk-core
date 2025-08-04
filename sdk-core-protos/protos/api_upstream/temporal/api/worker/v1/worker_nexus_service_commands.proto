@@ -9,7 +9,8 @@ option java_outer_classname = "WorkerNexusServiceCommandsProto";
 option ruby_package = "Temporalio::Api::Worker::V1";
 option csharp_namespace = "Temporalio.Api.Worker.V1";
 
-
+import "google/protobuf/field_mask.proto";
+import "temporal/api/sdk/v1/worker_config.proto";
 
 // (--
 /////////////////////////////////////////////////////////////////////
@@ -36,3 +37,35 @@ option csharp_namespace = "Temporalio.Api.Worker.V1";
 // - Task queue: "temporal-sys/worker-tq/{namespace_name}/{process_key}"
 // --)
 
+// Will be sent to the worker as a payload of the FetchWorkerConfig command.
+message FetchWorkerConfigRequest {
+  // List of worker identifiers. For now only a single worker instance key is supported.
+  repeated string worker_instance_key = 1;
+}
+
+message FetchWorkerConfigResponse {
+  message WorkerConfigEntry {
+    // Worker instance key the config is for.
+    string worker_instance_key = 1;
+
+    temporal.api.sdk.v1.WorkerConfig worker_config = 2;
+  }
+  repeated WorkerConfigEntry worker_configs = 1;
+}
+
+// Will be sent to the worker as a payload of the UpdateWorkerConfig command.
+message UpdateWorkerConfigRequest {
+  // (-- api-linter: core::0134::request-unknown-fields=disabled
+  //     aip.dev/not-precedent: FetchWorkerConfigRequest uses instance keys instead of a name field. --)
+  // List of worker identifiers.
+  repeated string worker_instance_key = 1;
+
+  // The new worker config to be applied.
+  temporal.api.sdk.v1.WorkerConfig worker_config = 2;
+
+  // Controls which fields from `worker_config` will be applied
+  google.protobuf.FieldMask update_mask = 3;
+}
+
+message UpdateWorkerConfigResponse {
+}

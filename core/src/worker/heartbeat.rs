@@ -45,7 +45,13 @@ use uuid::Uuid;
 
 pub(crate) type HeartbeatCallback = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 /// Used by runtime to map Client identity to SharedNamespaceWorker
-pub(crate) type SharedNamespaceMap = HashMap<ClientIdentity, SharedNamespaceWorker>;
+/// TODO: Arc is used here to let us mark the worker as "shutdown", and if somehow we re-register,
+///  we can recreate a new SharedNamespaceWorker and replace the weak Arc.
+///
+///  no that won't work, SharedNamespaceWorker doesn't have access to shared_namespace_map, and
+/// likewise, Worker doesn't have access to SharedNamespaceWorker.worker_data_map
+/// // TODO: use a CancelCallback??
+pub(crate) type SharedNamespaceMap = HashMap<ClientIdentity, Arc<Mutex<SharedNamespaceWorker>>>;
 pub(crate) type WorkerDataMap = HashMap<String, Arc<Mutex<WorkerHeartbeatData>>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -179,7 +185,9 @@ impl SharedNamespaceWorker {
 
 
                                                             }
-                                                            Err(e) => dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
+                                                            Err(e) => {
+                                                                dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
+                                                            },
                                                         }
                                                     }
                                                     "UpdateWorkerConfig" => {
@@ -215,7 +223,9 @@ impl SharedNamespaceWorker {
                                                                     }
                                                                 }
                                                             }
-                                                            Err(e) => dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
+                                                            Err(e) => {
+                                                                dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
+                                                            },
                                                         }
                                                     }
                                                     _ => todo!("unknown operation"),
@@ -373,66 +383,74 @@ impl WorkerHeartbeatData {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::test_help::WorkerExt;
-//     use crate::test_help::test_worker_cfg;
-//     use crate::worker;
-//     use crate::worker::client::mocks::mock_worker_client;
-//     use std::sync::Arc;
-//     use std::time::Duration;
-//     use temporal_sdk_core_api::worker::PollerBehavior;
-//     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
-//
-//     #[tokio::test]
-//     async fn worker_heartbeat() {
-//         let mut mock = mock_worker_client();
-//         mock.expect_record_worker_heartbeat()
-//             .times(2)
-//             .returning(move |heartbeat| {
-//                 let host_info = heartbeat.host_info.clone().unwrap();
-//                 assert_eq!("test-identity", heartbeat.worker_identity);
-//                 assert!(!heartbeat.worker_instance_key.is_empty());
-//                 assert_eq!(
-//                     host_info.host_name,
-//                     gethostname::gethostname().to_string_lossy().to_string()
-//                 );
-//                 assert_eq!(host_info.process_id, std::process::id().to_string());
-//                 assert_eq!(heartbeat.sdk_name, "test-core");
-//                 assert_eq!(heartbeat.sdk_version, "0.0.0");
-//                 assert_eq!(heartbeat.task_queue, "q");
-//                 assert!(heartbeat.heartbeat_time.is_some());
-//                 assert!(heartbeat.start_time.is_some());
-//
-//                 Ok(RecordWorkerHeartbeatResponse {})
-//             });
-//
-//         let config = test_worker_cfg()
-//             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-//             .max_outstanding_activities(1_usize)
-//             .heartbeat_interval(Duration::from_millis(200))
-//             .build()
-//             .unwrap();
-//
-//         let heartbeat_callback = Arc::new(OnceLock::new());
-//         let client = Arc::new(mock);
-//         let worker = worker::Worker::new(config, None, client, None, Some(heartbeat_callback.clone()));
-//         heartbeat_callback.get().unwrap()();
-//
-//         // heartbeat timer fires once
-//         advance_time(Duration::from_millis(300)).await;
-//         // it hasn't been >90% of the interval since the last heartbeat, so no data should be returned here
-//         assert_eq!(None, heartbeat_callback.get().unwrap()());
-//         // heartbeat timer fires once
-//         advance_time(Duration::from_millis(300)).await;
-//
-//         worker.drain_activity_poller_and_shutdown().await;
-//     }
-//
-//     async fn advance_time(dur: Duration) {
-//         tokio::time::pause();
-//         tokio::time::advance(dur).await;
-//         tokio::time::resume();
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_help::WorkerExt;
+    use crate::test_help::test_worker_cfg;
+    use crate::worker;
+    use crate::worker::client::mocks::mock_worker_client;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use temporal_sdk_core_api::worker::PollerBehavior;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
+
+    #[tokio::test]
+    async fn worker_heartbeat() {
+        let mut mock = mock_worker_client();
+        let mut heartbeat_count = 0;
+        mock.expect_record_worker_heartbeat()
+            .times(2)
+            .returning(move |namespace, identity, worker_heartbeat| {
+                assert_eq!(1, worker_heartbeat.len());
+                let heartbeat = worker_heartbeat[0].clone();
+                let host_info = heartbeat.host_info.clone().unwrap();
+                assert_eq!("test-identity", heartbeat.worker_identity);
+                assert!(!heartbeat.worker_instance_key.is_empty());
+                assert_eq!(
+                    host_info.host_name,
+                    gethostname::gethostname().to_string_lossy().to_string()
+                );
+                assert_eq!(host_info.process_id, std::process::id().to_string());
+                assert_eq!(heartbeat.sdk_name, "test-core");
+                assert_eq!(heartbeat.sdk_version, "0.0.0");
+                assert_eq!(heartbeat.task_queue, "q");
+                assert!(heartbeat.heartbeat_time.is_some());
+                assert!(heartbeat.start_time.is_some());
+
+                heartbeat_count += 1;
+
+                Ok(RecordWorkerHeartbeatResponse {})
+            });
+
+        let config = test_worker_cfg()
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .max_outstanding_activities(1_usize)
+            .heartbeat_interval(Duration::from_millis(200))
+            .build()
+            .unwrap();
+
+        let heartbeat_callback = Arc::new(OnceLock::new());
+        let client = Arc::new(mock);
+        // TODO: Create worker, then create SharedNamespaceWorker
+        let worker = worker::Worker::new(config, None, client, None, false);
+        // heartbeat_callback.get().unwrap()();
+
+        // heartbeat timer fires once
+        advance_time(Duration::from_millis(300)).await;
+        // it hasn't been >90% of the interval since the last heartbeat, so no data should be returned here
+        // assert_eq!(None, heartbeat_callback.get().unwrap()());
+        // heartbeat timer fires once
+        advance_time(Duration::from_millis(300)).await;
+
+        worker.drain_activity_poller_and_shutdown().await;
+
+        assert_eq!(2, heartbeat_count);
+    }
+
+    async fn advance_time(dur: Duration) {
+        tokio::time::pause();
+        tokio::time::advance(dur).await;
+        tokio::time::resume();
+    }
+}

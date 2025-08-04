@@ -8,6 +8,7 @@ use crate::{
 };
 use lru::LruCache;
 use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
+use std::sync::atomic::Ordering;
 use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::remove_from_cache::EvictionReason,
@@ -35,8 +36,9 @@ impl RunCache {
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
         // "0" size mode, the run is evicted once the workflow task is complete.
-        let lru_size = if worker_config.max_cached_workflows > 0 {
-            worker_config.max_cached_workflows
+        let max_cached_workflows = worker_config.max_cached_workflows.load(Ordering::Relaxed);
+        let lru_size = if max_cached_workflows > 0 {
+            max_cached_workflows
         } else {
             1
         };
@@ -146,6 +148,6 @@ impl RunCache {
     }
 
     pub(super) fn cache_capacity(&self) -> usize {
-        self.worker_config.max_cached_workflows
+        self.worker_config.max_cached_workflows.load(Ordering::Relaxed)
     }
 }

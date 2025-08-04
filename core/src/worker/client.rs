@@ -50,7 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: OnceLock<HeartbeatCallback>,
+    heartbeat_callback: OnceLock<HeartbeatCallback>,
 }
 
 impl WorkerClientBag {
@@ -59,14 +59,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: OnceLock<HeartbeatCallback>,
+        heartbeat_callback: OnceLock<HeartbeatCallback>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_data,
+            heartbeat_callback,
         }
     }
 
@@ -129,7 +129,7 @@ impl WorkerClientBag {
     }
 
     fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        if let Some(hb) = self.heartbeat_data.get() {
+        if let Some(hb) = self.heartbeat_callback.get() {
             Some(hb())
         } else {
             dbg_panic!("Heartbeat function never set");
