@@ -839,10 +839,7 @@ impl WorkflowMachines {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
-        // Currently nothing of interest to the SDK in this event
-        if event.event_type() == EventType::WorkflowExecutionOptionsUpdated
-            && event.worker_may_ignore
-        {
+        if event.is_ignorable() {
             return Ok(EventHandlingOutcome::Normal);
         }
         if matches!(
