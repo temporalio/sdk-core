@@ -1558,10 +1558,18 @@ impl WorkflowMachines {
                             )
                         })?;
 
-                    // Get the cancel type and lang_seq_num from the nexus operation machine
-                    let (cancel_type, nexus_op_seq) = match self.all_machines.get(*nexus_op_key) {
+                    // Get the necessary info from the nexus operation machine
+                    let (cancel_type, nexus_op_seq, nexus_op_scheduled_event_id, endpoint, service, operation, operation_token) = match self.all_machines.get(*nexus_op_key) {
                         Some(Machines::NexusOperationMachine(machine)) => {
-                            (machine.cancel_type(), machine.lang_seq_num())
+                            (
+                                machine.cancel_type(), 
+                                machine.lang_seq_num(),
+                                machine.scheduled_event_id(),
+                                machine.endpoint().to_string(),
+                                machine.service().to_string(),
+                                machine.operation().to_string(),
+                                machine.operation_token(),
+                            )
                         }
                         _ => {
                             return Err(WFMachinesError::Nondeterminism(
@@ -1570,7 +1578,16 @@ impl WorkflowMachines {
                         }
                     };
 
-                    let cancel_machine = new_nexus_op_cancel(attrs.seq, nexus_op_seq, scheduled_event_id, cancel_type);
+                    let cancel_machine = new_nexus_op_cancel(
+                        attrs.seq, 
+                        nexus_op_seq, 
+                        scheduled_event_id, 
+                        cancel_type,
+                        endpoint,
+                        service,
+                        operation,
+                        operation_token,
+                    );
                     self.add_cmd_to_wf_task(cancel_machine, None, CommandID::CancelNexusOperation(attrs.seq).into());
                 }
                 WFCommandVariant::NoCommandsFromLang => (),

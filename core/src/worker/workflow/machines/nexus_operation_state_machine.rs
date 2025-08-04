@@ -159,6 +159,26 @@ impl NexusOperationMachine {
     pub(super) fn lang_seq_num(&self) -> u32 {
         self.shared_state.lang_seq_num
     }
+    
+    pub(super) fn scheduled_event_id(&self) -> i64 {
+        self.shared_state.scheduled_event_id
+    }
+    
+    pub(super) fn endpoint(&self) -> &str {
+        &self.shared_state.endpoint
+    }
+    
+    pub(super) fn service(&self) -> &str {
+        &self.shared_state.service
+    }
+    
+    pub(super) fn operation(&self) -> &str {
+        &self.shared_state.operation
+    }
+    
+    pub(super) fn operation_token(&self) -> Option<String> {
+        self.shared_state.operation_token.clone()
+    }
 }
 
 #[derive(Default, Clone)]

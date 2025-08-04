@@ -43,6 +43,11 @@ pub(super) struct SharedState {
     seq: u32,
     nexus_op_seq: u32,
     cancel_type: NexusOperationCancellationType,
+    nexus_op_scheduled_event_id: i64,
+    endpoint: String,
+    service: String,
+    operation: String,
+    operation_token: Option<String>,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -57,10 +62,23 @@ pub(super) fn new_nexus_op_cancel(
     nexus_op_seq: u32,
     nexus_op_scheduled_event_id: i64,
     cancel_type: NexusOperationCancellationType,
+    endpoint: String,
+    service: String,
+    operation: String,
+    operation_token: Option<String>,
 ) -> NewMachineWithCommand {
     let s = CancelNexusOpMachine::from_parts(
         RequestCancelNexusOpCommandCreated {}.into(),
-        SharedState { seq, nexus_op_seq, cancel_type },
+        SharedState { 
+            seq, 
+            nexus_op_seq, 
+            cancel_type,
+            nexus_op_scheduled_event_id,
+            endpoint,
+            service,
+            operation,
+            operation_token,
+        },
     );
     let cmd_attrs = command::Attributes::RequestCancelNexusOperationCommandAttributes(
         RequestCancelNexusOperationCommandAttributes {
@@ -166,11 +184,25 @@ impl WFMachinesAdapter for CancelNexusOpMachine {
                             result: Some(NexusOperationResult {
                                 status: Some(nexus_operation_result::Status::Cancelled(
                                     Failure {
-                                        message: "Nexus operation cancelled".to_string(),
-                                        failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                            failure::CanceledFailureInfo {
-                                                details: None,
-                                            }
+                                        message: "nexus operation completed unsuccessfully".to_string(),
+                                        cause: Some(Box::new(Failure {
+                                            message: "operation canceled".to_string(),
+                                            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                                failure::CanceledFailureInfo {
+                                                    details: None,
+                                                }
+                                            )),
+                                            ..Default::default()
+                                        })),
+                                        failure_info: Some(FailureInfo::NexusOperationExecutionFailureInfo(
+                                            failure::NexusOperationFailureInfo {
+                                                scheduled_event_id: self.shared_state.nexus_op_scheduled_event_id,
+                                                endpoint: self.shared_state.endpoint.clone(),
+                                                service: self.shared_state.service.clone(),
+                                                operation: self.shared_state.operation.clone(),
+                                                operation_token: self.shared_state.operation_token.clone().unwrap_or_default(),
+                                                ..Default::default()
+                                            },
                                         )),
                                         ..Default::default()
                                     }
