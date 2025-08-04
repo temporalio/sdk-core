@@ -47,7 +47,7 @@ fsm! {
     ScheduledEventRecorded
       --(NexusOperationFailed(NexusOperationFailedEventAttributes), on_failed)--> Failed;
     ScheduledEventRecorded
-      --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), on_canceled)--> Cancelled;
+      --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), shared on_canceled)--> Cancelled;
     ScheduledEventRecorded
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
     ScheduledEventRecorded
@@ -62,7 +62,7 @@ fsm! {
     Started
       --(NexusOperationFailed(NexusOperationFailedEventAttributes), on_failed)--> Failed;
     Started
-      --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), on_canceled)--> Cancelled;
+      --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), shared on_canceled)--> Cancelled;
     Started
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
 
@@ -228,16 +228,24 @@ impl ScheduledEventRecorded {
 
     pub(super) fn on_canceled(
         self,
+        ss: &SharedState,
         ca: NexusOperationCanceledEventAttributes,
     ) -> NexusOperationMachineTransition<Cancelled> {
-        NexusOperationMachineTransition::commands([
-            NexusOperationCommand::StartSync,
-            NexusOperationCommand::Cancel(ca.failure.unwrap_or_else(|| Failure {
-                message:
-                    "Nexus operation was cancelled but failure field was not populated".to_owned(),
-                ..Default::default()
-            })),
-        ])
+        // For WAIT_REQUESTED, the operation has already been resolved by CancelNexusOpMachine
+        // when it received NexusOperationCancelRequestCompleted, so we should not send
+        // another resolution to avoid duplicate resolution errors in the language SDK
+        if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
+            NexusOperationMachineTransition::default()
+        } else {
+            NexusOperationMachineTransition::commands([
+                NexusOperationCommand::StartSync,
+                NexusOperationCommand::Cancel(ca.failure.unwrap_or_else(|| Failure {
+                    message:
+                        "Nexus operation was cancelled but failure field was not populated".to_owned(),
+                    ..Default::default()
+                })),
+            ])
+        }
     }
 
     pub(super) fn on_timed_out(
@@ -310,15 +318,23 @@ impl Started {
 
     pub(super) fn on_canceled(
         self,
+        ss: &SharedState,
         ca: NexusOperationCanceledEventAttributes,
     ) -> NexusOperationMachineTransition<Cancelled> {
-        NexusOperationMachineTransition::commands([NexusOperationCommand::Cancel(
-            ca.failure.unwrap_or_else(|| Failure {
-                message: "Nexus operation was cancelled but failure field was not populated"
-                    .to_owned(),
-                ..Default::default()
-            }),
-        )])
+        // For WAIT_REQUESTED, the operation has already been resolved by CancelNexusOpMachine
+        // when it received NexusOperationCancelRequestCompleted, so we should not send
+        // another resolution to avoid duplicate resolution errors in the language SDK
+        if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
+            NexusOperationMachineTransition::default()
+        } else {
+            NexusOperationMachineTransition::commands([NexusOperationCommand::Cancel(
+                ca.failure.unwrap_or_else(|| Failure {
+                    message: "Nexus operation was cancelled but failure field was not populated"
+                        .to_owned(),
+                    ..Default::default()
+                }),
+            )])
+        }
     }
 
     pub(super) fn on_timed_out(

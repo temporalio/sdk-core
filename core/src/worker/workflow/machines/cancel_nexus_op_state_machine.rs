@@ -159,7 +159,28 @@ impl WFMachinesAdapter for CancelNexusOpMachine {
                 vec![]
             }
             CancelNexusOpCommand::Completed => {
-                vec![]
+                if self.shared_state.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
+                    vec![MachineResponse::PushWFJob(
+                        ResolveNexusOperation {
+                            seq: self.shared_state.nexus_op_seq,
+                            result: Some(NexusOperationResult {
+                                status: Some(nexus_operation_result::Status::Cancelled(
+                                    Failure {
+                                        message: "Nexus operation cancelled".to_string(),
+                                        source: "".to_string(),
+                                        stack_trace: "".to_string(),
+                                        encoded_attributes: None,
+                                        cause: None,
+                                        failure_info: None,
+                                    }
+                                )),
+                            }),
+                        }
+                        .into(),
+                    )]
+                } else {
+                    vec![]
+                }
             }
             CancelNexusOpCommand::Failed(_failure) => {
                 vec![]
