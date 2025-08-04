@@ -13,7 +13,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{command, RequestCancelNexusOperationCommandAttributes},
         enums::v1::{CommandType, EventType},
-        failure::v1::Failure,
+        failure::v1::{self as failure, Failure, failure::FailureInfo},
         history::v1::history_event,
     },
 };
@@ -167,11 +167,12 @@ impl WFMachinesAdapter for CancelNexusOpMachine {
                                 status: Some(nexus_operation_result::Status::Cancelled(
                                     Failure {
                                         message: "Nexus operation cancelled".to_string(),
-                                        source: "".to_string(),
-                                        stack_trace: "".to_string(),
-                                        encoded_attributes: None,
-                                        cause: None,
-                                        failure_info: None,
+                                        failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                            failure::CanceledFailureInfo {
+                                                details: None,
+                                            }
+                                        )),
+                                        ..Default::default()
                                     }
                                 )),
                             }),
