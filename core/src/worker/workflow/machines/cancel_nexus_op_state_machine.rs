@@ -35,6 +35,7 @@ fsm! {
 
 #[derive(Default, Clone)]
 pub(super) struct SharedState {
+    #[allow(dead_code)]
     seq: u32,
 }
 
