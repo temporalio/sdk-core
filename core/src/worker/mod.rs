@@ -303,9 +303,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        let client = Arc::new(client);
-        let heartbeat_fn = Arc::new(OnceLock::new());
-        Self::new(config, None, client, None, Some(heartbeat_fn))
+        Self::new(config, None, Arc::new(client), None, None)
     }
 
     pub(crate) fn new_with_pollers(
