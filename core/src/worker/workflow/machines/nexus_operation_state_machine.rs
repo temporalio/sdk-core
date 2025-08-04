@@ -231,9 +231,12 @@ impl ScheduledEventRecorded {
         ss: &SharedState,
         ca: NexusOperationCanceledEventAttributes,
     ) -> NexusOperationMachineTransition<Cancelled> {
-        // For WAIT_REQUESTED, the operation has already been resolved by CancelNexusOpMachine
-        // when it received NexusOperationCancelRequestCompleted, so we should not send
-        // another resolution to avoid duplicate resolution errors in the language SDK
+        // For WAIT_REQUESTED, the operation has already been resolved by CancelNexusOpMachine when
+        // it received NexusOperationCancelRequestCompleted, so we should not send another
+        // resolution to avoid duplicate resolution errors in the language SDK
+        // TODO What about if the nexus handler does something very slow (or indeed never responds)
+        // after issuing the workflow cancel request? The NexusOperationMachine cancel might come
+        // first, and in that situation I think we should honor it.
         if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
             NexusOperationMachineTransition::default()
         } else {
