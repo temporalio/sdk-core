@@ -136,7 +136,6 @@ impl NexusOperationMachine {
         }
     }
 
-    #[allow(dead_code)]
     pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
         let event = NexusOperationMachineEvents::Cancel;
         let cmds = OnEventWrapper::on_event_mut(self, event)?;
