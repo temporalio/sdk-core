@@ -840,6 +840,9 @@ impl WorkflowMachines {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
+        if event.is_ignorable() {
+            return Ok(EventHandlingOutcome::Normal);
+        }
         if matches!(
             event.event_type(),
             EventType::WorkflowExecutionTerminated | EventType::WorkflowExecutionTimedOut

@@ -7,9 +7,8 @@ use temporal_client::{
     Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
 };
 use temporal_sdk::WfContext;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::temporal::api::{
-    enums::v1::{EventType, WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure},
+    enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -28,6 +27,7 @@ async fn get_client(client_name: &str) -> RetryClient<Client> {
         .target_url(Url::from_str(&cloud_addr).unwrap())
         .client_name(client_name)
         .client_version("clientver")
+        .identity("sdk-test-client")
         .tls_cfg(TlsConfig {
             client_tls_config: Some(ClientTlsConfig {
                 client_cert,
