@@ -40,9 +40,9 @@ async fn eager_wf_start_different_clients() {
     let res = client
         .start_workflow(
             vec![],
-            w.get_config().task_queue.clone(), // task_queue
-            wf_name.to_string(),               // workflow_id
-            wf_name.to_string(),               // workflow_type
+            w.get_task_queue(),  // task_queue
+            wf_name.to_string(), // workflow_id
+            wf_name.to_string(), // workflow_type
             None,
             starter.workflow_options.clone(),
         )

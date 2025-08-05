@@ -42,8 +42,8 @@ use temporal_sdk::{
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
-    init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
@@ -183,8 +183,9 @@ pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }
     Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
+        let runtime_options = RuntimeOptions::new(telemetry_options, None);
         let rt =
-            CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
+            CoreRuntime::new_assume_tokio(runtime_options).expect("Core runtime inits cleanly");
         if let Some(sub) = rt.telemetry().trace_subscriber() {
             let _ = tracing::subscriber::set_global_default(sub);
         }
@@ -233,7 +234,7 @@ impl CoreWfStarter {
         let mut worker_config = integ_worker_config(&task_queue);
         worker_config
             .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
-            .max_cached_workflows(1000_usize);
+            .max_cached_workflows(1000usize);
         Self {
             task_queue_name: task_queue,
             worker_config,
@@ -259,7 +260,7 @@ impl CoreWfStarter {
 
     pub async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
-        let tq = w.get_config().task_queue.clone();
+        let tq = w.get_task_queue();
         let mut w = TestWorker::new(w, tq);
         w.client = Some(self.get_client().await);
 
@@ -330,7 +331,7 @@ impl CoreWfStarter {
         iw.client
             .start_workflow(
                 vec![],
-                iw.worker.get_config().task_queue.clone(),
+                iw.worker.get_task_queue(),
                 workflow_id,
                 self.task_queue_name.clone(),
                 None,

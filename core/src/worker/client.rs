@@ -1,11 +1,9 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::abstractions::dbg_panic;
 use crate::protosext::legacy_query_failure;
-use crate::worker::heartbeat::HeartbeatFn;
-use parking_lot::RwLock;
-use std::sync::OnceLock;
+use crate::worker::heartbeat::HeartbeatCallback;
+use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
@@ -50,7 +48,8 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
+    /// This is only used in SharedNamespaceWorker
+    heartbeat_callbacks: Arc<Mutex<Vec<HeartbeatCallback>>>,
 }
 
 impl WorkerClientBag {
@@ -59,14 +58,13 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Arc<OnceLock<HeartbeatFn>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_data,
+            heartbeat_callbacks: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -128,15 +126,28 @@ impl WorkerClientBag {
         }
     }
 
-    fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        if let Some(hb) = self.heartbeat_data.get() {
-            hb()
-        } else {
-            dbg_panic!("Heartbeat function never set");
-            None
-        }
+    fn capture_heartbeat(&self) -> Vec<WorkerHeartbeat> {
+        self.heartbeat_callbacks
+            .lock()
+            .iter()
+            .map(|f| f())
+            .collect()
     }
 }
+
+pub(crate) trait WorkerHeartbeatTrait {
+    fn get_heartbeat_map(&self) -> Arc<Mutex<Vec<HeartbeatCallback>>>;
+}
+
+impl WorkerHeartbeatTrait for WorkerClientBag {
+    fn get_heartbeat_map(&self) -> Arc<Mutex<Vec<HeartbeatCallback>>> {
+        self.heartbeat_callbacks.clone()
+    }
+}
+
+pub(crate) trait WorkerClientWithHeartbeat: WorkerClient + WorkerHeartbeatTrait {}
+
+impl<T: WorkerClient + WorkerHeartbeatTrait> WorkerClientWithHeartbeat for T {}
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
 /// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
@@ -159,6 +170,7 @@ pub trait WorkerClient: Sync + Send {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse>;
     /// Complete a workflow task
     async fn complete_workflow_task(
@@ -228,7 +240,9 @@ pub trait WorkerClient: Sync + Send {
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
@@ -354,7 +368,14 @@ impl WorkerClient for WorkerClientBag {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse> {
+        let worker_heartbeat = if send_heartbeat {
+            self.capture_heartbeat().into_iter().collect()
+        } else {
+            Vec::new()
+        };
+
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -366,7 +387,10 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
+            // TODO: Only SharedNamespaceWorker should send heartbeat info here
+            // There needs to be a way for SharedNamespaceWorker's worker to get the
+            // heartbeats of every worker on the namespace
+            worker_heartbeat,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -655,7 +679,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: None,
         };
 
         Ok(
@@ -672,14 +696,16 @@ impl WorkerClient for WorkerClientBag {
 
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        identity: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: vec![heartbeat],
+                namespace,
+                identity,
+                worker_heartbeat,
             })
             .await?
             .into_inner())
