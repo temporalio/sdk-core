@@ -49,13 +49,13 @@ pub use worker::{
 };
 
 use crate::abstractions::dbg_panic;
+use crate::worker::WorkerConfigInner;
 /// Expose [WorkerClient] symbols
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{
-    ClientIdentity, SharedNamespaceMap, SharedNamespaceWorker, WorkerHeartbeatData,
-};
+use crate::worker::client::WorkerClientWithHeartbeat;
+use crate::worker::heartbeat::{ClientIdentity, SharedNamespaceWorker, WorkerHeartbeatData};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -67,8 +67,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use parking_lot::Mutex;
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
@@ -100,32 +99,34 @@ where
 {
     let client_inner = *client.into().into_inner();
     let endpoint = client_inner.options().clone().target_url;
-    let client = init_worker_client(&worker_config, client_inner);
-    if client.namespace() != worker_config.namespace {
+    let client = init_worker_client(
+        worker_config.namespace.clone(),
+        worker_config.client_identity_override.clone(),
+        client_inner,
+    );
+    let namespace = worker_config.namespace.clone();
+    if client.namespace() != namespace {
         bail!("Passed in client is not bound to the same namespace as the worker");
     }
     if client.namespace() == "" {
         bail!("Client namespace cannot be empty");
     }
     let client_ident = client.get_identity().to_owned();
-    let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
+    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     if client_ident.is_empty() {
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 
-    let heartbeat_callback = OnceLock::new();
-
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
-        worker_config.namespace.clone(),
+        namespace.clone(),
         client_ident,
         worker_config.versioning_strategy.clone(),
-        heartbeat_callback.clone(),
     ));
 
     let mut worker = Worker::new(
-        worker_config.clone(),
+        worker_config,
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
@@ -133,19 +134,20 @@ where
     );
 
     if let Some(_) = runtime.heartbeat_interval {
+        let heartbeat_data = worker
+            .get_heartbeat_data()
+            .expect("Worker heartbeat data should exist for non-shared namespace worker");
         let remove_worker_callback = runtime.register_heartbeat_data(
             ClientIdentity {
                 endpoint: endpoint.to_string(),
-                namespace: worker_config.namespace.clone(),
+                namespace: namespace.clone(),
                 task_queue: format!(
                     "temporal-sys/worker-commands/{}/{}",
-                    worker_config.namespace,
+                    namespace,
                     runtime.task_queue_key()
                 ),
             },
-            worker
-                .get_heartbeat_data()
-                .expect("Worker heartbeat data should exist for non-shared namespace worker"),
+            heartbeat_data,
             client_bag,
         );
         worker.register_heartbeat_shutdown_callback(remove_worker_callback)
@@ -172,11 +174,12 @@ where
 }
 
 pub(crate) fn init_worker_client(
-    config: &WorkerConfig,
+    namespace: String,
+    client_identity_override: Option<String>,
     client: ConfiguredClient<TemporalServiceClientWithMetrics>,
 ) -> RetryClient<Client> {
-    let mut client = Client::new(client, config.namespace.clone());
-    if let Some(ref id_override) = config.client_identity_override {
+    let mut client = Client::new(client, namespace);
+    if let Some(ref id_override) = client_identity_override {
         client.options_mut().identity.clone_from(id_override);
     }
     RetryClient::new(client, RetryConfig::default())
@@ -186,9 +189,9 @@ pub(crate) fn init_worker_client(
 /// workflows.
 pub(crate) fn sticky_q_name_for_worker(
     process_identity: &str,
-    config: &WorkerConfig,
+    max_cached_workflows: usize,
 ) -> Option<String> {
-    if config.max_cached_workflows > 0 {
+    if max_cached_workflows > 0 {
         Some(format!(
             "{}-{}",
             &process_identity,
@@ -250,11 +253,12 @@ pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
     runtime_handle: tokio::runtime::Handle,
-    shared_namespace_map: Arc<Mutex<SharedNamespaceMap>>,
+    shared_namespace_map: Arc<Mutex<HashMap<ClientIdentity, SharedNamespaceWorker>>>,
     task_queue_key: Uuid,
     heartbeat_interval: Option<Duration>,
 }
 
+/// Holds telemetry options, as well as worker heartbeat_interval.
 #[non_exhaustive]
 pub struct RuntimeOptions {
     telemetry_options: TelemetryOptions,
@@ -262,6 +266,7 @@ pub struct RuntimeOptions {
 }
 
 impl RuntimeOptions {
+    /// Creates new runtime options.
     pub fn new(telemetry_options: TelemetryOptions, heartbeat_interval: Option<Duration>) -> Self {
         Self {
             telemetry_options,
@@ -393,7 +398,7 @@ impl CoreRuntime {
         &self,
         client_identity: ClientIdentity,
         heartbeat_data: Arc<Mutex<WorkerHeartbeatData>>,
-        client: Arc<dyn WorkerClient>,
+        client: Arc<dyn WorkerClientWithHeartbeat>,
     ) -> Arc<dyn Fn() + Send + Sync> {
         if let Some(ref heartbeat_interval) = self.heartbeat_interval {
             let mut shared_namespace_map = self.shared_namespace_map.lock();
@@ -406,15 +411,20 @@ impl CoreRuntime {
                         namespace_map.lock().remove(&client_identity_clone);
                     });
 
-                    Arc::new(Mutex::new(SharedNamespaceWorker::new(
+                    // The first client of a ClientIdentity is the client used for the
+                    // SharedNamespaceWorker, so we need to map that client
+                    let heartbeat_map = client.get_heartbeat_map();
+
+                    SharedNamespaceWorker::new(
                         client,
                         client_identity,
                         heartbeat_interval.clone(),
                         Some(&self.telemetry),
                         remove_namespace_worker_callback,
-                    )))
+                        heartbeat_map,
+                    )
                 });
-            worker.lock().add_data_to_map(heartbeat_data)
+            worker.add_data_to_map(heartbeat_data)
         } else {
             dbg_panic!("Worker heartbeat disabled for this runtime");
             Arc::new(|| {})

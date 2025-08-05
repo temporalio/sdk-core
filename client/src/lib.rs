@@ -1154,7 +1154,40 @@ pub struct Priority {
     /// 1, that comes out to 3.
     pub priority_key: u32,
 
+    /// Fairness key is a short string that's used as a key for a fairness
+    /// balancing mechanism. It may correspond to a tenant id, or to a fixed
+    /// string like "high" or "low". The default is the empty string.
+    ///
+    /// The fairness mechanism attempts to dispatch tasks for a given key in
+    /// proportion to its weight. For example, using a thousand distinct tenant
+    /// ids, each with a weight of 1.0 (the default) will result in each tenant
+    /// getting a roughly equal share of task dispatch throughput.
+    ///
+    /// (Note: this does not imply equal share of worker capacity! Fairness
+    /// decisions are made based on queue statistics, not
+    /// current worker load.)
+    ///
+    /// As another example, using keys "high" and "low" with weight 9.0 and 1.0
+    /// respectively will prefer dispatching "high" tasks over "low" tasks at a
+    /// 9:1 ratio, while allowing either key to use all worker capacity if the
+    /// other is not present.
+    ///
+    /// All fairness mechanisms, including rate limits, are best-effort and
+    /// probabilistic. The results may not match what a "perfect" algorithm with
+    /// infinite resources would produce. The more unique keys are used, the less
+    /// accurate the results will be.
+    ///
+    /// Fairness keys are limited to 64 bytes.
     pub fairness_key: String,
+
+    /// Fairness weight for a task can come from multiple sources for
+    /// flexibility. From highest to lowest precedence:
+    /// 1. Weights for a small set of keys can be overridden in task queue
+    ///    configuration with an API.
+    /// 2. It can be attached to the workflow/activity in this field.
+    /// 3. The default weight of 1.0 will be used.
+    ///
+    /// Weight values are clamped to the range [0.001, 1000].
     pub fairness_weight: u32, // TODO: f32 with eq
 }
 

@@ -14,6 +14,7 @@ mod workflow_stream;
 pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
+use crate::worker::WorkerConfigInner;
 use crate::{
     MetricsContext,
     abstractions::{
@@ -58,7 +59,7 @@ use std::{
 use temporal_client::MESSAGE_TOO_LARGE_KEY;
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollError},
-    worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
+    worker::{ActivitySlotKind, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -130,7 +131,7 @@ pub(crate) struct Workflows {
 }
 
 pub(crate) struct WorkflowBasics {
-    pub(crate) worker_config: Arc<WorkerConfig>,
+    pub(crate) worker_config: Arc<WorkerConfigInner>,
     pub(crate) shutdown_token: CancellationToken,
     pub(crate) metrics: MetricsContext,
     pub(crate) server_capabilities: get_system_info_response::Capabilities,
@@ -140,7 +141,7 @@ pub(crate) struct WorkflowBasics {
 }
 
 pub(crate) struct RunBasics<'a> {
-    pub(crate) worker_config: Arc<WorkerConfig>,
+    pub(crate) worker_config: Arc<WorkerConfigInner>,
     pub(crate) workflow_id: String,
     pub(crate) workflow_type: String,
     pub(crate) run_id: String,

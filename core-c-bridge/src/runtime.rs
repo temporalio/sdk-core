@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
 use temporal_sdk_core::CoreRuntime;
+use temporal_sdk_core::RuntimeOptions as CoreRuntimeOptions;
 use temporal_sdk_core::TokioRuntimeBuilder;
 use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 use temporal_sdk_core_api::telemetry::HistogramBucketOverrides;
@@ -25,7 +26,6 @@ use temporal_sdk_core_api::telemetry::{
     Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
     TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder,
 };
-use temporal_sdk_core::RuntimeOptions as CoreRuntimeOptions;
 use tracing::Level;
 use url::Url;
 
@@ -240,7 +240,10 @@ impl Runtime {
         } else {
             CoreTelemetryOptions::default()
         };
-        let core_runtime_options = CoreRuntimeOptions::new(telemetry_options, Some(Duration::from_millis(options.heartbeat_duration_millis)));
+        let core_runtime_options = CoreRuntimeOptions::new(
+            telemetry_options,
+            Some(Duration::from_millis(options.heartbeat_duration_millis)),
+        );
 
         // Build core runtime
         let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;

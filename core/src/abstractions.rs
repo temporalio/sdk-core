@@ -36,8 +36,8 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// is at this number, no more permits will be requested from the supplier until one is freed.
     /// This avoids requesting slots when we are at the workflow cache size limit. If and when
     /// we add user-defined cache sizing, that logic will need to live with the supplier and
-    /// there will need to be some associated refactoring.
-    max_permits: Option<usize>,
+    /// there will need to be some associated refactoring. // TODO: sounds like we'll need to do this
+    max_permits: Option<Arc<AtomicUsize>>,
     metrics_ctx: MetricsContext,
     meter: Option<TemporalMeter>,
     /// Only applies to permit dealers for workflow tasks. True if this permit dealer is associated
@@ -61,7 +61,7 @@ where
     pub(crate) fn new(
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
         metrics_ctx: MetricsContext,
-        max_permits: Option<usize>,
+        max_permits: Option<Arc<AtomicUsize>>,
         context_data: Arc<PermitDealerContextData>,
         meter: Option<TemporalMeter>,
     ) -> Self {
@@ -88,11 +88,11 @@ where
     }
 
     pub(crate) async fn acquire_owned(&self) -> OwnedMeteredSemPermit<SK> {
-        if let Some(max) = self.max_permits {
+        if let Some(ref max) = self.max_permits {
             self.extant_permits
                 .1
                 .clone()
-                .wait_for(|&ep| ep < max)
+                .wait_for(|&ep| ep < max.load(Ordering::Relaxed))
                 .await
                 .expect("Extant permit channel is never closed");
         }
@@ -101,8 +101,8 @@ where
     }
 
     pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
-        if let Some(max) = self.max_permits
-            && *self.extant_permits.1.borrow() >= max
+        if let Some(ref max) = self.max_permits
+            && *self.extant_permits.1.borrow() >= max.load(Ordering::Relaxed)
         {
             return Err(());
         }
@@ -482,7 +482,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn respects_max_extant_permits() {
         let mut sem = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
-        sem.max_permits = Some(1);
+        sem.max_permits = Some(Arc::new(AtomicUsize::new(1)));
         let perm = sem.try_acquire_owned().unwrap();
         sem.try_acquire_owned().unwrap_err();
         let acquire_fut = sem.acquire_owned();

@@ -12,6 +12,7 @@ use super::{
     workflow_machines::local_acts::LocalActivityData,
     workflow_task_state_machine::WorkflowTaskMachine,
 };
+use crate::worker::WorkerConfigInner;
 use crate::{
     abstractions::dbg_panic,
     internal_flags::{CoreInternalFlags, InternalFlags},
@@ -51,7 +52,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{WorkerConfig, WorkerDeploymentVersion};
+use temporal_sdk_core_api::worker::WorkerDeploymentVersion;
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{NamespacedWorkflowExecution, VersioningIntent},
@@ -161,7 +162,7 @@ pub(crate) struct WorkflowMachines {
 
     /// Metrics context
     pub(crate) metrics: MetricsContext,
-    worker_config: Arc<WorkerConfig>,
+    worker_config: Arc<WorkerConfigInner>,
 }
 
 #[derive(Debug, derive_more::Display)]

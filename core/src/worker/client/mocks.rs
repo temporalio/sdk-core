@@ -68,7 +68,7 @@ mockall::mock! {
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_nexus_task<'a, 'b>(&self, poll_options: PollOptions)
+        fn poll_nexus_task<'a, 'b>(&self, poll_options: PollOptions, send_heartbeat: bool)
             -> impl Future<Output = Result<PollNexusTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

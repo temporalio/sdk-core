@@ -1,3 +1,4 @@
+use crate::Mutex;
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::worker::heartbeat::{ClientIdentity, SharedNamespaceWorker};
@@ -163,14 +164,14 @@ pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
 }
 
 pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
-    let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
+    let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
     let act_poller = if mocks.inputs.config.no_remote_activities {
         None
     } else {
         mocks.inputs.act_poller
     };
     Worker::new_with_pollers(
-        mocks.inputs.config,
+        mocks.inputs.config.into(),
         sticky_q,
         mocks.client,
         TaskPollers::Mocked {
@@ -186,29 +187,28 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
     )
 }
 
-pub(crate) fn mock_worker_with_heartbeat(mocks: MocksHolder) -> Worker {
-    let client = mocks.client.clone();
+pub(crate) fn mock_worker_with_heartbeat(mock: MockWorkerClient, config: WorkerConfig) -> Worker {
+    let client = Arc::new(mock);
     let client_identity = ClientIdentity {
-        endpoint: endpoint.to_string(),
-        namespace: mocks.inputs.config.namespace.clone(),
+        endpoint: "test_endpoint".to_string(),
+        namespace: config.namespace.clone(),
         task_queue: format!(
             "temporal-sys/worker-commands/{}/{}",
-            mocks.inputs.config.namespace,
+            config.namespace.clone(),
             Uuid::new_v4(),
         ),
     };
 
-    let worker = mock_worker(mocks);
+    let worker = Worker::new(config.into(), None, client.clone(), None, false);
 
-    // TODO: plumb shutdown?
     let _shared_worker = SharedNamespaceWorker::new(
         client,
         client_identity,
         Duration::from_millis(200),
         None,
-        Arc::new(|| {}), // TODO:
+        Arc::new(|| {}),                  // TODO: remove namespace worker callback?
+        Arc::new(Mutex::new(Vec::new())), // TODO: this needs to be plumbed to fully test with server
     );
-    // worker.register_heartbeat_handler(Box::new(move ||))
 
     worker
 }
@@ -277,7 +277,7 @@ impl MockWorkerInputs {
             wft_stream,
             act_poller: None,
             nexus_poller: None,
-            config: test_worker_cfg().build().unwrap(),
+            config: test_worker_cfg().build().unwrap().into(),
         }
     }
 }
@@ -309,7 +309,7 @@ impl MocksHolder {
             wft_stream,
             act_poller: Some(mock_act_poller),
             nexus_poller: None,
-            config: test_worker_cfg().build().unwrap(),
+            config: test_worker_cfg().build().unwrap().into(),
         };
         Self {
             client: Arc::new(client),
@@ -332,7 +332,7 @@ impl MocksHolder {
             wft_stream,
             act_poller: None,
             nexus_poller: None,
-            config: test_worker_cfg().build().unwrap(),
+            config: test_worker_cfg().build().unwrap().into(),
         };
         Self {
             client: Arc::new(client),

@@ -16,7 +16,6 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll},
 };
-use std::sync::atomic::AtomicUsize;
 use temporal_sdk_core_api::worker::{PollerBehavior, WorkerConfig};
 pub use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
@@ -59,7 +58,7 @@ where
     }
 
     pub(crate) fn into_core_worker(mut self) -> Result<Worker, anyhow::Error> {
-        self.config.max_cached_workflows = Arc::new(AtomicUsize::new(1));
+        self.config.max_cached_workflows = 1;
         self.config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
         self.config.no_remote_activities = true;
         let historator = Historator::new(self.history_stream);
@@ -115,7 +114,7 @@ where
                 hist_allow_tx.send("Failed".to_string()).unwrap();
                 async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
             });
-        let mut worker = Worker::new(self.config, None, Arc::new(client), None, false);
+        let mut worker = Worker::new(self.config.into(), None, Arc::new(client), None, false);
         worker.set_post_activate_hook(post_activate);
         shutdown_tok(worker.shutdown_token());
         Ok(worker)

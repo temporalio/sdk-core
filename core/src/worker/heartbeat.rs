@@ -1,57 +1,36 @@
 use crate::WorkerClient;
 use crate::WorkerTrait;
-use crate::abstractions::{MeteredPermitDealer, dbg_panic};
-use crate::pollers::{BoxedNexusPoller, LongPollBuffer};
+use crate::abstractions::dbg_panic;
 use crate::telemetry::TelemetryInstance;
-use crate::telemetry::metrics::{MetricsContext, nexus_poller};
-use crate::worker::nexus::NexusManager;
+use crate::worker::WorkerConfigInner;
 use gethostname::gethostname;
 use parking_lot::Mutex;
-use prost_types::{Duration as PbDuration, FieldMask};
+use prost_types::Duration as PbDuration;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
-use std::task::Poll;
 use std::time::{Duration, SystemTime};
-use temporal_client::Client;
-use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_api::worker::{
-    NexusSlotKind, PollerBehavior, WorkerConfig, WorkerConfigBuilder, WorkerVersioningStrategy,
+    PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy,
 };
 use temporal_sdk_core_protos::coresdk::nexus::{
-    NexusTask, NexusTaskCompletion, nexus_task, nexus_task_completion,
+    NexusTaskCompletion, nexus_task, nexus_task_completion,
 };
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_protos::temporal::api::common::v1::WorkerSelector;
 use temporal_sdk_core_protos::temporal::api::nexus::v1::request::Variant::StartOperation;
 use temporal_sdk_core_protos::temporal::api::nexus::v1::{
     StartOperationResponse, start_operation_response,
 };
 use temporal_sdk_core_protos::temporal::api::sdk::v1::worker_config;
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerInfo;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{
     WorkerHeartbeat, WorkerHostInfo, fetch_worker_config_response,
 };
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    PollNexusTaskQueueResponse, RecordWorkerHeartbeatRequest,
-};
 use temporal_sdk_core_protos::temporal::api::{nexus, sdk, worker};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio::sync::{Notify, RwLock};
-use tokio::task::JoinHandle;
-use tokio::time::{Interval, MissedTickBehavior};
-use tokio_util::sync::CancellationToken;
+use tokio::sync::Notify;
+use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 pub(crate) type HeartbeatCallback = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
-/// Used by runtime to map Client identity to SharedNamespaceWorker
-/// TODO: Arc is used here to let us mark the worker as "shutdown", and if somehow we re-register,
-///  we can recreate a new SharedNamespaceWorker and replace the weak Arc.
-///
-///  no that won't work, SharedNamespaceWorker doesn't have access to shared_namespace_map, and
-/// likewise, Worker doesn't have access to SharedNamespaceWorker.worker_data_map
-/// // TODO: use a CancelCallback??
-pub(crate) type SharedNamespaceMap = HashMap<ClientIdentity, Arc<Mutex<SharedNamespaceWorker>>>;
 pub(crate) type WorkerDataMap = HashMap<String, Arc<Mutex<WorkerHeartbeatData>>>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -66,8 +45,8 @@ pub(crate) struct ClientIdentity {
 /// namespace.
 pub(crate) struct SharedNamespaceWorker {
     worker_data_map: Arc<Mutex<WorkerDataMap>>,
-    join_handle: JoinHandle<()>,
     heartbeat_interval: Duration,
+    heartbeat_map: Arc<Mutex<Vec<HeartbeatCallback>>>,
 }
 
 impl SharedNamespaceWorker {
@@ -77,12 +56,13 @@ impl SharedNamespaceWorker {
         heartbeat_interval: Duration,
         telemetry: Option<&TelemetryInstance>,
         shutdown_callback: Arc<dyn Fn() + Send + Sync>,
+        heartbeat_map: Arc<Mutex<Vec<HeartbeatCallback>>>,
     ) -> Self {
         let config = WorkerConfigBuilder::default()
             .namespace(client_identity.namespace.clone())
             .task_queue(client_identity.task_queue)
             .no_remote_activities(true)
-            .max_outstanding_nexus_tasks(5_usize) // TODO: arbitrary low number, feel free to change when needed
+            .max_outstanding_nexus_tasks(5_usize)
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "1.0".to_owned(),
             })
@@ -90,22 +70,16 @@ impl SharedNamespaceWorker {
             .expect("all required fields should be implemented");
         let worker_data_map = Arc::new(Mutex::new(WorkerDataMap::new()));
 
-        let worker = crate::worker::Worker::new(
-            config,
-            None, // TODO: want sticky queue?
-            client.clone(),
-            telemetry,
-            true,
-        );
+        let worker =
+            crate::worker::Worker::new(config.into(), None, client.clone(), telemetry, true);
 
         // heartbeat task
-        let sdk_name_and_ver = client.sdk_name_and_version();
         let reset_notify = Arc::new(Notify::new());
         let client_clone = client.clone();
 
         let worker_data_map_clone = worker_data_map.clone();
 
-        let join_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let mut ticker = tokio::time::interval(heartbeat_interval);
             ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
             loop {
@@ -113,6 +87,7 @@ impl SharedNamespaceWorker {
                     worker.shutdown().await;
                     // remove this worker from the Runtime map
                     shutdown_callback();
+                    return;
                 }
                 tokio::select! {
                     _ = ticker.tick() => {
@@ -182,12 +157,8 @@ impl SharedNamespaceWorker {
                                                                 } else {
                                                                     warn!("Worker {} not found", worker_instance_key);
                                                                 }
-
-
                                                             }
-                                                            Err(e) => {
-                                                                dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
-                                                            },
+                                                            Err(e) => warn!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
                                                         }
                                                     }
                                                     "UpdateWorkerConfig" => {
@@ -205,9 +176,17 @@ impl SharedNamespaceWorker {
                                                                     for path in &req.update_mask.unwrap().paths {
                                                                         match path.as_str() {
                                                                             "workflow_cache_size" => {
-                                                                                worker_data_from_map.workflow_cache_size.store(req.worker_config.unwrap().workflow_cache_size as usize, Ordering::Relaxed);
+                                                                                let workflow_cache_size = req.worker_config.unwrap().workflow_cache_size as usize;
+                                                                                let current_cache_size = worker_data_from_map.workflow_cache_size.load(Ordering::Relaxed);
+                                                                                if workflow_cache_size == 0 && current_cache_size != 0 {
+                                                                                    warn!("Cannot set workflow_cache_size to 0 when current cache size is non-zero");
+                                                                                } else if workflow_cache_size != 0 && current_cache_size == 0 {
+                                                                                    warn!("Cannot set workflow_cache_size to non-zero when current cache size is 0");
+                                                                                } else {
+                                                                                    worker_data_from_map.workflow_cache_size.store(workflow_cache_size, Ordering::Relaxed);
+                                                                                }
                                                                             }
-                                                                        _ => todo!("unknown path"),
+                                                                            _ => todo!("unknown path"),
                                                                         }
                                                                     WorkerTrait::complete_nexus_task(&worker, NexusTaskCompletion {
                                                                             task_token: task_token.clone(),
@@ -223,24 +202,20 @@ impl SharedNamespaceWorker {
                                                                     }
                                                                 }
                                                             }
-                                                            Err(e) => {
-                                                                dbg_panic!("Failed to parse FetchWorkerConfigRequest: {:?}", e)
-                                                            },
+                                                            Err(e) => warn!("Failed to parse FetchWorkerConfigRequest: {:?}", e),
                                                         }
                                                     }
                                                     _ => todo!("unknown operation"),
                                                 }
                                             }
-                                            nexus::v1::request::Variant::CancelOperation(cancel_op) => todo!("cancel op")
+                                            nexus::v1::request::Variant::CancelOperation(_cancel_op) => todo!("cancel op")
                                         }
 
                                     },
-                                    nexus_task::Variant::CancelTask(cancel) => todo!("handle cancel task"),
+                                    nexus_task::Variant::CancelTask(_cancel) => todo!("handle cancel task"),
                                 }
-
-
                             }
-                            Err(e) => todo!("log error"),
+                            Err(e) => warn!("Error SharedNamespaceWorker polling nexus task {:?}", e),
                         }
                     }
                 }
@@ -249,15 +224,24 @@ impl SharedNamespaceWorker {
 
         Self {
             worker_data_map,
-            join_handle,
             heartbeat_interval,
+            heartbeat_map,
         }
     }
 
+    /// Adds `WorkerHeartbeatData` to the `SharedNamespaceWorker` and adds a `HeartbeatCallback` to
+    /// the client that Worker
     pub(crate) fn add_data_to_map(
         &mut self,
         data: Arc<Mutex<WorkerHeartbeatData>>,
     ) -> Arc<dyn Fn() + Send + Sync> {
+        // Add HeartbeatCallback
+        let data_clone = data.clone();
+        self.heartbeat_map
+            .lock()
+            .push(Arc::new(move || data_clone.lock().capture_heartbeat()));
+
+        // Add WorkerHeartbeatData
         let worker_instance_key = data.lock().worker_instance_key.clone();
         let mut worker_data_map = self.worker_data_map.lock();
         worker_data_map.insert(worker_instance_key.clone(), data);
@@ -301,7 +285,7 @@ pub(crate) struct WorkerHeartbeatData {
 
 impl WorkerHeartbeatData {
     pub(crate) fn new(
-        worker_config: WorkerConfig,
+        worker_config: WorkerConfigInner,
         worker_identity: String,
         sdk_name_and_ver: (String, String),
     ) -> Self {
@@ -385,7 +369,7 @@ impl WorkerHeartbeatData {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use crate::test_help::WorkerExt;
     use crate::test_help::test_worker_cfg;
     use crate::worker;
@@ -399,9 +383,8 @@ mod tests {
     async fn worker_heartbeat() {
         let mut mock = mock_worker_client();
         let mut heartbeat_count = 0;
-        mock.expect_record_worker_heartbeat()
-            .times(2)
-            .returning(move |namespace, identity, worker_heartbeat| {
+        mock.expect_record_worker_heartbeat().times(2).returning(
+            move |_namespace, _identity, worker_heartbeat| {
                 assert_eq!(1, worker_heartbeat.len());
                 let heartbeat = worker_heartbeat[0].clone();
                 let host_info = heartbeat.host_info.clone().unwrap();
@@ -421,16 +404,17 @@ mod tests {
                 heartbeat_count += 1;
 
                 Ok(RecordWorkerHeartbeatResponse {})
-            });
+            },
+        );
 
         let config = test_worker_cfg()
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .max_outstanding_activities(1_usize)
-            .heartbeat_interval(Duration::from_millis(200))
             .build()
-            .unwrap();
+            .unwrap()
+            .into();
 
-        let heartbeat_callback = Arc::new(OnceLock::new());
+        // let heartbeat_callback = Arc::new(OnceLock::new());
         let client = Arc::new(mock);
         // TODO: Create worker, then create SharedNamespaceWorker
         let worker = worker::Worker::new(config, None, client, None, false);

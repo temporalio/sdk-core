@@ -1,3 +1,4 @@
+use crate::worker::WorkerConfigInner;
 use crate::{
     MetricsContext,
     telemetry::metrics::workflow_type,
@@ -7,16 +8,15 @@ use crate::{
     },
 };
 use lru::LruCache;
-use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
 use std::sync::atomic::Ordering;
-use temporal_sdk_core_api::worker::WorkerConfig;
+use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::remove_from_cache::EvictionReason,
     temporal::api::workflowservice::v1::get_system_info_response,
 };
 
 pub(super) struct RunCache {
-    worker_config: Arc<WorkerConfig>,
+    worker_config: Arc<WorkerConfigInner>,
     sdk_name_and_version: (String, String),
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
@@ -28,7 +28,7 @@ pub(super) struct RunCache {
 
 impl RunCache {
     pub(super) fn new(
-        worker_config: Arc<WorkerConfig>,
+        worker_config: Arc<WorkerConfigInner>,
         sdk_name_and_version: (String, String),
         server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
@@ -55,6 +55,7 @@ impl RunCache {
     }
 
     pub(super) fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
+        self.update_cache_size_if_needed();
         let cur_num_cached_runs = self.runs.len();
         let run_id = pwft.work.execution.run_id.clone();
 
@@ -92,6 +93,7 @@ impl RunCache {
     }
 
     pub(super) fn remove(&mut self, k: &str) -> Option<ManagedRun> {
+        self.update_cache_size_if_needed();
         let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
         if let Some(rh) = &r {
@@ -110,10 +112,12 @@ impl RunCache {
     }
 
     pub(super) fn get_mut(&mut self, k: &str) -> Option<&mut ManagedRun> {
+        self.update_cache_size_if_needed();
         self.runs.get_mut(k)
     }
 
     pub(super) fn get(&mut self, k: &str) -> Option<&ManagedRun> {
+        self.update_cache_size_if_needed();
         self.runs.get(k)
     }
 
@@ -148,6 +152,24 @@ impl RunCache {
     }
 
     pub(super) fn cache_capacity(&self) -> usize {
-        self.worker_config.max_cached_workflows.load(Ordering::Relaxed)
+        self.worker_config
+            .max_cached_workflows
+            .load(Ordering::Relaxed)
+    }
+
+    fn update_cache_size_if_needed(&mut self) {
+        let max_cached_workflows = self
+            .worker_config
+            .max_cached_workflows
+            .load(Ordering::Relaxed);
+        let lru_size = if max_cached_workflows > 0 {
+            max_cached_workflows
+        } else {
+            1
+        };
+        if lru_size != self.runs.len() {
+            self.runs
+                .resize(NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"));
+        }
     }
 }

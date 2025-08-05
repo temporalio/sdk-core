@@ -432,7 +432,7 @@ impl WorkflowHalf {
                 };
 
                 wf_function.start_workflow(
-                    common.worker.get_config().namespace.clone(),
+                    common.worker.get_namespace(),
                     common.task_queue.clone(),
                     std::mem::take(sw),
                     completions_tx.clone(),

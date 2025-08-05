@@ -1,5 +1,4 @@
 use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},

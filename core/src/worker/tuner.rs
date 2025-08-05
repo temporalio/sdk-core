@@ -7,10 +7,11 @@ pub use resource_based::{
     ResourceSlotOptions,
 };
 
+use crate::worker::WorkerConfigInner;
 use std::sync::Arc;
 use temporal_sdk_core_api::worker::{
-    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier, WorkerConfig,
-    WorkerTuner, WorkflowSlotKind,
+    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier, WorkerTuner,
+    WorkflowSlotKind,
 };
 
 /// Allows for the composition of different slot suppliers into a [WorkerTuner]
@@ -169,7 +170,7 @@ pub struct TunerBuilder {
 }
 
 impl TunerBuilder {
-    pub(crate) fn from_config(cfg: &WorkerConfig) -> Self {
+    pub(crate) fn from_config(cfg: &WorkerConfigInner) -> Self {
         let mut builder = Self::default();
         if let Some(m) = cfg.max_outstanding_workflow_tasks {
             builder.workflow_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(m)));

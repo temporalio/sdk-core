@@ -41,7 +41,12 @@ use temporal_sdk::{
 };
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
-use temporal_sdk_core::{ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker, init_worker, replay::ReplayWorkerInput, telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter}, RuntimeOptions};
+use temporal_sdk_core::{
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
+    replay::ReplayWorkerInput,
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+};
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
     errors::PollError,
@@ -255,7 +260,7 @@ impl CoreWfStarter {
 
     pub async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
-        let tq = w.get_config().task_queue.clone();
+        let tq = w.get_task_queue();
         let mut w = TestWorker::new(w, tq);
         w.client = Some(self.get_client().await);
 
@@ -326,7 +331,7 @@ impl CoreWfStarter {
         iw.client
             .start_workflow(
                 vec![],
-                iw.worker.get_config().task_queue.clone(),
+                iw.worker.get_task_queue(),
                 workflow_id,
                 self.task_queue_name.clone(),
                 None,
