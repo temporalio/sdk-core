@@ -1,5 +1,7 @@
 use std::time::Duration;
-use temporal_client::{Priority, WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{
+    GetWorkflowResultOpts, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
 use temporal_sdk::{ActContext, ActivityOptions, ChildWorkflowOptions, WfContext};
 use temporal_sdk_core_protos::{
     coresdk::AsJsonPayloadExt,
@@ -89,6 +91,13 @@ pub(crate) async fn priority_values_sent_to_server() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
+    let handle = client.get_untyped_workflow_handle(starter.get_task_queue(), "");
+    let res = handle
+        .get_workflow_result(GetWorkflowResultOpts::default())
+        .await
+        .unwrap();
+    // Expect workflow success
+    res.unwrap_success();
     let history = client
         .get_workflow_execution_history(starter.get_task_queue().to_owned(), None, vec![])
         .await
