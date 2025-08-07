@@ -1441,7 +1441,7 @@ impl WorkflowManager {
 
     /// Must be called when we're ready to respond to a WFT after handling catching up on replay
     /// and handling all activation completions from lang.
-    fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+    fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent<'_> {
         self.machines.prepare_for_wft_response()
     }
 
