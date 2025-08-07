@@ -1194,4 +1194,45 @@ service WorkflowService {
             }
         };
     }
+
+    // Updates task queue configuration.
+    // For the overall queue rate limit: the rate limit set by this api overrides the worker-set rate limit,
+    // which uncouples the rate limit from the worker lifecycle.
+    // If the overall queue rate limit is unset, the worker-set rate limit takes effect.
+    rpc UpdateTaskQueueConfig (UpdateTaskQueueConfigRequest) returns (UpdateTaskQueueConfigResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/task-queues/{task_queue}/update-config"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/task-queues/{task_queue}/update-config"
+                body: "*"
+            }
+        };
+    }
+
+    // FetchWorkerConfig returns the worker configuration for a specific worker.
+    rpc FetchWorkerConfig (FetchWorkerConfigRequest) returns (FetchWorkerConfigResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workers/fetch-config"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workers/fetch-config"
+                body: "*"
+            }
+        };
+    }
+
+    // UpdateWorkerConfig updates the worker configuration of one or more workers.
+    // Can be used to partially update the worker configuration.
+    // Can be used to update the configuration of multiple workers.
+    rpc UpdateWorkerConfig (UpdateWorkerConfigRequest) returns (UpdateWorkerConfigResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workers/update-config"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workers/update-config"
+                body: "*"
+            }
+        };
+    }
 }

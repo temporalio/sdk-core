@@ -395,7 +395,7 @@ impl WorkflowMachines {
         self.current_started_event_id
     }
 
-    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent<'_> {
         MachinesWFTResponseContent {
             replaying: self.replaying,
             has_pending_jobs: self.has_pending_jobs(),
