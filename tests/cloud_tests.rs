@@ -1,53 +1,17 @@
-use std::{
-    env,
-    str::FromStr,
-    sync::atomic::{AtomicBool, Ordering::Relaxed},
-};
-use temporal_client::{
-    Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
-};
+use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk::WfContext;
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
-use url::Url;
+use temporal_sdk_core_test_utils::{CoreWfStarter, get_cloud_client};
 
-async fn get_client(client_name: &str) -> RetryClient<Client> {
-    let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
-    let cloud_key = env::var("TEMPORAL_CLIENT_KEY").unwrap();
-
-    let client_cert = env::var("TEMPORAL_CLIENT_CERT")
-        .expect("TEMPORAL_CLIENT_CERT must be set")
-        .replace("\\n", "\n")
-        .into_bytes();
-    let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-    let sgo = ClientOptionsBuilder::default()
-        .target_url(Url::from_str(&cloud_addr).unwrap())
-        .client_name(client_name)
-        .client_version("clientver")
-        .identity("sdk-test-client")
-        .tls_cfg(TlsConfig {
-            client_tls_config: Some(ClientTlsConfig {
-                client_cert,
-                client_private_key,
-            }),
-            ..Default::default()
-        })
-        .build()
-        .unwrap();
-    sgo.connect(
-        env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
-        None,
-    )
-    .await
-    .unwrap()
-}
+mod shared_tests;
 
 #[tokio::test]
 async fn tls_test() {
-    let con = get_client("tls_tester").await;
+    let con = get_cloud_client().await;
     con.list_workflow_executions(100, vec![], "".to_string())
         .await
         .unwrap();
@@ -56,8 +20,7 @@ async fn tls_test() {
 #[tokio::test]
 async fn grpc_message_too_large_test() {
     let wf_name = "oversize_grpc_message";
-    let mut starter =
-        CoreWfStarter::new_with_client(wf_name, get_client("grpc_message_too_large").await);
+    let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, "1.26").await;
     starter.worker_config.no_remote_activities(true);
     let mut core = starter.worker().await;
 
@@ -83,4 +46,9 @@ async fn grpc_message_too_large_test() {
                 false
             }
     }))
+}
+
+#[tokio::test]
+async fn priority_values_sent_to_server() {
+    shared_tests::priority::priority_values_sent_to_server().await
 }
