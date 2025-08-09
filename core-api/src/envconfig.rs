@@ -443,11 +443,10 @@ impl ClientConfigProfile {
         }
 
         if let Some(ref mut tls) = self.tls {
-            if let Some(disabled_str) = env_provider.get("TEMPORAL_TLS")? {
-                if let Some(disabled) = env_var_to_bool(&disabled_str) {
+            if let Some(disabled_str) = env_provider.get("TEMPORAL_TLS")?
+                && let Some(disabled) = env_var_to_bool(&disabled_str) {
                     tls.disabled = !disabled;
                 }
-            }
 
             apply_data_source_env_var(
                 env_provider,
@@ -474,11 +473,10 @@ impl ClientConfigProfile {
             if let Some(v) = env_provider.get("TEMPORAL_TLS_SERVER_NAME")? {
                 tls.server_name = Some(v);
             }
-            if let Some(v) = env_provider.get("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION")? {
-                if let Some(b) = env_var_to_bool(&v) {
+            if let Some(v) = env_provider.get("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION")?
+                && let Some(b) = env_var_to_bool(&v) {
                     tls.disable_host_verification = b;
                 }
-            }
         }
         Ok(())
     }

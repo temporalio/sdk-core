@@ -956,11 +956,10 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 
             worker.complete_workflow_activation(reply).await.unwrap();
 
-            if do_release {
-                if let Some(omap) = outstanding_map.as_ref() {
+            if do_release
+                && let Some(omap) = outstanding_map.as_ref() {
                     omap.release_run(&res.run_id);
                 }
-            }
             // Restart assertions from the beginning if it was an eviction (and workflow execution
             // isn't over)
             if is_eviction && !ends_execution {
