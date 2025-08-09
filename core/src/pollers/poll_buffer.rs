@@ -708,7 +708,6 @@ mod tests {
     };
     use futures_util::FutureExt;
     use std::time::Duration;
-    use temporal_client::{RetryClient, RetryConfig};
     use tokio::select;
 
     #[tokio::test]
@@ -795,7 +794,7 @@ mod tests {
         );
 
         // Should not see error, unwraps should get empty response
-        let res = pb.poll().await.unwrap().unwrap();
+        pb.poll().await.unwrap().unwrap();
         pb.shutdown().await;
     }
 }
