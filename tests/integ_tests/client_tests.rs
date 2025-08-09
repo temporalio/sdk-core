@@ -110,7 +110,7 @@ struct GenericService<F> {
 }
 impl<F> Service<tonic::codegen::http::Request<Body>> for GenericService<F>
 where
-    F: FnMut() -> Response<Body>,
+    F: FnMut() -> BoxFuture<'static, Response<Body>>,
 {
     type Response = Response<Body>;
     type Error = Infallible;
@@ -133,7 +133,7 @@ where
             )
             .unwrap();
         let r = (self.response_maker)();
-        async move { Ok(r) }.boxed()
+        async move { Ok(r.await) }.boxed()
     }
 }
 impl<F> NamedService for GenericService<F> {
@@ -144,12 +144,12 @@ struct FakeServer {
     addr: std::net::SocketAddr,
     shutdown_tx: oneshot::Sender<()>,
     header_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    server_handle: tokio::task::JoinHandle<()>,
+    pub server_handle: tokio::task::JoinHandle<()>,
 }
 
 async fn fake_server<F>(response_maker: F) -> FakeServer
 where
-    F: FnMut() -> Response<Body> + Clone + Send + Sync + 'static,
+    F: FnMut() -> BoxFuture<'static, Response<Body>> + Clone + Send + Sync + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, header_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -191,7 +191,7 @@ impl FakeServer {
 
 #[tokio::test]
 async fn timeouts_respected_one_call_fake_server() {
-    let mut fs = fake_server(|| Response::new(Body::empty())).await;
+    let mut fs = fake_server(|| async { Response::new(Body::empty()) }.boxed()).await;
     let header_rx = &mut fs.header_rx;
 
     let mut opts = get_integ_server_options();
@@ -260,7 +260,11 @@ async fn non_retryable_errors() {
         Code::Unauthenticated,
         Code::Unimplemented,
     ] {
-        let mut fs = fake_server(move || Status::new(code, "bla").into_http()).await;
+        let mut fs = fake_server(move || {
+            let s = Status::new(code, "bla").into_http();
+            async { s }.boxed()
+        })
+        .await;
 
         let mut opts = get_integ_server_options();
         let uri = format!("http://localhost:{}", fs.addr.port())
@@ -292,13 +296,13 @@ async fn retryable_errors() {
     {
         let count = Arc::new(AtomicUsize::new(0));
         let mut fs = fake_server(move || {
-            dbg!("Making resp");
             let prev = count.fetch_add(1, Ordering::Relaxed);
-            if prev < 3 {
+            let r = if prev < 3 {
                 Status::new(code, "bla").into_http()
             } else {
                 make_ok_response(RespondActivityTaskCanceledResponse::default())
-            }
+            };
+            async { r }.boxed()
         })
         .await;
 
@@ -335,7 +339,7 @@ async fn namespace_header_attached_to_relevant_calls() {
             .add_service(GenericService {
                 header_to_parse: "Temporal-Namespace",
                 header_tx,
-                response_maker: || Response::new(Body::empty()),
+                response_maker: || async { Response::new(Body::empty()) }.boxed(),
             })
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
