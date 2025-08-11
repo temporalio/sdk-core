@@ -125,30 +125,29 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
             let task = core.poll_workflow_activation().await.unwrap();
 
             // When we see the query, handle it.
-            if go_until_query {
-                if let [
+            if go_until_query
+                && let [
                     WorkflowActivationJob {
                         variant: Some(workflow_activation_job::Variant::QueryWorkflow(query)),
                     },
                 ] = task.jobs.as_slice()
-                {
-                    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-                        task.run_id,
-                        QueryResult {
-                            query_id: query.query_id.clone(),
-                            variant: Some(
-                                QuerySuccess {
-                                    response: Some(query_resp.into()),
-                                }
-                                .into(),
-                            ),
-                        }
-                        .into(),
-                    ))
-                    .await
-                    .unwrap();
-                    break "".to_string();
-                }
+            {
+                core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                    task.run_id,
+                    QueryResult {
+                        query_id: query.query_id.clone(),
+                        variant: Some(
+                            QuerySuccess {
+                                response: Some(query_resp.into()),
+                            }
+                            .into(),
+                        ),
+                    }
+                    .into(),
+                ))
+                .await
+                .unwrap();
+                break "".to_string();
             }
 
             if matches!(

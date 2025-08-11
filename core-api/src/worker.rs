@@ -460,25 +460,25 @@ pub enum SlotInfo<'a> {
 }
 
 pub trait SlotInfoTrait: prost::Message {
-    fn downcast(&self) -> SlotInfo;
+    fn downcast(&self) -> SlotInfo<'_>;
 }
 impl SlotInfoTrait for WorkflowSlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Workflow(self)
     }
 }
 impl SlotInfoTrait for ActivitySlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Activity(self)
     }
 }
 impl SlotInfoTrait for LocalActivitySlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::LocalActivity(self)
     }
 }
 impl SlotInfoTrait for NexusSlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Nexus(self)
     }
 }

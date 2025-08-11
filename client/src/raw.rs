@@ -437,7 +437,7 @@ macro_rules! proxy {
         fn $method(
             &mut self,
             request: impl tonic::IntoRequest<$req>,
-        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
             let mut as_req = request.into_request();
             $( type_closure_arg(&mut as_req, $closure); )*
@@ -455,7 +455,7 @@ macro_rules! proxy {
         fn $method(
             &mut self,
             request: impl tonic::IntoRequest<$req>,
-        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
             let mut as_req = request.into_request();
             type_closure_arg(&mut as_req, $closure_request);

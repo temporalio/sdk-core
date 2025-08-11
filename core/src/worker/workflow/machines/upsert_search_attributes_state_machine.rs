@@ -319,7 +319,7 @@ mod tests {
         if with_patched_cmd {
             t.add_has_change_marker(&patch_id, false);
         }
-        t.add_upsert_search_attrs_for_patch(&[patch_id.clone()]);
+        t.add_upsert_search_attrs_for_patch(std::slice::from_ref(&patch_id));
         t.add_we_signaled("hi", vec![]);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
