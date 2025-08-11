@@ -3,6 +3,7 @@ use std::{collections::HashMap, time::Duration};
 use temporal_client::{Priority, WorkflowOptions};
 use temporal_sdk_core_protos::{
     coresdk::{
+        AsJsonPayloadExt,
         child_workflow::ChildWorkflowCancellationType,
         nexus::NexusOperationCancellationType,
         workflow_commands::{
@@ -155,6 +156,8 @@ pub struct LocalActivityOptions {
     /// specified. If set, this must be <= `schedule_to_close_timeout`, if not, it will be clamped
     /// down.
     pub start_to_close_timeout: Option<Duration>,
+    /// Single-line summary for this activity that will appear in UI/CLI.
+    pub summary: Option<String>,
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
@@ -194,7 +197,13 @@ impl IntoWorkflowCommand for LocalActivityOptions {
                 }
                 .into(),
             ),
-            user_metadata: None,
+            user_metadata: self
+                .summary
+                .and_then(|summary| summary.as_json_payload().ok())
+                .map(|summary| UserMetadata {
+                    summary: Some(summary),
+                    details: None,
+                }),
         }
     }
 }
