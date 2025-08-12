@@ -14,3 +14,4 @@ test-lint = ["clippy", "--all", "--all-features", "--examples", "--workspace",
     "--tests", "--", "--D", "warnings"]
 test-lint-fix = ["clippy", "--all", "--all-features", "--examples", "--workspace",
     "--tests", "--fix", "--allow-dirty"]
+generate-fsm-diagrams = ["run", "--bin", "generate-fsm-diagrams", "--package", "temporal-sdk-core"]
