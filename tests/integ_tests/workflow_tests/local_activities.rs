@@ -270,12 +270,10 @@ impl WorkerInterceptor for LACancellerInterceptor {
         if let Some(workflow_activation_completion::Status::Successful(
             workflow_completion::Success { commands, .. },
         )) = completion.status.as_ref()
-        {
-            if let Some(&Variant::CompleteWorkflowExecution(_)) =
+            && let Some(&Variant::CompleteWorkflowExecution(_)) =
                 commands.last().and_then(|v| v.variant.as_ref())
-            {
-                self.token.cancel();
-            }
+        {
+            self.token.cancel();
         }
     }
     fn on_shutdown(&self, _: &temporal_sdk::Worker) {
