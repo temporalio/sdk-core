@@ -1,6 +1,8 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::env;
+use std::fs;
 use syn::{
     Error, Fields, Ident, Token, Type, Variant, Visibility, parenthesized,
     parse::{Parse, ParseStream, Result},
@@ -167,6 +169,40 @@ use syn::{
 #[proc_macro]
 pub fn fsm(input: TokenStream) -> TokenStream {
     let def: StateMachineDefinition = parse_macro_input!(input as StateMachineDefinition);
+
+    // Generate d2 diagram if requested via environment variable
+    // This is compile-time only and doesn't affect runtime behavior
+    #[cfg(not(doc))] // Don't generate diagrams during doc builds
+    {
+        if env::var("TEMPORAL_GENERATE_FSM_DIAGRAMS").is_ok() {
+            let diagram_content = def.generate_d2_diagram();
+
+            // Determine output directory
+            let out_dir = match env::var("TEMPORAL_FSM_DIAGRAM_DIR") {
+                Ok(p) => p,
+                Err(_) => {
+                    let base = env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+                    format!("{}/src/worker/workflow/machines/diagrams", base)
+                }
+            };
+
+            // Create directory if it doesn't exist
+            if let Err(e) = fs::create_dir_all(&out_dir) {
+                eprintln!("Warning: Failed to create diagram directory {}: {}", out_dir, e);
+            } else {
+                // Generate filename from state machine name
+                let filename = format!("{}/{}.d2", out_dir, def.name.to_string().to_lowercase());
+
+                // Write the diagram file
+                if let Err(e) = fs::write(&filename, diagram_content) {
+                    eprintln!("Warning: Failed to write diagram file {}: {}", filename, e);
+                } else {
+                    eprintln!("Generated FSM diagram: {}", filename);
+                }
+            }
+        }
+    }
+
     def.codegen()
 }
 
@@ -192,6 +228,128 @@ impl StateMachineDefinition {
         // If no transitions go from this state, it's a final state.
         !self.transitions.iter().any(|t| t.from == *state)
     }
+
+    fn generate_d2_diagram(&self) -> String {
+        let mut output = String::new();
+
+        // Header
+        output.push_str(&format!("# {} State Machine\n\n", self.name));
+
+        // Collect all states
+        let mut states = HashSet::new();
+        for transition in &self.transitions {
+            states.insert(&transition.from);
+            for to_state in &transition.to {
+                states.insert(to_state);
+            }
+        }
+
+        // Sort states for deterministic output
+        let mut sorted_states: Vec<_> = states.iter().collect();
+        sorted_states.sort_by_key(|s| s.to_string());
+
+        // Generate states
+        output.push_str("# States\n");
+        for state in sorted_states {
+            let state_str = state.to_string();
+            output.push_str(&format!("{}: {{\n", state_str));
+            output.push_str("  shape: rectangle\n");
+            output.push_str("}\n\n");
+        }
+
+        // Generate transitions
+        output.push_str("# Transitions\n");
+        for transition in &self.transitions {
+            let event_name = &transition.event.ident;
+            let event_str = event_name.to_string();
+
+            // Classify event type for coloring using known history event names (from proto)
+            let is_history = is_proto_history_event(&event_str);
+            let color = if is_history {
+                "#1565c0" // History events (server)
+            } else if event_str.starts_with("Command") || event_str.starts_with("Protocol") {
+                "#2e7d32" // Command acks/queueing
+            } else {
+                "#6a1b9a" // Internal triggers
+            };
+
+            for to_state in &transition.to {
+                let label = if let Some(handler) = &transition.handler {
+                    format!("{}\\n({})", event_str, handler)
+                } else {
+                    event_str.clone()
+                };
+
+                output.push_str(&format!(
+                    "{} -> {}: {{\n",
+                    transition.from, to_state
+                ));
+                output.push_str(&format!("  label: \"{}\"\n", label));
+                output.push_str(&format!("  style.stroke: \"{}\"\n", color));
+                output.push_str("  style.stroke-width: 2\n");
+                output.push_str("}\n\n");
+            }
+        }
+
+        // Legend arrows
+        output.push_str("\n# Legend\n");
+        output.push_str("legend_history_start: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_history_end: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_history_start -> legend_history_end: {\n");
+        output.push_str("  label: \"History Event\"\n");
+        output.push_str("  style.stroke: \"#1565c0\"\n");
+        output.push_str("  style.stroke-width: 2\n");
+        output.push_str("}\n\n");
+
+        output.push_str("legend_command_start: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_command_end: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_command_start -> legend_command_end: {\n");
+        output.push_str("  label: \"Outgoing\\nCommand\"\n");
+        output.push_str("  style.stroke: \"#2e7d32\"\n");
+        output.push_str("  style.stroke-width: 2\n");
+        output.push_str("}\n\n");
+
+        output.push_str("legend_internal_start: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_internal_end: \"\" {style.opacity: 0}\n");
+        output.push_str("legend_internal_start -> legend_internal_end: {\n");
+        output.push_str("  label: \"Activation Completion\\nCommand /\\nInternal Trigger\"\n");
+        output.push_str("  style.stroke: \"#6a1b9a\"\n");
+        output.push_str("  style.stroke-width: 2\n");
+        output.push_str("}\n");
+
+        output
+    }
+}
+
+fn is_proto_history_event(name: &str) -> bool {
+    let screaming = to_screaming_snake(name);
+    let candidate = format!("EVENT_TYPE_{}", screaming);
+    for candidate in [candidate.clone(), candidate.replace("CANCELLED", "CANCELED")] {
+        if temporal_sdk_core_protos::temporal::api::enums::v1::EventType::from_str_name(&candidate).is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+fn to_screaming_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() * 2);
+    let mut prev_lower_or_digit = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() {
+            if prev_lower_or_digit && !out.is_empty() { out.push('_'); }
+            out.push(ch);
+            prev_lower_or_digit = false;
+        } else if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_uppercase());
+            prev_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+        } else {
+            if !out.ends_with('_') { out.push('_'); }
+            prev_lower_or_digit = false;
+        }
+    }
+    while out.contains("__") { out = out.replace("__", "_"); }
+    out.trim_matches('_').to_string()
 }
 
 impl Parse for StateMachineDefinition {
@@ -552,8 +710,6 @@ impl StateMachineDefinition {
             }
         )).collect();
 
-        let viz_str = self.visualize();
-
         let trait_impl = quote! {
             impl ::rustfsm::StateMachine for #name {
                 type Error = #err_type;
@@ -595,9 +751,7 @@ impl StateMachineDefinition {
                     Self { shared_state: shared, state: Some(state) }
                 }
 
-                fn visualizer() -> &'static str {
-                    #viz_str
-                }
+                fn visualizer() -> &'static str { "" }
             }
         };
 
@@ -625,25 +779,7 @@ impl StateMachineDefinition {
             .collect()
     }
 
-    fn visualize(&self) -> String {
-        let transitions: Vec<String> = self
-            .transitions
-            .iter()
-            .flat_map(|t| {
-                t.to.iter()
-                    .map(move |d| format!("{} --> {}: {}", t.from, d, t.event.ident))
-            })
-            // Add all final state transitions
-            .chain(
-                self.all_states()
-                    .iter()
-                    .filter(|s| self.is_final_state(s))
-                    .map(|s| format!("{s} --> [*]")),
-            )
-            .collect();
-        let transitions = transitions.join("\n");
-        format!("@startuml\n{transitions}\n@enduml")
-    }
+    // Removed PlantUML visualize output
 }
 
 /// Merge transition's dest state lists for those with the same from state & handler

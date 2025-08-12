@@ -134,3 +134,15 @@ functional. We do not currently have any firm plans to productionize this SDK. I
 workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
 time without warning and we do not provide any support guarantees.
 
+## FSM diagram generation
+
+```
+cargo generate-fsm-diagrams
+```
+
+Output directory:
+
+```
+core/src/worker/workflow/machines/diagrams
+```
+

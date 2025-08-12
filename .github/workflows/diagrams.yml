@@ -1,0 +1,44 @@
+name: Generate FSM Diagrams
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Install d2
+        run: |
+          curl -fsSL https://d2lang.com/install.sh | sh
+          echo "$HOME/.d2/bin" >> $GITHUB_PATH
+
+      - name: Generate diagrams
+        run: |
+          cargo run --bin generate-fsm-diagrams
+
+      - name: Prepare gh-pages content
+        run: |
+          mkdir -p public
+          cp -r core/src/worker/workflow/machines/diagrams/* public/
+          if [ ! -f public/index.html ]; then echo "<html><head><meta http-equiv=\"refresh\" content=\"0; url=index.html\"></head></html>" > public/index.html; fi
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          force_orphan: true
+
+
