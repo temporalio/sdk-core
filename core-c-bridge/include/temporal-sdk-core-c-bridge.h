@@ -240,6 +240,14 @@ typedef void (*TemporalCoreClientRpcCallCallback)(void *user_data,
                                                   const struct TemporalCoreByteArray *failure_message,
                                                   const struct TemporalCoreByteArray *failure_details);
 
+/**
+ * Callback for client config load operations.
+ * If success or fail are not null, they must be manually freed when done.
+ */
+typedef void (*TemporalCoreClientConfigCallback)(void *user_data,
+                                                 const struct TemporalCoreByteArray *success,
+                                                 const struct TemporalCoreByteArray *fail);
+
 typedef union TemporalCoreMetricAttributeValue {
   struct TemporalCoreByteArrayRef string_value;
   int64_t int_value;
@@ -770,6 +778,30 @@ void temporal_core_client_rpc_call(struct TemporalCoreClient *client,
                                    const struct TemporalCoreRpcCallOptions *options,
                                    void *user_data,
                                    TemporalCoreClientRpcCallCallback callback);
+
+/**
+ * Load all client profiles from given sources
+ */
+void temporal_core_client_config_load(const char *path,
+                                      struct TemporalCoreByteArrayRef data,
+                                      bool disable_file,
+                                      bool config_file_strict,
+                                      struct TemporalCoreByteArrayRef env_vars,
+                                      void *user_data,
+                                      TemporalCoreClientConfigCallback callback);
+
+/**
+ * Load a single client profile from given sources with env overrides
+ */
+void temporal_core_client_config_profile_load(const char *profile,
+                                              const char *path,
+                                              struct TemporalCoreByteArrayRef data,
+                                              bool disable_file,
+                                              bool disable_env,
+                                              bool config_file_strict,
+                                              struct TemporalCoreByteArrayRef env_vars,
+                                              void *user_data,
+                                              TemporalCoreClientConfigCallback callback);
 
 struct TemporalCoreMetricMeter *temporal_core_metric_meter_new(struct TemporalCoreRuntime *runtime);
 
