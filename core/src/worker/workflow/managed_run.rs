@@ -1,3 +1,4 @@
+use crate::worker::WorkerConfigInner;
 use crate::{
     MetricsContext,
     abstractions::dbg_panic,
@@ -28,7 +29,7 @@ use std::{
     sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::{errors::WorkflowErrorType, worker::WorkerConfig};
+use temporal_sdk_core_api::errors::WorkflowErrorType;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -99,7 +100,7 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
-    config: Arc<WorkerConfig>,
+    config: Arc<WorkerConfigInner>,
 }
 impl ManagedRun {
     pub(super) fn new(

@@ -4,12 +4,8 @@ pub mod errors;
 pub mod telemetry;
 pub mod worker;
 
-use crate::{
-    errors::{
-        CompleteActivityError, CompleteNexusError, CompleteWfError, PollError,
-        WorkerValidationError,
-    },
-    worker::WorkerConfig,
+use crate::errors::{
+    CompleteActivityError, CompleteNexusError, CompleteWfError, PollError, WorkerValidationError,
 };
 use temporal_sdk_core_protos::coresdk::{
     ActivityHeartbeat, ActivityTaskCompletion,
@@ -110,8 +106,11 @@ pub trait Worker: Send + Sync {
     /// a warning.
     fn request_workflow_eviction(&self, run_id: &str);
 
-    /// Return this worker's config
-    fn get_config(&self) -> &WorkerConfig;
+    /// Return this worker's task queue
+    fn get_task_queue(&self) -> String;
+
+    /// Return this worker's namespace
+    fn get_namespace(&self) -> String;
 
     /// Initiate shutdown. See [Worker::shutdown], this is just a sync version that starts the
     /// process. You can then wait on `shutdown` or [Worker::finalize_shutdown].

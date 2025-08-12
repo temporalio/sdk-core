@@ -126,6 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto",
                 "./protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
                 "./protos/grpc/health/v1/health.proto",
+                "./protos/api_upstream/temporal/api/worker/v1/worker_nexus_service_commands.proto"
             ],
             &[
                 "./protos/api_upstream",

@@ -1235,6 +1235,7 @@ async fn pass_activity_summary_to_metadata() {
             ..Default::default()
         })
         .await;
+
         Ok(().into())
     });
     worker

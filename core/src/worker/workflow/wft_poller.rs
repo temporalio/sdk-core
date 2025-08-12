@@ -1,3 +1,4 @@
+use crate::worker::WorkerConfigInner;
 use crate::{
     MetricsContext,
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
@@ -8,13 +9,13 @@ use crate::{
 };
 use futures_util::{Stream, stream};
 use std::sync::{Arc, OnceLock};
-use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
+use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) fn make_wft_poller(
-    config: &WorkerConfig,
+    config: &WorkerConfigInner,
     sticky_queue_name: &Option<String>,
     client: &Arc<dyn WorkerClient>,
     metrics: &MetricsContext,

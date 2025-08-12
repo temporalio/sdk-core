@@ -3254,11 +3254,12 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
             .nonsticky_to_sticky_poll_ratio(0.2)
             .no_remote_activities(true)
             .build()
-            .unwrap(),
+            .unwrap()
+            .into(),
         Some("stickytq".to_string()),
         Arc::new(mock_client),
         None,
-        None,
+        false,
     );
 
     for _ in 1..50 {

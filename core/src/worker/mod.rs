@@ -1,6 +1,6 @@
 mod activities;
 pub(crate) mod client;
-mod heartbeat;
+pub(crate) mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
@@ -20,7 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
+use crate::worker::heartbeat::WorkerHeartbeatData;
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -51,7 +51,8 @@ use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
-use std::sync::OnceLock;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicUsize;
 use std::{
     convert::TryInto,
     future,
@@ -62,6 +63,10 @@ use std::{
     time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
+use temporal_sdk_core_api::errors::WorkflowErrorType;
+use temporal_sdk_core_api::worker::{
+    WorkerDeploymentVersion, WorkerTuner, WorkerVersioningStrategy,
+};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
@@ -81,7 +86,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
 };
-use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::sync::{OnceCell, mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 #[cfg(test)]
@@ -98,7 +103,7 @@ use {
 
 /// A worker polls on a certain task queue
 pub struct Worker {
-    config: WorkerConfig,
+    config: WorkerConfigInner,
     client: Arc<dyn WorkerClient>,
     /// Registration key to enable eager workflow start for this worker
     worker_key: Mutex<Option<WorkerKey>>,
@@ -121,8 +126,206 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
-    /// Used to shutdown the worker heartbeat task
-    worker_heartbeat: Option<WorkerHeartbeatManager>,
+    worker_heartbeat_data: Option<Arc<Mutex<WorkerHeartbeatData>>>,
+    /// Used to remove this worker from the parent map used to track this worker for
+    /// worker heartbeat
+    worker_heartbeat_shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
+}
+
+/// Mirrors `WorkerConfig`, but with atomic structs to allow Worker Commands to make config changes
+/// from the server
+#[derive(Clone)]
+pub(crate) struct WorkerConfigInner {
+    /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
+    /// history updates are applied incrementally to suspended instances of workflow execution.
+    /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
+    /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
+    /// or failures.
+    pub(crate) max_cached_workflows: Arc<AtomicUsize>,
+
+    // Everything else (unchanged)
+    /// The Temporal service namespace this worker is bound to
+    pub(crate) namespace: String,
+    /// What task queue will this worker poll from? This task queue name will be used for both
+    /// workflow and activity polling.
+    pub(crate) task_queue: String,
+    /// A human-readable string that can identify this worker. Using something like sdk version
+    /// and host name is a good default. If set, overrides the identity set (if any) on the client
+    /// used by this worker.
+    pub(crate) client_identity_override: Option<String>,
+    /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
+    /// fields must be set.
+    pub(crate) tuner: Option<Arc<dyn WorkerTuner + Send + Sync>>,
+    /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
+    /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio].
+    /// If using SimpleMaximum, Must be at least 2 when `max_cached_workflows` > 0, or is an error.
+    pub(crate) workflow_task_poller_behavior: PollerBehavior,
+    /// Only applies when using [PollerBehavior::SimpleMaximum]
+    ///
+    /// (max workflow task polls * this number) = the number of max pollers that will be allowed for
+    /// the nonsticky queue when sticky tasks are enabled. If both defaults are used, the sticky
+    /// queue will allow 4 max pollers while the nonsticky queue will allow one. The minimum for
+    /// either poller is 1, so if the maximum allowed is 1 and sticky queues are enabled, there will
+    /// be 2 concurrent polls.
+    pub(crate) nonsticky_to_sticky_poll_ratio: f32,
+    /// Maximum number of concurrent poll activity task requests we will perform at a time on this
+    /// worker's task queue
+    pub(crate) activity_task_poller_behavior: PollerBehavior,
+    /// Maximum number of concurrent poll nexus task requests we will perform at a time on this
+    /// worker's task queue
+    pub(crate) nexus_task_poller_behavior: PollerBehavior,
+    /// If set to true this worker will only handle workflow tasks and local activities, it will not
+    /// poll for activity tasks.
+    pub(crate) no_remote_activities: bool,
+    /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
+    /// and moved to the non-sticky queue where it may be picked up by any worker.
+    pub(crate) sticky_queue_schedule_to_start_timeout: Duration,
+
+    /// Longest interval for throttling activity heartbeats
+    pub(crate) max_heartbeat_throttle_interval: Duration,
+
+    /// Default interval for throttling activity heartbeats in case
+    /// `ActivityOptions.heartbeat_timeout` is unset.
+    /// When the timeout *is* set in the `ActivityOptions`, throttling is set to
+    /// `heartbeat_timeout * 0.8`.
+    pub(crate) default_heartbeat_throttle_interval: Duration,
+
+    /// Sets the maximum number of activities per second the task queue will dispatch, controlled
+    /// server-side. Note that this only takes effect upon an activity poll request. If multiple
+    /// workers on the same queue have different values set, they will thrash with the last poller
+    /// winning.
+    ///
+    /// Setting this to a nonzero value will also disable eager activity execution.
+    pub(crate) max_task_queue_activities_per_second: Option<f64>,
+
+    /// Limits the number of activities per second that this worker will process. The worker will
+    /// not poll for new activities if by doing so it might receive and execute an activity which
+    /// would cause it to exceed this limit. Negative, zero, or NaN values will cause building
+    /// the options to fail.
+    pub(crate) max_worker_activities_per_second: Option<f64>,
+
+    /// If set false (default), shutdown will not finish until all pending evictions have been
+    /// issued and replied to. If set true shutdown will be considered complete when the only
+    /// remaining work is pending evictions.
+    ///
+    /// This flag is useful during tests to avoid needing to deal with lots of uninteresting
+    /// evictions during shutdown. Alternatively, if a lang implementation finds it easy to clean
+    /// up during shutdown, setting this true saves some back-and-forth.
+    pub(crate) ignore_evicts_on_shutdown: bool,
+
+    /// Maximum number of next page (or initial) history event listing requests we'll make
+    /// concurrently. I don't this it's worth exposing this to users until we encounter a reason.
+    pub(crate) fetching_concurrency: usize,
+
+    /// If set, core will issue cancels for all outstanding activities and nexus operations after
+    /// shutdown has been initiated and this amount of time has elapsed.
+    pub(crate) graceful_shutdown_period: Option<Duration>,
+
+    /// The amount of time core will wait before timing out activities using its own local timers
+    /// after one of them elapses. This is to avoid racing with server's own tracking of the
+    /// timeout.
+    pub(crate) local_timeout_buffer_for_activities: Duration,
+
+    /// Any error types listed here will cause any workflow being processed by this worker to fail,
+    /// rather than simply failing the workflow task.
+    pub(crate) workflow_failure_errors: HashSet<WorkflowErrorType>,
+
+    /// Like [WorkerConfig::workflow_failure_errors], but specific to certain workflow types (the
+    /// map key).
+    pub(crate) workflow_types_to_failure_errors: HashMap<String, HashSet<WorkflowErrorType>>,
+
+    /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
+    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
+    /// "outstanding" until all activations it requires have been completed. Must be at least 2 if
+    /// `max_cached_workflows` is > 0, or is an error.
+    ///
+    /// Mutually exclusive with `tuner`
+    pub(crate) max_outstanding_workflow_tasks: Option<usize>,
+    /// The maximum number of activity tasks that will ever be given to this worker concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    pub(crate) max_outstanding_activities: Option<usize>,
+    /// The maximum number of local activity tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    pub(crate) max_outstanding_local_activities: Option<usize>,
+    /// The maximum number of nexus tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    pub(crate) max_outstanding_nexus_tasks: Option<usize>,
+
+    /// A versioning strategy for this worker.
+    pub(crate) versioning_strategy: WorkerVersioningStrategy,
+}
+
+impl From<WorkerConfig> for WorkerConfigInner {
+    fn from(config: WorkerConfig) -> Self {
+        Self {
+            max_cached_workflows: Arc::new(AtomicUsize::new(config.max_cached_workflows)),
+
+            namespace: config.namespace,
+            task_queue: config.task_queue,
+            client_identity_override: config.client_identity_override,
+            tuner: config.tuner,
+            workflow_task_poller_behavior: config.workflow_task_poller_behavior,
+            nonsticky_to_sticky_poll_ratio: config.nonsticky_to_sticky_poll_ratio,
+            activity_task_poller_behavior: config.activity_task_poller_behavior,
+            nexus_task_poller_behavior: config.nexus_task_poller_behavior,
+            no_remote_activities: config.no_remote_activities,
+            sticky_queue_schedule_to_start_timeout: config.sticky_queue_schedule_to_start_timeout,
+            max_heartbeat_throttle_interval: config.max_heartbeat_throttle_interval,
+            default_heartbeat_throttle_interval: config.default_heartbeat_throttle_interval,
+            max_task_queue_activities_per_second: config.max_task_queue_activities_per_second,
+            max_worker_activities_per_second: config.max_worker_activities_per_second,
+            ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
+            fetching_concurrency: config.fetching_concurrency,
+            graceful_shutdown_period: config.graceful_shutdown_period,
+            local_timeout_buffer_for_activities: config.local_timeout_buffer_for_activities,
+            workflow_failure_errors: config.workflow_failure_errors,
+            workflow_types_to_failure_errors: config.workflow_types_to_failure_errors,
+            max_outstanding_workflow_tasks: config.max_outstanding_workflow_tasks,
+            max_outstanding_activities: config.max_outstanding_activities,
+            max_outstanding_local_activities: config.max_outstanding_local_activities,
+            max_outstanding_nexus_tasks: config.max_outstanding_nexus_tasks,
+            versioning_strategy: config.versioning_strategy,
+        }
+    }
+}
+
+impl WorkerConfigInner {
+    /// Returns true if the configuration specifies we should fail a workflow on a certain error
+    /// type rather than failing the workflow task.
+    pub(crate) fn should_fail_workflow(
+        &self,
+        workflow_type: &str,
+        error_type: &WorkflowErrorType,
+    ) -> bool {
+        self.workflow_failure_errors.contains(error_type)
+            || self
+                .workflow_types_to_failure_errors
+                .get(workflow_type)
+                .map(|s| s.contains(error_type))
+                .unwrap_or(false)
+    }
+
+    pub(crate) fn computed_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
+        let wdv = match self.versioning_strategy {
+            WorkerVersioningStrategy::None { ref build_id } => WorkerDeploymentVersion {
+                deployment_name: "".to_owned(),
+                build_id: build_id.clone(),
+            },
+            WorkerVersioningStrategy::WorkerDeploymentBased(ref opts) => opts.version.clone(),
+            WorkerVersioningStrategy::LegacyBuildIdBased { ref build_id } => {
+                WorkerDeploymentVersion {
+                    deployment_name: "".to_owned(),
+                    build_id: build_id.clone(),
+                }
+            }
+        };
+        if wdv.is_empty() { None } else { Some(wdv) }
+    }
 }
 
 struct AllPermitsTracker {
@@ -220,8 +423,12 @@ impl WorkerTrait for Worker {
         );
     }
 
-    fn get_config(&self) -> &WorkerConfig {
-        &self.config
+    fn get_task_queue(&self) -> String {
+        self.config.task_queue.clone()
+    }
+
+    fn get_namespace(&self) -> String {
+        self.config.namespace.clone()
     }
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
@@ -275,17 +482,17 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        shared_namespace_worker: bool,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
         Self::new_with_pollers(
-            config,
+            config.into(),
             sticky_queue_name,
             client,
             TaskPollers::Real,
             telem_instance,
-            heartbeat_fn,
+            shared_namespace_worker,
         )
     }
 
@@ -295,24 +502,27 @@ impl Worker {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
         let slot_provider = (*worker_key).and_then(|k| self.client.workers().unregister(k));
-        self.client
-            .replace_client(super::init_worker_client(&self.config, new_client));
+        self.client.replace_client(super::init_worker_client(
+            self.config.namespace.clone(),
+            self.config.client_identity_override.clone(),
+            new_client,
+        ));
         *worker_key =
             slot_provider.and_then(|slot_provider| self.client.workers().register(slot_provider));
     }
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None)
+        Self::new(config.into(), None, Arc::new(client), None, false)
     }
 
     pub(crate) fn new_with_pollers(
-        config: WorkerConfig,
+        config: WorkerConfigInner,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
+        shared_namespace_worker: bool,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -335,13 +545,20 @@ impl Worker {
             worker_identity: client.get_identity(),
             worker_deployment_version: config.computed_deployment_version(),
         });
+        let mut max_cached_workflows = config.max_cached_workflows.load(Ordering::Relaxed);
+        if max_cached_workflows == 1 {
+            // Since we always need to be able to poll the normal task queue as well as the
+            // sticky queue, we need a value of at least 2 here.
+            max_cached_workflows = 2;
+            config
+                .max_cached_workflows
+                .store(max_cached_workflows, Ordering::Relaxed);
+        }
         let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
-            if config.max_cached_workflows > 0 {
-                // Since we always need to be able to poll the normal task queue as well as the
-                // sticky queue, we need a value of at least 2 here.
-                Some(std::cmp::max(2, config.max_cached_workflows))
+            if max_cached_workflows > 0 {
+                Some(config.max_cached_workflows.clone())
             } else {
                 None
             },
@@ -404,6 +621,7 @@ impl Worker {
                 };
 
                 let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                // This starts the poller thread.
                 let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
                     client.clone(),
                     config.task_queue.clone(),
@@ -411,6 +629,7 @@ impl Worker {
                     nexus_slots.clone(),
                     shutdown_token.child_token(),
                     Some(move |np| np_metrics.record_num_pollers(np)),
+                    shared_namespace_worker,
                 )) as BoxedNexusPoller;
 
                 #[cfg(test)]
@@ -492,14 +711,15 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
 
-        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| {
-            WorkerHeartbeatManager::new(
+        let worker_heartbeat_data = if !shared_namespace_worker {
+            Some(Arc::new(Mutex::new(WorkerHeartbeatData::new(
                 config.clone(),
                 client.get_identity(),
-                heartbeat_fn,
-                client.clone(),
-            )
-        });
+                sdk_name_and_ver.clone(),
+            ))))
+        } else {
+            None
+        };
 
         Self {
             worker_key,
@@ -557,7 +777,8 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
-            worker_heartbeat,
+            worker_heartbeat_data,
+            worker_heartbeat_shutdown_callback: OnceCell::new(),
         }
     }
 
@@ -602,8 +823,9 @@ impl Worker {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
         }
-        if let Some(heartbeat) = self.worker_heartbeat.as_ref() {
-            heartbeat.shutdown();
+        // If this worker is tracked by SharedNamespaceWorker, remove entry from SharedNamespaceWorker
+        if let Some(shutdown_callback) = self.worker_heartbeat_shutdown_callback.get() {
+            shutdown_callback();
         }
     }
 
@@ -859,6 +1081,19 @@ impl Worker {
         }
         Ok(())
     }
+
+    pub(crate) fn get_heartbeat_data(&self) -> Option<Arc<Mutex<WorkerHeartbeatData>>> {
+        self.worker_heartbeat_data.clone()
+    }
+
+    pub(crate) fn register_heartbeat_shutdown_callback(
+        &mut self,
+        callback: Arc<dyn Fn() + Send + Sync>,
+    ) {
+        if let Err(e) = self.worker_heartbeat_shutdown_callback.set(callback) {
+            dbg_panic!("Unable to set worker heartbeat shutdown callback: {}", e);
+        }
+    }
 }
 
 pub(crate) struct PostActivateHookData<'a> {
@@ -876,7 +1111,7 @@ pub(crate) enum TaskPollers {
     },
 }
 
-fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior {
+fn wft_poller_behavior(config: &WorkerConfigInner, is_sticky: bool) -> PollerBehavior {
     fn calc_max_nonsticky(max_polls: usize, ratio: f32) -> usize {
         ((max_polls as f32 * ratio) as usize).max(1)
     }
@@ -957,7 +1192,8 @@ mod tests {
         let cfg = test_worker_cfg()
             .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(5_usize))
             .build()
-            .unwrap();
+            .unwrap()
+            .into();
         assert_eq!(
             wft_poller_behavior(&cfg, false),
             PollerBehavior::SimpleMaximum(1)
