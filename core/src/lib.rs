@@ -103,7 +103,9 @@ where
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 
-    let heartbeat_fn = Arc::new(OnceLock::new());
+    let heartbeat_fn = worker_config
+        .heartbeat_interval
+        .map(|_| Arc::new(OnceLock::new()));
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
@@ -118,7 +120,7 @@ where
         sticky_q,
         client_bag,
         Some(&runtime.telemetry),
-        Some(heartbeat_fn),
+        heartbeat_fn,
     ))
 }
 
