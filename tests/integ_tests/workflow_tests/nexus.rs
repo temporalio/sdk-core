@@ -765,8 +765,14 @@ async fn nexus_cancellation_types(
             );
             assert_eq!(f.message, "Nexus operation cancelled after starting");
         }
-        NexusOperationCancellationType::WaitCancellationRequested
-        | NexusOperationCancellationType::WaitCancellationCompleted => {
+        NexusOperationCancellationType::WaitCancellationRequested => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Cancelled(f)) => f
+            );
+            assert_eq!(f.message, "Nexus operation cancellation request completed");
+        }
+        NexusOperationCancellationType::WaitCancellationCompleted => {
             let f = assert_matches!(
                 res.status,
                 Some(nexus_operation_result::Status::Cancelled(f)) => f
