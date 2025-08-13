@@ -24,6 +24,7 @@ use temporal_sdk_core_protos::{
             NexusOperationCanceledEventAttributes, NexusOperationCompletedEventAttributes,
             NexusOperationFailedEventAttributes, NexusOperationStartedEventAttributes,
             NexusOperationTimedOutEventAttributes, history_event,
+            NexusOperationCancelRequestCompletedEventAttributes,
         },
     },
 };
@@ -63,6 +64,11 @@ fsm! {
       --(NexusOperationFailed(NexusOperationFailedEventAttributes), on_failed)--> Failed;
     Started
       --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), on_canceled)--> Cancelled;
+
+
+    Started --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), shared on_cancel_request_completed)--> Started;
+    Started --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), shared on_cancel_request_completed)--> Cancelled;
+
     Started
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
 
@@ -72,6 +78,7 @@ fsm! {
     Cancelled --(NexusOperationCompleted(NexusOperationCompletedEventAttributes), shared on_completed)--> Cancelled;
     Cancelled --(NexusOperationFailed(NexusOperationFailedEventAttributes), shared on_failed)--> Cancelled;
     Cancelled --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), shared on_timed_out)--> Cancelled;
+    Cancelled --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), on_cancel_request_completed)--> Cancelled;
     Cancelled --(NexusOperationCanceled(NexusOperationCanceledEventAttributes))--> Cancelled;
 
     // Ignore cancels in all terminal states
@@ -311,6 +318,21 @@ impl Started {
         )])
     }
 
+    pub(super) fn on_cancel_request_completed(self, ss: &SharedState, _: NexusOperationCancelRequestCompletedEventAttributes,) -> NexusOperationMachineTransition<StartedOrCancelled> {
+        if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
+            TransitionResult::ok(
+                [NexusOperationCommand::Cancel(
+                    ss.cancelled_failure(
+                        "Nexus operation cancellation request completed".to_owned()
+                    ),
+                )],
+                StartedOrCancelled::Cancelled(Default::default()),
+            )
+        } else {
+            TransitionResult::ok([], StartedOrCancelled::Started(Default::default()))
+        }
+    }
+
     pub(super) fn on_timed_out(
         self,
         toa: NexusOperationTimedOutEventAttributes,
@@ -353,6 +375,10 @@ impl Cancelled {
         if ss.cancel_type == NexusOperationCancellationType::Abandon {
             return NexusOperationMachineTransition::Err(completion_of_not_abandoned_err());
         }
+        NexusOperationMachineTransition::ok([], self)
+    }
+
+    pub(super) fn on_cancel_request_completed(self, _: NexusOperationCancelRequestCompletedEventAttributes) -> NexusOperationMachineTransition<Cancelled> {
         NexusOperationMachineTransition::ok([], self)
     }
 
@@ -454,6 +480,21 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 }
             }
             Ok(EventType::NexusOperationCancelRequested) => Self::NexusOperationCancelRequested,
+            Ok(EventType::NexusOperationCancelRequestCompleted) => {
+                if let Some(
+                    history_event::Attributes::NexusOperationCancelRequestCompletedEventAttributes(
+                        attrs,
+                    ),
+                ) = e.attributes
+                {
+                    Self::NexusOperationCancelRequestCompleted(attrs)
+                } else {
+                    return Err(WFMachinesError::Nondeterminism(
+                        "NexusOperationCancelRequestCompleted attributes were unset or malformed"
+                            .to_string(),
+                    ));
+                }
+            }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Nexus operation machine does not handle this event: {e:?}"
