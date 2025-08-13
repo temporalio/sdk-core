@@ -121,7 +121,9 @@ impl WorkerHeartbeatData {
             start_time: SystemTime::now(),
             heartbeat_time: None,
             worker_instance_key: Uuid::new_v4().to_string(),
-            heartbeat_interval: worker_config.heartbeat_interval.expect("WorkerHeartbeatData is only called when heartbeat_interval is Some"),
+            heartbeat_interval: worker_config
+                .heartbeat_interval
+                .expect("WorkerHeartbeatData is only called when heartbeat_interval is Some"),
             reset_notify,
         }
     }

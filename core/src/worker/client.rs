@@ -139,7 +139,6 @@ impl WorkerClientBag {
         } else {
             None
         }
-
     }
 }
 
