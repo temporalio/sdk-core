@@ -244,12 +244,12 @@ impl Runtime {
 
         // We late-bind the metrics after core runtime is created since it needs
         // the Tokio handle
-        if let Some(v) = unsafe { options.telemetry.as_ref() } {
-            if let Some(v) = unsafe { v.metrics.as_ref() } {
-                let _guard = core.tokio_handle().enter();
-                core.telemetry_mut()
-                    .attach_late_init_metrics(create_meter(v, custom_meter)?);
-            }
+        if let Some(v) = unsafe { options.telemetry.as_ref() }
+            && let Some(v) = unsafe { v.metrics.as_ref() }
+        {
+            let _guard = core.tokio_handle().enter();
+            core.telemetry_mut()
+                .attach_late_init_metrics(create_meter(v, custom_meter)?);
         }
 
         // Create runtime
