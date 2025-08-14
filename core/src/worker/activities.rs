@@ -726,14 +726,14 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer,
         pollers::{ActivityTaskOptions, LongPollBuffer},
         prost_dur,
-        worker::client::mocks::mock_workflow_client,
+        worker::client::mocks::mock_worker_client,
     };
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
     async fn per_worker_ratelimit() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_poll_activity_task()
             .times(1)
@@ -812,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_timeouts() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_poll_activity_task()
             .times(1)
@@ -902,7 +902,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_timeout_heartbeating() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_poll_activity_task()
             .times(1)

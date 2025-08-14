@@ -2263,6 +2263,78 @@ pub mod temporal {
                             _ => false,
                         }
                     }
+
+                    pub fn is_ignorable(&self) -> bool {
+                        if !self.worker_may_ignore {
+                            return false;
+                        }
+                        // Never add a catch-all case to this match statement. We need to explicitly
+                        // mark any new event types as ignorable or not.
+                        if let Some(a) = self.attributes.as_ref() {
+                            match a {
+                                Attributes::WorkflowExecutionStartedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionCompletedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionFailedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionTimedOutEventAttributes(_) => false,
+                                Attributes::WorkflowTaskScheduledEventAttributes(_) => false,
+                                Attributes::WorkflowTaskStartedEventAttributes(_) => false,
+                                Attributes::WorkflowTaskCompletedEventAttributes(_) => false,
+                                Attributes::WorkflowTaskTimedOutEventAttributes(_) => false,
+                                Attributes::WorkflowTaskFailedEventAttributes(_) => false,
+                                Attributes::ActivityTaskScheduledEventAttributes(_) => false,
+                                Attributes::ActivityTaskStartedEventAttributes(_) => false,
+                                Attributes::ActivityTaskCompletedEventAttributes(_) => false,
+                                Attributes::ActivityTaskFailedEventAttributes(_) => false,
+                                Attributes::ActivityTaskTimedOutEventAttributes(_) => false,
+                                Attributes::TimerStartedEventAttributes(_) => false,
+                                Attributes::TimerFiredEventAttributes(_) => false,
+                                Attributes::ActivityTaskCancelRequestedEventAttributes(_) => false,
+                                Attributes::ActivityTaskCanceledEventAttributes(_) => false,
+                                Attributes::TimerCanceledEventAttributes(_) => false,
+                                Attributes::MarkerRecordedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionSignaledEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionTerminatedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionCancelRequestedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionCanceledEventAttributes(_) => false,
+                                Attributes::RequestCancelExternalWorkflowExecutionInitiatedEventAttributes(_) => false,
+                                Attributes::RequestCancelExternalWorkflowExecutionFailedEventAttributes(_) => false,
+                                Attributes::ExternalWorkflowExecutionCancelRequestedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionContinuedAsNewEventAttributes(_) => false,
+                                Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(_) => false,
+                                Attributes::StartChildWorkflowExecutionFailedEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionStartedEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionCompletedEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionFailedEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionCanceledEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionTimedOutEventAttributes(_) => false,
+                                Attributes::ChildWorkflowExecutionTerminatedEventAttributes(_) => false,
+                                Attributes::SignalExternalWorkflowExecutionInitiatedEventAttributes(_) => false,
+                                Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => false,
+                                Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => false,
+                                Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => false,
+                                Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => false,
+                                Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => false,
+                                Attributes::WorkflowPropertiesModifiedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => false,
+                                Attributes::NexusOperationScheduledEventAttributes(_) => false,
+                                Attributes::NexusOperationStartedEventAttributes(_) => false,
+                                Attributes::NexusOperationCompletedEventAttributes(_) => false,
+                                Attributes::NexusOperationFailedEventAttributes(_) => false,
+                                Attributes::NexusOperationCanceledEventAttributes(_) => false,
+                                Attributes::NexusOperationTimedOutEventAttributes(_) => false,
+                                Attributes::NexusOperationCancelRequestedEventAttributes(_) => false,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => true,
+                                Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => false,
+                                Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => false,
+                            }
+                        } else {
+                            false
+                        }
+                    }
                 }
 
                 impl Display for HistoryEvent {
@@ -2443,10 +2515,13 @@ pub mod temporal {
         }
         pub mod nexus {
             pub mod v1 {
-                use crate::temporal::api::{
-                    common,
-                    common::v1::link::{WorkflowEvent, workflow_event},
-                    enums::v1::EventType,
+                use crate::{
+                    camel_case_to_screaming_snake,
+                    temporal::api::{
+                        common,
+                        common::v1::link::{WorkflowEvent, workflow_event},
+                        enums::v1::EventType,
+                    },
                 };
                 use anyhow::{anyhow, bail};
                 use std::fmt::{Display, Formatter};
@@ -2540,12 +2615,20 @@ pub mod temporal {
                                     })?;
                                 }
                                 "eventType" => {
-                                    eventref.event_type =
-                                        EventType::from_str_name(val).unwrap_or_default().into()
+                                    eventref.event_type = EventType::from_str_name(val)
+                                        .unwrap_or_else(|| {
+                                            EventType::from_str_name(
+                                                &("EVENT_TYPE_".to_string()
+                                                    + &camel_case_to_screaming_snake(val)),
+                                            )
+                                            .unwrap_or_default()
+                                        })
+                                        .into()
                                 }
                                 _ => continue,
                             }
                         }
+                        dbg!(&eventref);
                         Some(workflow_event::Reference::EventRef(eventref))
                     } else {
                         None

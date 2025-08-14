@@ -1,5 +1,6 @@
 mod activities;
 pub(crate) mod client;
+mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
@@ -19,6 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
+use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
@@ -41,10 +43,15 @@ use crate::{
         },
     },
 };
+use crate::{
+    pollers::{ActivityTaskOptions, LongPollBuffer},
+    worker::workflow::wft_poller,
+};
 use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
+use std::sync::OnceLock;
 use std::{
     convert::TryInto,
     future,
@@ -77,11 +84,6 @@ use temporal_sdk_core_protos::{
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-
-use crate::{
-    pollers::{ActivityTaskOptions, LongPollBuffer},
-    worker::workflow::wft_poller,
-};
 #[cfg(test)]
 use {
     crate::{
@@ -119,6 +121,8 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
+    /// Used to shutdown the worker heartbeat task
+    worker_heartbeat: Option<WorkerHeartbeatManager>,
 }
 
 struct AllPermitsTracker {
@@ -271,6 +275,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -280,6 +285,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
+            heartbeat_fn,
         )
     }
 
@@ -297,7 +303,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None)
+        Self::new(config, None, Arc::new(client), None, None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -306,6 +312,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_fn: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
@@ -325,7 +332,7 @@ impl Worker {
         let shutdown_token = CancellationToken::new();
         let slot_context_data = Arc::new(PermitDealerContextData {
             task_queue: config.task_queue.clone(),
-            worker_identity: config.client_identity_override.clone().unwrap_or_default(),
+            worker_identity: client.get_identity(),
             worker_deployment_version: config.computed_deployment_version(),
         });
         let wft_slots = MeteredPermitDealer::new(
@@ -437,17 +444,17 @@ impl Worker {
         };
 
         let (hb_tx, hb_rx) = unbounded_channel();
-        let la_pemit_dealer = MeteredPermitDealer::new(
+        let la_permit_dealer = MeteredPermitDealer::new(
             tuner.local_activity_slot_supplier(),
             metrics.with_new_attrs([local_activity_worker_type()]),
             None,
-            slot_context_data,
+            slot_context_data.clone(),
             meter.clone(),
         );
-        let la_permits = la_pemit_dealer.get_extant_count_rcv();
+        let la_permits = la_permit_dealer.get_extant_count_rcv();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.namespace.clone(),
-            la_pemit_dealer,
+            la_permit_dealer,
             hb_tx,
             metrics.clone(),
         ));
@@ -484,6 +491,16 @@ impl Worker {
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
+
+        let worker_heartbeat = heartbeat_fn.map(|heartbeat_fn| {
+            WorkerHeartbeatManager::new(
+                config.clone(),
+                client.get_identity(),
+                heartbeat_fn,
+                client.clone(),
+            )
+        });
+
         Self {
             worker_key,
             client: client.clone(),
@@ -540,6 +557,7 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
+            worker_heartbeat,
         }
     }
 
@@ -583,6 +601,9 @@ impl Worker {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
+        }
+        if let Some(heartbeat) = self.worker_heartbeat.as_ref() {
+            heartbeat.shutdown();
         }
     }
 
@@ -883,7 +904,7 @@ mod tests {
     use crate::{
         advance_fut,
         test_help::test_worker_cfg,
-        worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+        worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
     };
     use futures_util::FutureExt;
     use temporal_sdk_core_api::worker::PollerBehavior;
@@ -891,7 +912,7 @@ mod tests {
 
     #[tokio::test]
     async fn activity_timeouts_maintain_permit() {
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_poll_activity_task()
             .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
@@ -913,7 +934,7 @@ mod tests {
     async fn activity_errs_dont_eat_permits() {
         // Return one error followed by simulating waiting on the poll, otherwise the poller will
         // loop very fast and be in some indeterminate state.
-        let mut mock_client = mock_manual_workflow_client();
+        let mut mock_client = mock_manual_worker_client();
         mock_client
             .expect_poll_activity_task()
             .returning(|_, _| async { Err(tonic::Status::internal("ahhh")) }.boxed())

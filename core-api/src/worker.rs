@@ -161,6 +161,12 @@ pub struct WorkerConfig {
 
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
+
+    /// The interval within which the worker will send a heartbeat.
+    /// The timer is reset on each existing RPC call that also happens to send this data, like
+    /// `PollWorkflowTaskQueueRequest`.
+    #[builder(default = "Duration::from_secs(60)")]
+    pub heartbeat_interval: Duration,
 }
 
 impl WorkerConfig {
@@ -454,25 +460,25 @@ pub enum SlotInfo<'a> {
 }
 
 pub trait SlotInfoTrait: prost::Message {
-    fn downcast(&self) -> SlotInfo;
+    fn downcast(&self) -> SlotInfo<'_>;
 }
 impl SlotInfoTrait for WorkflowSlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Workflow(self)
     }
 }
 impl SlotInfoTrait for ActivitySlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Activity(self)
     }
 }
 impl SlotInfoTrait for LocalActivitySlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::LocalActivity(self)
     }
 }
 impl SlotInfoTrait for NexusSlotInfo {
-    fn downcast(&self) -> SlotInfo {
+    fn downcast(&self) -> SlotInfo<'_> {
         SlotInfo::Nexus(self)
     }
 }

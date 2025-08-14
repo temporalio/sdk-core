@@ -423,14 +423,14 @@ impl Context {
     fn wait_while(
         &self,
         condition: impl FnMut(&mut InnerContext) -> bool,
-    ) -> anyhow::Result<MutexGuard<InnerContext>> {
+    ) -> anyhow::Result<MutexGuard<'_, InnerContext>> {
         self.inner
             .lock()
             .and_then(|lock| self.condvar.wait_while(lock, condition))
             .map_err(|_| anyhow!("Context mutex poisoned"))
     }
 
-    fn wait_for_available(&self) -> anyhow::Result<MutexGuard<InnerContext>> {
+    fn wait_for_available(&self) -> anyhow::Result<MutexGuard<'_, InnerContext>> {
         let guard = self.wait_while(|inner| {
             !matches!(inner.operation_state, ContextOperationState::Available) && !inner.is_disposed
         })?;

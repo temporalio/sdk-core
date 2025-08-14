@@ -10,7 +10,7 @@ use crate::{
         TaskPollers,
         client::{
             LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
-            mocks::mock_workflow_client,
+            mocks::mock_worker_client,
         },
     },
 };
@@ -179,6 +179,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
                 .nexus_poller
                 .unwrap_or_else(|| mock_poller_from_resps([])),
         },
+        None,
         None,
     )
 }
@@ -430,7 +431,7 @@ impl MockPollCfg {
             enforce_correct_number_of_polls,
             num_expected_fails,
             num_expected_legacy_query_resps: 0,
-            mock_client: mock_workflow_client(),
+            mock_client: mock_worker_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             expect_legacy_query_matcher: Box::new(|_, _| true),
             completion_mock_fn: None,
@@ -444,14 +445,14 @@ impl MockPollCfg {
     pub(crate) fn from_hist_builder(t: TestHistoryBuilder) -> Self {
         let full_hist_info = t.get_full_history_info().unwrap();
         let tasks = 1..=full_hist_info.wf_task_count();
-        Self::from_resp_batches("fake_wf_id", t, tasks, mock_workflow_client())
+        Self::from_resp_batches("fake_wf_id", t, tasks, mock_worker_client())
     }
 
     pub(crate) fn from_resps(
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
     ) -> Self {
-        Self::from_resp_batches("fake_wf_id", t, resps, mock_workflow_client())
+        Self::from_resp_batches("fake_wf_id", t, resps, mock_worker_client())
     }
 
     pub(crate) fn from_resp_batches(
@@ -955,10 +956,8 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
 
             worker.complete_workflow_activation(reply).await.unwrap();
 
-            if do_release {
-                if let Some(omap) = outstanding_map.as_ref() {
-                    omap.release_run(&res.run_id);
-                }
+            if do_release && let Some(omap) = outstanding_map.as_ref() {
+                omap.release_run(&res.run_id);
             }
             // Restart assertions from the beginning if it was an eviction (and workflow execution
             // isn't over)

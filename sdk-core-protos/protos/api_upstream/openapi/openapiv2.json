@@ -7606,7 +7606,11 @@
           "description": "The identity of the client who initiated this request."
         },
         "workerHeartbeat": {
-          "$ref": "#/definitions/v1WorkerHeartbeat"
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkerHeartbeat"
+          }
         }
       }
     },
@@ -15410,9 +15414,13 @@
           "type": "string",
           "description": "Worker host identifier."
         },
+        "processKey": {
+          "type": "string",
+          "title": "Worker process identifier. This id should be unique for all _processes_\nrunning workers in the namespace, and should be shared by all workers\nin the same process.\nThis will be used to build the worker command nexus task queue name:\n\"temporal-sys/worker-commands/{process_key}\""
+        },
         "processId": {
           "type": "string",
-          "description": "Worker process identifier, should be unique for the host."
+          "description": "Worker process identifier. Unlike process_key, this id only needs to be unique\nwithin one host (so using e.g. a unix pid would be appropriate)."
         },
         "currentHostCpuUsage": {
           "type": "number",

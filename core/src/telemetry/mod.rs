@@ -152,7 +152,7 @@ pub fn set_trace_subscriber_for_current_thread(sub: impl Subscriber + Send + Syn
 
 /// Undoes [set_trace_subscriber_for_current_thread]
 pub fn remove_trace_subscriber_for_current_thread() {
-    SUB_GUARD.with(|sg| sg.take());
+    SUB_GUARD.take();
 }
 
 impl CoreTelemetry for TelemetryInstance {

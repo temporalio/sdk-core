@@ -395,7 +395,7 @@ impl WorkflowMachines {
         self.current_started_event_id
     }
 
-    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent<'_> {
         MachinesWFTResponseContent {
             replaying: self.replaying,
             has_pending_jobs: self.has_pending_jobs(),
@@ -838,6 +838,9 @@ impl WorkflowMachines {
         let event = &event_dat.event;
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
+        }
+        if event.is_ignorable() {
+            return Ok(EventHandlingOutcome::Normal);
         }
         if matches!(
             event.event_type(),

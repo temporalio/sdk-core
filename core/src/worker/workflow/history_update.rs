@@ -686,6 +686,7 @@ impl NextWFTSeqEndIndex {
 }
 
 /// Discovers the index of the last event in next WFT sequence within the passed-in slice
+/// For more on workflow task chunking, see arch_docs/workflow_task_chunking.md
 fn find_end_index_of_next_wft_seq(
     events: &[HistoryEvent],
     from_event_id: i64,
@@ -718,11 +719,6 @@ fn find_end_index_of_next_wft_seq(
             return NextWFTSeqEndIndex::Complete(last_index);
         }
 
-        // TODO: Emergency undo for boundary calculation change. Remove if no problems after a bit.
-        if std::env::var("TEMPORAL_NO_WFT_BOUNDARY_CHANGE").is_ok() {
-            saw_command = false;
-        }
-
         if e.event_type() == EventType::WorkflowTaskStarted {
             wft_started_event_id_to_index.push((e.event_id, ix));
             if let Some(next_event) = events.get(ix + 1) {
@@ -737,6 +733,9 @@ fn find_end_index_of_next_wft_seq(
                         | EventType::WorkflowExecutionTerminated
                         | EventType::WorkflowExecutionCanceled
                 ) {
+                    // Since we're skipping this WFT, we don't want to include it in the vec used
+                    // for update accepted sequencing lookups.
+                    wft_started_event_id_to_index.pop();
                     continue;
                 } else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
@@ -761,7 +760,12 @@ fn find_end_index_of_next_wft_seq(
                                 ),
                             ) = next_next_event.attributes
                             {
-                                // Find index of closest WFT started before sequencing id
+                                // Find index of closest unskipped WFT started before sequencing id.
+                                // The fact that the WFT wasn't skipped is important. If it was, we
+                                // need to avoid stopping at that point even though that's where the
+                                // update was sequenced. If we did, we'll fail to actually include
+                                // the update accepted event and therefore fail to generate the
+                                // request to run the update handler on replay.
                                 if let Some(ret_ix) = wft_started_event_id_to_index
                                     .iter()
                                     .rev()
@@ -803,7 +807,7 @@ mod tests {
     use crate::{
         replay::{HistoryInfo, TestHistoryBuilder},
         test_help::{MockPollCfg, ResponseType, canned_histories, hist_to_poll_resp, mock_sdk_cfg},
-        worker::client::mocks::mock_workflow_client,
+        worker::client::mocks::mock_worker_client,
     };
     use futures_util::{StreamExt, TryStreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -965,7 +969,7 @@ mod tests {
         let wft_started = hinfo.workflow_task_started_event_id();
         let full_hist = hinfo.into_events();
         let initial_hist = full_hist.chunks(chunk_size).next().unwrap().to_vec();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         let mut npt = 1;
         mock_client
@@ -1162,7 +1166,7 @@ mod tests {
         // Chop off the last event, which is WFT started, which server doesn't return in get
         // history
         history_from_get.history.as_mut().map(|h| h.events.pop());
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(history_from_get.clone()));
@@ -1220,7 +1224,7 @@ mod tests {
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
         let wft_started_id = partial_task.workflow_task_started_event_id();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(Default::default()));
@@ -1247,7 +1251,7 @@ mod tests {
         let wft_started_id = partial_task.workflow_task_started_event_id();
         let full_resp: GetWorkflowExecutionHistoryResponse =
             timer_hist.get_full_history_info().unwrap().into();
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| {
@@ -1296,7 +1300,7 @@ mod tests {
             timer_hist.get_full_history_info().unwrap().into();
         full_resp_with_npt.next_page_token = vec![1];
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(full_resp_with_npt.clone()))
@@ -1375,7 +1379,7 @@ mod tests {
         resp_1.next_page_token = vec![1];
         resp_1.history.as_mut().unwrap().events.truncate(4);
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(resp_1.clone()))
@@ -1486,7 +1490,7 @@ mod tests {
         t.add_we_signaled("hi", vec![]);
         t.add_workflow_task_scheduled_and_started();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
         let first_event = events[0].clone();
@@ -1602,7 +1606,7 @@ mod tests {
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
         let first_event = events[0].clone();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
 
         for (i, event) in events.into_iter().enumerate() {
             // Add an empty page
@@ -1722,7 +1726,7 @@ mod tests {
             t.get_full_history_info().unwrap().into();
         resp_1.next_page_token = vec![2];
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(resp_1.clone()))
@@ -1765,7 +1769,7 @@ mod tests {
         let workflow_task = t.get_full_history_info().unwrap();
         let prev_started_wft_id = workflow_task.previous_started_event_id();
         let wft_started_id = workflow_task.workflow_task_started_event_id();
-        let mock_client = mock_workflow_client();
+        let mock_client = mock_worker_client();
         let mut paginator = HistoryPaginator::new(
             workflow_task.into(),
             prev_started_wft_id,
@@ -1802,7 +1806,7 @@ mod tests {
         let full_resp: GetWorkflowExecutionHistoryResponse =
             t.get_full_history_info().unwrap().into();
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         mock_client
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(full_resp.clone()))
@@ -1839,7 +1843,7 @@ mod tests {
         let incremental_task =
             hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::OneTask(3)).resp;
 
-        let mut mock_client = mock_workflow_client();
+        let mut mock_client = mock_worker_client();
         let mut one_task_resp: GetWorkflowExecutionHistoryResponse =
             t.get_history_info(1).unwrap().into();
         one_task_resp.next_page_token = vec![1];
@@ -1876,5 +1880,53 @@ mod tests {
         assert_eq!(seq.last().unwrap().event_id, 7);
         let seq = next_check_peek(&mut update, 7);
         assert_eq!(seq.last().unwrap().event_id, 11);
+    }
+
+    #[tokio::test]
+    async fn wft_fail_on_first_task_with_update() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_task_failed_with_failure(
+            WorkflowTaskFailedCause::Unspecified,
+            Default::default(),
+        );
+        t.add_full_wf_task();
+        let accept_id = t.add_update_accepted("1", "upd");
+        let timer_id = t.add_timer_started("1".to_string());
+        t.add_update_completed(accept_id);
+        t.add_timer_fired(timer_id, "1".to_string());
+        t.add_full_wf_task();
+
+        let mut update = t.as_history_update();
+        let seq = next_check_peek(&mut update, 0);
+        // In this case, we expect to see up to the task with update, since the task failure
+        // should be skipped. This means that the peek of the _next_ task will include the update
+        // and thus properly synthesize the update request with the first activation.
+        assert_eq!(seq.len(), 6);
+        let seq = next_check_peek(&mut update, 6);
+        assert_eq!(seq.len(), 7);
+    }
+
+    #[test]
+    fn update_accepted_after_empty_wft() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        let accept_id = t.add_update_accepted("1", "upd");
+        let timer_id = t.add_timer_started("1".to_string());
+        t.add_update_completed(accept_id);
+        t.add_timer_fired(timer_id, "1".to_string());
+        t.add_full_wf_task();
+
+        let mut update = t.as_history_update();
+        let seq = next_check_peek(&mut update, 0);
+        // unlike the case with a wft failure, here the first task should not extend through to
+        // the update, because here the first empty WFT happened with _just_ the workflow init,
+        // not also with the update.
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.len(), 3);
     }
 }

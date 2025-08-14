@@ -2,7 +2,7 @@ use crate::{
     internal_flags::CoreInternalFlags,
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{MockPollCfg, ResponseType, canned_histories, mock_sdk, mock_sdk_cfg},
-    worker::client::mocks::mock_workflow_client,
+    worker::client::mocks::mock_worker_client,
 };
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -40,7 +40,7 @@ async fn test_panic_wf_task_rejected_properly() {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::workflow_fails_with_failure_after_timer("1");
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
     // We should see one wft failure which has unspecified cause, since panics don't have a defined
     // type.
@@ -72,7 +72,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_timer_wf_completes("1");
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -131,7 +131,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
         canned_histories::single_activity("1")
     };
     t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -214,7 +214,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let mut t = canned_histories::single_child_workflow("1");
     t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
-    let mock = mock_workflow_client();
+    let mock = mock_worker_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
         t,
@@ -289,7 +289,7 @@ async fn repro_channel_missing_because_nondeterminism() {
         let _ts = t.add_by_type(EventType::TimerStarted);
         t.add_workflow_task_scheduled_and_started();
 
-        let mock = mock_workflow_client();
+        let mock = mock_worker_client();
         let mut mh =
             MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
         mh.num_expected_fails = 1;

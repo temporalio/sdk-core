@@ -3,7 +3,7 @@ use crate::{
         MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, canned_histories,
         hist_to_poll_resp, mock_worker,
     },
-    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
 use rstest::{fixture, rstest};
 use std::{collections::VecDeque, time::Duration};
@@ -94,7 +94,7 @@ async fn replay_flag_correct_with_query() {
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
     ]);
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
     mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
@@ -139,7 +139,7 @@ async fn replay_flag_correct_signal_before_query_ending_on_wft_completed() {
         pr
     };
 
-    let mut mock = MockPollCfg::from_resp_batches(wfid, t, [task], mock_workflow_client());
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, [task], mock_worker_client());
     mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);

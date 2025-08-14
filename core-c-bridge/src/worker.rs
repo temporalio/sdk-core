@@ -1,35 +1,37 @@
-use crate::ByteArray;
-use crate::ByteArrayRef;
-use crate::ByteArrayRefArray;
-use crate::UserDataHandle;
-use crate::client::Client;
-use crate::runtime::Runtime;
+use crate::{
+    ByteArray, ByteArrayRef, ByteArrayRefArray, UserDataHandle, client::Client, runtime::Runtime,
+};
 use anyhow::{Context, bail};
 use prost::Message;
-use temporal_sdk_core::WorkerConfigBuilder;
-use temporal_sdk_core::replay::HistoryForReplay;
-use temporal_sdk_core::replay::ReplayWorkerInput;
-use temporal_sdk_core_api::Worker as CoreWorker;
-use temporal_sdk_core_api::errors::PollError;
-use temporal_sdk_core_api::errors::WorkflowErrorType;
-use temporal_sdk_core_api::worker::SlotInfoTrait;
-use temporal_sdk_core_api::worker::SlotKind;
-use temporal_sdk_core_api::worker::SlotMarkUsedContext;
-use temporal_sdk_core_api::worker::SlotReleaseContext;
-use temporal_sdk_core_api::worker::SlotReservationContext;
-use temporal_sdk_core_api::worker::SlotSupplierPermit;
-use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
-use temporal_sdk_core_protos::coresdk::ActivityTaskCompletion;
-use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
-use temporal_sdk_core_protos::temporal::api::history::v1::History;
-use tokio::sync::mpsc::{Sender, channel};
-use tokio::sync::oneshot;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
+use temporal_sdk_core::{
+    WorkerConfigBuilder,
+    replay::{HistoryForReplay, ReplayWorkerInput},
+};
+use temporal_sdk_core_api::{
+    Worker as CoreWorker,
+    errors::{PollError, WorkflowErrorType},
+    worker::{
+        SlotInfoTrait, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
+        SlotSupplierPermit,
+    },
+};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        ActivityHeartbeat, ActivityTaskCompletion,
+        workflow_completion::WorkflowActivationCompletion,
+    },
+    temporal::api::history::v1::History,
+};
+use tokio::sync::{
+    mpsc::{Sender, channel},
+    oneshot,
+};
 use tokio_stream::wrappers::ReceiverStream;
-
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::time::Duration;
 
 #[repr(C)]
 pub struct WorkerOptions {
@@ -418,11 +420,16 @@ pub struct WorkerReplayPushResult {
     pub fail: *const ByteArray,
 }
 
+/// Should be called at the top of any C bridge call that will need to use the tokio runtime from
+/// the Core runtime provided as an argument. Also sets up tracing for the duration of the scope in
+/// which the call was made.
 macro_rules! enter_sync {
     ($runtime:expr) => {
-        if let Some(subscriber) = $runtime.core.telemetry().trace_subscriber() {
-            temporal_sdk_core::telemetry::set_trace_subscriber_for_current_thread(subscriber);
-        }
+        let _trace_guard = $runtime
+            .core
+            .telemetry()
+            .trace_subscriber()
+            .map(|s| tracing::subscriber::set_default(s));
         let _guard = $runtime.core.tokio_handle().enter();
     };
 }

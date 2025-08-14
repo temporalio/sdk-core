@@ -116,7 +116,7 @@ pub struct ClientOptions {
     pub client_version: String,
 
     /// A human-readable string that can identify this process. Defaults to empty string.
-    #[builder(default)]
+    #[builder(setter(into), default)]
     pub identity: String,
 
     /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will

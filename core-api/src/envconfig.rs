@@ -72,6 +72,12 @@ pub enum ConfigError {
     LoadError(Box<dyn std::error::Error>),
 }
 
+impl From<std::env::VarError> for ConfigError {
+    fn from(e: std::env::VarError) -> Self {
+        Self::LoadError(e.into())
+    }
+}
+
 impl From<std::str::Utf8Error> for ConfigError {
     fn from(e: std::str::Utf8Error) -> Self {
         Self::LoadError(e.into())
@@ -198,6 +204,33 @@ pub struct ClientConfigFromTOMLOptions {
     pub strict: bool,
 }
 
+/// A source for environment variables, which can be either a provided HashMap or the system's
+/// environment. This allows for deferred/lazy reading of system env vars.
+enum EnvProvider<'a> {
+    Map(&'a HashMap<String, String>),
+    System,
+}
+
+impl<'a> EnvProvider<'a> {
+    fn get(&self, key: &str) -> Result<Option<String>, ConfigError> {
+        match self {
+            EnvProvider::Map(map) => Ok(map.get(key).cloned()),
+            EnvProvider::System => match std::env::var(key) {
+                Ok(v) => Ok(Some(v)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(e) => Err(e.into()),
+            },
+        }
+    }
+
+    fn contains_key(&self, key: &str) -> Result<bool, ConfigError> {
+        match self {
+            EnvProvider::Map(map) => Ok(map.contains_key(key)),
+            EnvProvider::System => Ok(std::env::var(key).is_ok()),
+        }
+    }
+}
+
 /// Read bytes from a file path, returning Ok(None) if it doesn't exist
 fn read_path_bytes(path: &str) -> Result<Option<Vec<u8>>, ConfigError> {
     if !Path::new(path).exists() {
@@ -210,24 +243,32 @@ fn read_path_bytes(path: &str) -> Result<Option<Vec<u8>>, ConfigError> {
     }
 }
 
-/// Load client configuration from TOML. Does not load values from environment variables
-/// (but may use environment variables to get which config file to load). This will not fail
-/// if the file does not exist.
+/// Load client configuration from TOML. This function uses environment variables (which are
+/// taken from the system if not provided) to locate the configuration file. It does not apply
+/// other environment variable values; that is handled by [load_client_config_profile]. This will
+/// not fail if the file does not exist.
 pub fn load_client_config(
     options: LoadClientConfigOptions,
     env_vars: Option<&HashMap<String, String>>,
 ) -> Result<ClientConfig, ConfigError> {
+    let env_provider = match env_vars {
+        Some(map) => EnvProvider::Map(map),
+        None => EnvProvider::System,
+    };
+
     // Get which bytes to load from TOML
     let toml_data = match options.config_source {
         Some(DataSource::Data(d)) => Some(d),
         Some(DataSource::Path(p)) => read_path_bytes(&p)?,
         None => {
-            let file_path = env_vars
-                .and_then(|vars| vars.get("TEMPORAL_CONFIG_FILE"))
+            let file_path = if let Some(path) = env_provider
+                .get("TEMPORAL_CONFIG_FILE")?
                 .filter(|p| !p.is_empty())
-                .cloned()
-                .map(Ok)
-                .unwrap_or_else(get_default_config_file_path)?;
+            {
+                path
+            } else {
+                get_default_config_file_path()?
+            };
             read_path_bytes(&file_path)?
         }
     };
@@ -244,7 +285,20 @@ pub fn load_client_config(
     }
 }
 
-/// Load a specific client configuration profile
+/// Load a specific client configuration profile.
+///
+/// This function is the primary entry point for loading client configuration. It orchestrates loading
+/// from a TOML file (if not disabled) and then applies overrides from environment variables (if not disabled).
+///
+/// The resolution order is as follows:
+/// 1. A profile is loaded from a TOML file. The file is located by checking `options.config_source`,
+///    then the `TEMPORAL_CONFIG_FILE` environment variable, then a default path. The profile within
+///    the file is determined by `options.config_file_profile`, then the `TEMPORAL_PROFILE`
+///    environment variable, then the "default" profile.
+/// 2. Environment variables are applied on top of the loaded profile.
+///
+/// If `env_vars` is provided as a `HashMap`, it will be used as the source for environment
+/// variables. If it is `None`, the function will fall back to using the system's environment variables.
 pub fn load_client_config_profile(
     options: LoadClientConfigProfileOptions,
     env_vars: Option<&HashMap<String, String>>,
@@ -254,6 +308,15 @@ pub fn load_client_config_profile(
             "Cannot disable both file and environment loading".to_string(),
         ));
     }
+
+    let env_provider = if options.disable_env {
+        None
+    } else {
+        Some(match env_vars {
+            Some(map) => EnvProvider::Map(map),
+            None => EnvProvider::System,
+        })
+    };
 
     let mut profile = if options.disable_file {
         ClientConfigProfile::default()
@@ -268,13 +331,17 @@ pub fn load_client_config_profile(
         )?;
 
         // Determine profile name
-        let (profile_name, profile_unset) = match &options.config_file_profile {
-            Some(profile) => (profile.clone(), false),
-            None => env_vars
-                .and_then(|vars| vars.get("TEMPORAL_PROFILE"))
-                .filter(|p| !p.is_empty())
-                .map(|p| (p.clone(), false))
-                .unwrap_or((DEFAULT_PROFILE.to_string(), true)),
+        let (profile_name, profile_unset) = if let Some(p) = options.config_file_profile.as_deref()
+        {
+            (p.to_string(), false)
+        } else {
+            match env_provider.as_ref() {
+                Some(provider) => match provider.get("TEMPORAL_PROFILE")? {
+                    Some(p) if !p.is_empty() => (p, false),
+                    _ => (DEFAULT_PROFILE.to_string(), true),
+                },
+                None => (DEFAULT_PROFILE.to_string(), true),
+            }
         };
 
         if let Some(prof) = config.profiles.get(&profile_name) {
@@ -288,9 +355,7 @@ pub fn load_client_config_profile(
 
     // Apply environment variables if not disabled
     if !options.disable_env {
-        if let Some(vars) = env_vars {
-            profile.apply_env_vars(vars)?;
-        }
+        profile.load_from_env(env_vars)?;
     }
 
     // Apply API key → TLS auto-enabling logic
@@ -332,33 +397,35 @@ impl ClientConfig {
 }
 
 impl ClientConfigProfile {
-    /// Apply environment variable overrides to this profile
-    pub fn apply_env_vars(
+    /// Apply environment variable overrides to this profile.
+    /// If `env_vars` is `None`, the system's environment variables will be used as the source.
+    pub fn load_from_env(
         &mut self,
-        env_vars: &HashMap<String, String>,
+        env_vars: Option<&HashMap<String, String>>,
     ) -> Result<(), ConfigError> {
+        let env_provider = match env_vars {
+            Some(map) => EnvProvider::Map(map),
+            None => EnvProvider::System,
+        };
         // Apply basic settings
-        if let Some(address) = env_vars.get("TEMPORAL_ADDRESS") {
-            self.address = Some(address.clone());
+        if let Some(address) = env_provider.get("TEMPORAL_ADDRESS")? {
+            self.address = Some(address);
         }
-        if let Some(namespace) = env_vars.get("TEMPORAL_NAMESPACE") {
-            self.namespace = Some(namespace.clone());
+        if let Some(namespace) = env_provider.get("TEMPORAL_NAMESPACE")? {
+            self.namespace = Some(namespace);
         }
-        if let Some(api_key) = env_vars.get("TEMPORAL_API_KEY") {
-            self.api_key = Some(api_key.clone());
+        if let Some(api_key) = env_provider.get("TEMPORAL_API_KEY")? {
+            self.api_key = Some(api_key);
         }
 
-        self.apply_tls_env_vars(env_vars)?;
-        self.apply_codec_env_vars(env_vars)?;
-        self.apply_grpc_meta_env_vars(env_vars)?;
+        self.apply_tls_env_vars(&env_provider)?;
+        self.apply_codec_env_vars(&env_provider)?;
+        self.apply_grpc_meta_env_vars(&env_provider)?;
 
         Ok(())
     }
 
-    fn apply_tls_env_vars(
-        &mut self,
-        env_vars: &HashMap<String, String>,
-    ) -> Result<(), ConfigError> {
+    fn apply_tls_env_vars(&mut self, env_provider: &EnvProvider) -> Result<(), ConfigError> {
         const TLS_ENV_VARS: &[&str] = &[
             "TEMPORAL_TLS",
             "TEMPORAL_TLS_CLIENT_CERT_PATH",
@@ -371,82 +438,91 @@ impl ClientConfigProfile {
             "TEMPORAL_TLS_DISABLE_HOST_VERIFICATION",
         ];
 
-        if TLS_ENV_VARS.iter().any(|&k| env_vars.contains_key(k)) && self.tls.is_none() {
+        if self.tls.is_none() && has_any_env_var(env_provider, TLS_ENV_VARS)? {
             self.tls = Some(ClientConfigTLS::default());
         }
 
         if let Some(ref mut tls) = self.tls {
-            if let Some(disabled_str) = env_vars.get("TEMPORAL_TLS") {
-                if let Some(disabled) = env_var_to_bool(disabled_str) {
-                    tls.disabled = !disabled;
-                }
+            if let Some(disabled_str) = env_provider.get("TEMPORAL_TLS")?
+                && let Some(disabled) = env_var_to_bool(&disabled_str)
+            {
+                tls.disabled = !disabled;
             }
 
             apply_data_source_env_var(
-                env_vars,
+                env_provider,
                 "cert",
                 "TEMPORAL_TLS_CLIENT_CERT_PATH",
                 "TEMPORAL_TLS_CLIENT_CERT_DATA",
                 &mut tls.client_cert,
             )?;
             apply_data_source_env_var(
-                env_vars,
+                env_provider,
                 "key",
                 "TEMPORAL_TLS_CLIENT_KEY_PATH",
                 "TEMPORAL_TLS_CLIENT_KEY_DATA",
                 &mut tls.client_key,
             )?;
             apply_data_source_env_var(
-                env_vars,
+                env_provider,
                 "server CA cert",
                 "TEMPORAL_TLS_SERVER_CA_CERT_PATH",
                 "TEMPORAL_TLS_SERVER_CA_CERT_DATA",
                 &mut tls.server_ca_cert,
             )?;
 
-            if let Some(v) = env_vars.get("TEMPORAL_TLS_SERVER_NAME") {
-                tls.server_name = Some(v.clone());
+            if let Some(v) = env_provider.get("TEMPORAL_TLS_SERVER_NAME")? {
+                tls.server_name = Some(v);
             }
-            if let Some(v) = env_vars.get("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION") {
-                if let Some(b) = env_var_to_bool(v) {
-                    tls.disable_host_verification = b;
-                }
+            if let Some(v) = env_provider.get("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION")?
+                && let Some(b) = env_var_to_bool(&v)
+            {
+                tls.disable_host_verification = b;
             }
         }
         Ok(())
     }
 
-    fn apply_codec_env_vars(
-        &mut self,
-        env_vars: &HashMap<String, String>,
-    ) -> Result<(), ConfigError> {
+    fn apply_codec_env_vars(&mut self, env_provider: &EnvProvider) -> Result<(), ConfigError> {
         const CODEC_ENV_VARS: &[&str] = &["TEMPORAL_CODEC_ENDPOINT", "TEMPORAL_CODEC_AUTH"];
-        if CODEC_ENV_VARS.iter().any(|&k| env_vars.contains_key(k)) && self.codec.is_none() {
+        if self.codec.is_none() && has_any_env_var(env_provider, CODEC_ENV_VARS)? {
             self.codec = Some(ClientConfigCodec::default());
         }
 
         if let Some(ref mut codec) = self.codec {
-            if let Some(endpoint) = env_vars.get("TEMPORAL_CODEC_ENDPOINT") {
-                codec.endpoint = Some(endpoint.clone());
+            if let Some(endpoint) = env_provider.get("TEMPORAL_CODEC_ENDPOINT")? {
+                codec.endpoint = Some(endpoint);
             }
-            if let Some(auth) = env_vars.get("TEMPORAL_CODEC_AUTH") {
-                codec.auth = Some(auth.clone());
+            if let Some(auth) = env_provider.get("TEMPORAL_CODEC_AUTH")? {
+                codec.auth = Some(auth);
             }
         }
         Ok(())
     }
 
-    fn apply_grpc_meta_env_vars(
-        &mut self,
-        env_vars: &HashMap<String, String>,
-    ) -> Result<(), ConfigError> {
-        for (key, value) in env_vars {
-            if let Some(header_name) = key.strip_prefix("TEMPORAL_GRPC_META_") {
-                let normalized_name = normalize_grpc_meta_key(header_name);
-                if value.is_empty() {
-                    self.grpc_meta.remove(&normalized_name);
-                } else {
-                    self.grpc_meta.insert(normalized_name, value.clone());
+    fn apply_grpc_meta_env_vars(&mut self, env_provider: &EnvProvider) -> Result<(), ConfigError> {
+        let mut handle_meta_var = |header_name: &str, value: &str| {
+            let normalized_name = normalize_grpc_meta_key(header_name);
+            if value.is_empty() {
+                self.grpc_meta.remove(&normalized_name);
+            } else {
+                self.grpc_meta.insert(normalized_name, value.to_string());
+            }
+        };
+
+        match env_provider {
+            EnvProvider::Map(map) => {
+                for (key, value) in map.iter() {
+                    if let Some(header_name) = key.strip_prefix("TEMPORAL_GRPC_META_") {
+                        handle_meta_var(header_name, value);
+                    }
+                }
+            }
+            EnvProvider::System => {
+                for (key, value) in std::env::vars() {
+                    if let Some(header_name) = key.strip_prefix("TEMPORAL_GRPC_META_") {
+                        handle_meta_var(header_name, &value);
+                    }
                 }
             }
         }
@@ -462,47 +538,51 @@ impl ClientConfigProfile {
     }
 }
 
+/// Helper to check if any of the given environment variables are set.
+fn has_any_env_var(env_provider: &EnvProvider, keys: &[&str]) -> Result<bool, ConfigError> {
+    for &key in keys {
+        if env_provider.contains_key(key)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Helper for applying env vars to a data source.
 fn apply_data_source_env_var(
-    env_vars: &HashMap<String, String>,
+    env_provider: &EnvProvider,
     name: &str,
     path_var: &str,
     data_var: &str,
     dest: &mut Option<DataSource>,
 ) -> Result<(), ConfigError> {
-    let has_path_env = env_vars.contains_key(path_var);
-    let has_data_env = env_vars.contains_key(data_var);
+    let path_val = env_provider.get(path_var)?;
+    let data_val = env_provider.get(data_var)?;
 
-    if has_path_env && has_data_env {
-        return Err(ConfigError::InvalidConfig(format!(
+    match (path_val, data_val) {
+        (Some(_), Some(_)) => Err(ConfigError::InvalidConfig(format!(
             "Cannot specify both {path_var} and {data_var}"
-        )));
-    }
-
-    if has_data_env {
-        if dest
-            .as_ref()
-            .is_some_and(|s| matches!(s, DataSource::Path(_)))
-        {
-            return Err(ConfigError::InvalidConfig(format!(
-                "Cannot specify {name} data via {data_var} when {name} path is already specified"
-            )));
+        ))),
+        (Some(path), None) => {
+            if let Some(DataSource::Data(_)) = dest {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "Cannot specify {name} path via {path_var} when {name} data is already specified"
+                )));
+            }
+            *dest = Some(DataSource::Path(path));
+            Ok(())
         }
-        *dest = Some(DataSource::Data(
-            env_vars.get(data_var).unwrap().clone().into_bytes(),
-        ));
-    } else if has_path_env {
-        if dest
-            .as_ref()
-            .is_some_and(|s| matches!(s, DataSource::Data(_)))
-        {
-            return Err(ConfigError::InvalidConfig(format!(
-                "Cannot specify {name} path via {path_var} when {name} data is already specified"
-            )));
+        (None, Some(data)) => {
+            if let Some(DataSource::Path(_)) = dest {
+                return Err(ConfigError::InvalidConfig(format!(
+                    "Cannot specify {name} data via {data_var} when {name} path is already specified"
+                )));
+            }
+            *dest = Some(DataSource::Data(data.into_bytes()));
+            Ok(())
         }
-        *dest = Some(DataSource::Path(env_vars.get(path_var).unwrap().clone()));
+        (None, None) => Ok(()),
     }
-    Ok(())
 }
 
 /// Parse a boolean value from string (supports "true", "false", "1", "0")
@@ -1540,5 +1620,30 @@ address = "some-address"
 
         // TLS should not be enabled
         assert!(profile.tls.is_none());
+    }
+
+    #[test]
+    fn test_load_client_config_profile_from_system_env() {
+        // Set up system env vars. These tests can't be run in parallel.
+        unsafe {
+            std::env::set_var("TEMPORAL_ADDRESS", "system-address");
+            std::env::set_var("TEMPORAL_NAMESPACE", "system-namespace");
+        }
+
+        let options = LoadClientConfigProfileOptions {
+            disable_file: true, // Don't load from any files
+            ..Default::default()
+        };
+
+        // Pass None for env_vars to trigger system env var loading
+        let profile = load_client_config_profile(options, None).unwrap();
+        assert_eq!(profile.address.as_ref().unwrap(), "system-address");
+        assert_eq!(profile.namespace.as_ref().unwrap(), "system-namespace");
+
+        // Clean up
+        unsafe {
+            std::env::remove_var("TEMPORAL_ADDRESS");
+            std::env::remove_var("TEMPORAL_NAMESPACE");
+        }
     }
 }
