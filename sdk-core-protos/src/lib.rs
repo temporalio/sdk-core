@@ -2628,7 +2628,6 @@ pub mod temporal {
                                 _ => continue,
                             }
                         }
-                        dbg!(&eventref);
                         Some(workflow_event::Reference::EventRef(eventref))
                     } else {
                         None
