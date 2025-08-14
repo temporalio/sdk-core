@@ -66,10 +66,8 @@ fsm! {
       --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), on_canceled)--> Cancelled;
 
 
-    // We define these two transitions in this order so that the generated type is
-    // CancelledOrStarted, distinct from the StartedOrCancelled type created for the Started--(Cancel, ...)--> transitions above.
-    Started --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), shared on_cancel_request_completed)--> Cancelled;
     Started --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), shared on_cancel_request_completed)--> Started;
+    Started --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes), shared on_cancel_request_completed)--> Cancelled;
 
     Started
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
@@ -320,7 +318,7 @@ impl Started {
         )])
     }
 
-    pub(super) fn on_cancel_request_completed(self, ss: &SharedState, _: NexusOperationCancelRequestCompletedEventAttributes,) -> NexusOperationMachineTransition<CancelledOrStarted> {
+    pub(super) fn on_cancel_request_completed(self, ss: &SharedState, _: NexusOperationCancelRequestCompletedEventAttributes,) -> NexusOperationMachineTransition<StartedOrCancelled> {
         if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
             TransitionResult::ok(
                 [NexusOperationCommand::Cancel(
@@ -328,10 +326,10 @@ impl Started {
                         "Nexus operation cancellation request completed".to_owned()
                     ),
                 )],
-                CancelledOrStarted::Cancelled(Default::default()),
+                StartedOrCancelled::Cancelled(Default::default()),
             )
         } else {
-            TransitionResult::ok([], CancelledOrStarted::Started(Default::default()))
+            TransitionResult::ok([], StartedOrCancelled::Started(Default::default()))
         }
     }
 
