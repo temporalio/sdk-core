@@ -1,6 +1,7 @@
 use crate::ByteArrayRef;
 use crate::client::{
     ClientGrpcOverrideRequest, ClientGrpcOverrideResponse, RpcService,
+    temporal_core_client_grpc_override_request_headers,
     temporal_core_client_grpc_override_request_proto,
     temporal_core_client_grpc_override_request_respond,
     temporal_core_client_grpc_override_request_rpc,
@@ -203,8 +204,14 @@ impl ClientOverrideError {
     }
 }
 
-unsafe extern "C" fn callback_override<'a>(req: *mut ClientGrpcOverrideRequest<'a>) {
+unsafe extern "C" fn callback_override(req: *mut ClientGrpcOverrideRequest) {
     let mut calls = CALLBACK_OVERRIDE_CALLS.lock().unwrap();
+
+    // Simple header check to confirm headers are working
+    let headers =
+        temporal_core_client_grpc_override_request_headers(req).to_string_map_on_newlines();
+    assert!(headers.get("content-type").unwrap().as_str() == "application/grpc");
+
     calls.push(format!(
         "service: {}, rpc: {}",
         temporal_core_client_grpc_override_request_service(req).to_string(),

@@ -10,6 +10,8 @@ use prost::bytes::Bytes;
 use std::cell::OnceCell;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use temporal_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
@@ -180,17 +182,27 @@ fn create_callback_based_grpc_service(
                     response_sender: sender,
                 })) as usize;
 
+                // We want to make sure it reached user code. If spawn_blocking fails _and_ it
+                // didn't reach user code, it is on us to drop the box.
+                let reached_user_code = Arc::new(AtomicBool::new(false));
+
                 // Spawn the callback as blocking, failing on join failure. We use spawn_blocking
                 // just in case the user is doing something blocking in their closure, but we ask
                 // them not to.
+                let reached_user_code_clone = reached_user_code.clone();
                 let spawn_ret = runtime
                     .core
                     .tokio_handle()
                     .spawn_blocking(move || unsafe {
+                        reached_user_code_clone.store(true, Ordering::Relaxed);
                         cb(req_ptr as *mut ClientGrpcOverrideRequest);
                     })
                     .await;
                 if let Err(err) = spawn_ret {
+                    // Re-own box so it can be dropped if never reached user code
+                    if !reached_user_code.load(Ordering::Relaxed) {
+                        let _ = unsafe { Box::from_raw(req_ptr as *mut ClientGrpcOverrideRequest) };
+                    }
                     return Err(tonic::Status::internal(format!("{err}")));
                 }
 
@@ -250,15 +262,15 @@ pub type ClientGrpcOverrideCallback =
 /// Note, temporal_core_client_grpc_override_request_respond is effectively the "free" call for
 /// each request. Each request _must_ call that and the request can no longer be valid after that
 /// call.
-pub struct ClientGrpcOverrideRequest<'a> {
-    core: callback_based::GrpcRequest<'a>,
+pub struct ClientGrpcOverrideRequest {
+    core: callback_based::GrpcRequest,
     built_headers: OnceCell<String>,
     response_sender: oneshot::Sender<Result<callback_based::GrpcSuccessResponse, tonic::Status>>,
 }
 
 // Expected to be passed to user thread
-unsafe impl<'a> Send for ClientGrpcOverrideRequest<'a> {}
-unsafe impl<'a> Sync for ClientGrpcOverrideRequest<'a> {}
+unsafe impl Send for ClientGrpcOverrideRequest {}
+unsafe impl Sync for ClientGrpcOverrideRequest {}
 
 /// Response provided to temporal_core_client_grpc_override_request_respond. All values referenced
 /// inside here must live until that call returns.
@@ -290,7 +302,7 @@ pub extern "C" fn temporal_core_client_grpc_override_request_service(
     req: *const ClientGrpcOverrideRequest,
 ) -> ByteArrayRef {
     let req = unsafe { &*req };
-    req.core.service.into()
+    req.core.service.as_str().into()
 }
 
 /// Get a reference to the RPC name.
@@ -301,7 +313,7 @@ pub extern "C" fn temporal_core_client_grpc_override_request_rpc(
     req: *const ClientGrpcOverrideRequest,
 ) -> ByteArrayRef {
     let req = unsafe { &*req };
-    req.core.rpc.into()
+    req.core.rpc.as_str().into()
 }
 
 /// Get a reference to the service headers.

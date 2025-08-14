@@ -16,17 +16,14 @@ use tonic::{Status, metadata::GRPC_CONTENT_TYPE};
 use tower::Service;
 
 /// gRPC request for use by a callback.
-pub struct GrpcRequest<'a> {
-    /// Reference to the gRPC service name.
-    pub service: &'a str,
-
-    /// Reference to the gRPC RPC name.
-    pub rpc: &'a str,
-
-    /// Reference to the gRPC request headers.
-    pub headers: &'a HeaderMap,
-
-    /// The gRPC protobuf bytes of the request.
+pub struct GrpcRequest {
+    /// Fully qualified gRPC service name.
+    pub service: String,
+    /// RPC name.
+    pub rpc: String,
+    /// Request headers.
+    pub headers: HeaderMap,
+    /// Protobuf bytes of the request.
     pub proto: Bytes,
 }
 
@@ -45,7 +42,7 @@ pub struct CallbackBasedGrpcService {
     /// Callback to invoke on each RPC call.
     #[allow(clippy::type_complexity)] // Signature is not that complex
     pub callback: Arc<
-        dyn for<'a> Fn(GrpcRequest<'a>) -> BoxFuture<'a, Result<GrpcSuccessResponse, Status>>
+        dyn Fn(GrpcRequest) -> BoxFuture<'static, Result<GrpcSuccessResponse, Status>>
             + Send
             + Sync,
     >,
@@ -85,9 +82,9 @@ impl Service<Request<tonic::body::Body>> for CallbackBasedGrpcService {
                 ));
             }
             let req = GrpcRequest {
-                service: path_parts.next().unwrap_or_default(),
-                rpc: path_parts.next().unwrap_or_default(),
-                headers: &parts.headers,
+                service: path_parts.next().unwrap_or_default().to_owned(),
+                rpc: path_parts.next().unwrap_or_default().to_owned(),
+                headers: parts.headers,
                 proto: req_body.slice(5..5 + req_proto_len),
             };
 
