@@ -1930,6 +1930,11 @@ pub mod temporal {
                     tonic::include_proto!("temporal.api.cloud.cloudservice.v1");
                 }
             }
+            pub mod connectivityrule {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.connectivityrule.v1");
+                }
+            }
             pub mod identity {
                 pub mod v1 {
                     tonic::include_proto!("temporal.api.cloud.identity.v1");
