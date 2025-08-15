@@ -38,7 +38,14 @@ pub struct ClientOptions {
     /// If this is set, all gRPC calls go through it and no connection is made to server. The client
     /// connection call usually calls this for "GetSystemInfo" before the connect is complete. See
     /// the callback documentation for more important information about usage and data lifetimes.
+    ///
+    /// When a callback is set, target_url is not used to connect, but it must be set to a valid URL
+    /// anyways in case it is used for logging or other reasons. Similarly, other connect-specific
+    /// fields like tls_options, keep_alive_options, and http_connect_proxy_options will be
+    /// completely ignored if a callback is set.
     pub grpc_override_callback: ClientGrpcOverrideCallback,
+    /// Optional user data passed to each callback call.
+    pub grpc_override_callback_user_data: *mut libc::c_void,
 }
 
 #[repr(C)]
@@ -118,9 +125,9 @@ pub extern "C" fn temporal_core_client_connect(
         }
     };
     // Create override if present
-    let service_override = options
-        .grpc_override_callback
-        .map(|cb| create_callback_based_grpc_service(runtime, cb));
+    let service_override = options.grpc_override_callback.map(|cb| {
+        create_callback_based_grpc_service(runtime, cb, options.grpc_override_callback_user_data)
+    });
     // Spawn async call
     let user_data = UserDataHandle(user_data);
     let core = runtime.core.clone();
@@ -156,12 +163,15 @@ pub extern "C" fn temporal_core_client_connect(
 
 fn create_callback_based_grpc_service(
     runtime: &Runtime,
-    cb: unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest),
+    cb: unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest, user_data: *mut libc::c_void),
+    user_data: *mut libc::c_void,
 ) -> callback_based::CallbackBasedGrpcService {
     let runtime = runtime.clone();
+    let user_data = Arc::new(UserDataHandle(user_data));
     callback_based::CallbackBasedGrpcService {
         callback: Arc::new(move |req| {
             let runtime = runtime.clone();
+            let user_data = user_data.clone();
             async move {
                 // Create a oneshot sender/receiver for the result
                 let (sender, receiver) = oneshot::channel();
@@ -195,7 +205,10 @@ fn create_callback_based_grpc_service(
                     .tokio_handle()
                     .spawn_blocking(move || unsafe {
                         reached_user_code_clone.store(true, Ordering::Relaxed);
-                        cb(req_ptr as *mut ClientGrpcOverrideRequest);
+                        cb(
+                            req_ptr as *mut ClientGrpcOverrideRequest,
+                            user_data.clone().0,
+                        );
                     })
                     .await;
                 if let Err(err) = spawn_ret {
@@ -254,8 +267,9 @@ pub extern "C" fn temporal_core_client_update_api_key(client: *mut Client, api_k
 ///
 /// Implementers should return as soon as possible and perform the network request in the
 /// background.
-pub type ClientGrpcOverrideCallback =
-    Option<unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest)>;
+pub type ClientGrpcOverrideCallback = Option<
+    unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest, user_data: *mut libc::c_void),
+>;
 
 /// Representation of gRPC request for the callback.
 ///
@@ -280,7 +294,8 @@ pub struct ClientGrpcOverrideResponse {
     /// is failure.
     pub status_code: i32,
 
-    /// Headers for the response if any.
+    /// Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
+    /// not the gRPC system headers (like :status or content-type).
     pub headers: MetadataRef,
 
     /// Protobuf bytes for a successful response. Ignored if status_code is non-0.

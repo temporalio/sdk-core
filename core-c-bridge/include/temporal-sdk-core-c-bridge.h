@@ -134,7 +134,8 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
  * Implementers should return as soon as possible and perform the network request in the
  * background.
  */
-typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request);
+typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request,
+                                                       void *user_data);
 
 typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef target_url;
@@ -151,8 +152,17 @@ typedef struct TemporalCoreClientOptions {
    * If this is set, all gRPC calls go through it and no connection is made to server. The client
    * connection call usually calls this for "GetSystemInfo" before the connect is complete. See
    * the callback documentation for more important information about usage and data lifetimes.
+   *
+   * When a callback is set, target_url is not used to connect, but it must be set to a valid URL
+   * anyways in case it is used for logging or other reasons. Similarly, other connect-specific
+   * fields like tls_options, keep_alive_options, and http_connect_proxy_options will be
+   * completely ignored if a callback is set.
    */
   TemporalCoreClientGrpcOverrideCallback grpc_override_callback;
+  /**
+   * Optional user data passed to each callback call.
+   */
+  void *grpc_override_callback_user_data;
 } TemporalCoreClientOptions;
 
 typedef struct TemporalCoreByteArray {
@@ -186,7 +196,8 @@ typedef struct TemporalCoreClientGrpcOverrideResponse {
    */
   int32_t status_code;
   /**
-   * Headers for the response if any.
+   * Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
+   * not the gRPC system headers (like :status or content-type).
    */
   TemporalCoreMetadataRef headers;
   /**

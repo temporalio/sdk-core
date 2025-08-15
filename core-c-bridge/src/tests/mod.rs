@@ -204,13 +204,20 @@ impl ClientOverrideError {
     }
 }
 
-unsafe extern "C" fn callback_override(req: *mut ClientGrpcOverrideRequest) {
+unsafe extern "C" fn callback_override(
+    req: *mut ClientGrpcOverrideRequest,
+    user_data: *mut libc::c_void,
+) {
     let mut calls = CALLBACK_OVERRIDE_CALLS.lock().unwrap();
 
     // Simple header check to confirm headers are working
     let headers =
         temporal_core_client_grpc_override_request_headers(req).to_string_map_on_newlines();
     assert!(headers.get("content-type").unwrap().as_str() == "application/grpc");
+
+    // Confirm user data is as we expect
+    let user_data: &String = unsafe { &*(user_data as *const String) };
+    assert!(user_data.as_str() == "some-user-data");
 
     calls.push(format!(
         "service: {}, rpc: {}",
@@ -278,12 +285,14 @@ unsafe extern "C" fn callback_override(req: *mut ClientGrpcOverrideRequest) {
 #[test]
 fn test_simple_callback_override() {
     Context::with(|context| {
+        let mut user_data = "some-user-data".to_owned();
         context.runtime_new().unwrap();
         // Create client which will invoke GetSystemInfo
         context
             .client_connect_with_override(
                 Box::new(default_client_options("127.0.0.1:4567")),
                 Some(callback_override),
+                &mut user_data as *mut String as *mut libc::c_void,
             )
             .unwrap();
 
