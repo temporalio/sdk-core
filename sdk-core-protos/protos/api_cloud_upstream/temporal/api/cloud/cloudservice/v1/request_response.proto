@@ -18,6 +18,7 @@ import "temporal/api/cloud/nexus/v1/message.proto";
 import "temporal/api/cloud/region/v1/message.proto";
 import "temporal/api/cloud/account/v1/message.proto";
 import "temporal/api/cloud/usage/v1/message.proto";
+import "temporal/api/cloud/connectivityrule/v1/message.proto";
 
 message GetUsersRequest {
     // The requested size of the page to retrieve - optional.
@@ -129,6 +130,9 @@ message CreateNamespaceRequest {
     // The id to use for this async operation.
     // Optional, if not provided a random id will be generated.
     string async_operation_id = 3;
+    // The tags to add to the namespace.
+    // Note: This field can be set by global admins or account owners only.
+    map<string, string> tags = 4;
 }
 
 message CreateNamespaceResponse {
@@ -844,4 +848,83 @@ message ValidateNamespaceExportSinkRequest {
 }
 
 message ValidateNamespaceExportSinkResponse {
+}
+
+message UpdateNamespaceTagsRequest {
+    // The namespace to set tags for.
+    string namespace = 1;
+    // A list of tags to add or update. 
+    // If a key of an existing tag is added, the tag's value is updated. 
+    // At least one of tags_to_upsert or tags_to_remove must be specified.
+    map<string, string> tags_to_upsert = 2;
+    // A list of tag keys to remove. 
+    // If a tag key doesn't exist, it is silently ignored.
+    // At least one of tags_to_upsert or tags_to_remove must be specified.
+    repeated string tags_to_remove = 3;
+    // The id to use for this async operation - optional.
+    string async_operation_id = 4;
+}
+
+message UpdateNamespaceTagsResponse {
+    // The async operation.
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+} 
+
+message CreateConnectivityRuleRequest {
+    // The connectivity rule specification.
+    temporal.api.cloud.connectivityrule.v1.ConnectivityRuleSpec spec = 1;
+    // The id to use for this async operation.
+    // Optional, if not provided a random id will be generated.
+    string async_operation_id = 2;
+}
+
+message CreateConnectivityRuleResponse {
+    // The id of the connectivity rule that was created.
+    string connectivity_rule_id = 1;
+    // The async operation
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 2;
+}
+
+message GetConnectivityRuleRequest {
+    // The id of the connectivity rule to get.
+    string connectivity_rule_id = 1;
+}
+
+message GetConnectivityRuleResponse {
+    temporal.api.cloud.connectivityrule.v1.ConnectivityRule connectivity_rule = 1;
+}
+
+message GetConnectivityRulesRequest {
+    // The requested size of the page to retrieve.
+    // Optional, defaults to 100.
+    int32 page_size = 1;
+    // The page token if this is continuing from another response.
+    // Optional, defaults to empty.
+    string page_token = 2;
+    // Filter connectivity rule by the namespace id.
+    string namespace = 3;
+}
+
+message GetConnectivityRulesResponse {
+    // connectivity_rules returned
+    repeated temporal.api.cloud.connectivityrule.v1.ConnectivityRule connectivity_rules = 1;
+    // The next page token
+    string next_page_token = 2;
+}
+
+message DeleteConnectivityRuleRequest {
+    // The ID of the connectivity rule that need be deleted, required.
+    string connectivity_rule_id = 1;
+
+    // The resource version which should be the same from the the db, required
+    // The latest version can be found in the GetConnectivityRule operation response
+    string resource_version = 2;
+    // The id to use for this async operation.
+    // Optional, if not provided a random id will be generated.
+    string async_operation_id = 3;
+}
+
+message DeleteConnectivityRuleResponse {
+    // The async operation
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
 }
