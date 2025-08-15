@@ -88,6 +88,12 @@ fsm! {
     Completed --(Cancel)--> Completed;
     Failed --(Cancel)--> Failed;
     TimedOut --(Cancel)--> TimedOut;
+    Completed --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes))--> Completed;
+    Failed --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes))--> Failed;
+    TimedOut --(NexusOperationCancelRequestCompleted(NexusOperationCancelRequestCompletedEventAttributes))--> TimedOut;
+    Completed --(NexusOperationCancelRequestFailed(NexusOperationCancelRequestFailedEventAttributes))--> Completed;
+    Failed --(NexusOperationCancelRequestFailed(NexusOperationCancelRequestFailedEventAttributes))--> Failed;
+    TimedOut --(NexusOperationCancelRequestFailed(NexusOperationCancelRequestFailedEventAttributes))--> TimedOut;
 }
 
 #[derive(Debug, derive_more::Display)]
