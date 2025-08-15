@@ -37,6 +37,7 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
         history::v1::{History, HistoryEvent, MarkerRecordedEventAttributes, history_event},
         query::v1::WorkflowQuery,
+        sdk::v1::UserMetadata,
         workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
     utilities::TryIntoOrNone,
@@ -320,6 +321,7 @@ pub(crate) struct ValidScheduleLA {
     pub(crate) retry_policy: RetryPolicy,
     pub(crate) local_retry_threshold: Duration,
     pub(crate) cancellation_type: ActivityCancellationType,
+    pub(crate) user_metadata: Option<UserMetadata>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -349,7 +351,10 @@ impl Default for LACloseTimeouts {
 }
 
 impl ValidScheduleLA {
-    pub(crate) fn from_schedule_la(v: ScheduleLocalActivity) -> Result<Self, anyhow::Error> {
+    pub(crate) fn from_schedule_la(
+        v: ScheduleLocalActivity,
+        user_metadata: Option<UserMetadata>,
+    ) -> Result<Self, anyhow::Error> {
         let original_schedule_time = v
             .original_schedule_time
             .map(|x| {
@@ -423,6 +428,7 @@ impl ValidScheduleLA {
             retry_policy,
             local_retry_threshold,
             cancellation_type,
+            user_metadata,
         })
     }
 }
