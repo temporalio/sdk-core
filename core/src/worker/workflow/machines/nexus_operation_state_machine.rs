@@ -329,7 +329,7 @@ impl Started {
 
     pub(super) fn on_cancel_request_completed(
         self,
-        ss: &SharedState,
+        ss: &mut SharedState,
         _: NexusOperationCancelRequestCompletedEventAttributes,
     ) -> NexusOperationMachineTransition<StartedOrCancelled> {
         if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
@@ -346,7 +346,7 @@ impl Started {
 
     pub(super) fn on_cancel_request_failed(
         self,
-        ss: &SharedState,
+        ss: &mut SharedState,
         fa: NexusOperationCancelRequestFailedEventAttributes,
     ) -> NexusOperationMachineTransition<Started> {
         if ss.cancel_type == NexusOperationCancellationType::WaitCancellationRequested {
