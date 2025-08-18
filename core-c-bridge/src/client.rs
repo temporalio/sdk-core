@@ -1,12 +1,8 @@
-use crate::ByteArray;
-use crate::ByteArrayRef;
-use crate::CancellationToken;
-use crate::MetadataRef;
-use crate::UserDataHandle;
-use crate::runtime::Runtime;
+use crate::{
+    ByteArray, ByteArrayRef, CancellationToken, MetadataRef, UserDataHandle, runtime::Runtime,
+};
 
-use std::str::FromStr;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
 use temporal_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
     ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
@@ -326,6 +322,7 @@ async fn call_workflow_service(
         "DescribeWorkflowExecution" => rpc_call!(client, call, describe_workflow_execution),
         "DescribeWorkflowRule" => rpc_call!(client, call, describe_workflow_rule),
         "ExecuteMultiOperation" => rpc_call!(client, call, execute_multi_operation),
+        "FetchWorkerConfig" => rpc_call!(client, call, fetch_worker_config),
         "GetClusterInfo" => rpc_call!(client, call, get_cluster_info),
         "GetCurrentDeployment" => rpc_call!(client, call, get_current_deployment),
         "GetDeploymentReachability" => rpc_call!(client, call, get_deployment_reachability),
@@ -419,6 +416,8 @@ async fn call_workflow_service(
         }
         "UpdateNamespace" => rpc_call_on_trait!(client, call, WorkflowService, update_namespace),
         "UpdateSchedule" => rpc_call!(client, call, update_schedule),
+        "UpdateTaskQueueConfig" => rpc_call!(client, call, update_task_queue_config),
+        "UpdateWorkerConfig" => rpc_call!(client, call, update_worker_config),
         "UpdateWorkerDeploymentVersionMetadata" => {
             rpc_call!(client, call, update_worker_deployment_version_metadata)
         }

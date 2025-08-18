@@ -773,7 +773,6 @@ mod tests {
             });
         mock_client
             .expect_poll_workflow_task()
-            .times(1)
             .returning(move |_, _| async { Ok(Default::default()) }.boxed());
 
         let pb = LongPollBuffer::new_workflow_task(

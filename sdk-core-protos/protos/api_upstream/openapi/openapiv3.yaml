@@ -1300,6 +1300,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/task-queues/{taskQueue}/update-config:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Updates task queue configuration.
+         For the overall queue rate limit: the rate limit set by this api overrides the worker-set rate limit,
+         which uncouples the rate limit from the worker lifecycle.
+         If the overall queue rate limit is unset, the worker-set rate limit takes effect.
+      operationId: UpdateTaskQueueConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: taskQueue
+          in: path
+          description: Selects the task queue to update.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskQueueConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateTaskQueueConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility:
     get:
       tags:
@@ -1431,6 +1472,11 @@ paths:
         - name: reportStats
           in: query
           description: Report stats for the requested task queue type(s).
+          schema:
+            type: boolean
+        - name: reportConfig
+          in: query
+          description: Report Task Queue Config
           schema:
             type: boolean
         - name: includeTaskQueueStatus
@@ -2041,6 +2087,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workers/fetch-config:
+    post:
+      tags:
+        - WorkflowService
+      description: FetchWorkerConfig returns the worker configuration for a specific worker.
+      operationId: FetchWorkerConfig
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FetchWorkerConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchWorkerConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/workers/heartbeat:
     post:
       tags:
@@ -2067,6 +2145,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecordWorkerHeartbeatResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workers/update-config:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        UpdateWorkerConfig updates the worker configuration of one or more workers.
+         Can be used to partially update the worker configuration.
+         Can be used to update the configuration of multiple workers.
+      operationId: UpdateWorkerConfig
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkerConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkerConfigResponse'
         default:
           description: Default error response
           content:
@@ -4571,6 +4684,47 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/task-queues/{taskQueue}/update-config:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Updates task queue configuration.
+         For the overall queue rate limit: the rate limit set by this api overrides the worker-set rate limit,
+         which uncouples the rate limit from the worker lifecycle.
+         If the overall queue rate limit is unset, the worker-set rate limit takes effect.
+      operationId: UpdateTaskQueueConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: taskQueue
+          in: path
+          description: Selects the task queue to update.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTaskQueueConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateTaskQueueConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility:
     get:
       tags:
@@ -4702,6 +4856,11 @@ paths:
         - name: reportStats
           in: query
           description: Report stats for the requested task queue type(s).
+          schema:
+            type: boolean
+        - name: reportConfig
+          in: query
+          description: Report Task Queue Config
           schema:
             type: boolean
         - name: includeTaskQueueStatus
@@ -5279,6 +5438,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workers/fetch-config:
+    post:
+      tags:
+        - WorkflowService
+      description: FetchWorkerConfig returns the worker configuration for a specific worker.
+      operationId: FetchWorkerConfig
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FetchWorkerConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchWorkerConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/workers/heartbeat:
     post:
       tags:
@@ -5305,6 +5496,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RecordWorkerHeartbeatResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workers/update-config:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        UpdateWorkerConfig updates the worker configuration of one or more workers.
+         Can be used to partially update the worker configuration.
+         Can be used to update the configuration of multiple workers.
+      operationId: UpdateWorkerConfig
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkerConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkerConfigResponse'
         default:
           description: Default error response
           content:
@@ -6623,6 +6849,40 @@ components:
       description: |-
         BatchOperationReset sends reset requests to batch workflows.
          Keep the parameter in sync with temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest.
+    BatchOperationResetActivities:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: The identity of the worker/client.
+        type:
+          type: string
+        matchAll:
+          type: boolean
+        resetAttempts:
+          type: boolean
+          description: Setting this flag will also reset the number of attempts.
+        resetHeartbeat:
+          type: boolean
+          description: Setting this flag will also reset the heartbeat details.
+        keepPaused:
+          type: boolean
+          description: If activity is paused, it will remain paused after reset
+        jitter:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            If set, the activity will start at a random time within the specified jitter
+             duration, introducing variability to the start time.
+        restoreOriginalOptions:
+          type: boolean
+          description: |-
+            If set, the activity options will be restored to the defaults.
+             Default options are then options activity was created with.
+             They are part of the first ActivityTaskScheduled event.
+      description: |-
+        BatchOperationResetActivities sends activity reset requests in a batch.
+         NOTE: keep in sync with temporal.api.workflowservice.v1.ResetActivityRequest
     BatchOperationSignal:
       type: object
       properties:
@@ -6671,10 +6931,10 @@ components:
           type: boolean
         resetAttempts:
           type: boolean
-          description: Providing this flag will also reset the number of attempts.
+          description: Setting this flag will also reset the number of attempts.
         resetHeartbeat:
           type: boolean
-          description: Providing this flag will also reset the heartbeat details.
+          description: Setting this flag will also reset the heartbeat details.
         jitter:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -6682,6 +6942,35 @@ components:
             If set, the activity will start at a random time within the specified jitter
              duration, introducing variability to the start time.
       description: BatchOperationUnpauseActivities sends unpause requests to batch workflows.
+    BatchOperationUpdateActivityOptions:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: The identity of the worker/client.
+        type:
+          type: string
+        matchAll:
+          type: boolean
+        activityOptions:
+          allOf:
+            - $ref: '#/components/schemas/ActivityOptions'
+          description: Update Activity options. Partial updates are accepted and controlled by update_mask.
+        updateMask:
+          type: string
+          description: Controls which fields from `activity_options` will be applied
+          format: field-mask
+        restoreOriginal:
+          type: boolean
+          description: |-
+            If set, the activity options will be restored to the default.
+             Default options are then options activity was created with.
+             They are part of the first ActivityTaskScheduled event.
+             This flag cannot be combined with any other option; if you supply
+             restore_original together with other options, the request will be rejected.
+      description: |-
+        BatchOperationUpdateActivityOptions sends an update-activity-options requests in a batch.
+         NOTE: keep in sync with temporal.api.workflowservice.v1.UpdateActivityRequest
     BatchOperationUpdateWorkflowExecutionOptions:
       type: object
       properties:
@@ -7135,6 +7424,21 @@ components:
       description: |-
         Used by the worker versioning APIs, represents an unordered set of one or more versions which are
          considered to be compatible with each other. Currently the versions are always worker build IDs.
+    ConfigMetadata:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Reason for why the config was set.
+        updateIdentity:
+          type: string
+          description: |-
+            Identity of the last updater.
+             Set by the request's identity field.
+        updateTime:
+          type: string
+          description: Time of the last update.
+          format: date-time
     CountWorkflowExecutionsResponse:
       type: object
       properties:
@@ -7396,6 +7700,9 @@ components:
             - BATCH_OPERATION_TYPE_DELETE
             - BATCH_OPERATION_TYPE_RESET
             - BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS
+            - BATCH_OPERATION_TYPE_UNPAUSE_ACTIVITY
+            - BATCH_OPERATION_TYPE_UPDATE_ACTIVITY_OPTIONS
+            - BATCH_OPERATION_TYPE_RESET_ACTIVITY
           type: string
           description: Batch operation type
           format: enum
@@ -7501,7 +7808,18 @@ components:
         stats:
           allOf:
             - $ref: '#/components/schemas/TaskQueueStats'
-          description: Statistics for the task queue. Only populated when `report_stats` is set to true in the request.
+          description: |-
+            Statistics for the task queue.
+             Only set if `report_stats` is set on the request.
+        statsByPriorityKey:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TaskQueueStats'
+          description: |-
+            Task queue stats breakdown by priority key. Only contains actively used priority keys.
+             Only set if `report_stats` is set on the request.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "by" is used to clarify the keys and values. --)
         versioningInfo:
           allOf:
             - $ref: '#/components/schemas/TaskQueueVersioningInfo'
@@ -7515,6 +7833,12 @@ components:
              they are always routed to their Pinned Deployment Version. However, new workflow executions
              are typically not Pinned until they complete their first task (unless they are started with
              a Pinned VersioningOverride or are Child Workflows of a Pinned parent).
+        config:
+          allOf:
+            - $ref: '#/components/schemas/TaskQueueConfig'
+          description: Only populated if report_task_queue_config is set to true.
+        effectiveRateLimit:
+          $ref: '#/components/schemas/DescribeTaskQueueResponse_EffectiveRateLimit'
         taskQueueStatus:
           allOf:
             - $ref: '#/components/schemas/TaskQueueStatus'
@@ -7529,6 +7853,26 @@ components:
             Deprecated.
              Only returned in ENHANCED mode.
              This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
+    DescribeTaskQueueResponse_EffectiveRateLimit:
+      type: object
+      properties:
+        requestsPerSecond:
+          type: number
+          description: The effective rate limit for the task queue.
+          format: float
+        rateLimitSource:
+          enum:
+            - RATE_LIMIT_SOURCE_UNSPECIFIED
+            - RATE_LIMIT_SOURCE_API
+            - RATE_LIMIT_SOURCE_WORKER
+            - RATE_LIMIT_SOURCE_SYSTEM
+          type: string
+          description: |-
+            Source of the RateLimit Configuration,which can be one of the following values:
+             - SOURCE_API: The rate limit that is set via the TaskQueueConfig api.
+             - SOURCE_WORKER: The rate limit is the value set using the workerOptions in TaskQueueActivitiesPerSecond.
+             - SOURCE_SYSTEM: The rate limit is the default value set by the system
+          format: enum
     DescribeWorkerDeploymentResponse:
       type: object
       properties:
@@ -7568,6 +7912,15 @@ components:
           allOf:
             - $ref: '#/components/schemas/TaskQueueStats'
           description: Only set if `report_task_queue_stats` is set on the request.
+        statsByPriorityKey:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/TaskQueueStats'
+          description: |-
+            Task queue stats breakdown by priority key. Only contains actively used priority keys.
+             Only set if `report_task_queue_stats` is set to true in the request.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "by" is used to clarify the key. --)
     DescribeWorkflowExecutionResponse:
       type: object
       properties:
@@ -7839,6 +8192,31 @@ components:
           $ref: '#/components/schemas/NexusOperationFailureInfo'
         nexusHandlerFailureInfo:
           $ref: '#/components/schemas/NexusHandlerFailureInfo'
+    FetchWorkerConfigRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: Namespace this worker belongs to.
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        reason:
+          type: string
+          description: Reason for sending worker command, can be used for audit purpose.
+        selector:
+          allOf:
+            - $ref: '#/components/schemas/WorkerSelector'
+          description: |-
+            Defines which workers should receive this command.
+             only single worker is supported at this time.
+    FetchWorkerConfigResponse:
+      type: object
+      properties:
+        workerConfig:
+          allOf:
+            - $ref: '#/components/schemas/WorkerConfig'
+          description: The worker configuration.
     GetClusterInfoResponse:
       type: object
       properties:
@@ -9362,6 +9740,15 @@ components:
         attempt:
           type: integer
           format: int32
+    PluginInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the plugin, required.
+        version:
+          type: string
+          description: The version of the plugin, may be empty.
     PollWorkflowTaskQueueResponse:
       type: object
       properties:
@@ -9551,29 +9938,82 @@ components:
              The maximum priority value (minimum priority) is determined by server
              configuration, and defaults to 5.
 
-             The default priority is (min+max)/2. With the default max of 5 and min of
-             1, that comes out to 3.
+             If priority is not present (or zero), then the effective priority will be
+             the default priority, which is is calculated by (min+max)/2. With the
+             default max of 5, and min of 1, that comes out to 3.
           format: int32
+        fairnessKey:
+          type: string
+          description: |-
+            Fairness key is a short string that's used as a key for a fairness
+             balancing mechanism. It may correspond to a tenant id, or to a fixed
+             string like "high" or "low". The default is the empty string.
+
+             The fairness mechanism attempts to dispatch tasks for a given key in
+             proportion to its weight. For example, using a thousand distinct tenant
+             ids, each with a weight of 1.0 (the default) will result in each tenant
+             getting a roughly equal share of task dispatch throughput.
+
+             (Note: this does not imply equal share of worker capacity! Fairness
+             decisions are made based on queue statistics, not
+             current worker load.)
+
+             As another example, using keys "high" and "low" with weight 9.0 and 1.0
+             respectively will prefer dispatching "high" tasks over "low" tasks at a
+             9:1 ratio, while allowing either key to use all worker capacity if the
+             other is not present.
+
+             All fairness mechanisms, including rate limits, are best-effort and
+             probabilistic. The results may not match what a "perfect" algorithm with
+             infinite resources would produce. The more unique keys are used, the less
+             accurate the results will be.
+
+             Fairness keys are limited to 64 bytes.
+        fairnessWeight:
+          type: number
+          description: |-
+            Fairness weight for a task can come from multiple sources for
+             flexibility. From highest to lowest precedence:
+             1. Weights for a small set of keys can be overridden in task queue
+                configuration with an API.
+             2. It can be attached to the workflow/activity in this field.
+             3. The default weight of 1.0 will be used.
+
+             Weight values are clamped to the range [0.001, 1000].
+          format: float
       description: |-
         Priority contains metadata that controls relative ordering of task processing
-         when tasks are backlogged in a queue. Initially, Priority will be used in
-         activity and workflow task queues, which are typically where backlogs exist.
-         Other queues in the server (such as transfer and timer queues) and rate
-         limiting decisions do not use Priority, but may in the future.
+         when tasks are backed up in a queue. Initially, Priority will be used in
+         matching (workflow and activity) task queues. Later it may be used in history
+         task queues and in rate limiting decisions.
 
-         Priority is attached to workflows and activities. Activities and child
-         workflows inherit Priority from the workflow that created them, but may
-         override fields when they are started or modified. For each field of a
-         Priority on an activity/workflow, not present or equal to zero/empty string
-         means to inherit the value from the calling workflow, or if there is no
-         calling workflow, then use the default (documented below).
+         Priority is attached to workflows and activities. By default, activities
+         inherit Priority from the workflow that created them, but may override fields
+         when an activity is started or modified.
 
-         Despite being named "Priority", this message will also contains fields that
+         Despite being named "Priority", this message also contains fields that
          control "fairness" mechanisms.
 
+         For all fields, the field not present or equal to zero/empty string means to
+         inherit the value from the calling workflow, or if there is no calling
+         workflow, then use the default value.
+
+         For all fields other than fairness_key, the zero value isn't meaningful so
+         there's no confusion between inherit/default and a meaningful value. For
+         fairness_key, the empty string will be interpreted as "inherit". This means
+         that if a workflow has a non-empty fairness key, you can't override the
+         fairness key of its activity to the empty string.
+
          The overall semantics of Priority are:
-         1. First, consider "priority_key": lower number goes first.
-         (more will be added here later)
+         1. First, consider "priority": higher priority (lower number) goes first.
+         2. Then, consider fairness: try to dispatch tasks for different fairness keys
+            in proportion to their weight.
+
+         Applications may use any subset of mechanisms that are useful to them and
+         leave the other fields to use default values.
+
+         Not all queues in the system may support the "full" semantics of all priority
+         fields. (Currently only support in matching task queues is planned.)
     QueryRejected:
       type: object
       properties:
@@ -9643,6 +10083,20 @@ components:
          time in StructuredCalendarSpec. If end < start, then end is interpreted as
          equal to start. This means you can use a Range with start set to a value, and
          end and step unset (defaulting to 0) to represent a single value.
+    RateLimit:
+      type: object
+      properties:
+        requestsPerSecond:
+          type: number
+          description: Zero is a valid rate limit.
+          format: float
+    RateLimitConfig:
+      type: object
+      properties:
+        rateLimit:
+          $ref: '#/components/schemas/RateLimit'
+        metadata:
+          $ref: '#/components/schemas/ConfigMetadata'
     RecordActivityTaskHeartbeatByIdRequest:
       type: object
       properties:
@@ -9981,6 +10435,9 @@ components:
         type:
           type: string
           description: Reset all running activities with of this type.
+        matchAll:
+          type: boolean
+          description: Reset all running activities.
         resetHeartbeat:
           type: boolean
           description: |-
@@ -9988,7 +10445,7 @@ components:
              This flag will be applied only to the new instance of the activity.
         keepPaused:
           type: boolean
-          description: if activity is paused, it will remain paused after reset
+          description: If activity is paused, it will remain paused after reset
         jitter:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -10001,6 +10458,7 @@ components:
             If set, the activity options will be restored to the defaults.
              Default options are then options activity was created with.
              They are part of the first SCHEDULE event.
+      description: 'NOTE: keep in sync with temporal.api.batch.v1.BatchOperationResetActivities'
     ResetActivityResponse:
       type: object
       properties: {}
@@ -11254,6 +11712,10 @@ components:
           $ref: '#/components/schemas/BatchOperationUpdateWorkflowExecutionOptions'
         unpauseActivitiesOperation:
           $ref: '#/components/schemas/BatchOperationUnpauseActivities'
+        resetActivitiesOperation:
+          $ref: '#/components/schemas/BatchOperationResetActivities'
+        updateActivityOptionsOperation:
+          $ref: '#/components/schemas/BatchOperationUpdateActivityOptions'
     StartBatchOperationResponse:
       type: object
       properties: {}
@@ -11647,6 +12109,17 @@ components:
             Iff kind == TASK_QUEUE_KIND_STICKY, then this field contains the name of
              the normal task queue that the sticky worker is running on.
       description: See https://docs.temporal.io/docs/concepts/task-queues/
+    TaskQueueConfig:
+      type: object
+      properties:
+        queueRateLimit:
+          allOf:
+            - $ref: '#/components/schemas/RateLimitConfig'
+          description: Unless modified, this is the system-defined rate limit.
+        fairnessKeysRateLimitDefault:
+          allOf:
+            - $ref: '#/components/schemas/RateLimitConfig'
+          description: If set, each individual fairness key will be limited to this rate, scaled by the weight of the fairness key.
     TaskQueueReachability:
       type: object
       properties:
@@ -12033,6 +12506,9 @@ components:
         type:
           type: string
           description: Update all running activities of this type.
+        matchAll:
+          type: boolean
+          description: Update all running activities.
         restoreOriginal:
           type: boolean
           description: |-
@@ -12041,6 +12517,7 @@ components:
              They are part of the first SCHEDULE event.
              This flag cannot be combined with any other option; if you supply
              restore_original together with other options, the request will be rejected.
+      description: 'NOTE: keep in sync with temporal.api.batch.v1.BatchOperationUpdateActivityOptions'
     UpdateActivityOptionsResponse:
       type: object
       properties:
@@ -12187,6 +12664,87 @@ components:
     UpdateScheduleResponse:
       type: object
       properties: {}
+    UpdateTaskQueueConfigRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        identity:
+          type: string
+        taskQueue:
+          type: string
+          description: Selects the task queue to update.
+        taskQueueType:
+          enum:
+            - TASK_QUEUE_TYPE_UNSPECIFIED
+            - TASK_QUEUE_TYPE_WORKFLOW
+            - TASK_QUEUE_TYPE_ACTIVITY
+            - TASK_QUEUE_TYPE_NEXUS
+          type: string
+          format: enum
+        updateQueueRateLimit:
+          allOf:
+            - $ref: '#/components/schemas/UpdateTaskQueueConfigRequest_RateLimitUpdate'
+          description: |-
+            Update to queue-wide rate limit.
+             If not set, this configuration is unchanged.
+             NOTE: A limit set by the worker is overriden; and restored again when reset.
+             If the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit.
+        updateFairnessKeyRateLimitDefault:
+          allOf:
+            - $ref: '#/components/schemas/UpdateTaskQueueConfigRequest_RateLimitUpdate'
+          description: |-
+            Update to the default fairness key rate limit.
+             If not set, this configuration is unchanged.
+             If the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit.
+    UpdateTaskQueueConfigRequest_RateLimitUpdate:
+      type: object
+      properties:
+        rateLimit:
+          allOf:
+            - $ref: '#/components/schemas/RateLimit'
+          description: Rate Limit to be updated
+        reason:
+          type: string
+          description: Reason for why the rate limit was set.
+    UpdateTaskQueueConfigResponse:
+      type: object
+      properties:
+        config:
+          $ref: '#/components/schemas/TaskQueueConfig'
+    UpdateWorkerConfigRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: Namespace this worker belongs to.
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        reason:
+          type: string
+          description: Reason for sending worker command, can be used for audit purpose.
+        workerConfig:
+          allOf:
+            - $ref: '#/components/schemas/WorkerConfig'
+          description: |-
+            Partial updates are accepted and controlled by update_mask.
+             The worker configuration to set.
+        updateMask:
+          type: string
+          description: Controls which fields from `worker_config` will be applied
+          format: field-mask
+        selector:
+          allOf:
+            - $ref: '#/components/schemas/WorkerSelector'
+          description: Defines which workers should receive this command.
+    UpdateWorkerConfigResponse:
+      type: object
+      properties:
+        workerConfig:
+          allOf:
+            - $ref: '#/components/schemas/WorkerConfig'
+          description: The worker configuration. Will be returned if the command was sent to a single worker.
     UpdateWorkerDeploymentVersionMetadataRequest:
       type: object
       properties:
@@ -12478,6 +13036,41 @@ components:
              user specified timeout, API call returns even if specified stage is not reached.
           format: enum
       description: Specifies client's intent to wait for Update results.
+    WorkerConfig:
+      type: object
+      properties:
+        workflowCacheSize:
+          type: integer
+          format: int32
+        simplePollerBehavior:
+          $ref: '#/components/schemas/WorkerConfig_SimplePollerBehavior'
+        autoscalingPollerBehavior:
+          $ref: '#/components/schemas/WorkerConfig_AutoscalingPollerBehavior'
+    WorkerConfig_AutoscalingPollerBehavior:
+      type: object
+      properties:
+        minPollers:
+          type: integer
+          description: |-
+            At least this many poll calls will always be attempted (assuming slots are available).
+             Cannot be zero.
+          format: int32
+        maxPollers:
+          type: integer
+          description: At most this many poll calls will ever be open at once. Must be >= `minimum`.
+          format: int32
+        initialPollers:
+          type: integer
+          description: |-
+            This many polls will be attempted initially before scaling kicks in. Must be between
+              `minimum` and `maximum`.
+          format: int32
+    WorkerConfig_SimplePollerBehavior:
+      type: object
+      properties:
+        maxPollers:
+          type: integer
+          format: int32
     WorkerDeploymentInfo:
       type: object
       properties:
@@ -12788,6 +13381,11 @@ components:
           type: integer
           description: Current cache size, expressed in number of Workflow Executions.
           format: int32
+        plugins:
+          type: array
+          items:
+            $ref: '#/components/schemas/PluginInfo'
+          description: Plugins currently in use by this SDK.
       description: |-
         Worker info message, contains information about the worker and its current state.
          All information is provided by the worker itself.
@@ -12843,6 +13441,16 @@ components:
         isAutoscaling:
           type: boolean
           description: Set true if the number of concurrent pollers is auto-scaled
+    WorkerSelector:
+      type: object
+      properties:
+        workerInstanceKey:
+          type: string
+          description: Worker instance key to which the command should be sent.
+      description: |-
+        This is used to send commands to a specific worker or a group of workers.
+         Right now, it is used to send commands to a specific worker instance.
+         Will be extended to be able to send command to multiple workers.
     WorkerSlotsInfo:
       type: object
       properties:
@@ -13610,6 +14218,12 @@ components:
 
              Pinned override is inherited if Task Queue of new run is compatible with the override version.
              Override is inherited separately and takes precedence over inherited base version.
+        eagerExecutionAccepted:
+          type: boolean
+          description: |-
+            A boolean indicating whether the SDK has asked to eagerly execute the first workflow task for this workflow and
+             eager execution was accepted by the server.
+             Only populated by server with version >= 1.29.0.
       description: Always the first event in workflow history
     WorkflowExecutionTerminatedEventAttributes:
       type: object

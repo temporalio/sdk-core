@@ -1354,6 +1354,34 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        update_task_queue_config,
+        UpdateTaskQueueConfigRequest,
+        UpdateTaskQueueConfigResponse,
+        |r| {
+            let mut labels = namespaced_request!(r);
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        fetch_worker_config,
+        FetchWorkerConfigRequest,
+        FetchWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_worker_config,
+        UpdateWorkerConfigRequest,
+        UpdateWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -1543,10 +1571,16 @@ mod tests {
             })
             .collect();
         let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();
+        let mut not_implemented = vec![];
         for method in methods {
             if !no_underscores.contains(&method.to_lowercase()) {
-                panic!("RPC method {method} is not implemented by raw client")
+                not_implemented.push(method);
             }
+        }
+        if !not_implemented.is_empty() {
+            panic!(
+                "The following RPC methods are not implemented by raw client: {not_implemented:?}"
+            );
         }
     }
     #[test]

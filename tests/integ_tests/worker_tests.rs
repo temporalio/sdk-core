@@ -1,3 +1,4 @@
+use crate::shared_tests;
 use assert_matches::assert_matches;
 use std::{
     cell::Cell,
@@ -15,13 +16,13 @@ use temporal_sdk_core_api::{
     errors::WorkerValidationError,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::GrpcMessageTooLarge;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
         Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
     },
     temporal::api::{
-        enums::v1::EventType, failure::v1::Failure as InnerFailure,
+        enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
+        failure::v1::Failure as InnerFailure,
         history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     },
 };
@@ -194,4 +195,9 @@ async fn oversize_grpc_message() {
                 false
             }
     }))
+}
+
+#[tokio::test]
+async fn grpc_message_too_large_test() {
+    shared_tests::grpc_message_too_large().await
 }
