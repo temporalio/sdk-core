@@ -10,6 +10,8 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false }
+http = "1.1"
 libc = "0.2"
 prost = { workspace = true }
 # We rely on Cargo semver rules not updating a 0.x to 0.y. Per the rand

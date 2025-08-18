@@ -7,6 +7,7 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod callback_based;
 mod metrics;
 mod proxy;
 mod raw;
@@ -35,7 +36,7 @@ pub use workflow_handle::{
 };
 
 use crate::{
-    metrics::{GrpcMetricSvc, MetricsContext},
+    metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::{AttachMetricLabels, sealed::RawClientLike},
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
@@ -434,34 +435,59 @@ impl ClientOptions {
         metrics_meter: Option<TemporalMeter>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
-        let channel = Channel::from_shared(self.target_url.to_string())?;
-        let channel = self.add_tls_to_channel(channel).await?;
-        let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
-            channel
-                .keep_alive_while_idle(true)
-                .http2_keep_alive_interval(keep_alive.interval)
-                .keep_alive_timeout(keep_alive.timeout)
-        } else {
-            channel
-        };
-        let channel = if let Some(origin) = self.override_origin.clone() {
-            channel.origin(origin)
-        } else {
-            channel
-        };
-        // If there is a proxy, we have to connect that way
-        let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
-            proxy.connect_endpoint(&channel).await?
-        } else {
-            channel.connect().await?
-        };
-        let service = ServiceBuilder::new()
-            .layer_fn(move |channel| GrpcMetricSvc {
-                inner: channel,
+        self.connect_no_namespace_with_service_override(metrics_meter, None)
+            .await
+    }
+
+    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
+    /// intercepted with retry, default headers functionality, and metrics if provided. If a
+    /// service_override is present, network-specific options are ignored and the callback is
+    /// invoked for each gRPC call.
+    ///
+    /// See [RetryClient] for more
+    pub async fn connect_no_namespace_with_service_override(
+        &self,
+        metrics_meter: Option<TemporalMeter>,
+        service_override: Option<callback_based::CallbackBasedGrpcService>,
+    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
+    {
+        let service = if let Some(service_override) = service_override {
+            GrpcMetricSvc {
+                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
                 metrics: metrics_meter.clone().map(MetricsContext::new),
                 disable_errcode_label: self.disable_error_code_metric_tags,
-            })
-            .service(channel);
+            }
+        } else {
+            let channel = Channel::from_shared(self.target_url.to_string())?;
+            let channel = self.add_tls_to_channel(channel).await?;
+            let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
+                channel
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(keep_alive.interval)
+                    .keep_alive_timeout(keep_alive.timeout)
+            } else {
+                channel
+            };
+            let channel = if let Some(origin) = self.override_origin.clone() {
+                channel.origin(origin)
+            } else {
+                channel
+            };
+            // If there is a proxy, we have to connect that way
+            let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
+                proxy.connect_endpoint(&channel).await?
+            } else {
+                channel.connect().await?
+            };
+            ServiceBuilder::new()
+                .layer_fn(move |channel| GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::Channel(channel),
+                    metrics: metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: self.disable_error_code_metric_tags,
+                })
+                .service(channel)
+        };
+
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: self.headers.clone().unwrap_or_default(),
             api_key: self.api_key.clone(),

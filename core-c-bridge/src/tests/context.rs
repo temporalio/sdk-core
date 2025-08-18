@@ -277,6 +277,15 @@ impl Context {
     }
 
     pub fn client_connect(self: &Arc<Self>, options: Box<ClientOptions>) -> anyhow::Result<()> {
+        Self::client_connect_with_override(self, options, None, std::ptr::null_mut())
+    }
+
+    pub fn client_connect_with_override(
+        self: &Arc<Self>,
+        options: Box<ClientOptions>,
+        grpc_override_callback: crate::client::ClientGrpcOverrideCallback,
+        grpc_override_callback_user_data: *mut libc::c_void,
+    ) -> anyhow::Result<()> {
         let metadata = options
             .headers
             .as_ref()
@@ -339,6 +348,8 @@ impl Context {
             retry_options: &*retry_options,
             keep_alive_options: pointer_or_null(keep_alive_options.as_deref()),
             http_connect_proxy_options: pointer_or_null(proxy_options.as_deref()),
+            grpc_override_callback,
+            grpc_override_callback_user_data,
         });
 
         let client_options_ptr = &*client_options as *const _;
