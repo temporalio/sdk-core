@@ -1,6 +1,6 @@
 use crate::{
-    Client, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY, NamespacedClient, NoRetryOnMatching,
-    Result, RetryConfig, raw::IsUserLongPoll,
+    Client, ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
+    NamespacedClient, NoRetryOnMatching, Result, RetryConfig, raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -214,6 +214,10 @@ where
         if let Some(sc) = self.retry_short_circuit.as_ref()
             && (sc.predicate)(&e)
         {
+            e.metadata_mut().insert(
+                ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT,
+                tonic::metadata::MetadataValue::from(0),
+            );
             return RetryPolicy::ForwardError(e);
         }
 
@@ -441,7 +445,12 @@ mod tests {
             FixedClock(Instant::now()),
         );
         let result = err_handler.handle(1, Status::new(Code::ResourceExhausted, "leave me alone"));
-        assert_matches!(result, RetryPolicy::ForwardError(_))
+        let e = assert_matches!(result, RetryPolicy::ForwardError(e) => e);
+        assert!(
+            e.metadata()
+                .get(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT)
+                .is_some()
+        );
     }
 
     #[tokio::test]

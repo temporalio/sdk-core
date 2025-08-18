@@ -777,6 +777,11 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
         "UpdateUserGroup" => rpc_call!(client, call, update_user_group),
         "UpdateUser" => rpc_call!(client, call, update_user),
         "ValidateNamespaceExportSink" => rpc_call!(client, call, validate_namespace_export_sink),
+        "UpdateNamespaceTags" => rpc_call!(client, call, update_namespace_tags),
+        "CreateConnectivityRule" => rpc_call!(client, call, create_connectivity_rule),
+        "GetConnectivityRule" => rpc_call!(client, call, get_connectivity_rule),
+        "GetConnectivityRules" => rpc_call!(client, call, get_connectivity_rules),
+        "DeleteConnectivityRule" => rpc_call!(client, call, delete_connectivity_rule),
         rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
     }
 }
