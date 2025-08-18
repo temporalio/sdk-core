@@ -260,6 +260,8 @@ impl CoreWfStarter {
 
     /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
     /// the minimum version requirement is met). Returns None if the local server is not new enough.
+    ///
+    /// An empty string means to skip the version check.
     pub async fn new_cloud_or_local(test_name: &str, version_req: &str) -> Option<Self> {
         init_integ_telem();
         let mut check_mlsv = false;
@@ -271,7 +273,7 @@ impl CoreWfStarter {
         };
         let mut s = Self::_new(test_name, None, client);
 
-        if check_mlsv {
+        if check_mlsv && !version_req.is_empty() {
             let clustinfo = (*s.get_client().await)
                 .get_client()
                 .inner()
