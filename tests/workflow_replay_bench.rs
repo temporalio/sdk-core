@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowFunction};
-use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
+use temporal_sdk_core::{CoreRuntime, RuntimeOptions, replay::HistoryForReplay};
 use temporal_sdk_core_api::telemetry::metrics::{
     MetricKeyValue, MetricParametersBuilder, NewAttributes,
 };
@@ -80,7 +80,8 @@ pub fn bench_metrics(c: &mut Criterion) {
     let _tokio = tokio_runtime.enter();
     let (mut telemopts, _addr, _aborter) = prom_metrics(None);
     telemopts.logging = None;
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let runtime_opts = RuntimeOptions::new(telemopts, None);
+    let rt = CoreRuntime::new_assume_tokio(runtime_opts).unwrap();
     let meter = rt.telemetry().get_metric_meter().unwrap();
 
     c.bench_function("Record with new attributes on each call", move |b| {

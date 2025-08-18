@@ -30,6 +30,7 @@ use url::Url;
 #[repr(C)]
 pub struct RuntimeOptions {
     pub telemetry: *const TelemetryOptions,
+    pub heartbeat_duration_millis: u64,
 }
 
 #[repr(C)]
@@ -142,7 +143,7 @@ pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> R
             let mut runtime = Runtime {
                 core: Arc::new(
                     CoreRuntime::new(
-                        CoreTelemetryOptions::default(),
+                        CoreRuntimeOptions::default(),
                         TokioRuntimeBuilder::default(),
                     )
                     .unwrap(),
@@ -237,9 +238,13 @@ impl Runtime {
         } else {
             CoreTelemetryOptions::default()
         };
+        let core_runtime_options = CoreRuntimeOptions::new(
+            telemetry_options,
+            Some(Duration::from_millis(options.heartbeat_duration_millis)),
+        );
 
         // Build core runtime
-        let mut core = CoreRuntime::new(telemetry_options, TokioRuntimeBuilder::default())?;
+        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;
 
         // We late-bind the metrics after core runtime is created since it needs
         // the Tokio handle

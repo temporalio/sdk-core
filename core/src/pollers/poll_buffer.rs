@@ -203,6 +203,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         permit_dealer: MeteredPermitDealer<NexusSlotKind>,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        send_heartbeat: bool,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -216,11 +217,14 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
             let task_queue = task_queue.clone();
             async move {
                 client
-                    .poll_nexus_task(PollOptions {
-                        task_queue,
-                        no_retry,
-                        timeout_override,
-                    })
+                    .poll_nexus_task(
+                        PollOptions {
+                            task_queue,
+                            no_retry,
+                            timeout_override,
+                        },
+                        send_heartbeat,
+                    )
                     .await
             }
         };
