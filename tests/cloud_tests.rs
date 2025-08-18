@@ -16,7 +16,8 @@ async fn grpc_message_too_large_test() {
     shared_tests::grpc_message_too_large().await
 }
 
-#[tokio::test]
-async fn priority_values_sent_to_server() {
-    shared_tests::priority::priority_values_sent_to_server().await
-}
+// Needs https://github.com/temporalio/temporal/pull/8143 to be rolled out in cloud to pass
+// #[tokio::test]
+// async fn priority_values_sent_to_server() {
+//     shared_tests::priority::priority_values_sent_to_server().await
+// }
