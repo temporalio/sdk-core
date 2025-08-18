@@ -43,8 +43,8 @@ use temporal_sdk::{
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
-    init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
@@ -186,8 +186,9 @@ pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }
     Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
+        let runtime_options = RuntimeOptions::new(telemetry_options, None);
         let rt =
-            CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
+            CoreRuntime::new_assume_tokio(runtime_options).expect("Core runtime inits cleanly");
         if let Some(sub) = rt.telemetry().trace_subscriber() {
             let _ = tracing::subscriber::set_global_default(sub);
         }
