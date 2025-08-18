@@ -260,10 +260,7 @@ impl CoreWfStarter {
 
     /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
     /// the minimum version requirement is met). Returns None if the local server is not new enough.
-    pub async fn new_cloud_or_local(
-        test_name: &str,
-        min_local_server_version: &str,
-    ) -> Option<Self> {
+    pub async fn new_cloud_or_local(test_name: &str, version_req: &str) -> Option<Self> {
         init_integ_telem();
         let mut check_mlsv = false;
         let client = if env::var("TEMPORAL_CLOUD_ADDRESS").is_ok() {
@@ -289,7 +286,7 @@ impl CoreWfStarter {
                     .server_version,
             )
             .expect("must be able to parse server version");
-            let req = semver::VersionReq::parse(&format!(">={min_local_server_version}"))
+            let req = semver::VersionReq::parse(version_req)
                 .expect("must be able to parse server version requirement");
 
             if !req.matches(&srv_ver) {

@@ -20,7 +20,7 @@ async fn tls_test() {
 #[tokio::test]
 async fn grpc_message_too_large_test() {
     let wf_name = "oversize_grpc_message";
-    let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, "1.26")
+    let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, ">=1.26")
         .await
         .unwrap();
     starter.worker_config.no_remote_activities(true);

@@ -11,7 +11,7 @@ use temporal_sdk_core_test_utils::CoreWfStarter;
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =
-        CoreWfStarter::new_cloud_or_local("priority_values_sent_to_server", "1.29").await
+        CoreWfStarter::new_cloud_or_local("priority_values_sent_to_server", ">=1.29.0-139.2").await
     {
         wfs
     } else {
