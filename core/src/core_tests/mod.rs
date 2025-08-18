@@ -12,13 +12,25 @@ mod workflow_tasks;
 use crate::{
     Worker,
     errors::PollError,
-    test_help::{MockPollCfg, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg},
+    test_help::{
+        MockPollCfg, build_mock_pollers, canned_histories, mock_worker, single_hist_mock_sg,
+        test_worker_cfg,
+    },
     worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
 use temporal_sdk_core_api::{Worker as WorkerTrait, worker::PollerBehavior};
-use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
+use temporal_sdk_core_protos::{
+    TestHistoryBuilder,
+    coresdk::{
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+        workflow_completion::WorkflowActivationCompletion,
+    },
+    temporal::api::{
+        enums::v1::EventType, history::v1::WorkflowExecutionOptionsUpdatedEventAttributes,
+    },
+};
 use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
@@ -97,4 +109,27 @@ async fn shutdown_interrupts_both_polls() {
             worker.shutdown().await;
         }
     };
+}
+
+#[tokio::test]
+async fn ignores_workflow_options_updated_event() {
+    temporal_sdk_core_test_utils::init_integ_telem();
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add(WorkflowExecutionOptionsUpdatedEventAttributes::default());
+    t.last_event().unwrap().worker_may_ignore = true;
+    t.add_full_wf_task();
+
+    let mock = mock_worker_client();
+    let mut mock = single_hist_mock_sg("whatever", t, [1], mock, true);
+    mock.worker_cfg(|w| w.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+        }]
+    );
 }

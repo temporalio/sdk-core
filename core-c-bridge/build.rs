@@ -16,10 +16,11 @@ fn main() {
         .write_to_file("include/temporal-sdk-core-c-bridge.h");
 
     // If this changed and an env var disallows change, error
-    if let Ok(env_val) = env::var("TEMPORAL_SDK_BRIDGE_DISABLE_HEADER_CHANGE") {
-        if changed && env_val == "true" {
-            println!("cargo:warning=bridge's header file changed unexpectedly from what's on disk");
-            std::process::exit(1);
-        }
+    if let Ok(env_val) = env::var("TEMPORAL_SDK_BRIDGE_DISABLE_HEADER_CHANGE")
+        && changed
+        && env_val == "true"
+    {
+        println!("cargo:warning=bridge's header file changed unexpectedly from what's on disk");
+        std::process::exit(1);
     }
 }
