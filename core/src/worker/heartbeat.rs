@@ -1,60 +1,110 @@
 use crate::WorkerClient;
 use crate::abstractions::dbg_panic;
-use gethostname::gethostname;
+use crate::telemetry::TelemetryInstance;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use temporal_sdk_core_api::worker::WorkerConfig;
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporal_sdk_core_api::worker::{WorkerConfigBuilder, WorkerVersioningStrategy};
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
-use uuid::Uuid;
 
-pub(crate) type HeartbeatFn = Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>;
+/// Callback used to collect heartbeat data from each worker at the time of heartbeat
+pub(crate) type HeartbeatFn = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 
-pub(crate) struct WorkerHeartbeatManager {
-    heartbeat_handle: JoinHandle<()>,
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct ClientIdentity {
+    pub(crate) endpoint: String,
+    pub(crate) namespace: String,
+    pub(crate) task_queue: String,
 }
 
-impl WorkerHeartbeatManager {
-    pub(crate) fn new(
-        config: WorkerConfig,
-        identity: String,
-        heartbeat_fn: Arc<OnceLock<HeartbeatFn>>,
-        client: Arc<dyn WorkerClient>,
-    ) -> Self {
-        let sdk_name_and_ver = client.sdk_name_and_version();
-        let reset_notify = Arc::new(Notify::new());
-        let data = Arc::new(Mutex::new(WorkerHeartbeatData::new(
-            config,
-            identity,
-            sdk_name_and_ver,
-            reset_notify.clone(),
-        )));
-        let data_clone = data.clone();
+/// SharedNamespaceWorker is responsible for polling nexus-delivered worker commands and sending
+/// worker heartbeats to the server. This communicates with all workers in the same process that
+/// share the same namespace.
+pub(crate) struct SharedNamespaceWorker {
+    heartbeat_map: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
+}
 
-        let heartbeat_handle = tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(data_clone.lock().heartbeat_interval);
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+impl SharedNamespaceWorker {
+    pub(crate) fn new(
+        client: Arc<dyn WorkerClient>,
+        client_identity: ClientIdentity,
+        heartbeat_interval: Duration,
+        telemetry: Option<&TelemetryInstance>,
+        shutdown_callback: Arc<dyn Fn() + Send + Sync>,
+        heartbeat_map: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
+    ) -> Self {
+        let config = WorkerConfigBuilder::default()
+            .namespace(client_identity.namespace.clone())
+            .task_queue(client_identity.task_queue)
+            .no_remote_activities(true)
+            .max_outstanding_nexus_tasks(5_usize)
+            .versioning_strategy(WorkerVersioningStrategy::None {
+                build_id: "1.0".to_owned(),
+            })
+            .build()
+            .expect("all required fields should be implemented");
+        let worker =
+            crate::worker::Worker::new(config.into(), None, client.clone(), telemetry, true);
+
+        let last_heartbeat_time_map = Mutex::new(HashMap::new());
+
+        // heartbeat task
+        let reset_notify = Arc::new(Notify::new());
+        let client_clone = client.clone();
+
+        let heartbeat_map_clone = heartbeat_map.clone();
+
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(heartbeat_interval);
+            ticker.tick().await;
             loop {
+                // TODO: Race condition here, can technically shut down before anything is ever initialized
+                if heartbeat_map_clone.lock().is_empty() {
+                    worker.shutdown().await;
+                    // remove this worker from the Runtime map
+                    shutdown_callback();
+                    return;
+                }
                 tokio::select! {
                     _ = ticker.tick() => {
-                        let heartbeat = if let Some(heartbeat) = data_clone.lock().capture_heartbeat_if_needed() {
-                            heartbeat
-                        } else {
-                            continue
-                        };
-                        if let Err(e) = client.clone().record_worker_heartbeat(heartbeat).await {
-                            if matches!(
+                        let mut hb_to_send = Vec::new();
+                        for (instance_key, heartbeat_callback) in heartbeat_map_clone.lock().iter() {
+                            let mut heartbeat = heartbeat_callback();
+                            let mut last_heartbeat_time_map = last_heartbeat_time_map.lock();
+                            let heartbeat_time = last_heartbeat_time_map.get(instance_key).cloned();
+
+                            let now = SystemTime::now();
+                            let elapsed_since_last_heartbeat = if let Some(heartbeat_time) = heartbeat_time {
+                                let dur = now.duration_since(heartbeat_time).unwrap_or(Duration::ZERO);
+                                Some(PbDuration {
+                                    seconds: dur.as_secs() as i64,
+                                    nanos: dur.subsec_nanos() as i32,
+                                })
+                            } else {
+                                None
+                            };
+
+
+                            heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
+                            heartbeat.heartbeat_time = Some(now.into());
+
+                            hb_to_send.push(heartbeat);
+
+                            last_heartbeat_time_map.insert(instance_key.clone(), now);
+                        }
+                        if let Err(e) = client_clone.record_worker_heartbeat(client_identity.namespace.clone(), client_identity.endpoint.clone(), hb_to_send
+                            ).await {
+                                if matches!(
                                 e.code(),
                                 tonic::Code::Unimplemented
-                            ) {
-                                return;
+                                ) {
+                                    return;
+                                }
+                                warn!(error=?e, "Network error while sending worker heartbeat");
                             }
-                            warn!(error=?e, "Network error while sending worker heartbeat");
-                        }
                     }
                     _ = reset_notify.notified() => {
                         ticker.reset();
@@ -63,105 +113,32 @@ impl WorkerHeartbeatManager {
             }
         });
 
-        let data_clone = data.clone();
-        if heartbeat_fn
-            .set(Box::new(move || {
-                data_clone.lock().capture_heartbeat_if_needed()
-            }))
-            .is_err()
-        {
-            dbg_panic!(
-                "Failed to set heartbeat_fn, heartbeat_fn should only be set once, when a singular WorkerHeartbeatInfo is created"
-            );
-        }
-
-        Self { heartbeat_handle }
+        Self { heartbeat_map }
     }
 
-    pub(crate) fn shutdown(&self) {
-        self.heartbeat_handle.abort()
-    }
-}
+    /// Adds `WorkerHeartbeatData` to the `SharedNamespaceWorker` and adds a `HeartbeatCallback` to
+    /// the client that Worker
+    pub(crate) fn register_callback(
+        &mut self,
+        worker_instance_key: String,
+        heartbeat_callback: HeartbeatFn,
+    ) -> Arc<dyn Fn() + Send + Sync> {
+        self.heartbeat_map
+            .lock()
+            .insert(worker_instance_key.clone(), heartbeat_callback);
 
-#[derive(Debug, Clone)]
-struct WorkerHeartbeatData {
-    worker_instance_key: String,
-    worker_identity: String,
-    host_info: WorkerHostInfo,
-    // Time of the last heartbeat. This is used to both for heartbeat_time and last_heartbeat_time
-    heartbeat_time: Option<SystemTime>,
-    task_queue: String,
-    /// SDK name
-    sdk_name: String,
-    /// SDK version
-    sdk_version: String,
-    /// Worker start time
-    start_time: SystemTime,
-    heartbeat_interval: Duration,
-    reset_notify: Arc<Notify>,
-}
-
-impl WorkerHeartbeatData {
-    fn new(
-        worker_config: WorkerConfig,
-        worker_identity: String,
-        sdk_name_and_ver: (String, String),
-        reset_notify: Arc<Notify>,
-    ) -> Self {
-        Self {
-            worker_identity,
-            host_info: WorkerHostInfo {
-                host_name: gethostname().to_string_lossy().to_string(),
-                process_id: std::process::id().to_string(),
-                ..Default::default()
-            },
-            sdk_name: sdk_name_and_ver.0,
-            sdk_version: sdk_name_and_ver.1,
-            task_queue: worker_config.task_queue.clone(),
-            start_time: SystemTime::now(),
-            heartbeat_time: None,
-            worker_instance_key: Uuid::new_v4().to_string(),
-            heartbeat_interval: worker_config
-                .heartbeat_interval
-                .expect("WorkerHeartbeatData is only called when heartbeat_interval is Some"),
-            reset_notify,
-        }
-    }
-
-    fn capture_heartbeat_if_needed(&mut self) -> Option<WorkerHeartbeat> {
-        let now = SystemTime::now();
-        let elapsed_since_last_heartbeat = if let Some(heartbeat_time) = self.heartbeat_time {
-            let dur = now.duration_since(heartbeat_time).unwrap_or(Duration::ZERO);
-
-            // Only send poll data if it's nearly been a full interval since this data has been sent
-            // In this case, "nearly" is 90% of the interval
-            if dur.as_secs_f64() < 0.9 * self.heartbeat_interval.as_secs_f64() {
-                return None;
+        let heartbeat_map_clone = self.heartbeat_map.clone();
+        Arc::new(move || {
+            if heartbeat_map_clone
+                .lock()
+                .remove(&worker_instance_key)
+                .is_none()
+            {
+                dbg_panic!(
+                    "Attempted to remove key {} that was already removed",
+                    worker_instance_key
+                );
             }
-            Some(PbDuration {
-                seconds: dur.as_secs() as i64,
-                nanos: dur.subsec_nanos() as i32,
-            })
-        } else {
-            None
-        };
-
-        self.heartbeat_time = Some(now);
-
-        self.reset_notify.notify_one();
-
-        Some(WorkerHeartbeat {
-            worker_instance_key: self.worker_instance_key.clone(),
-            worker_identity: self.worker_identity.clone(),
-            host_info: Some(self.host_info.clone()),
-            task_queue: self.task_queue.clone(),
-            sdk_name: self.sdk_name.clone(),
-            sdk_version: self.sdk_version.clone(),
-            status: 0,
-            start_time: Some(self.start_time.into()),
-            heartbeat_time: Some(SystemTime::now().into()),
-            elapsed_since_last_heartbeat,
-            ..Default::default()
         })
     }
 }
@@ -177,13 +154,17 @@ mod tests {
     use std::time::Duration;
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
+    use uuid::Uuid;
 
     #[tokio::test]
     async fn worker_heartbeat() {
         let mut mock = mock_worker_client();
-        mock.expect_record_worker_heartbeat()
-            .times(2)
-            .returning(move |heartbeat| {
+        let heartbeat_count = Arc::new(Mutex::new(0));
+        let heartbeat_count_clone = heartbeat_count.clone();
+        mock.expect_record_worker_heartbeat().times(2).returning(
+            move |_namespace, _identity, worker_heartbeat| {
+                assert_eq!(1, worker_heartbeat.len());
+                let heartbeat = worker_heartbeat[0].clone();
                 let host_info = heartbeat.host_info.clone().unwrap();
                 assert_eq!("test-identity", heartbeat.worker_identity);
                 assert!(!heartbeat.worker_instance_key.is_empty());
@@ -198,34 +179,51 @@ mod tests {
                 assert!(heartbeat.heartbeat_time.is_some());
                 assert!(heartbeat.start_time.is_some());
 
+                let mut count = heartbeat_count_clone.lock();
+                *count += 1;
+
                 Ok(RecordWorkerHeartbeatResponse {})
-            });
+            },
+        );
 
         let config = test_worker_cfg()
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .max_outstanding_activities(1_usize)
-            .heartbeat_interval(Duration::from_millis(200))
             .build()
-            .unwrap();
+            .unwrap()
+            .into();
 
-        let heartbeat_fn = Arc::new(OnceLock::new());
         let client = Arc::new(mock);
-        let worker = worker::Worker::new(config, None, client, None, Some(heartbeat_fn.clone()));
-        heartbeat_fn.get().unwrap()();
+        let worker = worker::Worker::new(config, None, client.clone(), None, false);
 
-        // heartbeat timer fires once
-        advance_time(Duration::from_millis(300)).await;
-        // it hasn't been >90% of the interval since the last heartbeat, so no data should be returned here
-        assert_eq!(None, heartbeat_fn.get().unwrap()());
-        // heartbeat timer fires once
-        advance_time(Duration::from_millis(300)).await;
+        let namespace = "test-namespace".to_string();
+        let task_queue_key = Uuid::new_v4();
+        let mut shared_namespace_worker = SharedNamespaceWorker::new(
+            client,
+            ClientIdentity {
+                endpoint: "test-endpoint".to_string(),
+                namespace: namespace.clone(),
+                task_queue: format!(
+                    "temporal-sys/worker-commands/{}/{}",
+                    namespace, task_queue_key,
+                ),
+            },
+            Duration::from_millis(100),
+            None,
+            Arc::new(move || {}),
+            Arc::new(Mutex::new(HashMap::new())),
+        );
+        let worker_instance_key = worker.worker_instance_key();
+        shared_namespace_worker.register_callback(
+            worker_instance_key,
+            worker
+                .get_heartbeat_callback()
+                .expect("heartbeat callback should be set"),
+        );
 
+        tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;
-    }
 
-    async fn advance_time(dur: Duration) {
-        tokio::time::pause();
-        tokio::time::advance(dur).await;
-        tokio::time::resume();
+        assert_eq!(2, *heartbeat_count.lock());
     }
 }

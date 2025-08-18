@@ -3258,7 +3258,7 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         Some("stickytq".to_string()),
         Arc::new(mock_client),
         None,
-        None,
+        false,
     );
 
     for _ in 1..50 {
