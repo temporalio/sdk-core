@@ -24,6 +24,7 @@ use std::{
     future::Future,
     net::SocketAddr,
     path::PathBuf,
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -69,8 +70,9 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
-        common::v1::Payload, history::v1::History,
-        workflowservice::v1::StartWorkflowExecutionResponse,
+        common::v1::Payload,
+        history::v1::History,
+        workflowservice::v1::{GetClusterInfoRequest, StartWorkflowExecutionResponse},
     },
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
@@ -95,6 +97,7 @@ pub const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 /// This should match the prometheus port exposed in docker-compose-ci.yaml
 pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
+
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {
@@ -192,6 +195,37 @@ pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }))
 }
 
+pub async fn get_cloud_client() -> RetryClient<Client> {
+    let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
+    let cloud_key = env::var("TEMPORAL_CLIENT_KEY").unwrap();
+
+    let client_cert = env::var("TEMPORAL_CLIENT_CERT")
+        .expect("TEMPORAL_CLIENT_CERT must be set")
+        .replace("\\n", "\n")
+        .into_bytes();
+    let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
+    let sgo = ClientOptionsBuilder::default()
+        .target_url(Url::from_str(&cloud_addr).unwrap())
+        .client_name("sdk-core-integ-tests")
+        .client_version("clientver")
+        .identity("sdk-test-client")
+        .tls_cfg(TlsConfig {
+            client_tls_config: Some(ClientTlsConfig {
+                client_cert,
+                client_private_key,
+            }),
+            ..Default::default()
+        })
+        .build()
+        .unwrap();
+    sgo.connect(
+        env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
+        None,
+    )
+    .await
+    .unwrap()
+}
+
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
@@ -202,6 +236,7 @@ pub struct CoreWfStarter {
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
     client_override: Option<Arc<RetryClient<Client>>>,
+    min_local_server_version: Option<String>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
@@ -223,6 +258,51 @@ impl CoreWfStarter {
         Self::_new(test_name, None, Some(client))
     }
 
+    /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
+    /// the minimum version requirement is met). Returns None if the local server is not new enough.
+    ///
+    /// An empty string means to skip the version check.
+    pub async fn new_cloud_or_local(test_name: &str, version_req: &str) -> Option<Self> {
+        init_integ_telem();
+        let mut check_mlsv = false;
+        let client = if env::var("TEMPORAL_CLOUD_ADDRESS").is_ok() {
+            Some(get_cloud_client().await)
+        } else {
+            check_mlsv = true;
+            None
+        };
+        let mut s = Self::_new(test_name, None, client);
+
+        if check_mlsv && !version_req.is_empty() {
+            let clustinfo = (*s.get_client().await)
+                .get_client()
+                .inner()
+                .workflow_svc()
+                .clone()
+                .get_cluster_info(GetClusterInfoRequest::default())
+                .await;
+            let srv_ver = semver::Version::parse(
+                &clustinfo
+                    .expect("must be able to get cluster info")
+                    .into_inner()
+                    .server_version,
+            )
+            .expect("must be able to parse server version");
+            let req = semver::VersionReq::parse(version_req)
+                .expect("must be able to parse server version requirement");
+
+            if !req.matches(&srv_ver) {
+                warn!(
+                    "Server version {} does not meet requirement {} for test {}",
+                    srv_ver, req, test_name
+                );
+                return None;
+            }
+        }
+
+        Some(s)
+    }
+
     fn _new(
         test_name: &str,
         runtime_override: Option<CoreRuntime>,
@@ -241,6 +321,7 @@ impl CoreWfStarter {
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
             client_override: client_override.map(Arc::new),
+            min_local_server_version: None,
         }
     }
 
@@ -253,6 +334,7 @@ impl CoreWfStarter {
             workflow_options: self.workflow_options.clone(),
             runtime_override: self.runtime_override.clone(),
             client_override: self.client_override.clone(),
+            min_local_server_version: self.min_local_server_version.clone(),
             initted_worker: Default::default(),
         }
     }
@@ -475,10 +557,15 @@ impl TestWorker {
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        options: WorkflowOptions,
+        mut options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
         if self.client.is_none() {
             return Ok("fake_run_id".to_string());
+        }
+        // Fallback overall execution timeout to avoid leaving open workflows when testing against
+        // cloud
+        if options.execution_timeout.is_none() {
+            options.execution_timeout = Some(Duration::from_secs(60 * 5));
         }
         self.get_submitter_handle()
             .submit_wf(workflow_id, workflow_type, input, options)

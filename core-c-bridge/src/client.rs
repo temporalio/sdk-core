@@ -1,9 +1,6 @@
-use crate::ByteArray;
-use crate::ByteArrayRef;
-use crate::CancellationToken;
-use crate::MetadataRef;
-use crate::UserDataHandle;
-use crate::runtime::Runtime;
+use crate::{
+    ByteArray, ByteArrayRef, CancellationToken, MetadataRef, UserDataHandle, runtime::Runtime,
+};
 
 use futures_util::FutureExt;
 use prost::bytes::Bytes;
@@ -578,6 +575,7 @@ async fn call_workflow_service(
         "DescribeWorkflowExecution" => rpc_call!(client, call, describe_workflow_execution),
         "DescribeWorkflowRule" => rpc_call!(client, call, describe_workflow_rule),
         "ExecuteMultiOperation" => rpc_call!(client, call, execute_multi_operation),
+        "FetchWorkerConfig" => rpc_call!(client, call, fetch_worker_config),
         "GetClusterInfo" => rpc_call!(client, call, get_cluster_info),
         "GetCurrentDeployment" => rpc_call!(client, call, get_current_deployment),
         "GetDeploymentReachability" => rpc_call!(client, call, get_deployment_reachability),
@@ -671,6 +669,8 @@ async fn call_workflow_service(
         }
         "UpdateNamespace" => rpc_call_on_trait!(client, call, WorkflowService, update_namespace),
         "UpdateSchedule" => rpc_call!(client, call, update_schedule),
+        "UpdateTaskQueueConfig" => rpc_call!(client, call, update_task_queue_config),
+        "UpdateWorkerConfig" => rpc_call!(client, call, update_worker_config),
         "UpdateWorkerDeploymentVersionMetadata" => {
             rpc_call!(client, call, update_worker_deployment_version_metadata)
         }
@@ -777,6 +777,11 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
         "UpdateUserGroup" => rpc_call!(client, call, update_user_group),
         "UpdateUser" => rpc_call!(client, call, update_user),
         "ValidateNamespaceExportSink" => rpc_call!(client, call, validate_namespace_export_sink),
+        "UpdateNamespaceTags" => rpc_call!(client, call, update_namespace_tags),
+        "CreateConnectivityRule" => rpc_call!(client, call, create_connectivity_rule),
+        "GetConnectivityRule" => rpc_call!(client, call, get_connectivity_rule),
+        "GetConnectivityRules" => rpc_call!(client, call, get_connectivity_rules),
+        "DeleteConnectivityRule" => rpc_call!(client, call, delete_connectivity_rule),
         rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
     }
 }

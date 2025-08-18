@@ -11,6 +11,7 @@ use temporal_sdk::{
     ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
     WfExitValue, WorkflowResult,
 };
+use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, TaskToken,
     coresdk::{
@@ -1066,11 +1067,23 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 
 #[tokio::test]
 #[ignore] // Runs forever, used to manually attempt to repro spurious activity completion rpc errs
+// Unfortunately there is no way to unit test this as tonic doesn't publicly expose the necessary
+// machinery to construct the right kind of error.
 async fn long_activity_timeout_repro() {
     let wf_name = "long_activity_timeout_repro";
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
+        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 10,
+            initial: 5,
+        })
+        .activity_task_poller_behavior(PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 10,
+            initial: 5,
+        })
         .local_timeout_buffer_for_activities(Duration::from_secs(0));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {

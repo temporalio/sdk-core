@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::NoRetryOnMatching;
+use temporal_client::{ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, NoRetryOnMatching};
 use temporal_sdk_core_api::worker::{
     ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind,
 };
@@ -538,20 +538,27 @@ impl PollScalerReportHandle {
                 }
             }
             Err(e) => {
-                // We should only see (and react to) errors in autoscaling mode
-                if matches!(self.behavior, PollerBehavior::Autoscaling { .. })
-                    && self.ever_saw_scaling_decision.load(Ordering::Relaxed)
-                {
-                    debug!("Got error from server while polling: {:?}", e);
-                    if e.code() == Code::ResourceExhausted {
-                        // Scale down significantly for resource exhaustion
-                        self.change_target(usize::saturating_div, 2);
-                    } else {
-                        // Other codes that would normally have made us back off briefly can
-                        // reclaim this poller
-                        self.change_target(usize::saturating_sub, 1);
+                if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
+                    // We should only react to errors in autoscaling mode if we saw a scaling
+                    // decision
+                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
+                        debug!("Got error from server while polling: {:?}", e);
+                        if e.code() == Code::ResourceExhausted {
+                            // Scale down significantly for resource exhaustion
+                            self.change_target(usize::saturating_div, 2);
+                        } else {
+                            // Other codes that would normally have made us back off briefly can
+                            // reclaim this poller
+                            self.change_target(usize::saturating_sub, 1);
+                        }
                     }
-                    return false;
+                    // Only propagate errors out if they weren't because of the short-circuiting
+                    // logic. IE: We don't want to fail callers because we said we wanted to know
+                    // about ResourceExhausted errors, but we haven't seen a scaling decision yet,
+                    // so we're not reacting to errors, only propagating them.
+                    return !e
+                        .metadata()
+                        .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
                 }
             }
         }
@@ -745,6 +752,47 @@ mod tests {
         assert!(last_val);
         // Now we grab the buffered poll response, the poll task will go again but we don't grab it,
         // therefore we will have only polled twice.
+        pb.poll().await.unwrap().unwrap();
+        pb.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn autoscale_wont_fail_caller_on_short_circuited_error() {
+        let mut mock_client = mock_manual_worker_client();
+        mock_client
+            .expect_poll_workflow_task()
+            .times(1)
+            .returning(move |_, _| {
+                async {
+                    let mut st = tonic::Status::cancelled("whatever");
+                    st.metadata_mut()
+                        .insert(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, 1.into());
+                    Err(st)
+                }
+                .boxed()
+            });
+        mock_client
+            .expect_poll_workflow_task()
+            .returning(move |_, _| async { Ok(Default::default()) }.boxed());
+
+        let pb = LongPollBuffer::new_workflow_task(
+            Arc::new(mock_client),
+            "sometq".to_string(),
+            None,
+            PollerBehavior::Autoscaling {
+                minimum: 1,
+                maximum: 1,
+                initial: 1,
+            },
+            fixed_size_permit_dealer(1),
+            CancellationToken::new(),
+            None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
+            },
+        );
+
+        // Should not see error, unwraps should get empty response
         pb.poll().await.unwrap().unwrap();
         pb.shutdown().await;
     }

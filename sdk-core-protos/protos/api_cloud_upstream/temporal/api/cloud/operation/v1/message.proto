@@ -47,5 +47,6 @@ message AsyncOperation {
 	STATE_FAILED = 3;      // The operation failed, check failure_reason for more details.
 	STATE_CANCELLED = 4;   // The operation was cancelled.
 	STATE_FULFILLED = 5;   // The operation was fulfilled.
+        STATE_REJECTED = 6;    // The operation was rejected.
     }
 }

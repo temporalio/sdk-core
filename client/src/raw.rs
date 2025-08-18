@@ -1354,6 +1354,34 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        update_task_queue_config,
+        UpdateTaskQueueConfigRequest,
+        UpdateTaskQueueConfigResponse,
+        |r| {
+            let mut labels = namespaced_request!(r);
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        fetch_worker_config,
+        FetchWorkerConfigRequest,
+        FetchWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_worker_config,
+        UpdateWorkerConfigRequest,
+        UpdateWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -1445,6 +1473,11 @@ proxier! {
     (update_namespace_export_sink, cloudreq::UpdateNamespaceExportSinkRequest, cloudreq::UpdateNamespaceExportSinkResponse);
     (delete_namespace_export_sink, cloudreq::DeleteNamespaceExportSinkRequest, cloudreq::DeleteNamespaceExportSinkResponse);
     (validate_namespace_export_sink, cloudreq::ValidateNamespaceExportSinkRequest, cloudreq::ValidateNamespaceExportSinkResponse);
+    (update_namespace_tags, cloudreq::UpdateNamespaceTagsRequest, cloudreq::UpdateNamespaceTagsResponse);
+    (create_connectivity_rule, cloudreq::CreateConnectivityRuleRequest, cloudreq::CreateConnectivityRuleResponse);
+    (get_connectivity_rule, cloudreq::GetConnectivityRuleRequest, cloudreq::GetConnectivityRuleResponse);
+    (get_connectivity_rules, cloudreq::GetConnectivityRulesRequest, cloudreq::GetConnectivityRulesResponse);
+    (delete_connectivity_rule, cloudreq::DeleteConnectivityRuleRequest, cloudreq::DeleteConnectivityRuleResponse);
 }
 
 proxier! {
@@ -1538,10 +1571,16 @@ mod tests {
             })
             .collect();
         let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();
+        let mut not_implemented = vec![];
         for method in methods {
             if !no_underscores.contains(&method.to_lowercase()) {
-                panic!("RPC method {method} is not implemented by raw client")
+                not_implemented.push(method);
             }
+        }
+        if !not_implemented.is_empty() {
+            panic!(
+                "The following RPC methods are not implemented by raw client: {not_implemented:?}"
+            );
         }
     }
     #[test]

@@ -90,6 +90,8 @@ static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 
 /// Key used to communicate when a GRPC message is too large
 pub static MESSAGE_TOO_LARGE_KEY: &str = "message-too-large";
+/// Key used to indicate a error was returned by the retryer because of the short-circuit predicate
+pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
@@ -1166,7 +1168,7 @@ pub struct WorkflowOptions {
 /// The overall semantics of Priority are:
 /// (more will be added here later)
 /// 1. First, consider "priority_key": lower number goes first.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Priority {
     /// Priority key is a positive integer from 1 to n, where smaller integers
     /// correspond to higher priorities (tasks run sooner). In general, tasks in
@@ -1179,12 +1181,50 @@ pub struct Priority {
     /// The default priority is (min+max)/2. With the default max of 5 and min of
     /// 1, that comes out to 3.
     pub priority_key: u32,
+
+    /// Fairness key is a short string that's used as a key for a fairness
+    /// balancing mechanism. It may correspond to a tenant id, or to a fixed
+    /// string like "high" or "low". The default is the empty string.
+    ///
+    /// The fairness mechanism attempts to dispatch tasks for a given key in
+    /// proportion to its weight. For example, using a thousand distinct tenant
+    /// ids, each with a weight of 1.0 (the default) will result in each tenant
+    /// getting a roughly equal share of task dispatch throughput.
+    ///
+    /// (Note: this does not imply equal share of worker capacity! Fairness
+    /// decisions are made based on queue statistics, not
+    /// current worker load.)
+    ///
+    /// As another example, using keys "high" and "low" with weight 9.0 and 1.0
+    /// respectively will prefer dispatching "high" tasks over "low" tasks at a
+    /// 9:1 ratio, while allowing either key to use all worker capacity if the
+    /// other is not present.
+    ///
+    /// All fairness mechanisms, including rate limits, are best-effort and
+    /// probabilistic. The results may not match what a "perfect" algorithm with
+    /// infinite resources would produce. The more unique keys are used, the less
+    /// accurate the results will be.
+    ///
+    /// Fairness keys are limited to 64 bytes.
+    pub fairness_key: String,
+
+    /// Fairness weight for a task can come from multiple sources for
+    /// flexibility. From highest to lowest precedence:
+    /// 1. Weights for a small set of keys can be overridden in task queue
+    ///    configuration with an API.
+    /// 2. It can be attached to the workflow/activity in this field.
+    /// 3. The default weight of 1.0 will be used.
+    ///
+    /// Weight values are clamped by the server to the range [0.001, 1000].
+    pub fairness_weight: f32,
 }
 
 impl From<Priority> for common::v1::Priority {
     fn from(priority: Priority) -> Self {
         common::v1::Priority {
             priority_key: priority.priority_key as i32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight,
         }
     }
 }
@@ -1193,6 +1233,8 @@ impl From<common::v1::Priority> for Priority {
     fn from(priority: common::v1::Priority) -> Self {
         Self {
             priority_key: priority.priority_key as u32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight,
         }
     }
 }
