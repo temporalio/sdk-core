@@ -5,9 +5,11 @@
 extern crate tracing;
 
 pub mod canned_histories;
+mod http_proxy;
 pub mod interceptors;
 pub mod workflows;
 
+pub use http_proxy::HttpProxy;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};

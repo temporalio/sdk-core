@@ -17,7 +17,11 @@ ephemeral-server = ["temporal-sdk-core/ephemeral-server"]
 anyhow = "1.0"
 assert_matches = "1"
 async-trait = "0.1"
+bytes = "1.10"
 futures-util = { version = "0.3", default-features = false }
+hyper = { version = "1.4.1" }
+http-body-util = "0.1"
+hyper-util = "0.1.6"
 parking_lot = "0.12"
 prost = { workspace = true }
 rand = "0.9"
