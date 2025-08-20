@@ -29,6 +29,7 @@ use tokio::{
     join,
     sync::{mpsc, watch},
 };
+use tokio_stream::StreamExt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Outcome {
@@ -557,10 +558,10 @@ async fn nexus_cancellation_types(
     let endpoint = mk_nexus_endpoint(&mut starter).await;
     let schedule_to_close_timeout = Some(Duration::from_secs(5));
 
-    let (cancel_call_completion_tx, cancel_call_completion_rx) = watch::channel(false);
+    let (caller_op_future_tx, caller_op_future_rx) = watch::channel(false);
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
-        let cancel_call_completion_tx = cancel_call_completion_tx.clone();
+        let caller_op_future_tx = caller_op_future_tx.clone();
         async move {
             let options = NexusOperationOptions {
                 endpoint,
@@ -577,13 +578,14 @@ async fn nexus_cancellation_types(
             started.cancel(&ctx);
 
             let res = result.await;
-            cancel_call_completion_tx.send(true).unwrap();
+            caller_op_future_tx.send(true).unwrap();
 
-            // Make sure cancel after completion doesn't cause problems
+            // Make sure cancel after op completion doesn't cause problems
             started.cancel(&ctx);
 
             // We need to wait slightly so that the workflow is not complete at the same time
-            // cancellation is invoked. If it does, the caller workflow will close and the server won't attempt to send the cancellation to the handler
+            // cancellation is invoked. If it does, the caller workflow will close and the server
+            // won't attempt to send the cancellation to the handler
             ctx.timer(Duration::from_millis(1)).await;
             Ok(res.into())
         }
@@ -591,21 +593,37 @@ async fn nexus_cancellation_types(
 
     let (cancellation_wait_tx, cancellation_wait_rx) = watch::channel(false);
     let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
+    let (handler_exited_tx, mut handler_exited_rx) = watch::channel(false);
     worker.register_wf("async_completer".to_owned(), move |ctx: WfContext| {
         let cancellation_tx = cancellation_tx.clone();
         let mut cancellation_wait_rx = cancellation_wait_rx.clone();
+        let handler_exited_tx = handler_exited_tx.clone();
         async move {
+            // Wait for cancellation
             ctx.cancelled().await;
             cancellation_tx.send(true).unwrap();
+
             if cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
                 cancellation_wait_rx.changed().await.unwrap();
+            } else if cancellation_type == NexusOperationCancellationType::WaitCancellationRequested
+            {
+                // For WAIT_REQUESTED, wait until the caller nexus op future has been resolved. This
+                // allows the test to verify that it resolved due to
+                // NexusOperationCancelRequestCompleted (written after cancel handler responds)
+                // rather than NexusOperationCanceled (written after handler workflow completes as
+                // cancelled).
+                let mut signal_chan = ctx.make_signal_channel("proceed-to-exit");
+                signal_chan.next().await;
             }
+
+            handler_exited_tx.send(true).unwrap();
             Ok(WfExitValue::<()>::Cancelled)
         }
     });
     let submitter = worker.get_submitter_handle();
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
     let client = starter.get_client().await.get_client().clone();
+    let (handler_wf_id_tx, mut handler_wf_id_rx) = tokio::sync::oneshot::channel();
     let nexus_task_handle = async {
         let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         let start_req = assert_matches!(
@@ -613,6 +631,7 @@ async fn nexus_cancellation_types(
             request::Variant::StartOperation(sr) => sr
         );
         let completer_id = format!("completer-{}", rand_6_chars());
+        let _ = handler_wf_id_tx.send(completer_id.clone());
         let links = start_req
             .links
             .iter()
@@ -668,16 +687,19 @@ async fn nexus_cancellation_types(
         match cancellation_type {
             NexusOperationCancellationType::WaitCancellationCompleted
             | NexusOperationCancellationType::WaitCancellationRequested => {
-                assert!(!*cancel_call_completion_rx.borrow());
+                // The nexus op future should not have been resolved
+                assert!(!*caller_op_future_rx.borrow());
             }
             NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {
                 wf_handle
                     .get_workflow_result(Default::default())
                     .await
                     .unwrap();
-                assert!(*cancel_call_completion_rx.borrow())
+                // The nexus op future should have been resolved
+                assert!(*caller_op_future_rx.borrow())
             }
         }
+        let (cancel_handler_responded_tx, _cancel_handler_responded_rx) = watch::channel(false);
         if cancellation_type != NexusOperationCancellationType::Abandon {
             let nt = core_worker.poll_nexus_task().await.unwrap();
             let nt = nt.unwrap_task();
@@ -702,19 +724,20 @@ async fn nexus_cancellation_types(
                 })
                 .await
                 .unwrap();
+            // Mark that the cancel handler has responded
+            cancel_handler_responded_tx.send(true).unwrap();
         }
 
-        // Confirm the caller WF has not completed even after the handling of the cancel request
+        // Check that the nexus op future resolves only _after_ the handler WF completes
         if cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
-            assert!(!*cancel_call_completion_rx.borrow());
+            assert!(!*caller_op_future_rx.borrow());
 
-            // It only completes after the handler WF terminates
             cancellation_wait_tx.send(true).unwrap();
             wf_handle
                 .get_workflow_result(Default::default())
                 .await
                 .unwrap();
-            assert!(*cancel_call_completion_rx.borrow());
+            assert!(*caller_op_future_rx.borrow());
         }
 
         assert_matches!(
@@ -724,6 +747,38 @@ async fn nexus_cancellation_types(
     };
 
     let shutdown_handle = worker.inner_mut().shutdown_handle();
+
+    let check_caller_op_future_resolved_then_allow_handler_to_complete = async {
+        // The caller nexus op future has been resolved
+        assert!(*caller_op_future_rx.borrow());
+
+        // Verify the handler workflow has not exited yet. This proves that the caller op future
+        // was resolved as a result of NexusOperationCancelRequestCompleted (written after cancel
+        // handler responds), as opposed to NexusOperationCanceled (written after handler workflow
+        // exits).
+        assert!(
+            !*handler_exited_rx.borrow(),
+            "Handler should not have exited yet"
+        );
+
+        let handler_wf_id = handler_wf_id_rx
+            .try_recv()
+            .expect("Should have received handler workflow ID");
+        client
+            .signal_workflow_execution(
+                handler_wf_id,
+                "".to_string(),
+                "proceed-to-exit".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+
+        handler_exited_rx.changed().await.unwrap();
+        assert!(*handler_exited_rx.borrow());
+    };
+
     join!(
         nexus_task_handle,
         async { worker.inner_mut().run().await.unwrap() },
@@ -734,6 +789,9 @@ async fn nexus_cancellation_types(
                 .unwrap();
             if cancellation_type == NexusOperationCancellationType::TryCancel {
                 cancellation_rx.changed().await.unwrap();
+            }
+            if cancellation_type == NexusOperationCancellationType::WaitCancellationRequested {
+                check_caller_op_future_resolved_then_allow_handler_to_complete.await;
             }
             shutdown_handle();
         }
