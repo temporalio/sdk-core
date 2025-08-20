@@ -107,6 +107,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     "frontend.workerVersioningDataAPIs=true".to_owned(),
                     "--dynamic-config-value".to_owned(),
                     "system.enableDeploymentVersions=true".to_owned(),
+                    "--dynamic-config-value".to_owned(),
+                    "component.nexusoperations.recordCancelRequestCompletionEvents=true".to_owned(),
                     "--http-port".to_string(),
                     "7243".to_string(),
                     "--search-attribute".to_string(),
