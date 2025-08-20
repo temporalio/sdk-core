@@ -130,8 +130,8 @@ impl WorkerClientBag {
     fn capture_heartbeat(&self) -> Vec<WorkerHeartbeat> {
         self.heartbeat_callbacks
             .lock()
-            .iter()
-            .map(|(_, f)| f())
+            .values()
+            .map(|f| f())
             .collect()
     }
 }

@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 use temporal_sdk_core::{
-    CoreRuntime,
+    CoreRuntime, RuntimeOptionsBuilder,
     telemetry::{build_otlp_metric_exporter, construct_filter_string, telemetry_init_global},
 };
 use temporal_sdk_core_api::telemetry::{
@@ -67,18 +67,20 @@ async fn otel_errors_logged_as_errors() {
             .unwrap(),
     )
     .unwrap();
+    let telemopts = TelemetryOptionsBuilder::default()
+        .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
+        // Importantly, _not_ using subscriber override, is using console.
+        .logging(Logger::Console {
+            filter: construct_filter_string(Level::INFO, Level::WARN),
+        })
+        .build()
+        .unwrap();
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(telemopts)
+        .build()
+        .unwrap();
 
-    let rt = CoreRuntime::new_assume_tokio(
-        TelemetryOptionsBuilder::default()
-            .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
-            // Importantly, _not_ using subscriber override, is using console.
-            .logging(Logger::Console {
-                filter: construct_filter_string(Level::INFO, Level::WARN),
-            })
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);
     let _worker = starter.get_worker().await;
 

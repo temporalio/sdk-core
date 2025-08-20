@@ -66,7 +66,7 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHostInfo;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -112,6 +112,8 @@ pub struct Worker {
     local_act_mgr: Arc<LocalActivityManager>,
     /// Manages Nexus tasks
     nexus_mgr: NexusManager,
+    /// Manages worker heartbeat. Will be None for [crate::SharedNamespaceWorker] workers
+    worker_heartbeat_mgr: Option<WorkerHeartbeat>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -123,13 +125,6 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
-    /// Instance key used to identify this worker in worker heartbeating
-    worker_instance_key: String,
-    /// Collects data to send to server via worker heartbeat
-    worker_heartbeat_callback: Option<HeartbeatFn>,
-    /// Used to remove this worker from the parent map used to track this worker for
-    /// worker heartbeat
-    worker_heartbeat_shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct AllPermitsTracker {
@@ -144,6 +139,16 @@ impl AllPermitsTracker {
         let _ = self.act_permits.wait_for(|x| *x == 0).await;
         let _ = self.la_permits.wait_for(|x| *x == 0).await;
     }
+}
+
+struct WorkerHeartbeat {
+    /// Instance key used to identify this worker in worker heartbeating
+    worker_instance_key: String,
+    /// Collects data to send to server via worker heartbeat
+    callback: HeartbeatFn,
+    /// Used to remove this worker from the parent map used to track this worker for
+    /// worker heartbeat
+    shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
 }
 
 #[async_trait::async_trait]
@@ -502,10 +507,10 @@ impl Worker {
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
-        let worker_instance_key = Uuid::new_v4().to_string();
 
-        let worker_heartbeat_callback: Option<HeartbeatFn> = if !shared_namespace_worker {
-            let worker_instance_key = worker_instance_key.clone();
+        let worker_heartbeat = if !shared_namespace_worker {
+            let worker_instance_key = Uuid::new_v4().to_string();
+            let worker_instance_key_clone = worker_instance_key.clone();
             let worker_identity = client.get_identity();
             let task_queue = config.task_queue.clone();
             let sdk_name_and_ver = sdk_name_and_ver.clone();
@@ -513,9 +518,9 @@ impl Worker {
             // TODO: poller info
 
             // TODO: slots info
-            Some(Arc::new(move || {
-                WorkerHeartbeat {
-                    worker_instance_key: worker_instance_key.clone(),
+            let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
+                temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat {
+                    worker_instance_key: worker_instance_key_clone.clone(),
                     worker_identity: worker_identity.clone(),
                     host_info: Some(WorkerHostInfo {
                         host_name: gethostname().to_string_lossy().to_string(),
@@ -543,7 +548,13 @@ impl Worker {
                     plugins: vec![],
                     ..Default::default()
                 }
-            }))
+            });
+
+            Some(WorkerHeartbeat {
+                worker_instance_key,
+                callback: worker_heartbeat_callback,
+                shutdown_callback: OnceCell::new(),
+            })
         } else {
             None
         };
@@ -604,9 +615,7 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
-            worker_instance_key,
-            worker_heartbeat_callback,
-            worker_heartbeat_shutdown_callback: OnceCell::new(),
+            worker_heartbeat_mgr: worker_heartbeat,
         }
     }
 
@@ -652,7 +661,9 @@ impl Worker {
             }
         }
         // If this worker is tracked by SharedNamespaceWorker, remove entry from SharedNamespaceWorker
-        if let Some(shutdown_callback) = self.worker_heartbeat_shutdown_callback.get() {
+        if let Some(worker_heartbeat) = self.worker_heartbeat_mgr.as_ref()
+            && let Some(shutdown_callback) = worker_heartbeat.shutdown_callback.get()
+        {
             shutdown_callback();
         }
     }
@@ -911,18 +922,26 @@ impl Worker {
     }
 
     pub(crate) fn get_heartbeat_callback(&self) -> Option<HeartbeatFn> {
-        self.worker_heartbeat_callback.clone()
+        if let Some(worker_heartbeat) = self.worker_heartbeat_mgr.as_ref() {
+            Some(worker_heartbeat.callback.clone())
+        } else {
+            None
+        }
     }
 
-    pub(crate) fn worker_instance_key(&self) -> String {
-        self.worker_instance_key.clone()
+    pub(crate) fn worker_instance_key(&self) -> Option<String> {
+        self.worker_heartbeat_mgr
+            .as_ref()
+            .map(|worker_heartbeat| worker_heartbeat.worker_instance_key.clone())
     }
 
     pub(crate) fn register_heartbeat_shutdown_callback(
         &mut self,
         callback: Arc<dyn Fn() + Send + Sync>,
     ) {
-        if let Err(e) = self.worker_heartbeat_shutdown_callback.set(callback) {
+        if let Some(worker_heartbeat) = self.worker_heartbeat_mgr.as_mut()
+            && let Err(e) = worker_heartbeat.shutdown_callback.set(callback)
+        {
             dbg_panic!("Unable to set worker heartbeat shutdown callback: {}", e);
         }
     }

@@ -25,7 +25,7 @@ mod integ_tests {
 
     use std::time::Duration;
     use temporal_client::{NamespacedClient, WorkflowService};
-    use temporal_sdk_core::{CoreRuntime, init_worker};
+    use temporal_sdk_core::{CoreRuntime, RuntimeOptionsBuilder, init_worker};
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::{
         nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
@@ -41,7 +41,11 @@ mod integ_tests {
     #[ignore] // Really a compile time check more than anything
     async fn lang_bridge_example() {
         let opts = get_integ_server_options();
-        let runtime = CoreRuntime::new_assume_tokio(get_integ_telem_options()).unwrap();
+        let runtimeopts = RuntimeOptionsBuilder::default()
+            .telemetry_options(get_integ_telem_options())
+            .build()
+            .unwrap();
+        let runtime = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
         let mut retrying_client = opts
             .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
             .await

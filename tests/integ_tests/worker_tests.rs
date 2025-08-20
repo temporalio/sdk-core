@@ -10,7 +10,9 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
-use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker};
+use temporal_sdk_core::{
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder, init_worker,
+};
 use temporal_sdk_core_api::{
     Worker,
     errors::WorkerValidationError,
@@ -35,7 +37,11 @@ use uuid::Uuid;
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
     let opts = get_integ_server_options();
-    let runtime = CoreRuntime::new_assume_tokio(get_integ_telem_options()).unwrap();
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(get_integ_telem_options())
+        .build()
+        .unwrap();
+    let runtime = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let retrying_client = opts
         .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
         .await

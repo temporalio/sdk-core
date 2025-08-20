@@ -132,26 +132,32 @@ where
         false,
     );
 
-    if let Some(_) = runtime.heartbeat_interval {
+    if runtime.heartbeat_interval.is_some() {
         let worker_instance_key = worker.worker_instance_key();
-        let heartbeat_callback = worker
-            .get_heartbeat_callback()
-            .expect("Worker heartbeat data should exist for non-shared namespace worker");
-        let remove_worker_callback = runtime.register_heartbeat_callback(
-            worker_instance_key,
-            ClientIdentity {
-                endpoint: endpoint.to_string(),
-                namespace: namespace.clone(),
-                task_queue: format!(
-                    "temporal-sys/worker-commands/{}/{}",
-                    namespace,
-                    runtime.task_queue_key()
-                ),
-            },
-            heartbeat_callback,
-            client_bag,
-        );
-        worker.register_heartbeat_shutdown_callback(remove_worker_callback)
+        let heartbeat_callback = worker.get_heartbeat_callback();
+        if let Some(instance_key) = worker_instance_key
+            && let Some(callback) = heartbeat_callback
+        {
+            let remove_worker_callback = runtime.register_heartbeat_callback(
+                instance_key,
+                ClientIdentity {
+                    endpoint: endpoint.to_string(),
+                    namespace: namespace.clone(),
+                    task_queue: format!(
+                        "temporal-sys/worker-commands/{}/{}",
+                        namespace,
+                        runtime.task_queue_key()
+                    ),
+                },
+                callback,
+                client_bag,
+            );
+            worker.register_heartbeat_shutdown_callback(remove_worker_callback);
+        } else {
+            dbg_panic!(
+                "Failed to register worker with runtime, worker instance key or heartbeat callback missing for non-shared namespace worker"
+            );
+        }
     }
 
     Ok(worker)
@@ -259,10 +265,17 @@ pub struct CoreRuntime {
     heartbeat_interval: Option<Duration>,
 }
 
-/// Holds telemetry options, as well as worker heartbeat_interval.
+/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptionsBuilder]
+#[derive(derive_builder::Builder)]
 #[non_exhaustive]
+#[derive(Default)]
 pub struct RuntimeOptions {
+    /// Telemetry configuration options.
+    #[builder(default)]
     telemetry_options: TelemetryOptions,
+    /// Optional worker heartbeat interval - This configures the heartbeat setting of all
+    /// workers created using this runtime.
+    #[builder(default)]
     heartbeat_interval: Option<Duration>,
 }
 
@@ -272,15 +285,6 @@ impl RuntimeOptions {
         Self {
             telemetry_options,
             heartbeat_interval,
-        }
-    }
-}
-
-impl Default for RuntimeOptions {
-    fn default() -> Self {
-        Self {
-            telemetry_options: Default::default(),
-            heartbeat_interval: None,
         }
     }
 }
@@ -421,7 +425,7 @@ impl CoreRuntime {
                     SharedNamespaceWorker::new(
                         client,
                         client_identity,
-                        heartbeat_interval.clone(),
+                        *heartbeat_interval,
                         Some(&self.telemetry),
                         remove_namespace_worker_callback,
                         heartbeat_map,
@@ -435,7 +439,7 @@ impl CoreRuntime {
     }
 
     fn task_queue_key(&self) -> Uuid {
-        self.task_queue_key.clone()
+        self.task_queue_key
     }
 }
 
