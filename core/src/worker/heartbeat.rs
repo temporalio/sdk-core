@@ -1,15 +1,17 @@
-use crate::{WorkerClient, abstractions::dbg_panic};
-use gethostname::gethostname;
+use crate::WorkerClient;
+use crate::abstractions::dbg_panic;
+use crate::telemetry::TelemetryInstance;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
-use std::{
-    sync::{Arc, OnceLock},
-    time::{Duration, SystemTime},
-};
-use temporal_sdk_core_api::worker::WorkerConfig;
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
-use tokio::{sync::Notify, task::JoinHandle, time::MissedTickBehavior};
-use uuid::Uuid;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use temporal_sdk_core_api::worker::{WorkerConfigBuilder, WorkerVersioningStrategy};
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
+use tokio::sync::Notify;
+
+/// Callback used to collect heartbeat data from each worker at the time of heartbeat
+pub(crate) type HeartbeatFn = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct ClientIdentity {
@@ -44,8 +46,7 @@ impl SharedNamespaceWorker {
             })
             .build()
             .expect("all required fields should be implemented");
-        let worker =
-            crate::worker::Worker::new(config.into(), None, client.clone(), telemetry, true);
+        let worker = crate::worker::Worker::new(config, None, client.clone(), telemetry, true);
 
         let last_heartbeat_time_map = Mutex::new(HashMap::new());
 
@@ -114,8 +115,9 @@ impl SharedNamespaceWorker {
         Self { heartbeat_map }
     }
 
-    /// Adds `WorkerHeartbeatData` to the `SharedNamespaceWorker` and adds a `HeartbeatCallback` to
-    /// the client that Worker
+    /// Registers a heartbeat callback to the [SharedNamespaceWorker] and returns a callback
+    /// that removes the just registered callback, allowing the caller to handle removing this
+    /// mechanism on worker shutdown
     pub(crate) fn register_callback(
         &mut self,
         worker_instance_key: String,
@@ -144,12 +146,14 @@ impl SharedNamespaceWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        test_help::{WorkerExt, test_worker_cfg},
-        worker,
-        worker::client::mocks::mock_worker_client,
-    };
-    use std::{sync::Arc, time::Duration};
+    use crate::test_help::WorkerExt;
+    use crate::test_help::test_worker_cfg;
+    use crate::worker;
+    use crate::worker::client::mocks::mock_worker_client;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
     use uuid::Uuid;
@@ -157,7 +161,7 @@ mod tests {
     #[tokio::test]
     async fn worker_heartbeat() {
         let mut mock = mock_worker_client();
-        let heartbeat_count = Arc::new(Mutex::new(0));
+        let heartbeat_count = Arc::new(AtomicUsize::new(0));
         let heartbeat_count_clone = heartbeat_count.clone();
         mock.expect_record_worker_heartbeat().times(2).returning(
             move |_namespace, _identity, worker_heartbeat| {
@@ -177,8 +181,7 @@ mod tests {
                 assert!(heartbeat.heartbeat_time.is_some());
                 assert!(heartbeat.start_time.is_some());
 
-                let mut count = heartbeat_count_clone.lock();
-                *count += 1;
+                heartbeat_count_clone.fetch_add(1, Ordering::Relaxed);
 
                 Ok(RecordWorkerHeartbeatResponse {})
             },
@@ -211,7 +214,7 @@ mod tests {
             Arc::new(move || {}),
             Arc::new(Mutex::new(HashMap::new())),
         );
-        let worker_instance_key = worker.worker_instance_key();
+        let worker_instance_key = worker.worker_instance_key().unwrap();
         shared_namespace_worker.register_callback(
             worker_instance_key,
             worker
@@ -222,6 +225,6 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;
 
-        assert_eq!(2, *heartbeat_count.lock());
+        assert_eq!(2, heartbeat_count.load(Ordering::Relaxed));
     }
 }

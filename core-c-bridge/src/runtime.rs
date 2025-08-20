@@ -1,28 +1,31 @@
-use crate::{
-    ByteArray, ByteArrayRef, MetadataRef,
-    metric::{CustomMetricMeter, CustomMetricMeterRef},
-};
+use crate::ByteArray;
+use crate::ByteArrayRef;
+use crate::MetadataRef;
+use crate::metric::CustomMetricMeter;
+use crate::metric::CustomMetricMeterRef;
 
 use serde_json::json;
-use std::{
-    collections::HashMap,
-    fmt,
-    net::SocketAddr,
-    str::FromStr,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::{Duration, UNIX_EPOCH},
-};
-use temporal_sdk_core::{
-    CoreRuntime, TokioRuntimeBuilder,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-};
+use std::collections::HashMap;
+use std::fmt;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use std::time::UNIX_EPOCH;
+use temporal_sdk_core::CoreRuntime;
+use temporal_sdk_core::RuntimeOptions as CoreRuntimeOptions;
+use temporal_sdk_core::RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder;
+use temporal_sdk_core::TokioRuntimeBuilder;
+use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
+use temporal_sdk_core_api::telemetry::HistogramBucketOverrides;
+use temporal_sdk_core_api::telemetry::MetricTemporality;
+use temporal_sdk_core_api::telemetry::metrics::CoreMeter;
+use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
 use temporal_sdk_core_api::telemetry::{
-    CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
-    OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
-    TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,
+    Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
+    TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder,
 };
 use tracing::Level;
 use url::Url;
@@ -30,7 +33,7 @@ use url::Url;
 #[repr(C)]
 pub struct RuntimeOptions {
     pub telemetry: *const TelemetryOptions,
-    pub heartbeat_duration_millis: u64,
+    pub worker_heartbeat_duration_millis: u64,
 }
 
 #[repr(C)]
@@ -238,10 +241,19 @@ impl Runtime {
         } else {
             CoreTelemetryOptions::default()
         };
-        let core_runtime_options = CoreRuntimeOptions::new(
-            telemetry_options,
-            Some(Duration::from_millis(options.heartbeat_duration_millis)),
-        );
+
+        let heartbeat_interval = if options.worker_heartbeat_duration_millis == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(
+                options.worker_heartbeat_duration_millis,
+            ))
+        };
+
+        let core_runtime_options = CoreRuntimeOptionsBuilder::default()
+            .telemetry_options(telemetry_options)
+            .heartbeat_interval(heartbeat_interval)
+            .build()?;
 
         // Build core runtime
         let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;

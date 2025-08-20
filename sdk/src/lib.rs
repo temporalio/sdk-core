@@ -18,12 +18,14 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
+//!     use temporal_sdk_core::RuntimeOptionsBuilder;
+//! let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
 //!
 //!     let client = server_options.connect("default", None).await?;
 //!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
-//!     let runtime = CoreRuntime::new_assume_tokio(telemetry_options)?;
+//!     let runtime_options = RuntimeOptionsBuilder::default().telemetry_options(telemetry_options).build().unwrap();
+//!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
