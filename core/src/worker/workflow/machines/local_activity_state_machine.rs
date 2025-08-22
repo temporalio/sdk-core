@@ -31,7 +31,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::ActivityCancellationType,
     },
     temporal::api::{
-        command::v1::{RecordMarkerCommandAttributes, command},
+        command::v1::{Command as ProtoCommand, RecordMarkerCommandAttributes, command},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{Failure, failure::FailureInfo},
     },
@@ -772,9 +772,11 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         header: None,
                         failure: maybe_failure,
                     };
-                    responses.push(MachineResponse::IssueNewCommand(
-                        command::Attributes::RecordMarkerCommandAttributes(marker_data).into(),
-                    ));
+                    let command = ProtoCommand {
+                        user_metadata: self.shared_state.attrs.user_metadata.clone(),
+                        ..command::Attributes::RecordMarkerCommandAttributes(marker_data).into()
+                    };
+                    responses.push(MachineResponse::IssueNewCommand(command));
                 }
                 Ok(responses)
             }

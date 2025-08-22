@@ -19,7 +19,7 @@ use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     TestHistoryBuilder,
     coresdk::{
-        AsJsonPayloadExt, IntoPayloadsExt,
+        AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
         workflow_commands::{ActivityCancellationType, workflow_command::Variant},
         workflow_completion,
         workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
@@ -27,6 +27,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::RetryPolicy,
         enums::v1::{TimeoutType, UpdateWorkflowExecutionLifecycleStage},
+        history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
         update::v1::WaitPolicy,
     },
 };
@@ -905,4 +906,54 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         .await
         .unwrap();
     assert_eq!(res[0], replay_res.unwrap());
+}
+
+pub(crate) async fn local_activity_with_summary_wf(ctx: WfContext) -> WorkflowResult<()> {
+    ctx.local_activity(LocalActivityOptions {
+        activity_type: "echo_activity".to_string(),
+        input: "hi!".as_json_payload().expect("serializes fine"),
+        summary: Some("Echo summary".to_string()),
+        ..Default::default()
+    })
+    .await;
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn local_activity_with_summary() {
+    let wf_name = "local_activity_with_summary";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), local_activity_with_summary_wf);
+    worker.register_activity("echo_activity", echo);
+
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+
+    let la_events = starter
+        .get_history()
+        .await
+        .events
+        .into_iter()
+        .filter(|e| match e.attributes {
+            Some(MarkerRecordedEventAttributes(ref a)) => a.marker_name == "core_local_activity",
+            _ => false,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(la_events.len(), 1);
+    let summary = la_events[0]
+        .user_metadata
+        .as_ref()
+        .expect("metadata missing from local activity marker")
+        .summary
+        .as_ref()
+        .expect("summary missing from local activity marker");
+    assert_eq!(
+        "Echo summary",
+        String::from_json_payload(summary).expect("failed to parse summary")
+    );
 }
