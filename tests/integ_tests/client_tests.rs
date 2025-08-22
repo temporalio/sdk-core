@@ -14,7 +14,8 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait, WorkflowService,
+    HttpConnectProxyOptions, Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait,
+    WorkflowService,
 };
 use temporal_sdk_core_protos::temporal::api::{
     cloud::cloudservice::v1::GetNamespaceRequest,
@@ -23,7 +24,9 @@ use temporal_sdk_core_protos::temporal::api::{
         RespondActivityTaskCanceledResponse,
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE, get_integ_server_options};
+use temporal_sdk_core_test_utils::{CoreWfStarter, HttpProxy, NAMESPACE, get_integ_server_options};
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::{
     net::TcpListener,
     sync::{mpsc::UnboundedSender, oneshot},
@@ -110,7 +113,7 @@ struct GenericService<F> {
 }
 impl<F> Service<tonic::codegen::http::Request<Body>> for GenericService<F>
 where
-    F: FnMut() -> BoxFuture<'static, Response<Body>>,
+    F: FnMut(tonic::codegen::http::Request<Body>) -> BoxFuture<'static, Response<Body>>,
 {
     type Response = Response<Body>;
     type Error = Infallible;
@@ -132,7 +135,7 @@ where
                 .to_string(),
             )
             .unwrap();
-        let r = (self.response_maker)();
+        let r = (self.response_maker)(req);
         async move { Ok(r.await) }.boxed()
     }
 }
@@ -149,7 +152,11 @@ struct FakeServer {
 
 async fn fake_server<F>(response_maker: F) -> FakeServer
 where
-    F: FnMut() -> BoxFuture<'static, Response<Body>> + Clone + Send + Sync + 'static,
+    F: FnMut(tonic::codegen::http::Request<Body>) -> BoxFuture<'static, Response<Body>>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
 {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, header_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -191,7 +198,7 @@ impl FakeServer {
 
 #[tokio::test]
 async fn timeouts_respected_one_call_fake_server() {
-    let mut fs = fake_server(|| async { Response::new(Body::empty()) }.boxed()).await;
+    let mut fs = fake_server(|_| async { Response::new(Body::empty()) }.boxed()).await;
     let header_rx = &mut fs.header_rx;
 
     let mut opts = get_integ_server_options();
@@ -260,7 +267,7 @@ async fn non_retryable_errors() {
         Code::Unauthenticated,
         Code::Unimplemented,
     ] {
-        let mut fs = fake_server(move || {
+        let mut fs = fake_server(move |_| {
             let s = Status::new(code, "bla").into_http();
             async { s }.boxed()
         })
@@ -295,7 +302,7 @@ async fn retryable_errors() {
         .filter(|p| p != &Code::ResourceExhausted)
     {
         let count = Arc::new(AtomicUsize::new(0));
-        let mut fs = fake_server(move || {
+        let mut fs = fake_server(move |_| {
             let prev = count.fetch_add(1, Ordering::Relaxed);
             let r = if prev < 3 {
                 Status::new(code, "bla").into_http()
@@ -339,7 +346,7 @@ async fn namespace_header_attached_to_relevant_calls() {
             .add_service(GenericService {
                 header_to_parse: "Temporal-Namespace",
                 header_tx,
-                response_maker: || async { Response::new(Body::empty()) }.boxed(),
+                response_maker: |_| async { Response::new(Body::empty()) }.boxed(),
             })
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -411,6 +418,77 @@ async fn cloud_ops_test() {
         .await
         .unwrap();
     assert_eq!(res.into_inner().namespace.unwrap().namespace, namespace);
+}
+
+#[tokio::test]
+async fn http_proxy() {
+    // Create server
+    let call_count = Arc::new(AtomicUsize::new(0));
+    let call_count_cloned = call_count.clone();
+    let server = fake_server(move |_| {
+        call_count_cloned.fetch_add(1, Ordering::SeqCst);
+        async { Response::new(Body::empty()) }.boxed()
+    })
+    .await;
+
+    // Create HTTP TCP proxy
+    let tcp_proxy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tcp_proxy_addr = tcp_proxy_listener.local_addr().unwrap();
+    let tcp_proxy = HttpProxy::spawn_tcp(tcp_proxy_listener);
+
+    // General client options
+    let mut opts = get_integ_server_options();
+    opts.retry_config = RetryConfig::no_retries();
+    opts.skip_get_system_info = true;
+
+    // Connect client with no proxy and make call and confirm reached
+    opts.target_url = format!("http://127.0.0.1:{}", server.addr.port())
+        .parse()
+        .unwrap();
+    let client = opts.connect("my-namespace", None).await.unwrap();
+    let _ = client.list_namespaces().await;
+    assert!(call_count.load(Ordering::SeqCst) == 1);
+    assert!(tcp_proxy.hit_count() == 0);
+
+    // Connect client to proxy and make call and confirm reached
+    opts.http_connect_proxy = Some(HttpConnectProxyOptions {
+        target_addr: tcp_proxy_addr.to_string(),
+        basic_auth: None,
+    });
+    let proxied_client = opts.connect("my-namespace", None).await.unwrap();
+    let _ = proxied_client.list_namespaces().await;
+    assert!(call_count.load(Ordering::SeqCst) == 2);
+    assert!(tcp_proxy.hit_count() == 1);
+
+    // Test Unix socket too only in Unix environments
+    #[cfg(unix)]
+    {
+        // Create temp socket path
+        let mut sock_path = std::env::temp_dir();
+        sock_path.push(format!("http-proxy-test-{}.sock", std::process::id()));
+        // Remove if there just in case
+        let _ = std::fs::remove_file(&sock_path);
+
+        // Create unix-socket-based proxy
+        let unix_proxy = HttpProxy::spawn_unix(UnixListener::bind(&sock_path).unwrap());
+
+        // Connect client to proxy and make call and confirm reached
+        opts.http_connect_proxy = Some(HttpConnectProxyOptions {
+            target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
+            basic_auth: None,
+        });
+        let proxied_client = opts.connect("my-namespace", None).await.unwrap();
+        let _ = proxied_client.list_namespaces().await;
+        assert!(call_count.load(Ordering::SeqCst) == 3);
+        assert!(unix_proxy.hit_count() == 1);
+
+        // Shutdown unix proxy
+        unix_proxy.shutdown();
+    }
+
+    // Shutdown server and proxy
+    server.shutdown().await;
+    tcp_proxy.shutdown();
 }
 
 fn make_ok_response<T>(message: T) -> Response<Body>
