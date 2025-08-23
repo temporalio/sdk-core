@@ -9,6 +9,7 @@
 )]
 
 pub mod client;
+pub mod envconfig;
 pub mod metric;
 pub mod random;
 pub mod runtime;
