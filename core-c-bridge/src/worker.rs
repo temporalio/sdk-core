@@ -20,6 +20,7 @@ use temporal_sdk_core_api::{
         SlotSupplierPermit,
     },
 };
+use temporal_sdk_core_protos::coresdk::nexus::NexusTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion,
@@ -51,6 +52,7 @@ pub struct WorkerOptions {
     pub workflow_task_poller_behavior: PollerBehavior,
     pub nonsticky_to_sticky_poll_ratio: f32,
     pub activity_task_poller_behavior: PollerBehavior,
+    pub nexus_task_poller_behavior: PollerBehavior,
     pub nondeterminism_as_workflow_fail: bool,
     pub nondeterminism_as_workflow_fail_for_types: ByteArrayRefArray,
 }
@@ -130,6 +132,7 @@ pub struct TunerHolder {
     pub workflow_slot_supplier: SlotSupplier,
     pub activity_slot_supplier: SlotSupplier,
     pub local_activity_slot_supplier: SlotSupplier,
+    pub nexus_task_slot_supplier: SlotSupplier,
 }
 
 #[repr(C)]
@@ -604,6 +607,40 @@ pub extern "C" fn temporal_core_worker_poll_activity_task(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_worker_poll_nexus_task(
+    worker: *mut Worker,
+    user_data: *mut libc::c_void,
+    callback: WorkerPollCallback,
+) {
+    let worker = unsafe { &*worker };
+    let user_data = UserDataHandle(user_data);
+    let core_worker = worker.worker.as_ref().unwrap().clone();
+    worker.runtime.core.tokio_handle().spawn(async move {
+        let (success, fail) = match core_worker.poll_nexus_task().await {
+            Ok(task) => (
+                ByteArray::from_vec(task.encode_to_vec())
+                    .into_raw()
+                    .cast_const(),
+                std::ptr::null(),
+            ),
+            Err(PollError::ShutDown) => (std::ptr::null(), std::ptr::null()),
+            Err(err) => (
+                std::ptr::null(),
+                worker
+                    .runtime
+                    .clone()
+                    .alloc_utf8(&format!("Poll failure: {err}"))
+                    .into_raw()
+                    .cast_const(),
+            ),
+        };
+        unsafe {
+            callback(user_data.into(), success, fail);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_worker_complete_workflow_activation(
     worker: *mut Worker,
     completion: ByteArrayRef,
@@ -673,6 +710,48 @@ pub extern "C" fn temporal_core_worker_complete_activity_task(
     let core_worker = worker.worker.as_ref().unwrap().clone();
     worker.runtime.core.tokio_handle().spawn(async move {
         let fail = match core_worker.complete_activity_task(completion).await {
+            Ok(_) => std::ptr::null(),
+            Err(err) => worker
+                .runtime
+                .clone()
+                .alloc_utf8(&format!("Completion failure: {err}"))
+                .into_raw()
+                .cast_const(),
+        };
+        unsafe {
+            callback(user_data.into(), fail);
+        }
+    });
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_worker_complete_nexus_task(
+    worker: *mut Worker,
+    completion: ByteArrayRef,
+    user_data: *mut libc::c_void,
+    callback: WorkerCallback,
+) {
+    let worker = unsafe { &*worker };
+    let completion = match NexusTaskCompletion::decode(completion.to_slice()) {
+        Ok(completion) => completion,
+        Err(err) => {
+            unsafe {
+                callback(
+                    user_data,
+                    worker
+                        .runtime
+                        .clone()
+                        .alloc_utf8(&format!("Decode failure: {err}"))
+                        .into_raw(),
+                );
+            }
+            return;
+        }
+    };
+    let user_data = UserDataHandle(user_data);
+    let core_worker = worker.worker.as_ref().unwrap().clone();
+    worker.runtime.core.tokio_handle().spawn(async move {
+        let fail = match core_worker.complete_nexus_task(completion).await {
             Ok(_) => std::ptr::null(),
             Err(err) => worker
                 .runtime
@@ -958,6 +1037,7 @@ impl TryFrom<&WorkerOptions> for temporal_sdk_core::WorkerConfig {
             .workflow_task_poller_behavior(temporal_sdk_core_api::worker::PollerBehavior::try_from(&opt.workflow_task_poller_behavior)?)
             .nonsticky_to_sticky_poll_ratio(opt.nonsticky_to_sticky_poll_ratio)
             .activity_task_poller_behavior(temporal_sdk_core_api::worker::PollerBehavior::try_from(&opt.activity_task_poller_behavior)?)
+            .nexus_task_poller_behavior(temporal_sdk_core_api::worker::PollerBehavior::try_from(&opt.nexus_task_poller_behavior)?)
             .workflow_failure_errors(if opt.nondeterminism_as_workflow_fail {
                 HashSet::from([WorkflowErrorType::Nondeterminism])
             } else {
@@ -1003,10 +1083,17 @@ impl TryFrom<&TunerHolder> for temporal_sdk_core::TunerHolder {
             } else {
                 None
             };
+        let maybe_nexus_resource_opts =
+            if let SlotSupplier::ResourceBased(ref ss) = holder.nexus_task_slot_supplier {
+                Some(&ss.tuner_options)
+            } else {
+                None
+            };
         let all_resource_opts = [
             maybe_wf_resource_opts,
             maybe_act_resource_opts,
             maybe_local_act_resource_opts,
+            maybe_nexus_resource_opts,
         ];
         let mut set_resource_opts = all_resource_opts.iter().flatten();
         let first = set_resource_opts.next();
@@ -1033,6 +1120,7 @@ impl TryFrom<&TunerHolder> for temporal_sdk_core::TunerHolder {
             .workflow_slot_options(holder.workflow_slot_supplier.try_into()?)
             .activity_slot_options(holder.activity_slot_supplier.try_into()?)
             .local_activity_slot_options(holder.local_activity_slot_supplier.try_into()?)
+            .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?)
             .build()
             .context("Invalid tuner holder options")?
             .build_tuner_holder()
