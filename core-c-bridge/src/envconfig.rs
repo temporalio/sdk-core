@@ -149,7 +149,7 @@ fn parse_env_vars(env_vars: ByteArrayRef) -> Result<Option<HashMap<String, Strin
 
     let env_json = std::str::from_utf8(env_vars.to_slice())
         .map_err(|e| format!("Invalid env vars UTF-8: {}", e))?;
-    
+
     serde_json::from_str(env_json)
         .map(Some)
         .map_err(|e| format!("Invalid env vars JSON: {}", e))
