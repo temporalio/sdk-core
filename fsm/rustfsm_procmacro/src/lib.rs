@@ -434,6 +434,7 @@ impl StateMachineDefinition {
             }
         };
         let mut multi_dest_enums = vec![];
+        let mut multi_dest_enum_names = HashSet::new();
         let state_branches: Vec<_> = statemap.into_iter().map(|(from, transitions)| {
             let occupied_current_state = quote! { Some(#state_enum_name::#from(state_data)) };
             // Merge transition dest states with the same handler
@@ -468,7 +469,11 @@ impl StateMachineDefinition {
                                         }
                                     }
                                 };
-                                multi_dest_enums.push(multi_dest_enum);
+                                // Deduplicate; two different events may each result in a transition
+                                // set with the same set of dest states
+                                if multi_dest_enum_names.insert(enum_ident.clone()) {
+                                    multi_dest_enums.push(multi_dest_enum);
+                                }
                                 quote! {
                                     #transition_result_name<#enum_ident>
                                 }

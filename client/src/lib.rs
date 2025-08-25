@@ -7,8 +7,11 @@
 #[macro_use]
 extern crate tracing;
 
+pub mod callback_based;
 mod metrics;
-mod proxy;
+/// Visible only for tests
+#[doc(hidden)]
+pub mod proxy;
 mod raw;
 mod retry;
 mod worker_registry;
@@ -35,7 +38,7 @@ pub use workflow_handle::{
 };
 
 use crate::{
-    metrics::{GrpcMetricSvc, MetricsContext},
+    metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::{AttachMetricLabels, sealed::RawClientLike},
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
@@ -89,6 +92,8 @@ static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 
 /// Key used to communicate when a GRPC message is too large
 pub static MESSAGE_TOO_LARGE_KEY: &str = "message-too-large";
+/// Key used to indicate a error was returned by the retryer because of the short-circuit predicate
+pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
@@ -432,34 +437,59 @@ impl ClientOptions {
         metrics_meter: Option<TemporalMeter>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
-        let channel = Channel::from_shared(self.target_url.to_string())?;
-        let channel = self.add_tls_to_channel(channel).await?;
-        let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
-            channel
-                .keep_alive_while_idle(true)
-                .http2_keep_alive_interval(keep_alive.interval)
-                .keep_alive_timeout(keep_alive.timeout)
-        } else {
-            channel
-        };
-        let channel = if let Some(origin) = self.override_origin.clone() {
-            channel.origin(origin)
-        } else {
-            channel
-        };
-        // If there is a proxy, we have to connect that way
-        let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
-            proxy.connect_endpoint(&channel).await?
-        } else {
-            channel.connect().await?
-        };
-        let service = ServiceBuilder::new()
-            .layer_fn(move |channel| GrpcMetricSvc {
-                inner: channel,
+        self.connect_no_namespace_with_service_override(metrics_meter, None)
+            .await
+    }
+
+    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
+    /// intercepted with retry, default headers functionality, and metrics if provided. If a
+    /// service_override is present, network-specific options are ignored and the callback is
+    /// invoked for each gRPC call.
+    ///
+    /// See [RetryClient] for more
+    pub async fn connect_no_namespace_with_service_override(
+        &self,
+        metrics_meter: Option<TemporalMeter>,
+        service_override: Option<callback_based::CallbackBasedGrpcService>,
+    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
+    {
+        let service = if let Some(service_override) = service_override {
+            GrpcMetricSvc {
+                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
                 metrics: metrics_meter.clone().map(MetricsContext::new),
                 disable_errcode_label: self.disable_error_code_metric_tags,
-            })
-            .service(channel);
+            }
+        } else {
+            let channel = Channel::from_shared(self.target_url.to_string())?;
+            let channel = self.add_tls_to_channel(channel).await?;
+            let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
+                channel
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(keep_alive.interval)
+                    .keep_alive_timeout(keep_alive.timeout)
+            } else {
+                channel
+            };
+            let channel = if let Some(origin) = self.override_origin.clone() {
+                channel.origin(origin)
+            } else {
+                channel
+            };
+            // If there is a proxy, we have to connect that way
+            let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
+                proxy.connect_endpoint(&channel).await?
+            } else {
+                channel.connect().await?
+            };
+            ServiceBuilder::new()
+                .layer_fn(move |channel| GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::Channel(channel),
+                    metrics: metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: self.disable_error_code_metric_tags,
+                })
+                .service(channel)
+        };
+
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: self.headers.clone().unwrap_or_default(),
             api_key: self.api_key.clone(),
@@ -1140,7 +1170,7 @@ pub struct WorkflowOptions {
 /// The overall semantics of Priority are:
 /// (more will be added here later)
 /// 1. First, consider "priority_key": lower number goes first.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Priority {
     /// Priority key is a positive integer from 1 to n, where smaller integers
     /// correspond to higher priorities (tasks run sooner). In general, tasks in
@@ -1153,12 +1183,50 @@ pub struct Priority {
     /// The default priority is (min+max)/2. With the default max of 5 and min of
     /// 1, that comes out to 3.
     pub priority_key: u32,
+
+    /// Fairness key is a short string that's used as a key for a fairness
+    /// balancing mechanism. It may correspond to a tenant id, or to a fixed
+    /// string like "high" or "low". The default is the empty string.
+    ///
+    /// The fairness mechanism attempts to dispatch tasks for a given key in
+    /// proportion to its weight. For example, using a thousand distinct tenant
+    /// ids, each with a weight of 1.0 (the default) will result in each tenant
+    /// getting a roughly equal share of task dispatch throughput.
+    ///
+    /// (Note: this does not imply equal share of worker capacity! Fairness
+    /// decisions are made based on queue statistics, not
+    /// current worker load.)
+    ///
+    /// As another example, using keys "high" and "low" with weight 9.0 and 1.0
+    /// respectively will prefer dispatching "high" tasks over "low" tasks at a
+    /// 9:1 ratio, while allowing either key to use all worker capacity if the
+    /// other is not present.
+    ///
+    /// All fairness mechanisms, including rate limits, are best-effort and
+    /// probabilistic. The results may not match what a "perfect" algorithm with
+    /// infinite resources would produce. The more unique keys are used, the less
+    /// accurate the results will be.
+    ///
+    /// Fairness keys are limited to 64 bytes.
+    pub fairness_key: String,
+
+    /// Fairness weight for a task can come from multiple sources for
+    /// flexibility. From highest to lowest precedence:
+    /// 1. Weights for a small set of keys can be overridden in task queue
+    ///    configuration with an API.
+    /// 2. It can be attached to the workflow/activity in this field.
+    /// 3. The default weight of 1.0 will be used.
+    ///
+    /// Weight values are clamped by the server to the range [0.001, 1000].
+    pub fairness_weight: f32,
 }
 
 impl From<Priority> for common::v1::Priority {
     fn from(priority: Priority) -> Self {
         common::v1::Priority {
             priority_key: priority.priority_key as i32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight,
         }
     }
 }
@@ -1167,6 +1235,8 @@ impl From<common::v1::Priority> for Priority {
     fn from(priority: common::v1::Priority) -> Self {
         Self {
             priority_key: priority.priority_key as u32,
+            fairness_key: priority.fairness_key,
+            fairness_weight: priority.fairness_weight,
         }
     }
 }

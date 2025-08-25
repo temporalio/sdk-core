@@ -395,7 +395,7 @@ impl WorkflowMachines {
         self.current_started_event_id
     }
 
-    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+    pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent<'_> {
         MachinesWFTResponseContent {
             replaying: self.replaying,
             has_pending_jobs: self.has_pending_jobs(),
@@ -1352,7 +1352,7 @@ impl WorkflowMachines {
                 WFCommandVariant::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA =
-                        ValidScheduleLA::from_schedule_la(attrs).map_err(|e| {
+                        ValidScheduleLA::from_schedule_la(attrs, cmd.metadata).map_err(|e| {
                             WFMachinesError::Fatal(format!(
                                 "Invalid schedule local activity request (seq {seq}): {e}"
                             ))

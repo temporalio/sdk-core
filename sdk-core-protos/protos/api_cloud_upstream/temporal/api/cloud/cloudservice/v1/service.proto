@@ -395,4 +395,41 @@ service CloudService {
             body: "*"
         };
     }
+
+    // Update the tags for a namespace
+     rpc UpdateNamespaceTags(UpdateNamespaceTagsRequest) returns (UpdateNamespaceTagsResponse) {
+        option (google.api.http) = {
+            post: "/cloud/namespaces/{namespace}/update-tags"
+            body: "*"
+        };
+    }
+
+    // Creates a connectivity rule
+    rpc CreateConnectivityRule(CreateConnectivityRuleRequest) returns (CreateConnectivityRuleResponse) {
+        option (google.api.http) = {
+            post: "/cloud/connectivity-rules"
+            body: "*"
+        };
+    }
+
+    // Gets a connectivity rule by id
+    rpc GetConnectivityRule(GetConnectivityRuleRequest) returns (GetConnectivityRuleResponse) {
+        option (google.api.http) = {
+            get: "/cloud/connectivity-rules/{connectivity_rule_id}"
+        };
+    }
+
+    // Lists connectivity rules by account
+    rpc GetConnectivityRules(GetConnectivityRulesRequest) returns (GetConnectivityRulesResponse) {
+        option (google.api.http) = {
+            get: "/cloud/connectivity-rules"
+        };
+    }
+
+    // Deletes a connectivity rule by id
+    rpc DeleteConnectivityRule(DeleteConnectivityRuleRequest) returns (DeleteConnectivityRuleResponse) {
+        option (google.api.http) = {
+            delete: "/cloud/connectivity-rules/{connectivity_rule_id}"
+        };
+    }
 }

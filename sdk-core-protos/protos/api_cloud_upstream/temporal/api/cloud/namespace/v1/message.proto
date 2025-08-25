@@ -12,6 +12,7 @@ option csharp_namespace = "Temporalio.Api.Cloud.Namespace.V1";
 import "temporal/api/cloud/resource/v1/message.proto";
 import "google/protobuf/timestamp.proto";
 import "temporal/api/cloud/sink/v1/message.proto";
+import "temporal/api/cloud/connectivityrule/v1/message.proto";
 
 message CertificateFilterSpec {
     // The common_name in the certificate.
@@ -139,6 +140,11 @@ message NamespaceSpec {
     // The high availability configuration for the namespace.
     // temporal:versioning:min_version=v0.4.0
     HighAvailabilitySpec high_availability = 10;
+    // The private connectivity configuration for the namespace.
+    // This will apply the connectivity rules specified to the namespace.
+    // temporal:versioning:min_version=v0.6.0
+    repeated string connectivity_rule_ids = 11;
+
 
     enum SearchAttributeType {
         SEARCH_ATTRIBUTE_TYPE_UNSPECIFIED = 0;
@@ -218,6 +224,10 @@ message Namespace {
     // The status of each region where the namespace is available.
     // The id of the region is the key and the status is the value of the map.
     map<string, NamespaceRegionStatus> region_status = 12;
+    // The connectivity rules that are set on this namespace.
+    repeated temporal.api.cloud.connectivityrule.v1.ConnectivityRule connectivity_rules = 14;
+    // The tags for the namespace.
+    map<string, string> tags = 15;
 }
 
 message NamespaceRegionStatus {
