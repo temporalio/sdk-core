@@ -133,7 +133,7 @@ fn parse_config_source(
     if !path.is_null() {
         match unsafe { CStr::from_ptr(path) }.to_str() {
             Ok(path_str) => Ok(Some(CoreDataSource::Path(path_str.to_string()))),
-            Err(e) => Err(format!("Invalid path UTF-8: {}", e)),
+            Err(e) => Err(format!("Invalid path UTF-8: {e}")),
         }
     } else if !data.data.is_null() && data.size > 0 {
         Ok(Some(CoreDataSource::Data(data.to_vec())))
@@ -148,11 +148,11 @@ fn parse_env_vars(env_vars: ByteArrayRef) -> Result<Option<HashMap<String, Strin
     }
 
     let env_json = std::str::from_utf8(env_vars.to_slice())
-        .map_err(|e| format!("Invalid env vars UTF-8: {}", e))?;
+        .map_err(|e| format!("Invalid env vars UTF-8: {e}"))?;
 
     serde_json::from_str(env_json)
         .map(Some)
-        .map_err(|e| format!("Invalid env vars JSON: {}", e))
+        .map_err(|e| format!("Invalid env vars JSON: {e}"))
 }
 
 fn send_result<T: Serialize>(
@@ -167,7 +167,7 @@ fn send_result<T: Serialize>(
                 unsafe { callback(user_data, result.into_raw(), std::ptr::null()) };
             }
             Err(e) => {
-                let err = ByteArray::from_utf8(format!("Failed to serialize: {}", e));
+                let err = ByteArray::from_utf8(format!("Failed to serialize: {e}"));
                 unsafe { callback(user_data, std::ptr::null(), err.into_raw()) };
             }
         },
@@ -224,7 +224,7 @@ pub extern "C" fn temporal_core_client_config_profile_load(
         let profile_name = if !profile.is_null() {
             match unsafe { CStr::from_ptr(profile) }.to_str() {
                 Ok(s) => Some(s.to_string()),
-                Err(e) => return Err(format!("Invalid profile UTF-8: {}", e)),
+                Err(e) => return Err(format!("Invalid profile UTF-8: {e}")),
             }
         } else {
             None
