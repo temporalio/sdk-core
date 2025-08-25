@@ -1129,7 +1129,7 @@ namespace = "my-namespace"
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options, None).unwrap();
+        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "my-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace");
     }
@@ -1519,7 +1519,7 @@ address = "localhost:7233"
         };
 
         // Should not error, just returns an empty profile
-        let profile = load_client_config_profile(options, None).unwrap();
+        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
         assert_eq!(profile, ClientConfigProfile::default());
     }
 
@@ -1595,7 +1595,7 @@ api_key = "my-api-key"
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options, None).unwrap();
+        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
 
         // TLS should be enabled due to API key presence
         assert!(profile.tls.is_some());
@@ -1616,7 +1616,7 @@ address = "some-address"
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options, None).unwrap();
+        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
 
         // TLS should not be enabled
         assert!(profile.tls.is_none());
@@ -1624,6 +1624,9 @@ address = "some-address"
 
     #[test]
     fn test_load_client_config_profile_from_system_env() {
+        // WARNING: This test modifies system environment variables which can cause
+        // test pollution if tests run in parallel.
+
         // Set up system env vars. These tests can't be run in parallel.
         unsafe {
             std::env::set_var("TEMPORAL_ADDRESS", "system-address");
