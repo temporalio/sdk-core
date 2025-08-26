@@ -631,6 +631,7 @@ typedef struct TemporalCoreTunerHolder {
   struct TemporalCoreSlotSupplier workflow_slot_supplier;
   struct TemporalCoreSlotSupplier activity_slot_supplier;
   struct TemporalCoreSlotSupplier local_activity_slot_supplier;
+  struct TemporalCoreSlotSupplier nexus_task_slot_supplier;
 } TemporalCoreTunerHolder;
 
 typedef struct TemporalCorePollerBehaviorSimpleMaximum {
@@ -670,6 +671,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCorePollerBehavior workflow_task_poller_behavior;
   float nonsticky_to_sticky_poll_ratio;
   struct TemporalCorePollerBehavior activity_task_poller_behavior;
+  struct TemporalCorePollerBehavior nexus_task_poller_behavior;
   bool nondeterminism_as_workflow_fail;
   struct TemporalCoreByteArrayRefArray nondeterminism_as_workflow_fail_for_types;
 } TemporalCoreWorkerOptions;
@@ -877,6 +879,10 @@ void temporal_core_worker_poll_activity_task(struct TemporalCoreWorker *worker,
                                              void *user_data,
                                              TemporalCoreWorkerPollCallback callback);
 
+void temporal_core_worker_poll_nexus_task(struct TemporalCoreWorker *worker,
+                                          void *user_data,
+                                          TemporalCoreWorkerPollCallback callback);
+
 void temporal_core_worker_complete_workflow_activation(struct TemporalCoreWorker *worker,
                                                        struct TemporalCoreByteArrayRef completion,
                                                        void *user_data,
@@ -886,6 +892,11 @@ void temporal_core_worker_complete_activity_task(struct TemporalCoreWorker *work
                                                  struct TemporalCoreByteArrayRef completion,
                                                  void *user_data,
                                                  TemporalCoreWorkerCallback callback);
+
+void temporal_core_worker_complete_nexus_task(struct TemporalCoreWorker *worker,
+                                              struct TemporalCoreByteArrayRef completion,
+                                              void *user_data,
+                                              TemporalCoreWorkerCallback callback);
 
 /**
  * Returns error if any. Must be freed if returned.
