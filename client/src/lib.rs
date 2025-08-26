@@ -9,7 +9,9 @@ extern crate tracing;
 
 pub mod callback_based;
 mod metrics;
-mod proxy;
+/// Visible only for tests
+#[doc(hidden)]
+pub mod proxy;
 mod raw;
 mod retry;
 mod worker_registry;
