@@ -561,7 +561,7 @@ pub extern "C" fn temporal_core_worker_poll_workflow_activation(
                 worker
                     .runtime
                     .clone()
-                    .alloc_utf8(&format!("Poll failure: {err}"))
+                    .alloc_utf8(&format!("Workflow polling failure: {err}"))
                     .into_raw()
                     .cast_const(),
             ),
@@ -595,7 +595,7 @@ pub extern "C" fn temporal_core_worker_poll_activity_task(
                 worker
                     .runtime
                     .clone()
-                    .alloc_utf8(&format!("Poll failure: {err}"))
+                    .alloc_utf8(&format!("Activity polling failure: {err}"))
                     .into_raw()
                     .cast_const(),
             ),
@@ -629,7 +629,7 @@ pub extern "C" fn temporal_core_worker_poll_nexus_task(
                 worker
                     .runtime
                     .clone()
-                    .alloc_utf8(&format!("Poll failure: {err}"))
+                    .alloc_utf8(&format!("Nexus polling failure: {err}"))
                     .into_raw()
                     .cast_const(),
             ),
@@ -657,7 +657,7 @@ pub extern "C" fn temporal_core_worker_complete_workflow_activation(
                     worker
                         .runtime
                         .clone()
-                        .alloc_utf8(&format!("Decode failure: {err}"))
+                        .alloc_utf8(&format!("Workflow task decode failure: {err}"))
                         .into_raw(),
                 );
             }
@@ -672,7 +672,7 @@ pub extern "C" fn temporal_core_worker_complete_workflow_activation(
             Err(err) => worker
                 .runtime
                 .clone()
-                .alloc_utf8(&format!("Completion failure: {err}"))
+                .alloc_utf8(&format!("Workflow completion failure: {err}"))
                 .into_raw()
                 .cast_const(),
         };
@@ -699,7 +699,7 @@ pub extern "C" fn temporal_core_worker_complete_activity_task(
                     worker
                         .runtime
                         .clone()
-                        .alloc_utf8(&format!("Decode failure: {err}"))
+                        .alloc_utf8(&format!("Activity task decode failure: {err}"))
                         .into_raw(),
                 );
             }
@@ -714,7 +714,7 @@ pub extern "C" fn temporal_core_worker_complete_activity_task(
             Err(err) => worker
                 .runtime
                 .clone()
-                .alloc_utf8(&format!("Completion failure: {err}"))
+                .alloc_utf8(&format!("Activity completion failure: {err}"))
                 .into_raw()
                 .cast_const(),
         };
@@ -741,7 +741,7 @@ pub extern "C" fn temporal_core_worker_complete_nexus_task(
                     worker
                         .runtime
                         .clone()
-                        .alloc_utf8(&format!("Decode failure: {err}"))
+                        .alloc_utf8(&format!("Nexus task decode failure: {err}"))
                         .into_raw(),
                 );
             }
@@ -756,7 +756,7 @@ pub extern "C" fn temporal_core_worker_complete_nexus_task(
             Err(err) => worker
                 .runtime
                 .clone()
-                .alloc_utf8(&format!("Completion failure: {err}"))
+                .alloc_utf8(&format!("Nexus completion failure: {err}"))
                 .into_raw()
                 .cast_const(),
         };
@@ -786,7 +786,7 @@ pub extern "C" fn temporal_core_worker_record_activity_heartbeat(
         Err(err) => worker
             .runtime
             .clone()
-            .alloc_utf8(&format!("Decode failure: {err}"))
+            .alloc_utf8(&format!("Activity heartbeat decode failure: {err}"))
             .into_raw(),
     }
 }
