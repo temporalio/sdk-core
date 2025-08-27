@@ -1,9 +1,11 @@
 Core SDK Architecture
 ===
 
-## High level description
+If you're newer to SDKs in general, first check out the [SDKs Intro](./arch_docs/sdks_intro.md)!
 
-The below diagram depicts how future SDKs are split into two parts. The `sdk-core` common code,
+## High-level description
+
+The below diagram depicts how Core-based SDKs are split into two parts. The `sdk-core` common code,
 which is written in Rust, and a `sdk-lang` package specific to the language the user is writing
 their workflow/activity in. For example a user writing workflows in Rust would be pulling in (at
 least) two crates - `temporal-sdk-core` and `temporal-sdk-rust`.
@@ -14,19 +16,15 @@ The `core` communicates with the Temporal service in the same way that existing 
 gRPC. It's responsible for polling for tasks, processing those tasks according to our state machine
 logic, and then driving the language-specific code and shuttling events to it and commands back.
 
-The `sdk-lang` side communicates with `sdk-core` via either C bindings, IPC, or (later) bindings to
-a WASM interface. Many languages already have nice support for calling into Rust code - generally
-speaking these implementations are using C bindings under the hood. For example, we
-use [neon](https://neon-bindings.com/) to support the TS/JS sdk, and we will likely
-use [PyO3](https://github.com/PyO3/pyo3) for Python. It is expected that such usages will layer
-another crate on top of `core` which brings in these language specific libraries to expose `core` to
-that language in an ergonomic manner. IPC will exist as a thin layer on top of the C bindings. Care
-should be taken here to avoid unnecessary copying and [de]serialization. Then `sdk-lang` is
-responsible for dispatching tasks to the appropriate user code (to whatever extent parts of this can
-be reasonably put in the core code, we desire that to make lang-specific SDKs as small as possible).
+The `sdk-lang` side communicates with `sdk-core` via C bindings. Many languages already have nice
+support for calling into Rust code - generally speaking these implementations are using C bindings
+under the hood. For example, we use [neon](https://neon-bindings.com/) to support the TS/JS SDK, and
+we use [PyO3](https://github.com/PyO3/pyo3) for Python. Languages using libraries like that layer
+another crate on top of `core` which brings in these language-specific helpers to expose `core` to
+that language in an ergonomic manner.
 
-As a general note, the more we can push from `sdk-lang` into `sdk-core`, the easier our ecosystem is
-to maintain in the long run as we will have less semantically identical code.
+Other SDKs (ex: .NET) directly use C bindings available in this repo
+at [core-c-bridge](./core-c-bridge).
 
 ### Glossary of terms
 
@@ -57,9 +55,9 @@ Additional clarifications that are internal to Core:
 * `StateMachine`s also handle events and produce commands, which often map directly to the above
   `HistoryEvent`s and `Command`s, but are distinct types. The state machine library is Temporal
   agnostic - but all interactions with the machines pass through a `TemporalStateMachine` trait,
-  which accepts `HistoryEvent`s, and produces `WorkflowTrigger`s.
-* `WorkflowTrigger`: These allow the state machines to trigger things to happen to the workflow.
-  Including pushing new `WfActivationJob`s, or otherwise advancing workflow state.
+  which accepts `HistoryEvent`s, and produces `MachineResponse`s.
+* `MachineResponse`: These allow the state machines to trigger things to happen to the workflow.
+  Including pushing new Activation Jobs, or otherwise advancing workflow state.
 
 ### Core SDK Responsibilities
 
@@ -67,18 +65,19 @@ Additional clarifications that are internal to Core:
   more ergonomic traits.
 - Provide interface for language-specific SDK to drive event loop and handle returned commands. The
   lang sdk will continuously call/poll the core SDK to receive new tasks, which either represent
-  workflows being started or awoken (`WorkflowActivation`) or activities to execute (
-  `ActivityTask`). It will then call its workflow/activity functions with the provided information
-  as appropriate, and will then push completed tasks back into the core SDK.
+  workflows being started or awoken (`WorkflowActivation`), activities to execute (`ActivityTask`),
+  or Nexus Operations to invoke (`NexusTask`). It will then call its workflow/activity/nexus
+  functions with the provided information as appropriate, and will then push completed tasks back
+  into the core SDK.
 - Advance state machines and report back to the temporal server as appropriate when handling events
   and commands
 
 ### Language Specific SDK Responsibilities
 
 - Periodically poll Core SDK for tasks
-- Call workflow and activity functions as appropriate, using information in events it received from
-  Core SDK
-- Return results of workflows/activities to Core SDK
+- Call workflow, activity, and nexus functions as appropriate, using information in events it
+  received from Core SDK
+- Return results of workflows/activities/nexus ops to Core SDK
 - Manage concurrency using language appropriate primitives. For example, it is up to the language
   side to decide how frequently to poll, and whether or not to execute worklows and activities in
   separate threads or coroutines, etc.
@@ -118,7 +117,3 @@ definition [here](https://github.com/temporalio/sdk-core/tree/master/sdk-core-pr
 
 - [Sticky task queues](arch_docs/sticky_queues.md)
 - [Workflow task chunking](arch_docs/workflow_task_chunking.md)
-
-## Workflow Processing Internals
-
-![Workflow Internals](arch_docs/diagrams/workflow_internals.svg)
