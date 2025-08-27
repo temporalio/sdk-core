@@ -42,12 +42,7 @@ use temporal_sdk::{
 };
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
-use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder, WorkerConfigBuilder,
-    init_replay_worker, init_worker,
-    replay::ReplayWorkerInput,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-};
+use temporal_sdk_core::{ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder, WorkerConfigBuilder, init_replay_worker, init_worker, replay::ReplayWorkerInput, telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter}, RuntimeOptions};
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
     errors::PollError,
@@ -834,6 +829,10 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     })
     .build()
     .unwrap()
+}
+
+pub fn get_integ_runtime_options(heartbeat_interval: Option<Duration>) -> RuntimeOptions {
+    RuntimeOptions::new(get_integ_telem_options(), heartbeat_interval)
 }
 
 #[cfg(feature = "ephemeral-server")]

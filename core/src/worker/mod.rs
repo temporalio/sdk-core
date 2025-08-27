@@ -304,6 +304,8 @@ impl Worker {
     /// Replace client and return a new client. For eager workflow purposes, this new client will
     /// now apply to future eager start requests and the older client will not.
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
+        // TODO: plumb and call SharedNamespaceWorker's client
+        //  This means it's essentially a remove + add to the runtime's SharedNamespaceWorker map?
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
         let slot_provider = (*worker_key).and_then(|k| self.client.workers().unregister(k));
