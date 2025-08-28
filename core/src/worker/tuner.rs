@@ -108,6 +108,20 @@ impl TunerHolderOptions {
             }
             None => {}
         }
+        match self.nexus_slot_options {
+            Some(SlotSupplierOptions::FixedSize { slots }) => {
+                builder.nexus_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(slots)));
+            }
+            Some(SlotSupplierOptions::ResourceBased(rso)) => {
+                builder.nexus_slot_supplier(
+                    rb_tuner.as_mut().unwrap().with_nexus_slots_options(rso).nexus_task_slot_supplier(),
+                );
+            }
+            Some(SlotSupplierOptions::Custom(ss)) => {
+                builder.nexus_slot_supplier(ss);
+            }
+            None => {}
+        }
         Ok(builder.build())
     }
 }
