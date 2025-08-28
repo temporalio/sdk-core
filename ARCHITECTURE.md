@@ -12,9 +12,10 @@ least) two crates - `temporal-sdk-core` and `temporal-sdk-rust`.
 
 ![Arch Diagram](https://lucid.app/publicSegments/view/7872bb33-d2b9-4b90-8aa1-bac111136aa5/image.png)
 
-The `core` communicates with the Temporal service in the same way that existing SDKs today do, via
-gRPC. It's responsible for polling for tasks, processing those tasks according to our state machine
-logic, and then driving the language-specific code and shuttling events to it and commands back.
+Core communicates with the Temporal service in the same way that existing SDKs today do, via
+gRPC. It's responsible for polling for tasks (Workflow, Activity, and Nexus), processing those tasks
+and updating internal state as necessary, and then delivering them to the lang-layer which is
+polling for them (and handling the responses).
 
 The `sdk-lang` side communicates with `sdk-core` via C bindings. Many languages already have nice
 support for calling into Rust code - generally speaking these implementations are using C bindings
@@ -36,9 +37,9 @@ the code. This list should help to disambiguate:
   represent the history of the workflow. They are defined in the protobuf definitions for the
   Temporal service itself.
 * `Command`: These are the commands defined in the temporal service protobufs that are returned by
-  clients upon completing a `WorkflowTask`. For example, starting a timer or an activity.
-* `WorkflowTask`: These are how the server represents the need to run user workflow code (or the
-  result of it executing). See the `HistoryEvent` proto definition for more.
+  workers upon completing a `WorkflowTask`. For example, starting a timer or an activity.
+* `WorkflowTask`: These are how the server represents the need to run user workflow code, and the
+  results of that execution. See the `HistoryEvent` proto definition for more.
 * `WorkflowActivation`: These are produced by the Core SDK when the lang sdk needs to "activate" the
   user's workflow code, either running it from the beginning or resuming a cached workflow.
 * `WorkflowActivationJob` (shorthand: `Job`s): These are included in `WorkflowActivation`s and
@@ -85,21 +86,21 @@ Additional clarifications that are internal to Core:
 ### Example Sequence Diagrams
 
 Here we consider what the sequence of API calls would look like for a simple workflow executing a
-happy path. The hello-world workflow & activity in imaginary Rust (don't pay too much attention to
-the specifics, just an example) is below. It is meant to be like our most basic hello world samples.
+happy path. The hello-world workflow & activity in Python is below.
 
-```rust
-#[workflow]
-async fn hello_world_workflow(name: &str) -> Result<String, Error> {
-    info!("Hello world workflow started! Name: {}", name);
-    // Very much TBD how this would actually work in rust sdk. Many options here.
-    activity!(hello_activity(name), timeout: 2s).await
-}
+```python
+@workflow.defn
+class SayHello:
+  @workflow.run
+  async def run(self, name: str) -> str:
+    return await workflow.execute_activity(
+      say_hello, name, schedule_to_close_timeout=timedelta(seconds=5)
+    )
 
-#[activity]
-async fn hello_activity(name: &str) -> String {
-    format!("Hello {}!", name)
-}
+
+@activity.defn
+async def say_hello(name: str) -> str:
+    return f"Hello, {name}!"
 ```
 
 [![](https://mermaid.ink/img/pako:eNptk81O6zAQhV9l5AWr8gIRqoQCC0QXQJDuJpvBnrZWbY-vf9rbi3h3bJqE0JKVlfP5zMyx_S4kKxKNiPQ3k5N0p3ET0PYOyucxJC21R5egA4zwStZzQAMdhb2WdIm1FWs5EHR3j5fyqsordJuTfAJWcL1cQtvAg9NJo9H_CQ4cdhTmetfAJnjZQJeK4Z-irw0f7v-RzEmzG80Ms__aXVVIGHfgA0uKUbvNCWl_-j2xMaPda-GfM-Vhsg6uh9aqEOEKtjomDseizb0KcOu9OU5yYogJE4FFudWO4ometUh7KnnU5VkItR1YcwCUSe-xzhanWpVZNTC2ezshc5MCvGQ3hbCoAahcIgDJ1qJTcaKHmpd-LVtvqK5u3sJSskuoXUnwzOJ7fLXHcn1-nZqcGk_nLPoXip6dmqc_FCZ1sXdKqNvmpPhQfouFsBQsalWu8HvFepG2ZKkXTVkqDLte9O6jcNmr0tm90uV8RLNGE2khMCfujk6KJoVMIzS8gYH6-ASOZQf0)](https://mermaid-js.github.io/mermaid-live-editor/edit#pako:eNptk81O6zAQhV9l5AWr8gIRqoQCC0QXQJDuJpvBnrZWbY-vf9rbi3h3bJqE0JKVlfP5zMyx_S4kKxKNiPQ3k5N0p3ET0PYOyucxJC21R5egA4zwStZzQAMdhb2WdIm1FWs5EHR3j5fyqsordJuTfAJWcL1cQtvAg9NJo9H_CQ4cdhTmetfAJnjZQJeK4Z-irw0f7v-RzEmzG80Ms__aXVVIGHfgA0uKUbvNCWl_-j2xMaPda-GfM-Vhsg6uh9aqEOEKtjomDseizb0KcOu9OU5yYogJE4FFudWO4ometUh7KnnU5VkItR1YcwCUSe-xzhanWpVZNTC2ezshc5MCvGQ3hbCoAahcIgDJ1qJTcaKHmpd-LVtvqK5u3sJSskuoXUnwzOJ7fLXHcn1-nZqcGk_nLPoXip6dmqc_FCZ1sXdKqNvmpPhQfouFsBQsalWu8HvFepG2ZKkXTVkqDLte9O6jcNmr0tm90uV8RLNGE2khMCfujk6KJoVMIzS8gYH6-ASOZQf0)
