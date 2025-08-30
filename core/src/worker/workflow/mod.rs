@@ -239,6 +239,7 @@ impl Workflows {
                         }
                     }
                 });
+                warn!("Workflow processing task exiting");
             })
             .expect("Must be able to spawn workflow processing thread");
         Self {
