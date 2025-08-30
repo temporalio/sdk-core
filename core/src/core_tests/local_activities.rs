@@ -1314,7 +1314,10 @@ async fn local_activity_after_wf_complete_is_discarded() {
             });
     });
     let mut mock = build_mock_pollers(mock_cfg);
-    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    mock.worker_cfg(|wc| {
+        wc.max_cached_workflows = 1;
+        wc.ignore_evicts_on_shutdown = false;
+    });
     let core = mock_worker(mock);
 
     let barr = Barrier::new(2);
