@@ -32,9 +32,6 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
-use tonic::metadata::{
-    AsciiMetadataKey, AsciiMetadataValue, BinaryMetadataKey, BinaryMetadataValue,
-};
 pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey};
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
@@ -81,7 +78,10 @@ use tonic::{
     body::Body,
     client::GrpcService,
     codegen::InterceptedService,
-    metadata::{MetadataKey, MetadataMap, MetadataValue},
+    metadata::{
+        AsciiMetadataKey, AsciiMetadataValue, BinaryMetadataKey, BinaryMetadataValue, MetadataMap,
+        MetadataValue,
+    },
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
 };
