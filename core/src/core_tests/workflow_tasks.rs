@@ -2058,6 +2058,7 @@ async fn no_race_acquiring_permits() {
     let task_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
     mock_client
         .expect_poll_workflow_task()
+        .times(2)
         .returning(move |_, _| {
             let t = canned_histories::single_timer("1");
             let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
@@ -2068,6 +2069,9 @@ async fn no_race_acquiring_permits() {
             .boxed()
         });
     mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| async move { Ok(Default::default()) }.boxed());
+    mock_client
         .expect_complete_workflow_task()
         .returning(|_| async move { Ok(Default::default()) }.boxed());
 
@@ -2075,6 +2079,7 @@ async fn no_race_acquiring_permits() {
         test_worker_cfg()
             .max_outstanding_workflow_tasks(2_usize)
             .max_cached_workflows(0_usize)
+            .ignore_evicts_on_shutdown(false)
             .build()
             .unwrap(),
         mock_client,
@@ -2111,6 +2116,21 @@ async fn no_race_acquiring_permits() {
         task_barr.wait().await;
     };
     join!(poll_1_f, poll_2_f, other_f);
+    // Deal with eviction due to cache being full
+    worker.handle_eviction().await;
+    // Complete workflow (otherwise, this test can encounter a rare shutdown-related race that is
+    // only possible with the `ignore_evicts_on_shutdown` flag set true, as it is to make tests
+    // more convenient).
+    let r = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            r.run_id,
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ))
+        .await
+        .unwrap();
+    let r = worker.poll_workflow_activation().await.unwrap();
+    worker.complete_execution(&r.run_id).await;
     worker.drain_pollers_and_shutdown().await;
 }
 
