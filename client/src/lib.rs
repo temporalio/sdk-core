@@ -32,6 +32,9 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
+use tonic::metadata::{
+    AsciiMetadataKey, AsciiMetadataValue, BinaryMetadataKey, BinaryMetadataValue,
+};
 pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey};
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
@@ -148,6 +151,13 @@ pub struct ClientOptions {
     /// HTTP headers to include on every RPC call.
     #[builder(default)]
     pub headers: Option<HashMap<String, String>>,
+
+    /// HTTP headers to include on every RPC call as binary gRPC metadata (typically encoded as
+    /// base64).
+    ///
+    /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix).
+    #[builder(default)]
+    pub binary_headers: Option<HashMap<String, Vec<u8>>>,
 
     /// API key which is set as the "Authorization" header with "Bearer " prepended. This will only
     /// be applied if the headers don't already have an "Authorization" header.
@@ -344,9 +354,18 @@ pub struct ConfiguredClient<C> {
 }
 
 impl<C> ConfiguredClient<C> {
-    /// Set HTTP request headers overwriting previous headers
+    /// Set HTTP request headers overwriting previous headers.
+    ///
+    /// This will not affect headers set via [ClientOptions::binary_headers].
     pub fn set_headers(&self, headers: HashMap<String, String>) {
         self.headers.write().user_headers = headers;
+    }
+
+    /// Set binary HTTP request headers overwriting previous headers.
+    ///
+    /// This will not affect headers set via [ClientOptions::headers].
+    pub fn set_binary_headers(&self, binary_headers: HashMap<String, Vec<u8>>) {
+        self.headers.write().user_binary_headers = binary_headers;
     }
 
     /// Set API key, overwriting previous
@@ -374,6 +393,7 @@ impl<C> ConfiguredClient<C> {
 #[derive(Debug)]
 struct ClientHeaders {
     user_headers: HashMap<String, String>,
+    user_binary_headers: HashMap<String, Vec<u8>>,
     api_key: Option<String>,
 }
 
@@ -383,8 +403,20 @@ impl ClientHeaders {
             // Only if not already present
             if !metadata.contains_key(key) {
                 // Ignore invalid keys/values
-                if let (Ok(key), Ok(val)) = (MetadataKey::from_str(key), val.parse()) {
+                if let (Ok(key), Ok(val)) = (
+                    AsciiMetadataKey::from_str(key),
+                    AsciiMetadataValue::from_str(val),
+                ) {
                     metadata.insert(key, val);
+                }
+            }
+        }
+        for (key, val) in self.user_binary_headers.iter() {
+            // Only if not already present
+            if !metadata.contains_key(key) {
+                // Ignore invalid keys
+                if let Ok(key) = BinaryMetadataKey::from_str(key) {
+                    metadata.insert_bin(key, BinaryMetadataValue::from_bytes(val));
                 }
             }
         }
@@ -492,6 +524,7 @@ impl ClientOptions {
 
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: self.headers.clone().unwrap_or_default(),
+            user_binary_headers: self.binary_headers.clone().unwrap_or_default(),
             api_key: self.api_key.clone(),
         }));
         let interceptor = ServiceCallInterceptor {
@@ -1770,6 +1803,7 @@ mod tests {
         // Initial header set
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: HashMap::new(),
+            user_binary_headers: HashMap::new(),
             api_key: Some("my-api-key".to_owned()),
         }));
         headers
