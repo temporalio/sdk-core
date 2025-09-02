@@ -1,7 +1,13 @@
 use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::bail;
 use assert_matches::assert_matches;
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_api::errors::PollError;
@@ -591,12 +597,13 @@ async fn nexus_cancellation_types(
         }
     });
 
-    let (cancellation_wait_tx, cancellation_wait_rx) = watch::channel(false);
+    let cancellation_wait_happened = Arc::new(AtomicBool::new(false));
+    let cancellation_wait_happened_clone = cancellation_wait_happened.clone();
     let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
     let (handler_exited_tx, mut handler_exited_rx) = watch::channel(false);
     worker.register_wf("async_completer".to_owned(), move |ctx: WfContext| {
         let cancellation_tx = cancellation_tx.clone();
-        let mut cancellation_wait_rx = cancellation_wait_rx.clone();
+        let cancellation_wait_happened = cancellation_wait_happened_clone.clone();
         let handler_exited_tx = handler_exited_tx.clone();
         async move {
             // Wait for cancellation
@@ -604,7 +611,8 @@ async fn nexus_cancellation_types(
             cancellation_tx.send(true).unwrap();
 
             if cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
-                cancellation_wait_rx.changed().await.unwrap();
+                ctx.wait_condition(|| cancellation_wait_happened.load(Ordering::Relaxed))
+                    .await;
             } else if cancellation_type == NexusOperationCancellationType::WaitCancellationRequested
             {
                 // For WAIT_REQUESTED, wait until the caller nexus op future has been resolved. This
@@ -624,13 +632,13 @@ async fn nexus_cancellation_types(
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
     let client = starter.get_client().await.get_client().clone();
     let (handler_wf_id_tx, mut handler_wf_id_rx) = tokio::sync::oneshot::channel();
+    let completer_id = &format!("completer-{}", rand_6_chars());
     let nexus_task_handle = async {
         let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         let start_req = assert_matches!(
             nt.request.unwrap().variant.unwrap(),
             request::Variant::StartOperation(sr) => sr
         );
-        let completer_id = format!("completer-{}", rand_6_chars());
         let _ = handler_wf_id_tx.send(completer_id.clone());
         let links = start_req
             .links
@@ -708,7 +716,12 @@ async fn nexus_cancellation_types(
                 request::Variant::CancelOperation(_)
             );
             client
-                .cancel_workflow_execution(completer_id, None, "nexus cancel".to_string(), None)
+                .cancel_workflow_execution(
+                    completer_id.to_string(),
+                    None,
+                    "nexus cancel".to_string(),
+                    None,
+                )
                 .await
                 .unwrap();
             core_worker
@@ -732,7 +745,18 @@ async fn nexus_cancellation_types(
         if cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
             assert!(!*caller_op_future_rx.borrow());
 
-            cancellation_wait_tx.send(true).unwrap();
+            cancellation_wait_happened.store(true, Ordering::Relaxed);
+            // Send a signal just to wake up the workflow so it'll check the condition
+            client
+                .signal_workflow_execution(
+                    completer_id.to_string(),
+                    "".to_string(),
+                    "wakeupdude".to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
             wf_handle
                 .get_workflow_result(Default::default())
                 .await
