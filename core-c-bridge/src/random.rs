@@ -32,9 +32,9 @@ pub extern "C" fn temporal_core_random_int32_range(
 ) -> i32 {
     let random = unsafe { &mut *random };
     if max_inclusive {
-        random.rand.gen_range(min..=max)
+        random.rand.random_range(min..=max)
     } else {
-        random.rand.gen_range(min..max)
+        random.rand.random_range(min..max)
     }
 }
 
@@ -47,9 +47,9 @@ pub extern "C" fn temporal_core_random_double_range(
 ) -> f64 {
     let random = unsafe { &mut *random };
     if max_inclusive {
-        random.rand.gen_range(min..=max)
+        random.rand.random_range(min..=max)
     } else {
-        random.rand.gen_range(min..max)
+        random.rand.random_range(min..max)
     }
 }
 

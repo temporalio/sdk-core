@@ -11,6 +11,7 @@ use crate::{
     },
     worker::WorkerConfig,
 };
+use std::sync::Arc;
 use temporal_sdk_core_protos::coresdk::{
     ActivityHeartbeat, ActivityTaskCompletion,
     activity_task::ActivityTask,
@@ -137,6 +138,73 @@ pub trait Worker: Send + Sync {
     /// This should be called only after [Worker::shutdown] has resolved and/or both polling
     /// functions have returned `ShutDown` errors.
     async fn finalize_shutdown(self);
+}
+
+#[async_trait::async_trait]
+impl<W> Worker for Arc<W>
+where
+    W: Worker + ?Sized,
+{
+    async fn validate(&self) -> Result<(), WorkerValidationError> {
+        (**self).validate().await
+    }
+
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
+        (**self).poll_workflow_activation().await
+    }
+
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollError> {
+        (**self).poll_activity_task().await
+    }
+
+    async fn poll_nexus_task(&self) -> Result<NexusTask, PollError> {
+        (**self).poll_nexus_task().await
+    }
+
+    async fn complete_workflow_activation(
+        &self,
+        completion: WorkflowActivationCompletion,
+    ) -> Result<(), CompleteWfError> {
+        (**self).complete_workflow_activation(completion).await
+    }
+
+    async fn complete_activity_task(
+        &self,
+        completion: ActivityTaskCompletion,
+    ) -> Result<(), CompleteActivityError> {
+        (**self).complete_activity_task(completion).await
+    }
+
+    async fn complete_nexus_task(
+        &self,
+        completion: NexusTaskCompletion,
+    ) -> Result<(), CompleteNexusError> {
+        (**self).complete_nexus_task(completion).await
+    }
+
+    fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
+        (**self).record_activity_heartbeat(details)
+    }
+
+    fn request_workflow_eviction(&self, run_id: &str) {
+        (**self).request_workflow_eviction(run_id)
+    }
+
+    fn get_config(&self) -> &WorkerConfig {
+        (**self).get_config()
+    }
+
+    fn initiate_shutdown(&self) {
+        (**self).initiate_shutdown()
+    }
+
+    async fn shutdown(&self) {
+        (**self).shutdown().await
+    }
+
+    async fn finalize_shutdown(self) {
+        panic!("Can't finalize shutdown on Arc'd worker")
+    }
 }
 
 macro_rules! dbg_panic {

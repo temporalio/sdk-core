@@ -1065,30 +1065,7 @@ pub(crate) trait WorkerExt {
 #[async_trait]
 impl WorkerExt for Worker {
     async fn drain_pollers_and_shutdown(self) {
-        self.initiate_shutdown();
-        tokio::join!(
-            async {
-                assert_matches!(
-                    self.poll_activity_task().await.unwrap_err(),
-                    PollError::ShutDown
-                );
-            },
-            async {
-                loop {
-                    match self.poll_workflow_activation().await {
-                        Err(PollError::ShutDown) => break,
-                        Ok(a) if a.is_only_eviction() => {
-                            self.complete_workflow_activation(WorkflowActivationCompletion::empty(
-                                a.run_id,
-                            ))
-                            .await
-                            .unwrap();
-                        }
-                        o => panic!("Unexpected activation while draining: {o:?}"),
-                    }
-                }
-            }
-        );
+        temporal_sdk_core_test_utils::drain_pollers_and_shutdown(&self).await;
         self.finalize_shutdown().await;
     }
 
