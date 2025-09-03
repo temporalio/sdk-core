@@ -23,7 +23,7 @@ use crate::{
     },
 };
 use anyhow::bail;
-use prost_wkt_types::Timestamp;
+use prost_types::Timestamp;
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},
