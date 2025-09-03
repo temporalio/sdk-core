@@ -747,7 +747,8 @@ async fn nexus_cancellation_types(
 
             cancellation_wait_happened.store(true, Ordering::Relaxed);
             // Send a signal just to wake up the workflow so it'll check the condition
-            client
+            // (it may already have completed, so ignore the result)
+            let _ = client
                 .signal_workflow_execution(
                     completer_id.to_string(),
                     "".to_string(),
@@ -755,8 +756,7 @@ async fn nexus_cancellation_types(
                     None,
                     None,
                 )
-                .await
-                .unwrap();
+                .await;
             wf_handle
                 .get_workflow_result(Default::default())
                 .await
