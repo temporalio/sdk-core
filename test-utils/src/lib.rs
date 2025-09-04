@@ -600,7 +600,7 @@ impl TestWorker {
             .as_ref()
             .context("no eager workflow task")?;
         self.started_workflows.lock().push(WorkflowExecutionInfo {
-            namespace: c.namespace().to_string(),
+            namespace: c.namespace(),
             workflow_id: wfid,
             run_id: Some(res.run_id.clone()),
         });
@@ -613,8 +613,7 @@ impl TestWorker {
                 .client
                 .as_ref()
                 .map(|c| c.namespace())
-                .unwrap_or(NAMESPACE)
-                .to_owned(),
+                .unwrap_or_else(|| NAMESPACE.to_owned()),
             workflow_id: wf_id.into(),
             run_id,
         });
@@ -684,7 +683,7 @@ impl TestWorkerSubmitterHandle {
             )
             .await?;
         self.started_workflows.lock().push(WorkflowExecutionInfo {
-            namespace: self.client.namespace().to_string(),
+            namespace: self.client.namespace(),
             workflow_id: wfid,
             run_id: Some(res.run_id.clone()),
         });
