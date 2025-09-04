@@ -152,7 +152,7 @@ mockall::mock! {
 
         fn record_worker_heartbeat<'a, 'b>(&self, heartbeat: WorkerHeartbeat) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
 
-        fn replace_client(&self, new_client: RetryClient<Client>);
+        fn replace_client(&self, new_client: Client);
         fn capabilities(&self) -> Option<Capabilities>;
         fn workers(&self) -> Arc<SlotManager>;
         fn is_mock(&self) -> bool;

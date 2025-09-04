@@ -1,4 +1,4 @@
-use crate::common::NAMESPACE;
+use crate::common::{INTEG_CLIENT_IDENTITY, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, NAMESPACE};
 use futures_util::{TryStreamExt, stream};
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
@@ -137,10 +137,10 @@ fn fixed_cached_download(version: &str) -> EphemeralExe {
 async fn assert_ephemeral_server(server: &EphemeralServer) {
     // Connect and describe namespace
     let mut client = ClientOptionsBuilder::default()
-        .identity("integ_tester".to_string())
+        .identity(INTEG_CLIENT_IDENTITY.to_string())
         .target_url(Url::try_from(&*format!("http://{}", server.target)).unwrap())
-        .client_name("temporal-core".to_string())
-        .client_version("0.1.0".to_string())
+        .client_name(INTEG_CLIENT_NAME.to_string())
+        .client_version(INTEG_CLIENT_VERSION.to_string())
         .build()
         .unwrap()
         .connect_no_namespace(None)
