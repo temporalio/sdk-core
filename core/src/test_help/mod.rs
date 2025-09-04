@@ -1,4 +1,4 @@
-pub(crate) use temporal_sdk_core_test_utils::canned_histories;
+pub(crate) use temporal_sdk_core_protos::canned_histories;
 
 use crate::{
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,

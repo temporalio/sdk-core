@@ -3,16 +3,17 @@ use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnorde
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
+    prost_dur,
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
+    test_utils::start_timer_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
-    start_timer_cmd,
 };
 use tokio::join;
 

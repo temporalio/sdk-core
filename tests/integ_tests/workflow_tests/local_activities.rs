@@ -17,7 +17,7 @@ use temporal_sdk::{
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
-    TestHistoryBuilder,
+    TestHistoryBuilder, prost_dur,
     coresdk::{
         AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
         workflow_commands::{ActivityCancellationType, workflow_command::Variant},

@@ -37,6 +37,7 @@ use temporal_sdk_core_api::{
     },
 };
 use temporal_sdk_core_protos::{
+    prost_dur,
     coresdk::{
         ActivityTaskCompletion, AsJsonPayloadExt,
         activity_result::ActivityExecutionResult,

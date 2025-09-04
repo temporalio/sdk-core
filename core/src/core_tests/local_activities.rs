@@ -40,9 +40,8 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
     },
 };
-use temporal_sdk_core_test_utils::{
-    WorkerTestHelpers, query_ok, schedule_local_activity_cmd, start_timer_cmd,
-};
+use temporal_sdk_core_protos::test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd};
+use temporal_sdk_core_test_utils::WorkerTestHelpers;
 use tokio::{join, select, sync::Barrier};
 
 async fn echo(_ctx: ActContext, e: String) -> Result<String, ActivityError> {

@@ -2,8 +2,6 @@
 
 #[macro_use]
 extern crate rstest;
-#[macro_use]
-extern crate temporal_sdk_core_test_utils;
 
 #[cfg(test)]
 mod shared_tests;

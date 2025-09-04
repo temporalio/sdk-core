@@ -4,7 +4,6 @@
 #[macro_use]
 extern crate tracing;
 
-pub mod canned_histories;
 mod http_proxy;
 pub mod interceptors;
 pub mod workflows;
@@ -61,14 +60,10 @@ use temporal_sdk_core_api::{
     worker::WorkerVersioningStrategy,
 };
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE,
     coresdk::{
         FromPayloadsExt,
         workflow_activation::{WorkflowActivation, WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, QueryResult, QuerySuccess,
-            ScheduleActivity, ScheduleLocalActivity, StartTimer, workflow_command,
-        },
+        workflow_commands::{CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
@@ -100,14 +95,6 @@ pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 /// This should match the prometheus port exposed in docker-compose-ci.yaml
 pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
 
-#[macro_export]
-macro_rules! prost_dur {
-    ($dur_call:ident $args:tt) => {
-        std::time::Duration::$dur_call$args
-            .try_into()
-            .expect("test duration fits")
-    };
-}
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance.
@@ -847,68 +834,6 @@ pub fn default_cached_download() -> EphemeralExe {
     }
 }
 
-pub fn schedule_activity_cmd(
-    seq: u32,
-    task_q: &str,
-    activity_id: &str,
-    cancellation_type: ActivityCancellationType,
-    activity_timeout: Duration,
-    heartbeat_timeout: Duration,
-) -> workflow_command::Variant {
-    ScheduleActivity {
-        seq,
-        activity_id: activity_id.to_string(),
-        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-        task_queue: task_q.to_owned(),
-        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        heartbeat_timeout: Some(heartbeat_timeout.try_into().expect("duration fits")),
-        cancellation_type: cancellation_type as i32,
-        ..Default::default()
-    }
-    .into()
-}
-
-pub fn schedule_local_activity_cmd(
-    seq: u32,
-    activity_id: &str,
-    cancellation_type: ActivityCancellationType,
-    activity_timeout: Duration,
-) -> workflow_command::Variant {
-    ScheduleLocalActivity {
-        seq,
-        activity_id: activity_id.to_string(),
-        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        cancellation_type: cancellation_type as i32,
-        ..Default::default()
-    }
-    .into()
-}
-
-pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Variant {
-    StartTimer {
-        seq,
-        start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-    }
-    .into()
-}
-
-pub fn query_ok(id: impl Into<String>, response: impl Into<Payload>) -> workflow_command::Variant {
-    QueryResult {
-        query_id: id.into(),
-        variant: Some(
-            QuerySuccess {
-                response: Some(response.into()),
-            }
-            .into(),
-        ),
-    }
-    .into()
-}
 
 /// Given a desired number of concurrent executions and a provided function that produces a future,
 /// run that many instances of the future concurrently.

@@ -13,7 +13,7 @@ use temporal_sdk::{
 };
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, TaskToken,
+    DEFAULT_ACTIVITY_TYPE, TaskToken, prost_dur,
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         IntoCompletion,
@@ -34,10 +34,10 @@ use temporal_sdk_core_protos::{
         enums::v1::RetryState,
         failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
     },
+    test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
-    schedule_activity_cmd,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 

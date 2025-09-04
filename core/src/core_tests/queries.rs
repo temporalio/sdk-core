@@ -1,6 +1,6 @@
 use crate::{
     test_help::{
-        MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, canned_histories,
+        MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, 
         hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
     worker::{
@@ -16,6 +16,8 @@ use std::{
 use temporal_sdk_core_api::{Worker as WorkerTrait, worker::WorkerVersioningStrategy};
 use temporal_sdk_core_protos::{
     TestHistoryBuilder,
+    canned_histories,
+    test_utils::{query_ok, schedule_activity_cmd, start_timer_cmd},
     coresdk::{
         workflow_activation::{
             WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
@@ -37,9 +39,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{
-    WorkerTestHelpers, query_ok, schedule_activity_cmd, start_timer_cmd,
-};
+use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
 #[rstest::rstest]
 #[case::with_history(true)]

@@ -58,7 +58,8 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{TestWorker, fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_protos::test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::{TestWorker, fanout_tasks};
 use tokio::{join, sync::Barrier, time::sleep};
 use tokio_util::sync::CancellationToken;
 

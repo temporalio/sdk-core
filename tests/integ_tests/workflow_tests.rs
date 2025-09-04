@@ -36,6 +36,7 @@ use temporal_sdk_core_api::{
     },
 };
 use temporal_sdk_core_protos::{
+    prost_dur,
     coresdk::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
         activity_result::ActivityExecutionResult,
@@ -49,10 +50,11 @@ use temporal_sdk_core_protos::{
         enums::v1::EventType, failure::v1::Failure, history::v1::history_event,
         query::v1::WorkflowQuery,
     },
+    test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, history_from_proto_binary,
-    init_core_and_create_wf, init_core_replay_preloaded, prom_metrics, schedule_activity_cmd,
+    init_core_and_create_wf, init_core_replay_preloaded, prom_metrics,
 };
 use tokio::{join, sync::Notify, time::sleep};
 

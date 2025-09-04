@@ -8,6 +8,7 @@ use temporal_sdk_core::{
 };
 use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
+    prost_dur,
     coresdk::{
         AsJsonPayloadExt, IntoCompletion,
         activity_task::activity_task as act_task,
@@ -16,10 +17,11 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::enums::v1::EventType,
+    test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, default_cached_download, drain_pollers_and_shutdown,
-    init_core_and_create_wf, init_integ_telem, integ_worker_config, schedule_activity_cmd,
+    init_core_and_create_wf, init_integ_telem, integ_worker_config,
 };
 use tokio::time::timeout;
 use tracing::info;

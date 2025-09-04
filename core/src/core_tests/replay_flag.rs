@@ -17,9 +17,8 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
 };
-use temporal_sdk_core_test_utils::{
-    interceptors::ActivationAssertionsInterceptor, query_ok, start_timer_cmd,
-};
+use temporal_sdk_core_protos::test_utils::{query_ok, start_timer_cmd};
+use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |command_sink: WfContext| async move {

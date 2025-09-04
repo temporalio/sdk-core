@@ -15,6 +15,7 @@ use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateCont
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
+    prost_dur,
     coresdk::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
         activity_result::ActivityExecutionResult,
@@ -32,10 +33,11 @@ use temporal_sdk_core_protos::{
         update::{self, v1::WaitPolicy},
         workflowservice::v1::ResetWorkflowExecutionRequest,
     },
+    test_utils::start_timer_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt, drain_pollers_and_shutdown,
-    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd,
+    init_core_and_create_wf, init_core_replay_preloaded,
 };
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;

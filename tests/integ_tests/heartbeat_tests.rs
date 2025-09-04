@@ -3,7 +3,7 @@ use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE,
+    DEFAULT_ACTIVITY_TYPE, prost_dur,
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
         activity_result::{
@@ -18,10 +18,10 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, RetryPolicy},
         enums::v1::TimeoutType,
     },
+    test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
-    schedule_activity_cmd,
 };
 use tokio::time::sleep;
 

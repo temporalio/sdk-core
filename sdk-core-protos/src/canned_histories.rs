@@ -1,8 +1,8 @@
 use prost::Message;
 use rand::RngCore;
 use std::{fs::File, io::Write, path::PathBuf};
-use temporal_sdk_core::replay::TestHistoryBuilder;
-use temporal_sdk_core_protos::{
+use crate::{
+    TestHistoryBuilder,
     coresdk::common::NamespacedWorkflowExecution,
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
