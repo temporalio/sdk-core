@@ -11,6 +11,7 @@ use crate::{
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
         test_worker_cfg,
     },
+    test_utils::{WorkerTestHelpers, fanout_tasks},
     worker::{
         TunerBuilder,
         client::mocks::{mock_manual_worker_client, mock_worker_client},
@@ -70,8 +71,8 @@ use temporal_sdk_core_protos::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
+    test_utils::start_timer_cmd,
 };
-use temporal_sdk_core_test_utils::{WorkerTestHelpers, fanout_tasks, start_timer_cmd};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},

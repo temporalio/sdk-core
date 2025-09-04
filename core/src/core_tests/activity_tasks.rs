@@ -6,6 +6,7 @@ use crate::{
         gen_assert_and_reply, mock_manual_poller, mock_poller, mock_poller_from_resps,
         mock_sdk_cfg, mock_worker, poll_and_reply, single_hist_mock_sg, test_worker_cfg,
     },
+    test_utils::fanout_tasks,
     worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
 use futures_util::FutureExt;
@@ -57,8 +58,9 @@ use temporal_sdk_core_protos::{
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
+    test_utils::start_timer_cmd,
 };
-use temporal_sdk_core_test_utils::{TestWorker, fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_test_utils::TestWorker;
 use tokio::{join, sync::Barrier, time::sleep};
 use tokio_util::sync::CancellationToken;
 

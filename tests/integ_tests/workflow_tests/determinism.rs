@@ -1,10 +1,10 @@
+use crate::common::{CoreWfStarter, WorkflowHandleExt};
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
-use temporal_sdk_core_test_utils::{CoreWfStarter, WorkflowHandleExt};
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
 

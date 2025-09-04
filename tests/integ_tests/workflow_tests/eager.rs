@@ -1,7 +1,7 @@
+use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options};
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE, get_integ_server_options};
 
 pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
     Ok(().into())

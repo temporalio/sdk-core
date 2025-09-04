@@ -18,7 +18,13 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
-use crate::integ_tests::{activity_functions::echo, metrics_tests};
+use crate::{
+    common::{
+        CoreWfStarter, history_from_proto_binary, init_core_and_create_wf,
+        init_core_replay_preloaded, prom_metrics,
+    },
+    integ_tests::{activity_functions::echo, metrics_tests},
+};
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
@@ -28,7 +34,11 @@ use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult,
 use temporal_sdk::{
     ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
 };
-use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
+use temporal_sdk_core::{
+    CoreRuntime,
+    replay::HistoryForReplay,
+    test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
+};
 use temporal_sdk_core_api::{
     errors::{PollError, WorkflowErrorType},
     worker::{
@@ -45,14 +55,12 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         enums::v1::EventType, failure::v1::Failure, history::v1::history_event,
         query::v1::WorkflowQuery,
     },
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, history_from_proto_binary,
-    init_core_and_create_wf, init_core_replay_preloaded, prom_metrics, schedule_activity_cmd,
+    test_utils::schedule_activity_cmd,
 };
 use tokio::{join, sync::Notify, time::sleep};
 

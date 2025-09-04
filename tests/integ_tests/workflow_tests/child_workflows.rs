@@ -1,3 +1,4 @@
+use crate::common::CoreWfStarter;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
@@ -10,7 +11,6 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::enums::v1::ParentClosePolicy,
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
 static PARENT_WF_TYPE: &str = "parent_wf";

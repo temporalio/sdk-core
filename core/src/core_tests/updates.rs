@@ -4,6 +4,7 @@ use crate::{
         MockPollCfg, PollWFTRespExt, ResponseType, build_mock_pollers, hist_to_poll_resp,
         mock_worker,
     },
+    test_utils::WorkerTestHelpers,
     worker::client::mocks::mock_worker_client,
 };
 use temporal_sdk_core_api::Worker;
@@ -24,7 +25,6 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
 };
-use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
 #[tokio::test]
 async fn replay_with_empty_first_task() {

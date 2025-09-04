@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
+use crate::common::CoreWfStarter;
 use futures_util::StreamExt;
 use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::{coresdk::IntoPayloadsExt, temporal::api::common::v1::Payload};
-use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
 const SIGNAME: &str = "signame";

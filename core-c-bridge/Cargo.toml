@@ -44,8 +44,6 @@ path = "../sdk-core-protos"
 futures-util = "0.3"
 thiserror = { workspace = true }
 
-[dev-dependencies.temporal-sdk-core-test-utils]
-path = "../test-utils"
 
 [build-dependencies]
 cbindgen = { version = "0.29", default-features = false }

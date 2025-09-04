@@ -20,12 +20,11 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::heartbeat::{HeartbeatFn, WorkerHeartbeatManager};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
     errors::CompleteWfError,
-    pollers::{BoxedActPoller, BoxedNexusPoller},
+    pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
     telemetry::{
         TelemetryInstance,
@@ -37,26 +36,23 @@ use crate::{
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
         client::WorkerClient,
+        heartbeat::{HeartbeatFn, WorkerHeartbeatManager},
         nexus::NexusManager,
         workflow::{
-            LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller::make_wft_poller,
+            LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller,
+            wft_poller::make_wft_poller,
         },
     },
-};
-use crate::{
-    pollers::{ActivityTaskOptions, LongPollBuffer},
-    worker::workflow::wft_poller,
 };
 use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
-use std::sync::OnceLock;
 use std::{
     convert::TryInto,
     future,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     time::Duration,

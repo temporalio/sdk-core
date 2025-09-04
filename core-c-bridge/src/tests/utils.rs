@@ -1,13 +1,13 @@
-use crate::client::RpcService;
-use crate::runtime::{Runtime, temporal_core_byte_array_free};
-use crate::{ByteArray, CancellationToken};
-use std::collections::HashMap;
-use std::ops::Deref;
+use crate::{
+    ByteArray, CancellationToken,
+    client::RpcService,
+    runtime::{Runtime, temporal_core_byte_array_free},
+};
+use std::{collections::HashMap, ops::Deref};
 use temporal_client::{ClientOptions, ClientOptionsBuilder};
 use temporal_sdk_core::ephemeral_server::{
-    TemporalDevServerConfig, TemporalDevServerConfigBuilder,
+    TemporalDevServerConfig, TemporalDevServerConfigBuilder, default_cached_download,
 };
-use temporal_sdk_core_test_utils::default_cached_download;
 use url::Url;
 
 pub fn byte_array_to_vec(runtime: *mut Runtime, byte_array: *const ByteArray) -> Option<Vec<u8>> {

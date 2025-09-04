@@ -182,6 +182,7 @@ mod tests {
     use crate::{
         replay::TestHistoryBuilder,
         test_help::{MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, mock_worker},
+        test_utils::WorkerTestHelpers,
         worker::{
             client::mocks::mock_worker_client,
             workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
@@ -206,7 +207,6 @@ mod tests {
             history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
     };
-    use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {

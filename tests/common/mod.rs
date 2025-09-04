@@ -1,21 +1,14 @@
-//! This crate contains testing functionality that can be useful when building SDKs against Core,
-//! or even when testing workflows written in SDKs that use Core.
+//! Common integration testing utilities
+//! These utilities are specific to integration tests and depend on the full temporal-client stack.
 
-#[macro_use]
-extern crate tracing;
+pub(crate) mod http_proxy;
+pub(crate) mod workflows;
 
-pub mod canned_histories;
-mod http_proxy;
-pub mod interceptors;
-pub mod workflows;
-
-pub use http_proxy::HttpProxy;
-pub use temporal_sdk_core::replay::HistoryForReplay;
-
-use crate::stream::{Stream, TryStreamExt};
 use anyhow::{Context, Error, bail};
-use assert_matches::assert_matches;
-use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
+use futures_util::{
+    Future, StreamExt, future, stream,
+    stream::{Stream, TryStreamExt},
+};
 use parking_lot::Mutex;
 use prost::Message;
 use rand::Rng;
@@ -23,7 +16,6 @@ use std::{
     cell::Cell,
     convert::TryFrom,
     env,
-    future::Future,
     net::SocketAddr,
     path::PathBuf,
     str::FromStr,
@@ -42,17 +34,14 @@ use temporal_sdk::{
         WorkerInterceptor,
     },
 };
-#[cfg(feature = "ephemeral-server")]
-use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
 use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
     init_worker,
-    replay::ReplayWorkerInput,
+    replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
-    errors::PollError,
     telemetry::{
         Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
@@ -61,14 +50,8 @@ use temporal_sdk_core_api::{
     worker::WorkerVersioningStrategy,
 };
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE,
     coresdk::{
-        FromPayloadsExt,
-        workflow_activation::{WorkflowActivation, WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, QueryResult, QuerySuccess,
-            ScheduleActivity, ScheduleLocalActivity, StartTimer, workflow_command,
-        },
+        FromPayloadsExt, workflow_activation::WorkflowActivation,
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
@@ -78,47 +61,34 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
+use tracing::{debug, warn};
 use url::Url;
 
-pub const NAMESPACE: &str = "default";
-pub const TEST_Q: &str = "q";
+pub(crate) use temporal_sdk_core::test_utils::NAMESPACE;
 /// The env var used to specify where the integ tests should point
-pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
-pub const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
-pub const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
-pub const INTEG_API_KEY: &str = "TEMPORAL_API_KEY_PATH";
-/// This env var is set (to any value) if temporal CLI dev server is in use
-pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
-/// This env var is set (to any value) if the test server is in use
-pub const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
-pub static SEARCH_ATTR_TXT: &str = "CustomTextField";
-pub static SEARCH_ATTR_INT: &str = "CustomIntField";
+pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
+pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
+pub(crate) const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
+pub(crate) const INTEG_API_KEY: &str = "TEMPORAL_API_KEY_PATH";
+pub(crate) static SEARCH_ATTR_TXT: &str = "CustomTextField";
+pub(crate) static SEARCH_ATTR_INT: &str = "CustomIntField";
 /// If set, turn export traces and metrics to the OTel collector at the given URL
-pub const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
+pub(crate) const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
-pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+pub(crate) const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 /// This should match the prometheus port exposed in docker-compose-ci.yaml
-pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
-
-#[macro_export]
-macro_rules! prost_dur {
-    ($dur_call:ident $args:tt) => {
-        std::time::Duration::$dur_call$args
-            .try_into()
-            .expect("test duration fits")
-    };
-}
+pub(crate) const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance.
-pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
+pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     let mut starter = CoreWfStarter::new(test_name);
     let _ = starter.get_worker().await;
     starter.start_wf().await;
     starter
 }
 
-pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
+pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
     let mut b = WorkerConfigBuilder::default();
     b.namespace(NAMESPACE)
         .task_queue(tq)
@@ -132,14 +102,14 @@ pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
 }
 
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
-pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
 where
     I: IntoIterator<Item = HistoryForReplay> + 'static,
     <I as IntoIterator>::IntoIter: Send,
 {
     init_core_replay_stream(test_name, stream::iter(histories))
 }
-pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_stream<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
@@ -151,14 +121,14 @@ where
         .expect("Replay worker must init properly");
     Arc::new(worker)
 }
-pub fn replay_sdk_worker<I>(histories: I) -> Worker
+pub(crate) fn replay_sdk_worker<I>(histories: I) -> Worker
 where
     I: IntoIterator<Item = HistoryForReplay> + 'static,
     <I as IntoIterator>::IntoIter: Send,
 {
     replay_sdk_worker_stream(stream::iter(histories))
 }
-pub fn replay_sdk_worker_stream<I>(histories: I) -> Worker
+pub(crate) fn replay_sdk_worker_stream<I>(histories: I) -> Worker
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
@@ -169,7 +139,9 @@ where
 }
 
 /// Load history from a file containing the protobuf serialization of it
-pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, anyhow::Error> {
+pub(crate) async fn history_from_proto_binary(
+    path_from_root: &str,
+) -> Result<History, anyhow::Error> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("..");
     path.push(path_from_root);
@@ -182,7 +154,7 @@ thread_local! {
     pub static DONT_AUTO_INIT_INTEG_TELEM: Cell<bool> = const { Cell::new(false) };
 }
 static INTEG_TESTS_RT: std::sync::OnceLock<CoreRuntime> = std::sync::OnceLock::new();
-pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
+pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     if DONT_AUTO_INIT_INTEG_TELEM.get() {
         return None;
     }
@@ -197,7 +169,7 @@ pub fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }))
 }
 
-pub async fn get_cloud_client() -> RetryClient<Client> {
+pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
     let cloud_key = env::var("TEMPORAL_CLIENT_KEY").unwrap();
 
@@ -229,7 +201,7 @@ pub async fn get_cloud_client() -> RetryClient<Client> {
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
-pub struct CoreWfStarter {
+pub(crate) struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     pub worker_config: WorkerConfigBuilder,
@@ -246,25 +218,20 @@ struct InitializedWorker {
 }
 
 impl CoreWfStarter {
-    pub fn new(test_name: &str) -> Self {
+    pub(crate) fn new(test_name: &str) -> Self {
         init_integ_telem();
         Self::_new(test_name, None, None)
     }
 
-    pub fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
+    pub(crate) fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
         Self::_new(test_name, Some(runtime), None)
-    }
-
-    pub fn new_with_client(test_name: &str, client: RetryClient<Client>) -> Self {
-        init_integ_telem();
-        Self::_new(test_name, None, Some(client))
     }
 
     /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
     /// the minimum version requirement is met). Returns None if the local server is not new enough.
     ///
     /// An empty string means to skip the version check.
-    pub async fn new_cloud_or_local(test_name: &str, version_req: &str) -> Option<Self> {
+    pub(crate) async fn new_cloud_or_local(test_name: &str, version_req: &str) -> Option<Self> {
         init_integ_telem();
         let mut check_mlsv = false;
         let client = if env::var("TEMPORAL_CLOUD_ADDRESS").is_ok() {
@@ -329,7 +296,7 @@ impl CoreWfStarter {
 
     /// Create a new starter with no initialized worker or runtime override. Useful for starting a
     /// new worker on the same queue.
-    pub fn clone_no_worker(&self) -> Self {
+    pub(crate) fn clone_no_worker(&self) -> Self {
         Self {
             task_queue_name: self.task_queue_name.clone(),
             worker_config: self.worker_config.clone(),
@@ -341,7 +308,7 @@ impl CoreWfStarter {
         }
     }
 
-    pub async fn worker(&mut self) -> TestWorker {
+    pub(crate) async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
         let tq = w.get_config().task_queue.clone();
         let mut w = TestWorker::new(w, tq);
@@ -350,25 +317,25 @@ impl CoreWfStarter {
         w
     }
 
-    pub async fn shutdown(&mut self) {
+    pub(crate) async fn shutdown(&mut self) {
         self.get_worker().await.shutdown().await;
     }
 
-    pub async fn get_worker(&mut self) -> Arc<dyn CoreWorker> {
+    pub(crate) async fn get_worker(&mut self) -> Arc<dyn CoreWorker> {
         self.get_or_init().await.worker.clone()
     }
 
-    pub async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
+    pub(crate) async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
         self.get_or_init().await.client.clone()
     }
 
     /// Start the workflow defined by the builder and return run id
-    pub async fn start_wf(&mut self) -> String {
+    pub(crate) async fn start_wf(&mut self) -> String {
         self.start_wf_with_id(self.get_wf_id().to_owned()).await
     }
 
     /// Starts the workflow using the worker
-    pub async fn start_with_worker(
+    pub(crate) async fn start_with_worker(
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
@@ -389,7 +356,7 @@ impl CoreWfStarter {
             .get_untyped_workflow_handle(&self.task_queue_name, run_id)
     }
 
-    pub async fn eager_start_with_worker(
+    pub(crate) async fn eager_start_with_worker(
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
@@ -406,7 +373,7 @@ impl CoreWfStarter {
             .unwrap()
     }
 
-    pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
+    pub(crate) async fn start_wf_with_id(&self, workflow_id: String) -> String {
         let iw = self.initted_worker.get().expect(
             "Worker must be initted before starting a workflow.\
                              Tests must call `get_worker` first.",
@@ -425,17 +392,17 @@ impl CoreWfStarter {
             .run_id
     }
 
-    pub fn get_task_queue(&self) -> &str {
+    pub(crate) fn get_task_queue(&self) -> &str {
         &self.task_queue_name
     }
 
-    pub fn get_wf_id(&self) -> &str {
+    pub(crate) fn get_wf_id(&self) -> &str {
         &self.task_queue_name
     }
 
     /// Fetch the history of the default workflow for this starter. IE: The one that would
     /// be started by [CoreWfStarter::start_wf].
-    pub async fn get_history(&self) -> History {
+    pub(crate) async fn get_history(&self) -> History {
         self.initted_worker
             .get()
             .expect("Starter must be initialized")
@@ -447,7 +414,7 @@ impl CoreWfStarter {
             .unwrap()
     }
 
-    pub async fn wait_for_default_wf_finish(
+    pub(crate) async fn wait_for_default_wf_finish(
         &self,
     ) -> Result<WorkflowExecutionResult<Vec<Payload>>, Error> {
         self.initted_worker
@@ -495,7 +462,7 @@ impl CoreWfStarter {
 }
 
 /// Provides conveniences for running integ tests with the SDK (against real server or mocks)
-pub struct TestWorker {
+pub(crate) struct TestWorker {
     inner: Worker,
     pub core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<RetryClient<Client>>>,
@@ -506,7 +473,7 @@ pub struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let inner = Worker::new_from_core(core_worker.clone(), task_queue);
         Self {
             inner,
@@ -517,12 +484,12 @@ impl TestWorker {
         }
     }
 
-    pub fn inner_mut(&mut self) -> &mut Worker {
+    pub(crate) fn inner_mut(&mut self) -> &mut Worker {
         &mut self.inner
     }
 
     // TODO: Maybe trait-ify?
-    pub fn register_wf<F: Into<WorkflowFunction>>(
+    pub(crate) fn register_wf<F: Into<WorkflowFunction>>(
         &mut self,
         workflow_type: impl Into<String>,
         wf_function: F,
@@ -530,7 +497,7 @@ impl TestWorker {
         self.inner.register_wf(workflow_type, wf_function)
     }
 
-    pub fn register_activity<A, R, O>(
+    pub(crate) fn register_activity<A, R, O>(
         &mut self,
         activity_type: impl Into<String>,
         act_function: impl IntoActivityFunc<A, R, O>,
@@ -540,7 +507,7 @@ impl TestWorker {
 
     /// Create a handle that can be used to submit workflows. Useful when workflows need to be
     /// started concurrently with running the worker.
-    pub fn get_submitter_handle(&self) -> TestWorkerSubmitterHandle {
+    pub(crate) fn get_submitter_handle(&self) -> TestWorkerSubmitterHandle {
         TestWorkerSubmitterHandle {
             client: self.client.clone().expect("client must be set"),
             tq: self.inner.task_queue().to_string(),
@@ -554,7 +521,7 @@ impl TestWorker {
     /// Increments the expected Workflow run count.
     ///
     /// Returns the run id of the started workflow (if no client has initialized returns a fake id)
-    pub async fn submit_wf(
+    pub(crate) async fn submit_wf(
         &self,
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
@@ -577,7 +544,7 @@ impl TestWorker {
     /// Similar to `submit_wf` but checking that the server returns the first
     /// workflow task in the client response.
     /// Note that this does not guarantee that the worker will execute this task eagerly.
-    pub async fn eager_submit_wf(
+    pub(crate) async fn eager_submit_wf(
         &self,
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
@@ -607,7 +574,11 @@ impl TestWorker {
         Ok(res)
     }
 
-    pub fn expect_workflow_completion(&self, wf_id: impl Into<String>, run_id: Option<String>) {
+    pub(crate) fn expect_workflow_completion(
+        &self,
+        wf_id: impl Into<String>,
+        run_id: Option<String>,
+    ) {
         self.started_workflows.lock().push(WorkflowExecutionInfo {
             namespace: self
                 .client
@@ -621,13 +592,13 @@ impl TestWorker {
     }
 
     /// Runs until all expected workflows have completed and then shuts down the worker
-    pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
+    pub(crate) async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
         self.run_until_done_intercepted(Option::<TestWorkerCompletionIceptor>::None)
             .await
     }
 
     /// See [Self::run_until_done], but allows configuration of some low-level interception.
-    pub async fn run_until_done_intercepted(
+    pub(crate) async fn run_until_done_intercepted(
         &mut self,
         next_interceptor: Option<impl WorkerInterceptor + 'static>,
     ) -> Result<(), anyhow::Error> {
@@ -652,7 +623,7 @@ impl TestWorker {
     }
 }
 
-pub struct TestWorkerSubmitterHandle {
+pub(crate) struct TestWorkerSubmitterHandle {
     client: Arc<RetryClient<Client>>,
     tq: String,
     started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
@@ -664,7 +635,7 @@ impl TestWorkerSubmitterHandle {
     /// Increments the expected Workflow run count.
     ///
     /// Returns the run id of the started workflow
-    pub async fn submit_wf(
+    pub(crate) async fn submit_wf(
         &self,
         workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
@@ -692,20 +663,18 @@ impl TestWorkerSubmitterHandle {
     }
 }
 
-pub type BoxDynActivationHook = Box<dyn Fn(&WorkflowActivationCompletion)>;
-
-pub enum TestWorkerShutdownCond {
+pub(crate) enum TestWorkerShutdownCond {
     GetResults(Vec<WorkflowExecutionInfo>, Arc<RetryClient<Client>>),
     NoAutoShutdown,
 }
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
-pub struct TestWorkerCompletionIceptor {
+pub(crate) struct TestWorkerCompletionIceptor {
     condition: TestWorkerShutdownCond,
     shutdown_handle: Arc<dyn Fn()>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 impl TestWorkerCompletionIceptor {
-    pub fn new(condition: TestWorkerShutdownCond, shutdown_handle: Arc<dyn Fn()>) -> Self {
+    pub(crate) fn new(condition: TestWorkerShutdownCond, shutdown_handle: Arc<dyn Fn()>) -> Self {
         Self {
             condition,
             shutdown_handle,
@@ -763,7 +732,7 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
 }
 
 /// Returns the client options used to connect to the server used for integration tests.
-pub fn get_integ_server_options() -> ClientOptions {
+pub(crate) fn get_integ_server_options() -> ClientOptions {
     let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
@@ -782,7 +751,7 @@ pub fn get_integ_server_options() -> ClientOptions {
     cb.build().unwrap()
 }
 
-pub fn get_integ_tls_config() -> Option<TlsConfig> {
+pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {
     if env::var(INTEG_USE_TLS_ENV_VAR).is_ok() {
         let root = std::fs::read("../.cloud_certs/ca.pem").unwrap();
         let client_cert = std::fs::read("../.cloud_certs/client.pem").unwrap();
@@ -800,7 +769,7 @@ pub fn get_integ_tls_config() -> Option<TlsConfig> {
     }
 }
 
-pub fn get_integ_telem_options() -> TelemetryOptions {
+pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
     let filter_string =
         env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporal_sdk_core=INFO".to_string());
@@ -834,154 +803,8 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     .unwrap()
 }
 
-#[cfg(feature = "ephemeral-server")]
-pub fn default_cached_download() -> EphemeralExe {
-    EphemeralExe::CachedDownload {
-        version: EphemeralExeVersion::SDKDefault {
-            sdk_name: "sdk-rust".to_string(),
-            sdk_version: "0.1.0".to_string(),
-        },
-        dest_dir: None,
-        // 15 days
-        ttl: Some(Duration::from_secs(60 * 60 * 24 * 15)),
-    }
-}
-
-pub fn schedule_activity_cmd(
-    seq: u32,
-    task_q: &str,
-    activity_id: &str,
-    cancellation_type: ActivityCancellationType,
-    activity_timeout: Duration,
-    heartbeat_timeout: Duration,
-) -> workflow_command::Variant {
-    ScheduleActivity {
-        seq,
-        activity_id: activity_id.to_string(),
-        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-        task_queue: task_q.to_owned(),
-        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        heartbeat_timeout: Some(heartbeat_timeout.try_into().expect("duration fits")),
-        cancellation_type: cancellation_type as i32,
-        ..Default::default()
-    }
-    .into()
-}
-
-pub fn schedule_local_activity_cmd(
-    seq: u32,
-    activity_id: &str,
-    cancellation_type: ActivityCancellationType,
-    activity_timeout: Duration,
-) -> workflow_command::Variant {
-    ScheduleLocalActivity {
-        seq,
-        activity_id: activity_id.to_string(),
-        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
-        cancellation_type: cancellation_type as i32,
-        ..Default::default()
-    }
-    .into()
-}
-
-pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Variant {
-    StartTimer {
-        seq,
-        start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-    }
-    .into()
-}
-
-pub fn query_ok(id: impl Into<String>, response: impl Into<Payload>) -> workflow_command::Variant {
-    QueryResult {
-        query_id: id.into(),
-        variant: Some(
-            QuerySuccess {
-                response: Some(response.into()),
-            }
-            .into(),
-        ),
-    }
-    .into()
-}
-
-/// Given a desired number of concurrent executions and a provided function that produces a future,
-/// run that many instances of the future concurrently.
-///
-/// Annoyingly, because of a sorta-bug in the way async blocks work, the async block produced by
-/// the closure must be `async move` if it uses the provided iteration number. On the plus side,
-/// since you're usually just accessing core in the closure, if core is a reference everything just
-/// works. See <https://github.com/rust-lang/rust/issues/81653>
-pub async fn fanout_tasks<FutureMaker, Fut>(num: usize, fm: FutureMaker)
-where
-    FutureMaker: Fn(usize) -> Fut,
-    Fut: Future,
-{
-    let mut tasks = FuturesUnordered::new();
-    for i in 0..num {
-        tasks.push(fm(i));
-    }
-
-    while tasks.next().await.is_some() {}
-}
-
-#[async_trait::async_trait]
-pub trait WorkerTestHelpers {
-    async fn complete_execution(&self, run_id: &str);
-    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration);
-    async fn handle_eviction(&self);
-}
-
-#[async_trait::async_trait]
-impl<T> WorkerTestHelpers for T
-where
-    T: CoreWorker + ?Sized,
-{
-    async fn complete_execution(&self, run_id: &str) {
-        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            run_id.to_string(),
-            vec![CompleteWorkflowExecution { result: None }.into()],
-        ))
-        .await
-        .unwrap();
-    }
-
-    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration) {
-        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            run_id.to_string(),
-            vec![
-                StartTimer {
-                    seq,
-                    start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-                }
-                .into(),
-            ],
-        ))
-        .await
-        .unwrap();
-    }
-
-    async fn handle_eviction(&self) {
-        let task = self.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }]
-        );
-        self.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
-    }
-}
-
 #[async_trait::async_trait(?Send)]
-pub trait WorkflowHandleExt {
+pub(crate) trait WorkflowHandleExt {
     async fn fetch_history_and_replay(
         &self,
         worker: &mut Worker,
@@ -1018,37 +841,7 @@ where
     }
 }
 
-/// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
-pub async fn drain_pollers_and_shutdown(worker: &dyn CoreWorker) {
-    worker.initiate_shutdown();
-    tokio::join!(
-        async {
-            assert_matches!(
-                worker.poll_activity_task().await.unwrap_err(),
-                PollError::ShutDown
-            );
-        },
-        async {
-            loop {
-                match worker.poll_workflow_activation().await {
-                    Err(PollError::ShutDown) => break,
-                    Ok(a) if a.is_only_eviction() => {
-                        worker
-                            .complete_workflow_activation(WorkflowActivationCompletion::empty(
-                                a.run_id,
-                            ))
-                            .await
-                            .unwrap();
-                    }
-                    o => panic!("Unexpected activation while draining: {o:?}"),
-                }
-            }
-        }
-    );
-    worker.shutdown().await;
-}
-
-pub fn rand_6_chars() -> String {
+pub(crate) fn rand_6_chars() -> String {
     rand::rng()
         .sample_iter(&rand::distr::Alphanumeric)
         .take(6)
@@ -1056,9 +849,9 @@ pub fn rand_6_chars() -> String {
         .collect()
 }
 
-pub static ANY_PORT: &str = "127.0.0.1:0";
+pub(crate) static ANY_PORT: &str = "127.0.0.1:0";
 
-pub fn prom_metrics(
+pub(crate) fn prom_metrics(
     options_override: Option<PrometheusExporterOptions>,
 ) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
     let prom_exp_opts = options_override.unwrap_or_else(|| {
@@ -1079,7 +872,7 @@ pub fn prom_metrics(
     )
 }
 
-pub struct AbortOnDrop {
+pub(crate) struct AbortOnDrop {
     ah: AbortHandle,
 }
 
@@ -1089,7 +882,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-pub async fn eventually<F, Fut, T, E>(func: F, timeout: Duration) -> Result<T, anyhow::Error>
+pub(crate) async fn eventually<F, Fut, T, E>(func: F, timeout: Duration) -> Result<T, anyhow::Error>
 where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, E>>,

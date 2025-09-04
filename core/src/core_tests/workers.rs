@@ -2,8 +2,9 @@ use crate::{
     PollError, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, build_fake_worker,
-        build_mock_pollers, canned_histories, mock_worker, test_worker_cfg,
+        build_mock_pollers, mock_worker, test_worker_cfg,
     },
+    test_utils::WorkerTestHelpers,
     worker::{
         self,
         client::{
@@ -16,6 +17,7 @@ use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
+    canned_histories,
     coresdk::{
         workflow_activation::workflow_activation_job,
         workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
@@ -24,8 +26,8 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
+    test_utils::start_timer_cmd,
 };
-use temporal_sdk_core_test_utils::{WorkerTestHelpers, start_timer_cmd};
 use tokio::sync::{Barrier, watch};
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-use crate::integ_tests::workflow_tests::timers::timer_wf;
+use crate::{common::CoreWfStarter, integ_tests::workflow_tests::timers::timer_wf};
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -6,7 +6,6 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_api::worker::PollerBehavior;
-use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
 #[tokio::test]

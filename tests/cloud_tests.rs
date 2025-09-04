@@ -1,7 +1,8 @@
-use temporal_client::WorkflowClientTrait;
-use temporal_sdk_core_test_utils::get_cloud_client;
-
+mod common;
 mod shared_tests;
+
+use common::get_cloud_client;
+use temporal_client::WorkflowClientTrait;
 
 #[tokio::test]
 async fn tls_test() {

@@ -1,4 +1,4 @@
-pub(crate) use temporal_sdk_core_test_utils::canned_histories;
+pub(crate) use temporal_sdk_core_protos::canned_histories;
 
 use crate::{
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
@@ -6,6 +6,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
+    test_utils::{NAMESPACE, drain_pollers_and_shutdown},
     worker::{
         TaskPollers,
         client::{
@@ -18,7 +19,7 @@ use async_trait::async_trait;
 use bimap::BiMap;
 use futures_util::{FutureExt, Stream, StreamExt, future::BoxFuture, stream, stream::BoxStream};
 use mockall::TimesRange;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fmt::Debug,
@@ -31,7 +32,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
+use temporal_sdk::interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -57,7 +58,7 @@ use temporal_sdk_core_protos::{
     },
     utilities::pack_any,
 };
-use temporal_sdk_core_test_utils::{NAMESPACE, TestWorker};
+use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -1065,7 +1066,7 @@ pub(crate) trait WorkerExt {
 #[async_trait]
 impl WorkerExt for Worker {
     async fn drain_pollers_and_shutdown(self) {
-        temporal_sdk_core_test_utils::drain_pollers_and_shutdown(&self).await;
+        drain_pollers_and_shutdown(&self).await;
         self.finalize_shutdown().await;
     }
 
@@ -1076,5 +1077,43 @@ impl WorkerExt for Worker {
             PollError::ShutDown
         );
         self.shutdown().await;
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct ActivationAssertionsInterceptor {
+    #[allow(clippy::type_complexity)]
+    assertions: Mutex<VecDeque<Box<dyn FnOnce(&WorkflowActivation)>>>,
+    used: AtomicBool,
+}
+
+impl ActivationAssertionsInterceptor {
+    pub(crate) fn skip_one(&mut self) -> &mut Self {
+        self.assertions.lock().push_back(Box::new(|_| {}));
+        self
+    }
+
+    pub(crate) fn then(&mut self, assert: impl FnOnce(&WorkflowActivation) + 'static) -> &mut Self {
+        self.assertions.lock().push_back(Box::new(assert));
+        self
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for ActivationAssertionsInterceptor {
+    async fn on_workflow_activation(&self, act: &WorkflowActivation) -> Result<(), anyhow::Error> {
+        self.used.store(true, Ordering::Relaxed);
+        if let Some(fun) = self.assertions.lock().pop_front() {
+            fun(act);
+        }
+        Ok(())
+    }
+}
+
+impl Drop for ActivationAssertionsInterceptor {
+    fn drop(&mut self) {
+        if !self.used.load(Ordering::Relaxed) {
+            panic!("Activation assertions interceptor was never used!")
+        }
     }
 }

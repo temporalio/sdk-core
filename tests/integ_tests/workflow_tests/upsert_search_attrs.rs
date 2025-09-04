@@ -1,3 +1,4 @@
+use crate::common::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
 use temporal_client::{
@@ -6,7 +7,6 @@ use temporal_client::{
 };
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_test_utils::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
 use uuid::Uuid;
 
 async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {

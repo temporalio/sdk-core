@@ -1,8 +1,8 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        MockPollCfg, ResponseType, build_fake_sdk, canned_histories, mock_sdk, mock_sdk_cfg,
-        mock_worker, single_hist_mock_sg,
+        MockPollCfg, ResponseType, build_fake_sdk, mock_sdk, mock_sdk_cfg, mock_worker,
+        single_hist_mock_sg,
     },
     worker::client::mocks::mock_worker_client,
 };
@@ -10,6 +10,7 @@ use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowResult};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
+    canned_histories,
     coresdk::{
         child_workflow::{ChildWorkflowCancellationType, child_workflow_result},
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},

@@ -1,7 +1,8 @@
 use crate::{AttachMetricLabels, CallType, callback_based, dbg_panic};
-use futures_util::TryFutureExt;
-use futures_util::future::Either;
-use futures_util::{FutureExt, future::BoxFuture};
+use futures_util::{
+    FutureExt, TryFutureExt,
+    future::{BoxFuture, Either},
+};
 use std::{
     fmt,
     sync::Arc,

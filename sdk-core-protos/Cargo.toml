@@ -13,6 +13,7 @@ categories = ["development-tools"]
 [features]
 history_builders = ["uuid", "rand"]
 serde_serialize = []
+test-utilities = ["history_builders"]
 
 [dependencies]
 anyhow = "1.0"

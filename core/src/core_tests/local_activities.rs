@@ -5,6 +5,7 @@ use crate::{
         MockPollCfg, ResponseType, WorkerExt, build_mock_pollers, hist_to_poll_resp, mock_sdk,
         mock_sdk_cfg, mock_worker, single_hist_mock_sg,
     },
+    test_utils::WorkerTestHelpers,
     worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
 use anyhow::anyhow;
@@ -39,9 +40,7 @@ use temporal_sdk_core_protos::{
         failure::v1::{Failure, failure::FailureInfo},
         query::v1::WorkflowQuery,
     },
-};
-use temporal_sdk_core_test_utils::{
-    WorkerTestHelpers, query_ok, schedule_local_activity_cmd, start_timer_cmd,
+    test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
 };
 use tokio::{join, select, sync::Barrier};
 

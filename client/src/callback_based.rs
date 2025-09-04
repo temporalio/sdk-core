@@ -3,8 +3,7 @@
 
 use anyhow::anyhow;
 use bytes::{BufMut, BytesMut};
-use futures_util::future::BoxFuture;
-use futures_util::stream;
+use futures_util::{future::BoxFuture, stream};
 use http::{HeaderMap, Request, Response};
 use http_body_util::{BodyExt, StreamBody, combinators::BoxBody};
 use hyper::body::{Bytes, Frame};

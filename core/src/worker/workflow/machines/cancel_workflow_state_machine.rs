@@ -100,14 +100,15 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::{MockPollCfg, build_fake_sdk, canned_histories};
+    use crate::test_help::{
+        ActivationAssertionsInterceptor, MockPollCfg, build_fake_sdk, canned_histories,
+    };
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
     use temporal_sdk_core_protos::{
         DEFAULT_WORKFLOW_TYPE,
         coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;

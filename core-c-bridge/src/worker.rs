@@ -20,10 +20,9 @@ use temporal_sdk_core_api::{
         SlotSupplierPermit,
     },
 };
-use temporal_sdk_core_protos::coresdk::nexus::NexusTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
-        ActivityHeartbeat, ActivityTaskCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, nexus::NexusTaskCompletion,
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::history::v1::History,

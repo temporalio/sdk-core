@@ -4,12 +4,15 @@ use crate::{
 
 use futures_util::FutureExt;
 use prost::bytes::Bytes;
-use std::cell::OnceCell;
-use std::str::FromStr;
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::{
+    cell::OnceCell,
+    str::FromStr,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 use temporal_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
     ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,

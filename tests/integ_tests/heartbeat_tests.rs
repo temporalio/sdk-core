@@ -1,7 +1,9 @@
+use crate::common::{CoreWfStarter, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext};
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE,
     coresdk::{
@@ -14,14 +16,12 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         common::v1::{Payload, RetryPolicy},
         enums::v1::TimeoutType,
     },
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
-    schedule_activity_cmd,
+    test_utils::schedule_activity_cmd,
 };
 use tokio::time::sleep;
 

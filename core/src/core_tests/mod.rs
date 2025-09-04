@@ -113,8 +113,6 @@ async fn shutdown_interrupts_both_polls() {
 
 #[tokio::test]
 async fn ignores_workflow_options_updated_event() {
-    temporal_sdk_core_test_utils::init_integ_telem();
-
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add(WorkflowExecutionOptionsUpdatedEventAttributes::default());

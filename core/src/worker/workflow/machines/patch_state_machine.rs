@@ -270,7 +270,7 @@ mod tests {
     use crate::{
         internal_flags::CoreInternalFlags,
         replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, ResponseType, build_fake_sdk},
+        test_help::{ActivationAssertionsInterceptor, MockPollCfg, ResponseType, build_fake_sdk},
         worker::workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
     };
     use rstest::rstest;
@@ -300,7 +300,6 @@ mod tests {
             },
         },
     };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     const MY_PATCH_ID: &str = "test_patch_id";
     #[derive(Eq, PartialEq, Copy, Clone, Debug)]

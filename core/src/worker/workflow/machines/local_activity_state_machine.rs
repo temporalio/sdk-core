@@ -868,7 +868,10 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, ResponseType, build_fake_sdk, canned_histories},
+        test_help::{
+            ActivationAssertionsInterceptor, MockPollCfg, ResponseType, build_fake_sdk,
+            canned_histories,
+        },
     };
     use anyhow::anyhow;
     use rstest::rstest;
@@ -890,7 +893,6 @@ mod tests {
             common::v1::RetryPolicy, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
     };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
     use tokio_util::sync::CancellationToken;
 
     async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
