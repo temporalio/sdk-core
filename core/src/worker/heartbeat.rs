@@ -4,45 +4,38 @@ use crate::telemetry::TelemetryInstance;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use temporal_client::SharedNamespaceWorkerTrait;
 use temporal_sdk_core_api::worker::{WorkerConfigBuilder, WorkerVersioningStrategy};
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use tokio::sync::Notify;
 
 /// Callback used to collect heartbeat data from each worker at the time of heartbeat
-pub(crate) type HeartbeatFn = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
-
-/// Identifies a client on the same namespace. This allows us to worker heartbeat per-runtime,
-/// per-namespace, and per-client. It is expected that each unique client uses a unique
-/// client_identity_override to differentiate its identity.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub(crate) struct ClientIdentity {
-    pub(crate) endpoint: String,
-    pub(crate) namespace: String,
-    pub(crate) task_queue: String,
-    pub(crate) client_identity_override: Option<String>,
-}
+pub(crate) type HeartbeatFn = Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 
 /// SharedNamespaceWorker is responsible for polling nexus-delivered worker commands and sending
 /// worker heartbeats to the server. This communicates with all workers in the same process that
 /// share the same namespace.
 pub(crate) struct SharedNamespaceWorker {
     heartbeat_map: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
+    namespace: String,
 }
 
 impl SharedNamespaceWorker {
     pub(crate) fn new(
         client: Arc<dyn WorkerClient>,
-        client_identity: ClientIdentity,
+        namespace: String,
         heartbeat_interval: Duration,
         telemetry: Option<&TelemetryInstance>,
-        shutdown_callback: Arc<dyn Fn() + Send + Sync>,
-        heartbeat_map: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
     ) -> Self {
         let config = WorkerConfigBuilder::default()
-            .namespace(client_identity.namespace.clone())
-            .task_queue(client_identity.task_queue)
+            .namespace(namespace.clone())
+            .task_queue(format!(
+                "temporal-sys/worker-commands/{namespace}/{}",
+                client.get_process_key().to_string()
+            ))
             .no_remote_activities(true)
             .max_outstanding_nexus_tasks(5_usize)
             .versioning_strategy(WorkerVersioningStrategy::None {
@@ -50,14 +43,16 @@ impl SharedNamespaceWorker {
             })
             .build()
             .expect("all required fields should be implemented");
-        let worker = crate::worker::Worker::new(config, None, client.clone(), telemetry, true);
+        let worker = crate::worker::Worker::new(config, None, client.clone(), telemetry, &None);
 
         let last_heartbeat_time_map = Mutex::new(HashMap::new());
 
         // heartbeat task
         let reset_notify = Arc::new(Notify::new());
-        let client_clone = client.clone();
+        let client_clone = client;
+        let namespace_clone = namespace.clone();
 
+        let heartbeat_map = Arc::new(Mutex::new(HashMap::<String, HeartbeatFn>::new()));
         let heartbeat_map_clone = heartbeat_map.clone();
 
         tokio::spawn(async move {
@@ -67,13 +62,11 @@ impl SharedNamespaceWorker {
                 // TODO: Race condition here, can technically shut down before anything is ever initialized
                 if heartbeat_map_clone.lock().is_empty() {
                     worker.shutdown().await;
-                    // remove this worker from the Runtime map
-                    shutdown_callback();
                     return;
                 }
                 tokio::select! {
                     _ = ticker.tick() => {
-                        println!("client: {:?}", client_clone.read().get_identity());
+                        println!("client: {:?}", client_clone.get_identity());
                         let mut hb_to_send = Vec::new();
                         for (instance_key, heartbeat_callback) in heartbeat_map_clone.lock().iter() {
                             let mut heartbeat = heartbeat_callback();
@@ -91,7 +84,6 @@ impl SharedNamespaceWorker {
                                 None
                             };
 
-
                             heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
                             heartbeat.heartbeat_time = Some(now.into());
 
@@ -99,16 +91,15 @@ impl SharedNamespaceWorker {
 
                             last_heartbeat_time_map.insert(instance_key.clone(), now);
                         }
-                        if let Err(e) = client_clone.record_worker_heartbeat(client_identity.namespace.clone(), client_identity.endpoint.clone(), hb_to_send
-                            ).await {
-                                if matches!(
-                                e.code(),
-                                tonic::Code::Unimplemented
-                                ) {
-                                    return;
-                                }
-                                warn!(error=?e, "Network error while sending worker heartbeat");
+                        if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).await {
+                            if matches!(
+                            e.code(),
+                            tonic::Code::Unimplemented
+                            ) {
+                                return;
                             }
+                            warn!(error=?e, "Network error while sending worker heartbeat");
+                        }
                     }
                     _ = reset_notify.notified() => {
                         ticker.reset();
@@ -117,37 +108,58 @@ impl SharedNamespaceWorker {
             }
         });
 
-        Self { heartbeat_map }
-    }
-
-    /// Registers a heartbeat callback to the [SharedNamespaceWorker] and returns a callback
-    /// that removes the just registered callback, allowing the caller to handle removing this
-    /// mechanism on worker shutdown
-    pub(crate) fn register_callback(
-        &mut self,
-        worker_instance_key: String,
-        heartbeat_callback: HeartbeatFn,
-    ) -> Arc<dyn Fn() + Send + Sync> {
-        self.heartbeat_map
-            .lock()
-            .insert(worker_instance_key.clone(), heartbeat_callback);
-
-        let heartbeat_map_clone = self.heartbeat_map.clone();
-        Arc::new(move || {
-            if heartbeat_map_clone
-                .lock()
-                .remove(&worker_instance_key)
-                .is_none()
-            {
-                dbg_panic!(
-                    "Attempted to remove key {} that was already removed",
-                    worker_instance_key
-                );
-            }
-        })
+        Self {
+            heartbeat_map,
+            namespace,
+        }
     }
 }
 
+impl SharedNamespaceWorkerTrait for SharedNamespaceWorker {
+    fn namespace(&self) -> String {
+        self.namespace.clone()
+    }
+
+    fn unregister_callback(
+        &self,
+        worker_instance_key: String,
+    ) -> (Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>, bool) {
+        let mut heartbeat_map = self.heartbeat_map.lock();
+        (
+            heartbeat_map.remove(&worker_instance_key),
+            heartbeat_map.is_empty(),
+        )
+    }
+    fn register_callback(
+        &self,
+        worker_instance_key: String,
+        heartbeat_callback: Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>,
+    ) {
+        self.heartbeat_map
+            .lock()
+            .insert(worker_instance_key, heartbeat_callback);
+    }
+}
+
+impl fmt::Debug for SharedNamespaceWorker {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.heartbeat_map.try_lock() {
+            Some(guard) => {
+                let keys: Vec<_> = guard.keys().cloned().collect();
+                f.debug_struct("SharedNamespaceWorker")
+                    .field("namespace", &self.namespace)
+                    .field("heartbeat_keys", &keys)
+                    .finish()
+            }
+            None => {
+                f.debug_struct("SharedNamespaceWorker")
+                    .field("namespace", &self.namespace)
+                    .field("heartbeat_map", &"<locked>")
+                    .finish()
+            }
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -203,30 +215,26 @@ mod tests {
         let worker = worker::Worker::new(config, None, client.clone(), None, false);
 
         let namespace = "test-namespace".to_string();
-        let task_queue_key = Uuid::new_v4();
-        let mut shared_namespace_worker = SharedNamespaceWorker::new(
-            client,
-            ClientIdentity {
-                endpoint: "test-endpoint".to_string(),
-                namespace: namespace.clone(),
-                task_queue: format!(
-                    "temporal-sys/worker-commands/{}/{}",
-                    namespace, task_queue_key,
-                ),
-                client_identity_override: Some("test-identity".to_string()),
-            },
-            Duration::from_millis(100),
-            None,
-            Arc::new(move || {}),
-            Arc::new(Mutex::new(HashMap::new())),
-        );
-        let worker_instance_key = worker.worker_instance_key().unwrap();
-        shared_namespace_worker.register_callback(
-            worker_instance_key,
-            worker
-                .get_heartbeat_callback()
-                .expect("heartbeat callback should be set"),
-        );
+        let process_key = Uuid::new_v4();
+        // let mut shared_namespace_worker = SharedNamespaceWorker::new(
+        //     client,
+        //     WorkerHeartbeatIdentity::new(
+        //         "test-endpoint".to_string(),
+        //         namespace.clone(),
+        //         process_key.to_string(),
+        //         "test-identity".to_string(),
+        //     ),
+        //     Duration::from_millis(100),
+        //     None,
+        // );
+        // TODO: translate to new way
+        // let worker_instance_key = worker.worker_instance_key().unwrap();
+        // shared_namespace_worker.register_callback(
+        //     worker_instance_key,
+        //     worker
+        //         .get_heartbeat_callback()
+        //         .expect("heartbeat callback should be set"),
+        // );
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;

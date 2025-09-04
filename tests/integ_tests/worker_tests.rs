@@ -10,7 +10,11 @@ use std::{
 };
 use temporal_client::{ClientOptionsBuilder, NamespacedClient, WorkflowOptions};
 use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
-use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder, init_worker, RuntimeOptions};
+use temporal_sdk_core::ephemeral_server::TemporalDevServerConfigBuilder;
+use temporal_sdk_core::{
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions, RuntimeOptionsBuilder,
+    init_worker,
+};
 use temporal_sdk_core_api::{
     Worker,
     errors::WorkerValidationError,
@@ -26,12 +30,14 @@ use temporal_sdk_core_protos::{
         history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, drain_pollers_and_shutdown, get_integ_server_options, get_integ_telem_options, default_cached_download, init_integ_telem, integ_worker_config, get_integ_runtime_options};
+use temporal_sdk_core_test_utils::{
+    CoreWfStarter, default_cached_download, drain_pollers_and_shutdown, get_integ_runtime_options,
+    get_integ_server_options, get_integ_telem_options, init_integ_telem, integ_worker_config,
+};
 use tokio::sync::Notify;
 use tracing::info;
 use url::Url;
 use uuid::Uuid;
-use temporal_sdk_core::ephemeral_server::TemporalDevServerConfigBuilder;
 
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
@@ -218,7 +224,6 @@ async fn worker_heartbeat_replace_client() {
     let mut opts = get_integ_server_options();
     opts.identity = "integ_tester1".to_owned();
 
-
     let server_config = TemporalDevServerConfigBuilder::default()
         .exe(default_cached_download())
         // We need to lower the poll timeout so the poll call rolls over
@@ -261,7 +266,7 @@ async fn worker_heartbeat_replace_client() {
             .unwrap(),
         client1.clone(),
     )
-        .unwrap();
+    .unwrap();
 
     println!("sleeping for 200ms");
     tokio::time::sleep(Duration::from_millis(300)).await;

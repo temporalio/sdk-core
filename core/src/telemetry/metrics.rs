@@ -76,6 +76,8 @@ impl MetricsContext {
         }
     }
 
+    // TODO: create a helper that takes in a TemporalMeter and sets up all of these attributes for
+    //  sharedNamespaceWorker creation
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
         if let Some(mut meter) = telemetry.get_temporal_metric_meter() {
             meter

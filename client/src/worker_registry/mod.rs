@@ -2,11 +2,13 @@
 //! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::collections::{HashMap, hash_map::Entry::Vacant};
-
+use std::sync::Arc;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use uuid::Uuid;
 
 slotmap::new_key_type! {
     /// Registration key for a worker
@@ -49,7 +51,7 @@ impl SlotKey {
     }
 }
 
-/// This is an inner class for [SlotManager] needed to hide the mutex.
+/// This is an inner class for [ClientWorkerSet] needed to hide the mutex.
 #[derive(Default, Debug)]
 struct SlotManagerImpl {
     /// Maps keys, i.e., namespace#task_queue, to provider.
@@ -109,19 +111,40 @@ impl SlotManagerImpl {
     }
 }
 
+pub trait SharedNamespaceWorkerTrait: std::fmt::Debug {
+    fn namespace(&self) -> String;
+
+    /// Unregisters a heartbeat callback. Returns the callback removed, as well as a bool that
+    /// indicates if there are no remaining callbacks in the SharedNamespaceWorker, indicating
+    /// the shared worker itself can be shut down.
+    fn unregister_callback(
+        &self,
+        worker_instance_key: String,
+    ) -> (Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>, bool);
+
+    fn register_callback(
+        &self,
+        worker_instance_key: String,
+        heartbeat_callback: Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>,
+    );
+}
+
 /// Enables local workers to make themselves visible to a shared client instance.
 /// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
 /// It also provides a convenient method to find compatible slots within the collection.
 #[derive(Default, Debug)]
-pub struct SlotManager {
-    manager: RwLock<SlotManagerImpl>,
+pub struct ClientWorkerSet {
+    slot_manager: RwLock<SlotManagerImpl>,
+    // key: Namespace, value: SharedNamespaceWorker, but hidden behind HeartbeatTraitThing
+    heartbeat_manager: Mutex<HashMap<String, Box<dyn SharedNamespaceWorkerTrait + Send + Sync>>>,
 }
 
-impl SlotManager {
+impl ClientWorkerSet {
     /// Factory method.
     pub fn new() -> Self {
         Self {
-            manager: RwLock::new(SlotManagerImpl::new()),
+            slot_manager: RwLock::new(SlotManagerImpl::new()),
+            heartbeat_manager: Mutex::new(HashMap::new()),
         }
     }
 
@@ -131,26 +154,71 @@ impl SlotManager {
         namespace: String,
         task_queue: String,
     ) -> Option<Box<dyn Slot + Send>> {
-        self.manager
+        self.slot_manager
             .read()
             .try_reserve_wft_slot(namespace, task_queue)
     }
 
     /// Register a local worker that can provide WFT processing slots.
-    pub fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
-        self.manager.write().register(provider)
+    pub fn register_slot(
+        &self,
+        provider: Box<dyn SlotProvider + Send + Sync>,
+    ) -> Option<WorkerKey> {
+        self.slot_manager.write().register(provider)
     }
 
     /// Unregister a provider, typically when its worker starts shutdown.
-    pub fn unregister(&self, id: WorkerKey) -> Option<Box<dyn SlotProvider + Send + Sync>> {
-        self.manager.write().unregister(id)
+    pub fn unregister_slot(&self, id: WorkerKey) -> Option<Box<dyn SlotProvider + Send + Sync>> {
+        self.slot_manager.write().unregister(id)
+    }
+
+    /// Register a worker with the worker heartbeat manager.
+    /// // TODO: Need to pass namespace, worker's identity, and heartbeat callback
+    ///     namespace - index into client's map
+    ///     worker identity - identify the worker to be able to later remove the callback from
+    ///     callback - to be able to heartbeat when needed.
+    pub fn register_heartbeat_worker(
+        &self,
+        namespace: String,
+        worker_instance_key: String,
+        heartbeat_callback: Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>,
+        shared_worker_callback: Arc<
+            dyn Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync> + Send + Sync,
+        >,
+    ) {
+        let mut shared_namespace_map = self.heartbeat_manager.lock();
+        let worker = shared_namespace_map
+            .entry(namespace)
+            .or_insert_with(|| shared_worker_callback());
+        worker.register_callback(worker_instance_key, heartbeat_callback)
+    }
+
+    /// Unregister
+    pub fn unregister_heartbeat_worker(
+        &self,
+        namespace: String,
+        worker_instance_key: String,
+    ) -> Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>> {
+        let mut heartbeat_manager = self.heartbeat_manager.lock();
+        if let Some(shared_worker) = heartbeat_manager.get(&namespace) {
+            let (callback, is_empty) = shared_worker.unregister_callback(worker_instance_key);
+            if is_empty {
+                heartbeat_manager.remove(&namespace);
+            }
+            callback
+        } else {
+            warn!(
+                "Namespace {namespace} isn't registered to client worker heartbeat, ignoring unregister."
+            );
+            None
+        }
     }
 
     #[cfg(test)]
     /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
     /// There is only one provider per bucket so `num_providers` should be equal to `num_buckets`.
     pub fn num_providers(&self) -> (usize, usize) {
-        self.manager.read().num_providers()
+        self.slot_manager.read().num_providers()
     }
 }
 
@@ -197,9 +265,9 @@ mod tests {
             new_mock_provider("foo".to_string(), "bar_q".to_string(), false, false);
         let mock_provider2 = new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true);
 
-        let manager = SlotManager::new();
-        let some_slots = manager.register(Box::new(mock_provider1));
-        let no_slots = manager.register(Box::new(mock_provider2));
+        let manager = ClientWorkerSet::new();
+        let some_slots = manager.register_slot(Box::new(mock_provider1));
+        let no_slots = manager.register_slot(Box::new(mock_provider2));
         assert!(no_slots.is_none());
 
         let mut found = 0;
@@ -214,15 +282,15 @@ mod tests {
         assert_eq!(found, 10);
         assert_eq!((1, 1), manager.num_providers());
 
-        manager.unregister(some_slots.unwrap());
+        manager.unregister_slot(some_slots.unwrap());
         assert_eq!((0, 0), manager.num_providers());
 
         let mock_provider1 =
             new_mock_provider("foo".to_string(), "bar_q".to_string(), false, false);
         let mock_provider2 = new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true);
 
-        let no_slots = manager.register(Box::new(mock_provider2));
-        let some_slots = manager.register(Box::new(mock_provider1));
+        let no_slots = manager.register_slot(Box::new(mock_provider2));
+        let some_slots = manager.register_slot(Box::new(mock_provider1));
         assert!(some_slots.is_none());
 
         let mut not_found = 0;
@@ -236,18 +304,18 @@ mod tests {
         }
         assert_eq!(not_found, 10);
         assert_eq!((1, 1), manager.num_providers());
-        manager.unregister(no_slots.unwrap());
+        manager.unregister_slot(no_slots.unwrap());
         assert_eq!((0, 0), manager.num_providers());
     }
 
     #[test]
     fn registry_keeps_one_provider_per_namespace() {
-        let manager = SlotManager::new();
+        let manager = ClientWorkerSet::new();
         let mut worker_keys = vec![];
         for i in 0..10 {
             let namespace = format!("myId{}", i % 3);
             let mock_provider = new_mock_provider(namespace, "bar_q".to_string(), false, false);
-            worker_keys.push(manager.register(Box::new(mock_provider)));
+            worker_keys.push(manager.register_slot(Box::new(mock_provider)));
         }
         assert_eq!((3, 3), manager.num_providers());
 
@@ -255,9 +323,9 @@ mod tests {
             .iter()
             .filter(|key| key.is_some())
             .fold(0, |count, key| {
-                manager.unregister(key.unwrap());
+                manager.unregister_slot(key.unwrap());
                 // Should be idempotent
-                manager.unregister(key.unwrap());
+                manager.unregister_slot(key.unwrap());
                 count + 1
             });
         assert_eq!(3, count);

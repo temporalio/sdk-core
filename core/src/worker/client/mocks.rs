@@ -1,10 +1,10 @@
 use super::*;
 use futures_util::Future;
 use std::sync::{Arc, LazyLock};
-use temporal_client::SlotManager;
+use temporal_client::ClientWorkerSet;
 
-pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
-    LazyLock::new(|| Arc::new(SlotManager::new()));
+pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<ClientWorkerSet>> =
+    LazyLock::new(|| Arc::new(ClientWorkerSet::new()));
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     signal_and_query_header: true,
@@ -153,15 +153,15 @@ mockall::mock! {
         fn record_worker_heartbeat<'a, 'b>(
             &self,
             namespace: String,
-            identity: String,
             heartbeat: Vec<WorkerHeartbeat>
         ) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
 
         fn replace_client(&self, new_client: RetryClient<Client>);
         fn capabilities(&self) -> Option<Capabilities>;
-        fn workers(&self) -> Arc<SlotManager>;
+        fn workers(&self) -> Arc<ClientWorkerSet>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
         fn get_identity(&self) -> String;
+        fn get_process_key(&self) -> Uuid;
     }
 }
