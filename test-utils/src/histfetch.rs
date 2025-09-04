@@ -7,11 +7,12 @@
 use prost::Message;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_test_utils::get_integ_server_options;
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
     let gw_opts = get_integ_server_options();
-    let client = gw_opts.connect("default", None).await?;
+    let client = gw_opts.connect("default", None, Uuid::new_v4()).await?;
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");

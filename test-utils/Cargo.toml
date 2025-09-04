@@ -29,6 +29,7 @@ temporal-sdk-core-api = { path = "../core-api" }
 tokio = "1.1"
 tracing = "0.1"
 url = "2.2"
+uuid = { version = "1.17.0", features = ["v4"] }
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"

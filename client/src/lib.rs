@@ -29,7 +29,10 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
-pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey};
+pub use worker_registry::{
+    ClientWorkerSet, SharedNamespaceWorkerTrait, Slot, SlotProvider, WorkerHeartbeatIdentity,
+    WorkerKey,
+};
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
@@ -337,7 +340,7 @@ pub struct ConfiguredClient<C> {
     headers: Arc<RwLock<ClientHeaders>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
-    workers: Arc<SlotManager>,
+    workers: Arc<ClientWorkerSet>, // ClientWorkerSet
 }
 
 impl<C> ConfiguredClient<C> {
@@ -363,7 +366,7 @@ impl<C> ConfiguredClient<C> {
     }
 
     /// Returns a cloned reference to a registry with workers using this client instance
-    pub fn workers(&self) -> Arc<SlotManager> {
+    pub fn workers(&self) -> Arc<ClientWorkerSet> {
         self.workers.clone()
     }
 }
@@ -418,9 +421,10 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<TemporalMeter>,
+        process_key: Uuid,
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
-        let client = Client::new(client, namespace.into());
+        let client = Client::new(client, namespace.into(), process_key);
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
     }
@@ -477,7 +481,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
-            workers: Arc::new(SlotManager::new()),
+            workers: Arc::new(ClientWorkerSet::new()), // TODO: Pass in callback to create SharedNamespaceWorker?
         };
         if !self.skip_get_system_info {
             match client
@@ -690,6 +694,8 @@ pub struct Client {
     inner: ConfiguredClient<TemporalServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
+    /// Process-wide key, used for worker heartbeating
+    process_key: Uuid,
 }
 
 impl Client {
@@ -697,10 +703,12 @@ impl Client {
     pub fn new(
         client: ConfiguredClient<TemporalServiceClientWithMetrics>,
         namespace: String,
+        process_key: Uuid,
     ) -> Self {
         Client {
             inner: client,
             namespace,
+            process_key,
         }
     }
 
@@ -742,6 +750,11 @@ impl Client {
     /// Consumes self and returns the underlying client
     pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClientWithMetrics> {
         self.inner
+    }
+
+    /// Returns the process-wide key
+    pub fn process_key(&self) -> Uuid {
+        self.process_key
     }
 }
 

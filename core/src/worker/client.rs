@@ -7,8 +7,8 @@ use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
-    SlotManager, WorkflowService,
+    Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
+    RetryClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
@@ -35,6 +35,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use uuid::Uuid;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -49,6 +50,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    // TODO: remove
     /// This is only used in SharedNamespaceWorker
     heartbeat_callbacks: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
 }
@@ -242,7 +244,6 @@ pub trait WorkerClient: Sync + Send {
     async fn record_worker_heartbeat(
         &self,
         namespace: String,
-        identity: String,
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
@@ -251,13 +252,15 @@ pub trait WorkerClient: Sync + Send {
     /// Return server capabilities
     fn capabilities(&self) -> Option<Capabilities>;
     /// Return workers using this client
-    fn workers(&self) -> Arc<SlotManager>;
+    fn workers(&self) -> Arc<ClientWorkerSet>;
     /// Indicates if this is a mock client
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
     /// Get worker identity
     fn get_identity(&self) -> String;
+    /// Get process key
+    fn get_process_key(&self) -> Uuid;
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -690,14 +693,13 @@ impl WorkerClient for WorkerClientBag {
     async fn record_worker_heartbeat(
         &self,
         namespace: String,
-        identity: String,
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
                 namespace,
-                identity,
+                identity: self.identity.clone(),
                 worker_heartbeat,
             })
             .await?
@@ -714,7 +716,7 @@ impl WorkerClient for WorkerClientBag {
         client.get_client().inner().capabilities().cloned()
     }
 
-    fn workers(&self) -> Arc<SlotManager> {
+    fn workers(&self) -> Arc<ClientWorkerSet> {
         let client = self.replaceable_client.read();
         client.get_client().inner().workers()
     }
@@ -731,6 +733,10 @@ impl WorkerClient for WorkerClientBag {
 
     fn get_identity(&self) -> String {
         self.identity.clone()
+    }
+
+    fn get_process_key(&self) -> Uuid {
+        self.replaceable_client.read().get_client().process_key()
     }
 }
 
