@@ -48,6 +48,7 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
+use crate::common::INTEG_CLIENT_IDENTITY;
 
 pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
@@ -206,7 +207,7 @@ async fn activity_non_retryable_failure() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
@@ -273,7 +274,7 @@ async fn activity_non_retryable_failure_with_error() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
