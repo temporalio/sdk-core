@@ -108,6 +108,24 @@ impl TunerHolderOptions {
             }
             None => {}
         }
+        match self.nexus_slot_options {
+            Some(SlotSupplierOptions::FixedSize { slots }) => {
+                builder.nexus_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(slots)));
+            }
+            Some(SlotSupplierOptions::ResourceBased(rso)) => {
+                builder.nexus_slot_supplier(
+                    rb_tuner
+                        .as_mut()
+                        .unwrap()
+                        .with_nexus_slots_options(rso)
+                        .nexus_task_slot_supplier(),
+                );
+            }
+            Some(SlotSupplierOptions::Custom(ss)) => {
+                builder.nexus_slot_supplier(ss);
+            }
+            None => {}
+        }
         Ok(builder.build())
     }
 }
@@ -143,6 +161,9 @@ impl TunerHolderOptionsBuilder {
             Some(Some(SlotSupplierOptions::ResourceBased(_)))
         ) || matches!(
             self.local_activity_slot_options,
+            Some(Some(SlotSupplierOptions::ResourceBased(_)))
+        ) || matches!(
+            self.nexus_slot_options,
             Some(Some(SlotSupplierOptions::ResourceBased(_)))
         );
         if any_is_resource_based && matches!(self.resource_based_options, None | Some(None)) {
