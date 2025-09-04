@@ -381,7 +381,7 @@ impl<SK: SlotKind + Send + Sync> CustomSlotSupplier<SK> {
             }
             temporal_sdk_core_api::worker::SlotInfo::Nexus(n) => SlotInfo::NexusSlotInfo {
                 operation: n.operation.as_str().into(),
-                service: n.operation.as_str().into(),
+                service: n.service.as_str().into(),
             },
         }
     }
