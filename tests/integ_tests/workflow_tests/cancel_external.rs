@@ -1,7 +1,7 @@
+use crate::common::CoreWfStarter;
 use temporal_client::{GetWorkflowResultOpts, WfClientExt, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution};
-use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 

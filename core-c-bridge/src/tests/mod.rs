@@ -1,22 +1,26 @@
-use crate::ByteArrayRef;
-use crate::client::{
-    ClientGrpcOverrideRequest, ClientGrpcOverrideResponse, RpcService,
-    temporal_core_client_grpc_override_request_headers,
-    temporal_core_client_grpc_override_request_proto,
-    temporal_core_client_grpc_override_request_respond,
-    temporal_core_client_grpc_override_request_rpc,
-    temporal_core_client_grpc_override_request_service,
-};
-use crate::tests::utils::{
-    OwnedRpcCallOptions, RpcCallError, default_client_options, default_server_config,
+use crate::{
+    ByteArrayRef,
+    client::{
+        ClientGrpcOverrideRequest, ClientGrpcOverrideResponse, RpcService,
+        temporal_core_client_grpc_override_request_headers,
+        temporal_core_client_grpc_override_request_proto,
+        temporal_core_client_grpc_override_request_respond,
+        temporal_core_client_grpc_override_request_rpc,
+        temporal_core_client_grpc_override_request_service,
+    },
+    tests::utils::{
+        OwnedRpcCallOptions, RpcCallError, default_client_options, default_server_config,
+    },
 };
 use context::Context;
 use prost::Message;
 use std::sync::{Arc, LazyLock, Mutex};
-use temporal_sdk_core_protos::temporal::api::failure::v1::Failure;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    GetSystemInfoRequest, GetSystemInfoResponse, QueryWorkflowRequest,
-    StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
+use temporal_sdk_core_protos::temporal::api::{
+    failure::v1::Failure,
+    workflowservice::v1::{
+        GetSystemInfoRequest, GetSystemInfoResponse, QueryWorkflowRequest,
+        StartWorkflowExecutionRequest, StartWorkflowExecutionResponse,
+    },
 };
 
 mod context;

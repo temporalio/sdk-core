@@ -1,3 +1,6 @@
+mod common;
+
+use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 use temporal_sdk_core::{
@@ -7,7 +10,6 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::telemetry::{
     Logger, OtelCollectorOptionsBuilder, TelemetryOptionsBuilder, metrics::CoreMeter,
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
 use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 

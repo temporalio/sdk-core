@@ -1,3 +1,8 @@
+mod common;
+
+use common::{
+    CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
+};
 use futures_util::{
     StreamExt,
     future::{AbortHandle, Abortable, join_all},
@@ -17,9 +22,6 @@ use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
 };
 
 mod fuzzy_workflow;

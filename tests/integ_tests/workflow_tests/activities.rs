@@ -1,4 +1,7 @@
-use crate::integ_tests::activity_functions::echo;
+use crate::{
+    common::{CoreWfStarter, init_core_and_create_wf},
+    integ_tests::activity_functions::echo,
+};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::future::join_all;
@@ -11,9 +14,10 @@ use temporal_sdk::{
     ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
     WfExitValue, WorkflowResult,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, TaskToken, prost_dur,
+    DEFAULT_ACTIVITY_TYPE, TaskToken,
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         IntoCompletion,
@@ -29,6 +33,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
         enums::v1::RetryState,
@@ -36,10 +41,6 @@ use temporal_sdk_core_protos::{
     },
     test_utils::schedule_activity_cmd,
 };
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, init_core_and_create_wf,
-};
-use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::{join, sync::Semaphore, time::sleep};
 
 pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {

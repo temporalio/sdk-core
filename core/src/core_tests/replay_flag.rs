@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
-        MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, canned_histories,
-        hist_to_poll_resp, mock_worker,
+        ActivationAssertionsInterceptor, MockPollCfg, ResponseType, build_fake_sdk,
+        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker,
     },
     worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
@@ -16,9 +16,8 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
+    test_utils::{query_ok, start_timer_cmd},
 };
-use temporal_sdk_core_protos::test_utils::{query_ok, start_timer_cmd};
-use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |command_sink: WfContext| async move {

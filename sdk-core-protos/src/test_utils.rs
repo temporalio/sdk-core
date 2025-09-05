@@ -1,17 +1,15 @@
 //! Test utilities for creating workflow commands and histories
 //! Only available when the test-utilities feature is enabled
 
-use std::time::Duration;
 use crate::{
-    coresdk::{
-        workflow_commands::{
-            ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity, StartTimer,
-            QueryResult, QuerySuccess, workflow_command,
-        },
+    DEFAULT_ACTIVITY_TYPE,
+    coresdk::workflow_commands::{
+        ActivityCancellationType, QueryResult, QuerySuccess, ScheduleActivity,
+        ScheduleLocalActivity, StartTimer, workflow_command,
     },
     temporal::api::common::v1::Payload,
-    DEFAULT_ACTIVITY_TYPE,
 };
+use std::time::Duration;
 
 /// Convenience macro for creating prost Duration from std::time::Duration
 #[macro_export]

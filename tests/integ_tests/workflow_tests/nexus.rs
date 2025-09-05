@@ -1,4 +1,7 @@
-use crate::integ_tests::mk_nexus_endpoint;
+use crate::{
+    common::{CoreWfStarter, WorkflowHandleExt, rand_6_chars},
+    integ_tests::mk_nexus_endpoint,
+};
 use anyhow::bail;
 use assert_matches::assert_matches;
 use std::{
@@ -30,7 +33,6 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, WorkflowHandleExt, rand_6_chars};
 use tokio::{
     join,
     sync::{mpsc, watch},

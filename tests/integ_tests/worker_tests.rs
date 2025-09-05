@@ -1,4 +1,7 @@
-use crate::shared_tests;
+use crate::{
+    common::{CoreWfStarter, get_integ_server_options, get_integ_telem_options},
+    shared_tests,
+};
 use assert_matches::assert_matches;
 use std::{
     cell::Cell,
@@ -10,7 +13,10 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
-use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker};
+use temporal_sdk_core::{
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker,
+    test_utils::drain_pollers_and_shutdown,
+};
 use temporal_sdk_core_api::{
     Worker,
     errors::WorkerValidationError,
@@ -26,10 +32,6 @@ use temporal_sdk_core_protos::{
         history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
     },
 };
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, get_integ_server_options, get_integ_telem_options,
-};
-use temporal_sdk_core::test_utils::drain_pollers_and_shutdown;
 use tokio::sync::Notify;
 use uuid::Uuid;
 

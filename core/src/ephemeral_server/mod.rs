@@ -282,6 +282,19 @@ pub enum EphemeralExe {
     },
 }
 
+/// Return the default cached download for test usage inside this repo
+pub fn default_cached_download() -> EphemeralExe {
+    EphemeralExe::CachedDownload {
+        version: EphemeralExeVersion::SDKDefault {
+            sdk_name: "sdk-rust".to_string(),
+            sdk_version: "0.1.0".to_string(),
+        },
+        dest_dir: None,
+        // 15 days
+        ttl: Some(Duration::from_secs(60 * 60 * 24 * 15)),
+    }
+}
+
 /// Which version of the exe to download.
 #[derive(Debug, Clone)]
 pub enum EphemeralExeVersion {

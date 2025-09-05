@@ -1,9 +1,9 @@
 //! Test utilities for the core crate
 //! Only available when the test-utilities feature is enabled
 
-use std::{future::Future, time::Duration};
 use assert_matches::assert_matches;
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use futures_util::{StreamExt, stream::FuturesUnordered};
+use std::{future::Future, time::Duration};
 use temporal_sdk_core_api::{Worker as CoreWorker, errors::PollError};
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{WorkflowActivationJob, workflow_activation_job},

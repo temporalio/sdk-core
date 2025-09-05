@@ -1,15 +1,14 @@
-use crate::WorkerClient;
-use crate::abstractions::dbg_panic;
+use crate::{WorkerClient, abstractions::dbg_panic};
 use gethostname::gethostname;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
-use std::sync::{Arc, OnceLock};
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::{Arc, OnceLock},
+    time::{Duration, SystemTime},
+};
 use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
+use tokio::{sync::Notify, task::JoinHandle, time::MissedTickBehavior};
 use uuid::Uuid;
 
 pub(crate) type HeartbeatFn = Box<dyn Fn() -> Option<WorkerHeartbeat> + Send + Sync>;
@@ -169,12 +168,12 @@ impl WorkerHeartbeatData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::WorkerExt;
-    use crate::test_help::test_worker_cfg;
-    use crate::worker;
-    use crate::worker::client::mocks::mock_worker_client;
-    use std::sync::Arc;
-    use std::time::Duration;
+    use crate::{
+        test_help::{WorkerExt, test_worker_cfg},
+        worker,
+        worker::client::mocks::mock_worker_client,
+    };
+    use std::{sync::Arc, time::Duration};
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
 

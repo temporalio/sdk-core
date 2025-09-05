@@ -135,9 +135,11 @@ path = "../fsm"
 [dev-dependencies]
 assert_matches = "1.5"
 bimap = "0.6.3"
+bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.7", features = ["async", "async_tokio"] }
 rstest = "0.26"
+semver = "1.0"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio = { version = "1.47", features = [

@@ -1,6 +1,3 @@
-use prost::Message;
-use rand::RngCore;
-use std::{fs::File, io::Write, path::PathBuf};
 use crate::{
     TestHistoryBuilder,
     coresdk::common::NamespacedWorkflowExecution,
@@ -11,6 +8,9 @@ use crate::{
         history::v1::*,
     },
 };
+use prost::Message;
+use rand::RngCore;
+use std::{fs::File, io::Write, path::PathBuf};
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED

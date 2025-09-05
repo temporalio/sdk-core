@@ -1,28 +1,34 @@
-use crate::client::{
-    Client, ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
-    ClientTlsOptions, RpcCallOptions, temporal_core_client_connect, temporal_core_client_free,
-    temporal_core_client_rpc_call,
-};
-use crate::runtime::{
-    Runtime, RuntimeOptions, RuntimeOrFail, temporal_core_byte_array_free,
-    temporal_core_runtime_free, temporal_core_runtime_new,
-};
-use crate::testing::{
-    DevServerOptions, EphemeralServer, TestServerOptions, temporal_core_ephemeral_server_free,
-    temporal_core_ephemeral_server_shutdown, temporal_core_ephemeral_server_start_dev_server,
+use crate::{
+    client::{
+        Client, ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
+        ClientTlsOptions, RpcCallOptions, temporal_core_client_connect, temporal_core_client_free,
+        temporal_core_client_rpc_call,
+    },
+    runtime::{
+        Runtime, RuntimeOptions, RuntimeOrFail, temporal_core_byte_array_free,
+        temporal_core_runtime_free, temporal_core_runtime_new,
+    },
+    testing::{
+        DevServerOptions, EphemeralServer, TestServerOptions, temporal_core_ephemeral_server_free,
+        temporal_core_ephemeral_server_shutdown, temporal_core_ephemeral_server_start_dev_server,
+    },
 };
 
-use crate::tests::utils::{
-    MetadataMap, OwnedRpcCallOptions, RpcCallError, byte_array_to_string, byte_array_to_vec,
-    pointer_or_null,
+use crate::{
+    ByteArray, ByteArrayRef,
+    tests::utils::{
+        MetadataMap, OwnedRpcCallOptions, RpcCallError, byte_array_to_string, byte_array_to_vec,
+        pointer_or_null,
+    },
 };
-use crate::{ByteArray, ByteArrayRef};
 use anyhow::anyhow;
-use std::any::Any;
-use std::panic::{AssertUnwindSafe, UnwindSafe};
-use std::ptr::NonNull;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
-use std::time::Duration;
+use std::{
+    any::Any,
+    panic::{AssertUnwindSafe, UnwindSafe},
+    ptr::NonNull,
+    sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
+    time::Duration,
+};
 use temporal_client::ClientOptions;
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfig,

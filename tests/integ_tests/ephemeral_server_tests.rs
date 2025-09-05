@@ -1,11 +1,12 @@
+use crate::common::NAMESPACE;
 use futures_util::{TryStreamExt, stream};
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
+    default_cached_download,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
-use temporal_sdk_core_test_utils::{NAMESPACE, default_cached_download};
 use url::Url;
 
 #[tokio::test]

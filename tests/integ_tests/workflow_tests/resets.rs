@@ -1,4 +1,7 @@
-use crate::integ_tests::activity_functions::echo;
+use crate::{
+    common::{CoreWfStarter, NAMESPACE},
+    integ_tests::activity_functions::echo,
+};
 use futures_util::StreamExt;
 use std::{
     sync::{
@@ -15,7 +18,6 @@ use temporal_sdk_core_protos::{
         common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE};
 use tokio::sync::Notify;
 
 const POST_RESET_SIG: &str = "post-reset";

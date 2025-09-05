@@ -5,6 +5,8 @@
 pub mod constants;
 pub mod utilities;
 
+#[cfg(feature = "test-utilities")]
+pub mod canned_histories;
 #[cfg(feature = "history_builders")]
 mod history_builder;
 #[cfg(feature = "history_builders")]
@@ -12,8 +14,6 @@ mod history_info;
 mod task_token;
 #[cfg(feature = "test-utilities")]
 pub mod test_utils;
-#[cfg(feature = "test-utilities")]
-pub mod canned_histories;
 
 #[cfg(feature = "history_builders")]
 pub use history_builder::{

@@ -804,7 +804,7 @@ mod test {
     use crate::{
         internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, ResponseType, build_fake_sdk},
+        test_help::{ActivationAssertionsInterceptor, MockPollCfg, ResponseType, build_fake_sdk},
         worker::workflow::{OutgoingJob, machines::Machines},
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
@@ -813,7 +813,6 @@ mod test {
         DEFAULT_WORKFLOW_TYPE,
         coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     #[tokio::test]
     async fn immediate_activity_cancelation() {

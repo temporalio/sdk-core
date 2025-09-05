@@ -1,5 +1,8 @@
+mod common;
+
 use anyhow::{anyhow, bail};
 use clap::Parser;
+use common::{INTEG_SERVER_TARGET_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -7,12 +10,14 @@ use std::{
 };
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, TestServerConfigBuilder,
-};
-use temporal_sdk_core_test_utils::{
-    INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
-    INTEG_TEST_SERVER_USED_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, default_cached_download,
+    default_cached_download,
 };
 use tokio::{self, process::Command};
+
+/// This env var is set (to any value) if temporal CLI dev server is in use
+const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
+/// This env var is set (to any value) if the test server is in use
+const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]

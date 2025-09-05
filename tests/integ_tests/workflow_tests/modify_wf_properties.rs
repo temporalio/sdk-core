@@ -1,7 +1,7 @@
+use crate::common::CoreWfStarter;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
 static FIELD_A: &str = "cat_name";

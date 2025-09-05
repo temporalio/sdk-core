@@ -9,8 +9,8 @@ use temporal_client::WorkflowClientTrait;
 use tokio::{join, sync::Notify};
 use tokio_stream::StreamExt;
 
+use crate::common::CoreWfStarter;
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 

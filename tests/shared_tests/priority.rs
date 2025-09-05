@@ -1,3 +1,4 @@
+use crate::common::CoreWfStarter;
 use std::time::Duration;
 use temporal_client::{
     GetWorkflowResultOpts, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
@@ -7,7 +8,6 @@ use temporal_sdk_core_protos::{
     coresdk::AsJsonPayloadExt,
     temporal::api::{common, history::v1::history_event::Attributes},
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =

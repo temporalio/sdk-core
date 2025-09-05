@@ -4,6 +4,7 @@ use crate::{
         MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, build_fake_worker,
         build_mock_pollers, mock_worker, test_worker_cfg,
     },
+    test_utils::WorkerTestHelpers,
     worker::{
         self,
         client::{
@@ -17,7 +18,6 @@ use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
     canned_histories,
-    test_utils::start_timer_cmd,
     coresdk::{
         workflow_activation::workflow_activation_job,
         workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
@@ -26,8 +26,8 @@ use temporal_sdk_core_protos::{
     temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
+    test_utils::start_timer_cmd,
 };
-use crate::test_utils::WorkerTestHelpers;
 use tokio::sync::{Barrier, watch};
 
 #[tokio::test]

@@ -1,8 +1,8 @@
+use crate::common::CoreWfStarter;
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
-use temporal_sdk_core_test_utils::CoreWfStarter;
 
 async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
     let mut reason = "".to_string();

@@ -299,7 +299,7 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, build_fake_sdk},
+        test_help::{ActivationAssertionsInterceptor, MockPollCfg, build_fake_sdk},
     };
     use std::mem::discriminant;
     use temporal_sdk::{CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowResult};
@@ -308,7 +308,6 @@ mod tests {
         coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         temporal::api::command::v1::Command,
     };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     const SIGNAME: &str = "signame";
 
@@ -348,7 +347,7 @@ mod tests {
                         command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs)),..}] => {
                         assert_eq!(attrs.signal_name, SIGNAME);
                         assert_eq!(attrs.input.as_ref().unwrap().payloads[0], b"hi!".into());
-                        assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(), 
+                        assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(),
                                    b"shakur".into());
                     }
                 );

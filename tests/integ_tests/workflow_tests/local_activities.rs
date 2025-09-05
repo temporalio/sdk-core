@@ -1,4 +1,10 @@
-use crate::integ_tests::activity_functions::echo;
+use crate::{
+    common::{
+        CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, init_core_replay_preloaded,
+        replay_sdk_worker, workflows::la_problem_workflow,
+    },
+    integ_tests::activity_functions::echo,
+};
 use anyhow::anyhow;
 use futures_util::future::join_all;
 use rstest::Context;
@@ -17,23 +23,20 @@ use temporal_sdk::{
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
-    TestHistoryBuilder, prost_dur,
+    TestHistoryBuilder,
     coresdk::{
         AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
         workflow_commands::{ActivityCancellationType, workflow_command::Variant},
         workflow_completion,
         workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
+    prost_dur,
     temporal::api::{
         common::v1::RetryPolicy,
         enums::v1::{TimeoutType, UpdateWorkflowExecutionLifecycleStage},
         history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
         update::v1::WaitPolicy,
     },
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, init_core_replay_preloaded,
-    replay_sdk_worker, workflows::la_problem_workflow,
 };
 use tokio_util::sync::CancellationToken;
 
