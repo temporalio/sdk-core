@@ -240,7 +240,7 @@ pub extern "C" fn temporal_core_client_update_metadata(
     metadata: ByteArrayRef,
 ) {
     let client = unsafe { &*client };
-    client
+    let _result = client
         .core
         .get_client()
         .set_headers(metadata.to_string_map_on_newlines());
