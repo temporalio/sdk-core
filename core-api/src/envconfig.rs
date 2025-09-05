@@ -138,9 +138,9 @@ pub struct ClientConfigProfile {
 /// ClientConfigTLS is TLS configuration for a client.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClientConfigTLS {
-    /// If true, TLS is explicitly disabled. If false/unset, whether TLS is enabled or not depends on other factors such
-    /// as whether this struct is present or None, and whether API key exists (which enables TLS by default).
-    pub disabled: bool,
+    /// If Some(true), TLS is explicitly disabled. If Some(false), TLS is explicitly enabled.
+    /// If None, TLS behavior depends on other factors (API key presence, etc.)
+    pub disabled: Option<bool>,
 
     /// Client certificate source.
     pub client_cert: Option<DataSource>,
@@ -446,7 +446,7 @@ impl ClientConfigProfile {
             if let Some(disabled_str) = env_provider.get("TEMPORAL_TLS")?
                 && let Some(disabled) = env_var_to_bool(&disabled_str)
             {
-                tls.disabled = !disabled;
+                tls.disabled = Some(!disabled);
             }
 
             apply_data_source_env_var(
@@ -729,8 +729,8 @@ impl TomlClientConfigProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct TomlClientConfigTLS {
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    disabled: Option<bool>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     client_cert_path: Option<String>,
@@ -760,7 +760,7 @@ struct TomlClientConfigTLS {
 impl TomlClientConfigTLS {
     fn new() -> Self {
         Self {
-            disabled: false,
+            disabled: None,
             client_cert_path: None,
             client_cert_data: None,
             client_key_path: None,
@@ -951,7 +951,7 @@ mod strict {
     #[serde(deny_unknown_fields)]
     struct StrictTomlClientConfigTLS {
         #[serde(default)]
-        disabled: bool,
+        disabled: Option<bool>,
         #[serde(default)]
         client_cert_path: Option<String>,
         #[serde(default)]
@@ -1068,7 +1068,7 @@ namespace = "production"
         assert_eq!(default_profile.api_key.as_ref().unwrap(), "test-key");
 
         let tls = default_profile.tls.as_ref().unwrap();
-        assert!(!tls.disabled);
+        assert_eq!(tls.disabled, Some(false)); // Explicitly set to false
         assert_eq!(
             tls.client_cert,
             Some(DataSource::Path("/path/to/cert".to_string()))
@@ -1244,7 +1244,7 @@ some-other-header = "some-value2"
         assert_eq!(profile.api_key.as_ref().unwrap(), "my-api-key-new");
 
         let tls = profile.tls.as_ref().unwrap();
-        assert!(!tls.disabled); // TLS enabled via env var
+        assert_eq!(tls.disabled, Some(false)); // TLS enabled via env var
         assert_eq!(
             tls.client_cert,
             Some(DataSource::Path("my-client-cert-path-new".to_string()))
@@ -1313,7 +1313,7 @@ sOme-hEader_key = "some-value"
         assert_eq!(codec.auth.as_ref().unwrap(), "my-auth");
 
         let tls = profile.tls.as_ref().unwrap();
-        assert!(tls.disabled);
+        assert_eq!(tls.disabled, Some(true)); // Explicitly disabled
         assert_eq!(
             tls.client_cert,
             Some(DataSource::Path("my-client-cert-path".to_string()))
@@ -1361,7 +1361,7 @@ api_key = "my-api-key"
         assert!(profile.tls.is_some());
 
         let tls = profile.tls.as_ref().unwrap();
-        assert!(!tls.disabled); // default value
+        assert_eq!(tls.disabled, None); // Not explicitly set // default value
         assert!(tls.client_cert.is_none());
     }
 
@@ -1600,7 +1600,7 @@ api_key = "my-api-key"
         // TLS should be enabled due to API key presence
         assert!(profile.tls.is_some());
         let tls = profile.tls.as_ref().unwrap();
-        assert!(!tls.disabled);
+        assert_eq!(tls.disabled, None); // Not explicitly set
     }
 
     #[test]
@@ -1645,5 +1645,77 @@ address = "some-address"
             std::env::remove_var("TEMPORAL_ADDRESS");
             std::env::remove_var("TEMPORAL_NAMESPACE");
         }
+    }
+
+    #[test]
+    fn test_tls_disabled_tri_state_behavior() {
+        // Test 1: disabled = None (unset) - should not appear in TOML
+        let tls_unset = ClientConfigTLS {
+            disabled: None,
+            ..Default::default()
+        };
+        let profile_unset = ClientConfigProfile {
+            address: Some("localhost:7233".to_string()),
+            tls: Some(tls_unset),
+            ..Default::default()
+        };
+        let mut config_unset = ClientConfig::default();
+        config_unset.profiles.insert("test".to_string(), profile_unset);
+        
+        let toml_unset = config_unset.to_toml().unwrap();
+        let toml_str_unset = String::from_utf8(toml_unset).unwrap();
+        
+        // Unset disabled should not appear in TOML output
+        assert!(!toml_str_unset.contains("disabled"));
+        
+        // Round-trip test - should remain None
+        let parsed_unset = ClientConfig::from_toml(&toml_str_unset.as_bytes(), Default::default()).unwrap();
+        assert_eq!(parsed_unset.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, None);
+
+        // Test 2: disabled = Some(false) (explicitly enabled) - should appear in TOML as false
+        let tls_enabled = ClientConfigTLS {
+            disabled: Some(false),
+            ..Default::default()
+        };
+        let profile_enabled = ClientConfigProfile {
+            address: Some("localhost:7233".to_string()),
+            tls: Some(tls_enabled),
+            ..Default::default()
+        };
+        let mut config_enabled = ClientConfig::default();
+        config_enabled.profiles.insert("test".to_string(), profile_enabled);
+        
+        let toml_enabled = config_enabled.to_toml().unwrap();
+        let toml_str_enabled = String::from_utf8(toml_enabled).unwrap();
+        
+        // Explicitly disabled=false should appear in TOML
+        assert!(toml_str_enabled.contains("disabled = false"));
+        
+        // Round-trip test - should remain Some(false)
+        let parsed_enabled = ClientConfig::from_toml(&toml_str_enabled.as_bytes(), Default::default()).unwrap();
+        assert_eq!(parsed_enabled.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, Some(false));
+
+        // Test 3: disabled = Some(true) (explicitly disabled) - should appear in TOML as true
+        let tls_disabled = ClientConfigTLS {
+            disabled: Some(true),
+            ..Default::default()
+        };
+        let profile_disabled = ClientConfigProfile {
+            address: Some("localhost:7233".to_string()),
+            tls: Some(tls_disabled),
+            ..Default::default()
+        };
+        let mut config_disabled = ClientConfig::default();
+        config_disabled.profiles.insert("test".to_string(), profile_disabled);
+        
+        let toml_disabled = config_disabled.to_toml().unwrap();
+        let toml_str_disabled = String::from_utf8(toml_disabled).unwrap();
+        
+        // Explicitly disabled=true should appear in TOML
+        assert!(toml_str_disabled.contains("disabled = true"));
+        
+        // Round-trip test - should remain Some(true)
+        let parsed_disabled = ClientConfig::from_toml(&toml_str_disabled.as_bytes(), Default::default()).unwrap();
+        assert_eq!(parsed_disabled.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, Some(true));
     }
 }
