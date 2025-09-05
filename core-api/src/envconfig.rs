@@ -1660,17 +1660,30 @@ address = "some-address"
             ..Default::default()
         };
         let mut config_unset = ClientConfig::default();
-        config_unset.profiles.insert("test".to_string(), profile_unset);
-        
+        config_unset
+            .profiles
+            .insert("test".to_string(), profile_unset);
+
         let toml_unset = config_unset.to_toml().unwrap();
         let toml_str_unset = String::from_utf8(toml_unset).unwrap();
-        
+
         // Unset disabled should not appear in TOML output
         assert!(!toml_str_unset.contains("disabled"));
-        
+
         // Round-trip test - should remain None
-        let parsed_unset = ClientConfig::from_toml(&toml_str_unset.as_bytes(), Default::default()).unwrap();
-        assert_eq!(parsed_unset.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, None);
+        let parsed_unset =
+            ClientConfig::from_toml(&toml_str_unset.as_bytes(), Default::default()).unwrap();
+        assert_eq!(
+            parsed_unset
+                .profiles
+                .get("test")
+                .unwrap()
+                .tls
+                .as_ref()
+                .unwrap()
+                .disabled,
+            None
+        );
 
         // Test 2: disabled = Some(false) (explicitly enabled) - should appear in TOML as false
         let tls_enabled = ClientConfigTLS {
@@ -1683,17 +1696,30 @@ address = "some-address"
             ..Default::default()
         };
         let mut config_enabled = ClientConfig::default();
-        config_enabled.profiles.insert("test".to_string(), profile_enabled);
-        
+        config_enabled
+            .profiles
+            .insert("test".to_string(), profile_enabled);
+
         let toml_enabled = config_enabled.to_toml().unwrap();
         let toml_str_enabled = String::from_utf8(toml_enabled).unwrap();
-        
+
         // Explicitly disabled=false should appear in TOML
         assert!(toml_str_enabled.contains("disabled = false"));
-        
+
         // Round-trip test - should remain Some(false)
-        let parsed_enabled = ClientConfig::from_toml(&toml_str_enabled.as_bytes(), Default::default()).unwrap();
-        assert_eq!(parsed_enabled.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, Some(false));
+        let parsed_enabled =
+            ClientConfig::from_toml(&toml_str_enabled.as_bytes(), Default::default()).unwrap();
+        assert_eq!(
+            parsed_enabled
+                .profiles
+                .get("test")
+                .unwrap()
+                .tls
+                .as_ref()
+                .unwrap()
+                .disabled,
+            Some(false)
+        );
 
         // Test 3: disabled = Some(true) (explicitly disabled) - should appear in TOML as true
         let tls_disabled = ClientConfigTLS {
@@ -1706,16 +1732,29 @@ address = "some-address"
             ..Default::default()
         };
         let mut config_disabled = ClientConfig::default();
-        config_disabled.profiles.insert("test".to_string(), profile_disabled);
-        
+        config_disabled
+            .profiles
+            .insert("test".to_string(), profile_disabled);
+
         let toml_disabled = config_disabled.to_toml().unwrap();
         let toml_str_disabled = String::from_utf8(toml_disabled).unwrap();
-        
+
         // Explicitly disabled=true should appear in TOML
         assert!(toml_str_disabled.contains("disabled = true"));
-        
+
         // Round-trip test - should remain Some(true)
-        let parsed_disabled = ClientConfig::from_toml(&toml_str_disabled.as_bytes(), Default::default()).unwrap();
-        assert_eq!(parsed_disabled.profiles.get("test").unwrap().tls.as_ref().unwrap().disabled, Some(true));
+        let parsed_disabled =
+            ClientConfig::from_toml(&toml_str_disabled.as_bytes(), Default::default()).unwrap();
+        assert_eq!(
+            parsed_disabled
+                .profiles
+                .get("test")
+                .unwrap()
+                .tls
+                .as_ref()
+                .unwrap()
+                .disabled,
+            Some(true)
+        );
     }
 }
