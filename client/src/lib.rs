@@ -150,9 +150,9 @@ pub struct ClientOptions {
 
     /// HTTP headers to include on every RPC call.
     ///
-    /// These must be valid gRPC metadata keys, and must not end with a `-bin` suffix (to set binary
-    /// headers, see [ClientOptions::binary_headers]). Invalid header keys will cause an error to be
-    /// returned when connecting.
+    /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
+    /// `-bin). To set binary headers, use [ClientOptions::binary_headers]. Invalid header keys or
+    /// values will cause an error to be returned when connecting.
     #[builder(default)]
     pub headers: Option<HashMap<String, String>>,
 
