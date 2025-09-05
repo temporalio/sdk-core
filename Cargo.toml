@@ -1,5 +1,13 @@
 [workspace]
-members = ["core", "client", "core-api", "fsm", "test-utils", "sdk-core-protos", "sdk", "core-c-bridge"]
+members = [
+    "core",
+    "client",
+    "core-api",
+    "fsm",
+    "sdk-core-protos",
+    "sdk",
+    "core-c-bridge",
+]
 resolver = "2"
 
 [workspace.package]
@@ -8,7 +16,14 @@ license-file = "LICENSE.txt"
 
 [workspace.dependencies]
 derive_builder = "0.20"
-derive_more = { version = "2.0", features = ["constructor", "display", "from", "into", "debug", "try_into"] }
+derive_more = { version = "2.0", features = [
+    "constructor",
+    "display",
+    "from",
+    "into",
+    "debug",
+    "try_into",
+] }
 thiserror = "2"
 tonic = "0.13"
 tonic-build = "0.13"

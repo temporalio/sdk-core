@@ -1,8 +1,4 @@
-# Test Utils Crate Refactoring Analysis
 
-This document provides a comprehensive inventory of all public exports from the `temporal-sdk-core-test-utils` crate and their usage patterns across the codebase.
-
-## Overview
 
 The `test-utils` crate creates a circular dependency issue with `core`:
 - `core` dev-depends on `test-utils`

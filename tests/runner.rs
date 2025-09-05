@@ -63,10 +63,15 @@ async fn main() -> Result<(), anyhow::Error> {
     } = Cli::parse();
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     // Try building first, so that we error early on build failures & don't start server
+    // Unclear why --all-features doesn't work here
     let test_args_preamble = [
         "test",
         "--features",
         "temporal-sdk-core-protos/serde_serialize",
+        "--features",
+        "test-utilities",
+        "--features",
+        "ephemeral-server",
         "--test",
         &test_name,
     ]

@@ -3,10 +3,15 @@
 CLI_VERSION_OVERRIDE = "v1.4.1-cloud-v1-29-0-139-2.0"
 
 [alias]
+# Not sure why --all-features doesn't work
 integ-test = [
     "test",
     "--features",
     "temporal-sdk-core-protos/serde_serialize",
+    "--features",
+    "test-utilities",
+    "--features",
+    "ephemeral-server",
     "--package",
     "temporal-sdk-core",
     "--test",

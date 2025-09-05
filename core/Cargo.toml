@@ -140,7 +140,6 @@ clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.7", features = ["async", "async_tokio"] }
 rstest = "0.26"
 semver = "1.0"
-temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio = { version = "1.47", features = [
     "rt",
@@ -159,7 +158,11 @@ path = "../tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
 test = false
-required-features = ["temporal-sdk-core-protos/serde_serialize"]
+required-features = [
+    "temporal-sdk-core-protos/serde_serialize",
+    "test-utilities",
+    "ephemeral-server",
+]
 
 [[test]]
 name = "heavy_tests"
@@ -194,7 +197,12 @@ name = "integ_runner"
 path = "../tests/runner.rs"
 harness = false
 test = false
-required-features = ["temporal-sdk-core-protos/serde_serialize"]
+required-features = [
+    "temporal-sdk-core-protos/serde_serialize",
+    "test-utilities",
+    "ephemeral-server",
+]
+
 
 [lints]
 workspace = true
