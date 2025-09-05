@@ -13,8 +13,9 @@ use temporal_sdk_core_protos::{
     test_utils::start_timer_cmd,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
+    CoreWfStarter, init_core_and_create_wf,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::join;
 
 #[tokio::test]

@@ -206,7 +206,7 @@ mod tests {
             history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
     };
-    use temporal_sdk_core_test_utils::WorkerTestHelpers;
+    use crate::test_utils::WorkerTestHelpers;
 
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {

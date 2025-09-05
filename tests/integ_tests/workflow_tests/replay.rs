@@ -15,9 +15,10 @@ use temporal_sdk_core_protos::{
     temporal::api::enums::v1::EventType,
 };
 use temporal_sdk_core_test_utils::{
-    WorkerTestHelpers, history_from_proto_binary, init_core_replay_preloaded,
+    history_from_proto_binary, init_core_replay_preloaded,
     replay_sdk_worker, replay_sdk_worker_stream,
 };
+use temporal_sdk_core::test_utils::WorkerTestHelpers;
 use tokio::join;
 
 fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {

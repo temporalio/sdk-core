@@ -20,9 +20,10 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, default_cached_download, drain_pollers_and_shutdown,
+    CoreWfStarter, default_cached_download,
     init_core_and_create_wf, init_integ_telem, integ_worker_config,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::timeout;
 use tracing::info;
 use url::Url;

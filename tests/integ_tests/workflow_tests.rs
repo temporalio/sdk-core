@@ -53,9 +53,10 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, history_from_proto_binary,
+    CoreWfStarter, history_from_proto_binary,
     init_core_and_create_wf, init_core_replay_preloaded, prom_metrics,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::{join, sync::Notify, time::sleep};
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end

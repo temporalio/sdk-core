@@ -10,11 +10,11 @@ pub mod workflows;
 
 pub use http_proxy::HttpProxy;
 pub use temporal_sdk_core::replay::HistoryForReplay;
+pub use temporal_sdk_core::test_utils::NAMESPACE;
 
 use crate::stream::{Stream, TryStreamExt};
 use anyhow::{Context, Error, bail};
-use assert_matches::assert_matches;
-use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
+use futures_util::{StreamExt, future, stream};
 use parking_lot::Mutex;
 use prost::Message;
 use rand::Rng;
@@ -22,7 +22,6 @@ use std::{
     cell::Cell,
     convert::TryFrom,
     env,
-    future::Future,
     net::SocketAddr,
     path::PathBuf,
     str::FromStr,
@@ -51,7 +50,6 @@ use temporal_sdk_core::{
 };
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
-    errors::PollError,
     telemetry::{
         Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
@@ -62,8 +60,7 @@ use temporal_sdk_core_api::{
 use temporal_sdk_core_protos::{
     coresdk::{
         FromPayloadsExt,
-        workflow_activation::{WorkflowActivation, WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{CompleteWorkflowExecution, StartTimer},
+        workflow_activation::WorkflowActivation,
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
@@ -75,8 +72,6 @@ use temporal_sdk_core_protos::{
 use tokio::{sync::OnceCell, task::AbortHandle};
 use url::Url;
 
-pub const NAMESPACE: &str = "default";
-pub const TEST_Q: &str = "q";
 /// The env var used to specify where the integ tests should point
 pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -835,75 +830,7 @@ pub fn default_cached_download() -> EphemeralExe {
 }
 
 
-/// Given a desired number of concurrent executions and a provided function that produces a future,
-/// run that many instances of the future concurrently.
-///
-/// Annoyingly, because of a sorta-bug in the way async blocks work, the async block produced by
-/// the closure must be `async move` if it uses the provided iteration number. On the plus side,
-/// since you're usually just accessing core in the closure, if core is a reference everything just
-/// works. See <https://github.com/rust-lang/rust/issues/81653>
-pub async fn fanout_tasks<FutureMaker, Fut>(num: usize, fm: FutureMaker)
-where
-    FutureMaker: Fn(usize) -> Fut,
-    Fut: Future,
-{
-    let mut tasks = FuturesUnordered::new();
-    for i in 0..num {
-        tasks.push(fm(i));
-    }
 
-    while tasks.next().await.is_some() {}
-}
-
-#[async_trait::async_trait]
-pub trait WorkerTestHelpers {
-    async fn complete_execution(&self, run_id: &str);
-    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration);
-    async fn handle_eviction(&self);
-}
-
-#[async_trait::async_trait]
-impl<T> WorkerTestHelpers for T
-where
-    T: CoreWorker + ?Sized,
-{
-    async fn complete_execution(&self, run_id: &str) {
-        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            run_id.to_string(),
-            vec![CompleteWorkflowExecution { result: None }.into()],
-        ))
-        .await
-        .unwrap();
-    }
-
-    async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration) {
-        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            run_id.to_string(),
-            vec![
-                StartTimer {
-                    seq,
-                    start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-                }
-                .into(),
-            ],
-        ))
-        .await
-        .unwrap();
-    }
-
-    async fn handle_eviction(&self) {
-        let task = self.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }]
-        );
-        self.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
-    }
-}
 
 #[async_trait::async_trait(?Send)]
 pub trait WorkflowHandleExt {
@@ -943,35 +870,6 @@ where
     }
 }
 
-/// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
-pub async fn drain_pollers_and_shutdown(worker: &dyn CoreWorker) {
-    worker.initiate_shutdown();
-    tokio::join!(
-        async {
-            assert_matches!(
-                worker.poll_activity_task().await.unwrap_err(),
-                PollError::ShutDown
-            );
-        },
-        async {
-            loop {
-                match worker.poll_workflow_activation().await {
-                    Err(PollError::ShutDown) => break,
-                    Ok(a) if a.is_only_eviction() => {
-                        worker
-                            .complete_workflow_activation(WorkflowActivationCompletion::empty(
-                                a.run_id,
-                            ))
-                            .await
-                            .unwrap();
-                    }
-                    o => panic!("Unexpected activation while draining: {o:?}"),
-                }
-            }
-        }
-    );
-    worker.shutdown().await;
-}
 
 pub fn rand_6_chars() -> String {
     rand::rng()

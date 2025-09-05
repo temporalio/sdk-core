@@ -27,8 +27,9 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, drain_pollers_and_shutdown, get_integ_server_options, get_integ_telem_options,
+    CoreWfStarter, get_integ_server_options, get_integ_telem_options,
 };
+use temporal_sdk_core::test_utils::drain_pollers_and_shutdown;
 use tokio::sync::Notify;
 use uuid::Uuid;
 

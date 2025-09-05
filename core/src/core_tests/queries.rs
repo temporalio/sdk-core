@@ -39,7 +39,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::WorkerTestHelpers;
+use crate::test_utils::WorkerTestHelpers;
 
 #[rstest::rstest]
 #[case::with_history(true)]

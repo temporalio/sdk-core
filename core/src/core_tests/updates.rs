@@ -24,7 +24,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
 };
-use temporal_sdk_core_test_utils::WorkerTestHelpers;
+use crate::test_utils::WorkerTestHelpers;
 
 #[tokio::test]
 async fn replay_with_empty_first_task() {

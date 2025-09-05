@@ -57,6 +57,7 @@ use temporal_sdk_core_protos::{
     },
     utilities::pack_any,
 };
+use crate::test_utils::drain_pollers_and_shutdown;
 use temporal_sdk_core_test_utils::{NAMESPACE, TestWorker};
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -1065,7 +1066,7 @@ pub(crate) trait WorkerExt {
 #[async_trait]
 impl WorkerExt for Worker {
     async fn drain_pollers_and_shutdown(self) {
-        temporal_sdk_core_test_utils::drain_pollers_and_shutdown(&self).await;
+        drain_pollers_and_shutdown(&self).await;
         self.finalize_shutdown().await;
     }
 

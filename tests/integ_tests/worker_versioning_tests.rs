@@ -18,7 +18,8 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, WorkerTestHelpers, eventually};
+use temporal_sdk_core_test_utils::{CoreWfStarter, eventually};
+use temporal_sdk_core::test_utils::WorkerTestHelpers;
 use tokio::join;
 
 #[rstest::rstest]

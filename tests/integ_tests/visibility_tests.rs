@@ -8,9 +8,10 @@ use temporal_sdk_core_protos::coresdk::workflow_activation::{
     WorkflowActivationJob, workflow_activation_job,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown, eventually,
+    CoreWfStarter, NAMESPACE, eventually,
     get_integ_server_options,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
 #[tokio::test]

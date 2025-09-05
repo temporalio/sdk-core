@@ -27,7 +27,7 @@ use temporal_sdk_core_protos::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
 };
-use temporal_sdk_core_test_utils::WorkerTestHelpers;
+use crate::test_utils::WorkerTestHelpers;
 use tokio::sync::{Barrier, watch};
 
 #[tokio::test]

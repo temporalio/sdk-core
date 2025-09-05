@@ -36,9 +36,10 @@ use temporal_sdk_core_protos::{
     test_utils::start_timer_cmd,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt, drain_pollers_and_shutdown,
+    CoreWfStarter, WorkflowHandleExt,
     init_core_and_create_wf, init_core_replay_preloaded,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;
 

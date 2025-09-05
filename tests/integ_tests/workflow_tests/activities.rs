@@ -37,8 +37,9 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
+    CoreWfStarter, init_core_and_create_wf,
 };
+use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::{join, sync::Semaphore, time::sleep};
 
 pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {

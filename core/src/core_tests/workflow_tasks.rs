@@ -72,7 +72,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_protos::test_utils::start_timer_cmd;
-use temporal_sdk_core_test_utils::{WorkerTestHelpers, fanout_tasks};
+use crate::test_utils::{WorkerTestHelpers, fanout_tasks};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
