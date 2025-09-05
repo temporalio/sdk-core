@@ -1672,7 +1672,7 @@ address = "some-address"
 
         // Round-trip test - should remain None
         let parsed_unset =
-            ClientConfig::from_toml(&toml_str_unset.as_bytes(), Default::default()).unwrap();
+            ClientConfig::from_toml(toml_str_unset.as_bytes(), Default::default()).unwrap();
         assert_eq!(
             parsed_unset
                 .profiles
@@ -1708,7 +1708,7 @@ address = "some-address"
 
         // Round-trip test - should remain Some(false)
         let parsed_enabled =
-            ClientConfig::from_toml(&toml_str_enabled.as_bytes(), Default::default()).unwrap();
+            ClientConfig::from_toml(toml_str_enabled.as_bytes(), Default::default()).unwrap();
         assert_eq!(
             parsed_enabled
                 .profiles
@@ -1744,7 +1744,7 @@ address = "some-address"
 
         // Round-trip test - should remain Some(true)
         let parsed_disabled =
-            ClientConfig::from_toml(&toml_str_disabled.as_bytes(), Default::default()).unwrap();
+            ClientConfig::from_toml(toml_str_disabled.as_bytes(), Default::default()).unwrap();
         assert_eq!(
             parsed_disabled
                 .profiles
