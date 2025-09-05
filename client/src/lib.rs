@@ -156,8 +156,7 @@ pub struct ClientOptions {
     #[builder(default)]
     pub headers: Option<HashMap<String, String>>,
 
-    /// HTTP headers to include on every RPC call as binary gRPC metadata (typically encoded as
-    /// base64).
+    /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
     ///
     /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix). Invalid
     /// header keys will cause an error to be returned when connecting.
