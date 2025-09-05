@@ -13,6 +13,7 @@ mod metrics;
 #[doc(hidden)]
 pub mod proxy;
 mod raw;
+mod replaceable;
 mod retry;
 mod worker_registry;
 mod workflow_handle;
@@ -23,6 +24,7 @@ pub use crate::{
 };
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
+pub use replaceable::SharedReplaceableClient;
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
@@ -904,12 +906,12 @@ impl Client {
 }
 
 impl NamespacedClient for Client {
-    fn namespace(&self) -> &str {
-        &self.namespace
+    fn namespace(&self) -> String {
+        self.namespace.clone()
     }
 
-    fn get_identity(&self) -> &str {
-        &self.inner.options.identity
+    fn identity(&self) -> String {
+        self.inner.options.identity.clone()
     }
 }
 
@@ -1232,9 +1234,9 @@ pub trait WorkflowClientTrait: NamespacedClient {
 /// A client that is bound to a namespace
 pub trait NamespacedClient {
     /// Returns the namespace this client is bound to
-    fn namespace(&self) -> &str;
+    fn namespace(&self) -> String;
     /// Returns the client identity
-    fn get_identity(&self) -> &str;
+    fn identity(&self) -> String;
 }
 
 /// Optional fields supplied at the start of workflow execution
@@ -1396,7 +1398,7 @@ where
         Ok(self
             .clone()
             .start_workflow_execution(StartWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 input: input.into_payloads(),
                 workflow_id,
                 workflow_type: Some(WorkflowType {
@@ -1434,7 +1436,7 @@ where
         run_id: String,
     ) -> Result<ResetStickyTaskQueueResponse> {
         let request = ResetStickyTaskQueueRequest {
-            namespace: self.namespace().to_owned(),
+            namespace: self.namespace(),
             execution: Some(WorkflowExecution {
                 workflow_id,
                 run_id,
@@ -1456,8 +1458,8 @@ where
             RespondActivityTaskCompletedRequest {
                 task_token: task_token.0,
                 result,
-                identity: self.get_identity().to_owned(),
-                namespace: self.namespace().to_owned(),
+                identity: self.identity(),
+                namespace: self.namespace(),
                 ..Default::default()
             },
         )
@@ -1474,8 +1476,8 @@ where
             RecordActivityTaskHeartbeatRequest {
                 task_token: task_token.0,
                 details,
-                identity: self.get_identity().to_owned(),
-                namespace: self.namespace().to_owned(),
+                identity: self.identity(),
+                namespace: self.namespace(),
             },
         )
         .await?
@@ -1491,8 +1493,8 @@ where
             RespondActivityTaskCanceledRequest {
                 task_token: task_token.0,
                 details,
-                identity: self.get_identity().to_owned(),
-                namespace: self.namespace().to_owned(),
+                identity: self.identity(),
+                namespace: self.namespace(),
                 ..Default::default()
             },
         )
@@ -1510,14 +1512,14 @@ where
     ) -> Result<SignalWorkflowExecutionResponse> {
         Ok(WorkflowService::signal_workflow_execution(&mut self.clone(),
             SignalWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id,
                 }),
                 signal_name,
                 input: payloads,
-                identity: self.get_identity().to_owned(),
+                identity: self.identity(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 ..Default::default()
             },
@@ -1533,7 +1535,7 @@ where
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         Ok(WorkflowService::signal_with_start_workflow_execution(&mut self.clone(),
             SignalWithStartWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 workflow_id: options.workflow_id,
                 workflow_type: Some(WorkflowType {
                     name: options.workflow_type,
@@ -1546,7 +1548,7 @@ where
                 input: options.input,
                 signal_name: options.signal_name,
                 signal_input: options.signal_input,
-                identity: self.get_identity().to_owned(),
+                identity: self.identity(),
                 request_id: options
                     .request_id
                     .unwrap_or_else(|| Uuid::new_v4().to_string()),
@@ -1577,7 +1579,7 @@ where
     ) -> Result<QueryWorkflowResponse> {
         Ok(self.clone().query_workflow(
             QueryWorkflowRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id,
@@ -1597,7 +1599,7 @@ where
     ) -> Result<DescribeWorkflowExecutionResponse> {
         Ok(WorkflowService::describe_workflow_execution(&mut self.clone(),
             DescribeWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -1616,7 +1618,7 @@ where
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
         Ok(WorkflowService::get_workflow_execution_history(&mut self.clone(),
             GetWorkflowExecutionHistoryRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
@@ -1638,12 +1640,12 @@ where
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         Ok(self.clone().request_cancel_workflow_execution(
             RequestCancelWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
-                identity: self.get_identity().to_owned(),
+                identity: self.identity(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 first_execution_run_id: "".to_string(),
                 reason,
@@ -1661,14 +1663,14 @@ where
     ) -> Result<TerminateWorkflowExecutionResponse> {
         Ok(WorkflowService::terminate_workflow_execution(&mut self.clone(),
             TerminateWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
                 reason: "".to_string(),
                 details: None,
-                identity: self.get_identity().to_owned(),
+                identity: self.identity(),
                 first_execution_run_id: "".to_string(),
                 links: vec![],
             },
@@ -1714,7 +1716,7 @@ where
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_open_workflow_executions(&mut self.clone(),
             ListOpenWorkflowExecutionsRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
@@ -1734,7 +1736,7 @@ where
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_closed_workflow_executions(&mut self.clone(),
             ListClosedWorkflowExecutionsRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
@@ -1753,7 +1755,7 @@ where
     ) -> Result<ListWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_workflow_executions(&mut self.clone(),
             ListWorkflowExecutionsRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 page_size,
                 next_page_token,
                 query,
@@ -1771,7 +1773,7 @@ where
     ) -> Result<ListArchivedWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_archived_workflow_executions(&mut self.clone(),
             ListArchivedWorkflowExecutionsRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 page_size,
                 next_page_token,
                 query,
@@ -1799,7 +1801,7 @@ where
     ) -> Result<UpdateWorkflowExecutionResponse> {
         Ok(WorkflowService::update_workflow_execution(&mut self.clone(),
             UpdateWorkflowExecutionRequest {
-                namespace: self.namespace().to_owned(),
+                namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id,
@@ -1808,7 +1810,7 @@ where
                 request: Some(update::v1::Request {
                     meta: Some(update::v1::Meta {
                         update_id: "".into(),
-                        identity: self.get_identity().to_owned(),
+                        identity: self.identity(),
                     }),
                     input: Some(update::v1::Input {
                         header: None,
@@ -1851,7 +1853,7 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
         UntypedWorkflowHandle::new(
             self.clone(),
             WorkflowExecutionInfo {
-                namespace: self.namespace().to_string(),
+                namespace: self.namespace(),
                 workflow_id: workflow_id.into(),
                 run_id: if rid.is_empty() { None } else { Some(rid) },
             },

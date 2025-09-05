@@ -76,7 +76,7 @@ mod integ_tests {
                     description: None,
                     target: Some(EndpointTarget {
                         variant: Some(endpoint_target::Variant::Worker(endpoint_target::Worker {
-                            namespace: client.namespace().to_owned(),
+                            namespace: client.namespace(),
                             task_queue: starter.get_task_queue().to_owned(),
                         })),
                     }),
