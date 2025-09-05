@@ -338,7 +338,7 @@ pub enum ClientInitError {
     #[error("Invalid URI: {0:?}")]
     InvalidUri(#[from] InvalidUri),
     /// Invalid gRPC metadata headers. Configuration error.
-    #[error("Invalid headers: {0:?}")]
+    #[error("Invalid headers: {0}")]
     InvalidHeaders(#[from] InvalidHeaderError),
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
