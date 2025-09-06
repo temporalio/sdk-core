@@ -1,12 +1,26 @@
-use std::collections::HashMap;
-
-use crate::common::CoreWfStarter;
+use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use futures_util::StreamExt;
+use std::collections::HashMap;
 use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
-    ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
+    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
+    WorkflowResult,
 };
-use temporal_sdk_core_protos::{coresdk::IntoPayloadsExt, temporal::api::common::v1::Payload};
+use temporal_sdk_core::test_help::MockPollCfg;
+use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+    coresdk::{
+        IntoPayloadsExt,
+        workflow_activation::{
+            ResolveSignalExternalWorkflow, WorkflowActivationJob, workflow_activation_job,
+        },
+    },
+    temporal::api::{
+        command::v1::{Command, command},
+        common::v1::Payload,
+        enums::v1::{CommandType, EventType},
+    },
+};
 use uuid::Uuid;
 
 const SIGNAME: &str = "signame";
@@ -161,4 +175,111 @@ async fn sends_signal_to_child() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+async fn signal_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
+    let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
+    dat.with_header("tupac", b"shakur");
+    let res = ctx.signal_workflow(dat).await;
+    if res.is_err() {
+        Err(anyhow::anyhow!("Signal fail!"))
+    } else {
+        Ok(().into())
+    }
+}
+
+#[rstest::rstest]
+#[case::succeeds(false)]
+#[case::fails(true)]
+#[tokio::test]
+async fn sends_signal(#[case] fails: bool) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let id = t.add_signal_wf(SIGNAME, "fake_wid", "fake_rid");
+    if fails {
+        t.add_external_signal_failed(id);
+    } else {
+        t.add_external_signal_completed(id);
+    }
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                assert_matches!(wft.commands.as_slice(),
+                    [Command { attributes: Some(
+                        command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs)),..}] => {
+                        assert_eq!(attrs.signal_name, SIGNAME);
+                        assert_eq!(attrs.input.as_ref().unwrap().payloads[0], b"hi!".into());
+                        assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(),
+                                   b"shakur".into());
+                    }
+                );
+            }).then(move |wft| {
+                let cmds = &wft.commands;
+                assert_eq!(cmds.len(), 1);
+                if fails {
+                    assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
+                } else {
+                    assert_eq!(
+                        cmds[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                }
+            });
+        });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, signal_sender_canned);
+    worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancels_before_sending() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let mut aai = ActivationAssertionsInterceptor::default();
+    aai.skip_one().then(move |act| {
+        assert_matches!(
+            &act.jobs[0],
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveSignalExternalWorkflow(
+                    ResolveSignalExternalWorkflow {
+                        failure: Some(c),
+                        ..
+                    }
+                ))
+            } => c.message == "Signal was cancelled before being sent"
+        );
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(move |wft| {
+            assert_eq!(wft.commands.len(), 1);
+            assert_eq!(
+                wft.commands[0].command_type(),
+                CommandType::CompleteWorkflowExecution
+            );
+        });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.set_worker_interceptor(aai);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+        let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
+            "fake_wid",
+            "fake_rid",
+            SIGNAME,
+            [b"hi!"],
+        ));
+        sig.cancel(&ctx);
+        let _res = sig.await;
+        Ok(().into())
+    });
+    worker.run().await.unwrap();
 }

@@ -20,9 +20,9 @@ pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     nexus: false,
 };
 
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 /// Create a mock client primed with basic necessary expectations
-pub(crate) fn mock_worker_client() -> MockWorkerClient {
+pub fn mock_worker_client() -> MockWorkerClient {
     let mut r = MockWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));

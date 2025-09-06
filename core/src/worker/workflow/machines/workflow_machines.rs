@@ -32,7 +32,7 @@ use crate::{
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
                 nexus_operation_state_machine::NexusOperationMachine,
-                patch_state_machine::VERSION_SEARCH_ATTR_KEY, update_state_machine::UpdateMachine,
+                update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
             },
         },
@@ -53,11 +53,11 @@ use std::{
 };
 use temporal_sdk_core_api::worker::{WorkerConfig, WorkerDeploymentVersion};
 use temporal_sdk_core_protos::{
+    VERSION_SEARCH_ATTR_KEY,
     coresdk::{
         common::{NamespacedWorkflowExecution, VersioningIntent},
-        workflow_activation,
         workflow_activation::{
-            NotifyHasPatch, UpdateRandomSeed, WorkflowActivation, workflow_activation_job,
+            self, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation, workflow_activation_job,
         },
         workflow_commands::ContinueAsNewWorkflowExecution,
     },

@@ -2,6 +2,8 @@
 
 #[macro_use]
 extern crate rstest;
+#[macro_use]
+extern crate assert_matches;
 
 mod common;
 
@@ -15,6 +17,7 @@ mod integ_tests {
     mod ephemeral_server_tests;
     mod heartbeat_tests;
     mod metrics_tests;
+    mod pagination_tests;
     mod polling_tests;
     mod queries_tests;
     mod update_tests;

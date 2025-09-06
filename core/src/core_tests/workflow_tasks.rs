@@ -6,10 +6,9 @@ use crate::{
     test_help::{
         FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
-        mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        test_worker_cfg,
+        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, gen_assert_and_fail,
+        gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
+        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, test_worker_cfg,
     },
     test_utils::{WorkerTestHelpers, fanout_tasks},
     worker::{
@@ -29,18 +28,16 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::PollError,
     worker::{
         PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerVersioningStrategy, WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
     },
 };
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
+    canned_histories,
     coresdk::{
         activity_result::{self as ar, ActivityResolution, activity_resolution},
         common::VersioningIntent,
@@ -59,14 +56,13 @@ use temporal_sdk_core_protos::{
     default_act_sched, default_wes_attribs,
     temporal::api::{
         command::v1::command::Attributes,
-        common::v1::{Payload, RetryPolicy, WorkerVersionStamp},
+        common::v1::{Payload, RetryPolicy},
         enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{
             TimerFiredEventAttributes, WorkflowPropertiesModifiedExternallyEventAttributes,
             history_event,
         },
-        sdk::v1::UserMetadata,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -475,54 +471,6 @@ async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
 }
 
-#[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
-#[tokio::test]
-async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [usize]) {
-    let wfid = "fake_wf_id";
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let activity_id = "1";
-
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let act_scheduled_event_id = t.add_activity_task_scheduled(activity_id);
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
-    t.add_activity_task_completed(
-        act_scheduled_event_id,
-        act_started_event_id,
-        Default::default(),
-    );
-    t.add_full_wf_task();
-    t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-    let mock = mock_worker_client();
-    let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
-
-    worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
-        let act_fut = ctx.activity(ActivityOptions {
-            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            cancellation_type: ActivityCancellationType::Abandon,
-            ..Default::default()
-        });
-        ctx.timer(Duration::from_secs(1)).await;
-        act_fut.cancel(&ctx);
-        ctx.timer(Duration::from_secs(3)).await;
-        act_fut.await;
-        Ok(().into())
-    });
-    worker
-        .submit_wf(wfid, wf_type, vec![], Default::default())
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
 #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
 #[tokio::test]
 async fn scheduled_activity_cancellation_try_cancel_task_canceled(hist_batches: &'static [usize]) {
@@ -923,43 +871,6 @@ async fn workflow_failures_only_reported_once() {
         ],
     )
     .await;
-}
-
-#[tokio::test]
-async fn max_wft_respected() {
-    let total_wfs = 100;
-    let wf_ids: Vec<_> = (0..total_wfs).map(|i| format!("fake-wf-{i}")).collect();
-    let hists = wf_ids.iter().map(|wf_id| {
-        let hist = canned_histories::single_timer("1");
-        FakeWfResponses {
-            wf_id: wf_id.to_string(),
-            hist,
-            response_batches: vec![1.into(), 2.into()],
-        }
-    });
-    let mh = MockPollCfg::new(hists.into_iter().collect(), true, 0);
-    let mut worker = mock_sdk_cfg(mh, |cfg| {
-        cfg.max_cached_workflows = total_wfs as usize;
-        cfg.max_outstanding_workflow_tasks = Some(1);
-    });
-    let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        drop(
-            active_count
-                .try_acquire()
-                .expect("No multiple concurrent workflow tasks!"),
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
-
-    for wf_id in wf_ids {
-        worker
-            .submit_wf(wf_id, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
-            .await
-            .unwrap();
-    }
-    worker.run_until_done().await.unwrap();
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
@@ -2700,95 +2611,6 @@ async fn jobs_are_in_appropriate_order() {
     );
 }
 
-#[rstest]
-#[tokio::test]
-async fn history_length_with_fail_and_timeout(
-    #[values(true, false)] use_cache: bool,
-    #[values(1, 2, 3)] history_responses_case: u8,
-) {
-    if !use_cache && history_responses_case == 3 {
-        eprintln!(
-            "Skipping history_length_with_fail_and_timeout::use_cache_2_false::history_responses_case_3_3 due to flaky hang"
-        );
-        return;
-    }
-    let wfid = "fake_wf_id";
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_workflow_task_scheduled_and_started();
-    t.add_workflow_task_failed_with_failure(WorkflowTaskFailedCause::Unspecified, "ahh".into());
-    t.add_workflow_task_scheduled_and_started();
-    t.add_workflow_task_timed_out();
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-
-    let mut mock_client = mock_worker_client();
-    let history_responses = match history_responses_case {
-        1 => vec![ResponseType::AllHistory],
-        2 => vec![
-            ResponseType::ToTaskNum(1),
-            ResponseType::ToTaskNum(2),
-            ResponseType::AllHistory,
-        ],
-        3 => {
-            let mut needs_fetch = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(2)).resp;
-            needs_fetch.next_page_token = vec![1];
-            // Truncate the history a bit in order to force incomplete WFT
-            needs_fetch.history.as_mut().unwrap().events.truncate(6);
-            let needs_fetch_resp = ResponseType::Raw(needs_fetch);
-            let mut empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
-                t.get_history_info(1).unwrap().into();
-            empty_fetch_resp.history.as_mut().unwrap().events = vec![];
-            mock_client
-                .expect_get_workflow_execution_history()
-                .returning(move |_, _, _| Ok(empty_fetch_resp.clone()))
-                .times(1);
-            vec![
-                ResponseType::ToTaskNum(1),
-                needs_fetch_resp,
-                ResponseType::ToTaskNum(2),
-                ResponseType::AllHistory,
-            ]
-        }
-        _ => unreachable!(),
-    };
-
-    let mut mh = MockPollCfg::from_resp_batches(wfid, t, history_responses, mock_client);
-    if history_responses_case == 3 {
-        // Expect the failed pagination fetch
-        mh.num_expected_fails = 1;
-    }
-    let mut worker = mock_sdk_cfg(mh, |wc| {
-        if use_cache {
-            wc.max_cached_workflows = 1;
-        }
-    });
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        assert_eq!(ctx.history_length(), 3);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 14);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 19);
-        Ok(().into())
-    });
-    worker
-        .submit_wf(
-            wfid.to_owned(),
-            DEFAULT_WORKFLOW_TYPE.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
 #[tokio::test]
 async fn poller_wont_run_ahead_of_task_slots() {
     let popped_tasks = Arc::new(AtomicUsize::new(0));
@@ -2973,70 +2795,6 @@ async fn use_compatible_version_flag(
     worker.shutdown().await;
 }
 
-#[allow(deprecated)]
-#[tokio::test]
-async fn sets_build_id_from_wft_complete() {
-    let wfid = "fake_wf_id";
-
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_full_wf_task();
-    t.modify_event(t.current_event_id(), |he| {
-        if let history_event::Attributes::WorkflowTaskCompletedEventAttributes(a) =
-            he.attributes.as_mut().unwrap()
-        {
-            a.worker_version = Some(WorkerVersionStamp {
-                build_id: "enchi-cat".to_string(),
-                ..Default::default()
-            });
-        }
-    });
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_workflow_task_scheduled_and_started();
-
-    let mock = mock_worker_client();
-    let mut worker = mock_sdk_cfg(
-        MockPollCfg::from_resp_batches(wfid, t, [ResponseType::AllHistory], mock),
-        |cfg| {
-            cfg.versioning_strategy = WorkerVersioningStrategy::None {
-                build_id: "fierce-predator".to_string(),
-            };
-            cfg.max_cached_workflows = 1;
-        },
-    );
-
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        // First task, it should be empty, since replaying and nothing in first WFT completed
-        assert_eq!(ctx.current_deployment_version(), None);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "enchi-cat"
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        // Not replaying at this point, so we should see the worker's build id
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "fierce-predator"
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "fierce-predator"
-        );
-        Ok(().into())
-    });
-    worker
-        .submit_wf(wfid, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
 #[tokio::test]
 async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     let popped_tasks = Arc::new(AtomicUsize::new(0));
@@ -3126,53 +2884,6 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
     // polling is not exceeding the task limit
     assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
-}
-
-#[tokio::test]
-async fn pass_timer_summary_to_metadata() {
-    let t = canned_histories::single_timer("1");
-    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
-    let wf_id = mock_cfg.hists[0].wf_id.clone();
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let expected_user_metadata = Some(UserMetadata {
-        summary: Some(b"timer summary".into()),
-        details: None,
-    });
-    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
-        asserts
-            .then(move |wft| {
-                assert_eq!(wft.commands.len(), 1);
-                assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
-                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
-            })
-            .then(move |wft| {
-                assert_eq!(wft.commands.len(), 1);
-                assert_eq!(
-                    wft.commands[0].command_type(),
-                    CommandType::CompleteWorkflowExecution
-                );
-            });
-    });
-
-    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
-        ctx.timer(TimerOptions {
-            duration: Duration::from_secs(1),
-            summary: Some("timer summary".to_string()),
-        })
-        .await;
-        Ok(().into())
-    });
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
 }
 
 #[tokio::test]

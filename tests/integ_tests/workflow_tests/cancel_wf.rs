@@ -1,8 +1,13 @@
-use crate::common::CoreWfStarter;
+use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
+use temporal_sdk_core::test_help::MockPollCfg;
+use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, canned_histories,
+    coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+    temporal::api::enums::v1::{CommandType, WorkflowExecutionStatus},
+};
 
 async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
     let mut reason = "".to_string();
@@ -54,4 +59,58 @@ async fn cancel_during_timer() {
         desc.workflow_execution_info.unwrap().status,
         WorkflowExecutionStatus::Canceled as i32
     );
+}
+
+async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
+    ctx.timer(Duration::from_millis(500)).await;
+    Ok(WfExitValue::Cancelled)
+}
+
+#[tokio::test]
+async fn wf_completing_with_cancelled() {
+    let t = canned_histories::timer_wf_cancel_req_cancelled("1");
+
+    let mut aai = ActivationAssertionsInterceptor::default();
+    aai.then(|a| {
+        assert_matches!(
+            a.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+            }]
+        )
+    });
+    aai.then(|a| {
+        assert_matches!(
+            a.jobs.as_slice(),
+            [
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::CancelWorkflow(_)),
+                }
+            ]
+        );
+    });
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(|wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(wft.commands[0].command_type(), CommandType::StartTimer);
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(
+                    wft.commands[0].command_type(),
+                    CommandType::CancelWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, wf_with_timer);
+    worker.set_worker_interceptor(aai);
+    worker.run().await.unwrap();
 }

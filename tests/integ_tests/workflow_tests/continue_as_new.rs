@@ -1,8 +1,13 @@
-use crate::common::CoreWfStarter;
+use crate::common::{CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
+use temporal_sdk_core::test_help::MockPollCfg;
+use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, canned_histories,
+    coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
+    temporal::api::enums::v1::CommandType,
+};
 
 async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];
@@ -62,4 +67,38 @@ async fn continue_as_new_multiple_concurrent() {
             .unwrap();
     }
     worker.run_until_done().await.unwrap();
+}
+
+async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
+    ctx.timer(Duration::from_millis(500)).await;
+    Ok(WfExitValue::continue_as_new(
+        ContinueAsNewWorkflowExecution {
+            arguments: vec![[1].into()],
+            ..Default::default()
+        },
+    ))
+}
+
+#[tokio::test]
+async fn wf_completing_with_continue_as_new() {
+    let t = canned_histories::timer_then_continue_as_new("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(|wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(wft.commands[0].command_type(), CommandType::StartTimer);
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(
+                    wft.commands[0].command_type(),
+                    CommandType::ContinueAsNewWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, wf_with_timer);
+    worker.run().await.unwrap();
 }

@@ -1,4 +1,9 @@
-pub(crate) use temporal_sdk_core_protos::canned_histories;
+#![allow(missing_docs)]
+
+pub use crate::{
+    internal_flags::CoreInternalFlags,
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
+};
 
 use crate::{
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
@@ -9,17 +14,15 @@ use crate::{
     test_utils::{NAMESPACE, drain_pollers_and_shutdown},
     worker::{
         TaskPollers,
-        client::{
-            LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
-            mocks::mock_worker_client,
-        },
+        client::{LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion},
     },
 };
+use assert_matches::assert_matches;
 use async_trait::async_trait;
 use bimap::BiMap;
 use futures_util::{FutureExt, Stream, StreamExt, future::BoxFuture, stream, stream::BoxStream};
 use mockall::TimesRange;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
     fmt::Debug,
@@ -32,7 +35,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_sdk::interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -58,7 +60,6 @@ use temporal_sdk_core_protos::{
     },
     utilities::pack_any,
 };
-use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -80,7 +81,7 @@ pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
 /// When constructing responses for mocks, indicates how a given response should be built
 #[derive(derive_more::From)]
 #[allow(clippy::large_enum_variant)] // Test only code, whatever.
-pub(crate) enum ResponseType {
+pub enum ResponseType {
     ToTaskNum(usize),
     /// Returns just the history from the WFT completed of the provided task number - 1, through to
     /// the next WFT started. Simulating the incremental history for just the provided task number
@@ -149,19 +150,7 @@ pub(crate) fn build_fake_worker(
     mock_worker(mock_holder)
 }
 
-pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
-    let mut mock = build_mock_pollers(mock_cfg);
-    mock.worker_cfg(|c| {
-        c.max_cached_workflows = 1;
-        c.ignore_evicts_on_shutdown = false;
-    });
-    let core = mock_worker(mock);
-    let mut worker = temporal_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
-    worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
-    worker
-}
-
-pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
+pub fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
     let act_poller = if mocks.inputs.config.no_remote_activities {
         None
@@ -185,39 +174,25 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
     )
 }
 
-pub(crate) fn mock_sdk(poll_cfg: MockPollCfg) -> TestWorker {
-    mock_sdk_cfg(poll_cfg, |_| {})
-}
-pub(crate) fn mock_sdk_cfg(
-    mut poll_cfg: MockPollCfg,
-    mutator: impl FnOnce(&mut WorkerConfig),
-) -> TestWorker {
-    poll_cfg.using_rust_sdk = true;
-    let mut mock = build_mock_pollers(poll_cfg);
-    mock.worker_cfg(mutator);
-    let core = mock_worker(mock);
-    TestWorker::new(Arc::new(core), TEST_Q.to_string())
-}
-
-pub(crate) struct FakeWfResponses {
-    pub(crate) wf_id: String,
-    pub(crate) hist: TestHistoryBuilder,
-    pub(crate) response_batches: Vec<ResponseType>,
+pub struct FakeWfResponses {
+    pub wf_id: String,
+    pub hist: TestHistoryBuilder,
+    pub response_batches: Vec<ResponseType>,
 }
 
 // TODO: Should be all-internal to this module
-pub(crate) struct MocksHolder {
+pub struct MocksHolder {
     client: Arc<dyn WorkerClient>,
     inputs: MockWorkerInputs,
-    pub(crate) outstanding_task_map: Option<OutstandingWFTMap>,
+    pub outstanding_task_map: Option<OutstandingWFTMap>,
 }
 
 impl MocksHolder {
-    pub(crate) fn worker_cfg(&mut self, mutator: impl FnOnce(&mut WorkerConfig)) {
+    pub fn worker_cfg(&mut self, mutator: impl FnOnce(&mut WorkerConfig)) {
         mutator(&mut self.inputs.config);
     }
 
-    pub(crate) fn set_act_poller(&mut self, poller: BoxedPoller<PollActivityTaskQueueResponse>) {
+    pub fn set_act_poller(&mut self, poller: BoxedPoller<PollActivityTaskQueueResponse>) {
         self.inputs.act_poller = Some(poller);
     }
 
@@ -314,8 +289,7 @@ impl MocksHolder {
     }
 }
 
-// TODO: Un-pub ideally
-pub(crate) fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
+fn mock_poller_from_resps<T, I>(tasks: I) -> BoxedPoller<T>
 where
     T: Send + Sync + 'static,
     I: IntoIterator<Item = QueueResponse<T>>,
@@ -339,6 +313,7 @@ where
     Box::new(mock_poller) as BoxedPoller<T>
 }
 
+#[cfg(test)]
 pub(crate) fn mock_poller<T>() -> MockPoller<T>
 where
     T: Send + Sync + 'static,
@@ -384,7 +359,7 @@ pub(crate) fn build_multihist_mock_sg(
 }
 
 /// See [build_multihist_mock_sg] -- one history convenience version
-pub(crate) fn single_hist_mock_sg(
+pub fn single_hist_mock_sg(
     wf_id: &str,
     t: TestHistoryBuilder,
     response_batches: impl IntoIterator<Item = impl Into<ResponseType>>,
@@ -400,29 +375,32 @@ type WFTCompletionMockFn = dyn FnMut(&WorkflowTaskCompletion) -> Result<RespondW
     + Send;
 
 #[allow(clippy::type_complexity)]
-pub(crate) struct MockPollCfg {
-    pub(crate) hists: Vec<FakeWfResponses>,
-    pub(crate) enforce_correct_number_of_polls: bool,
-    pub(crate) num_expected_fails: usize,
+pub struct MockPollCfg {
+    pub hists: Vec<FakeWfResponses>,
+    pub enforce_correct_number_of_polls: bool,
+    pub num_expected_fails: usize,
     pub(crate) num_expected_legacy_query_resps: usize,
     pub(crate) mock_client: MockWorkerClient,
     /// All calls to fail WFTs must match this predicate
-    pub(crate) expect_fail_wft_matcher:
+    pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
     /// All calls to legacy query responses must match this predicate
     pub(crate) expect_legacy_query_matcher:
         Box<dyn Fn(&TaskToken, &LegacyQueryResult) -> bool + Send>,
-    pub(crate) completion_mock_fn: Option<Box<WFTCompletionMockFn>>,
-    pub(crate) num_expected_completions: Option<TimesRange>,
+    pub completion_mock_fn: Option<Box<WFTCompletionMockFn>>,
+    pub num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
     /// Instead, they will just block forever.
-    pub(crate) using_rust_sdk: bool,
-    pub(crate) make_poll_stream_interminable: bool,
+    pub using_rust_sdk: bool,
+    pub make_poll_stream_interminable: bool,
+    /// If set, will create a mock activity poller with the provided responeses. If unset, no poller
+    /// is created.
+    pub activity_responses: Option<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
 }
 
 impl MockPollCfg {
-    pub(crate) fn new(
+    pub fn new(
         hists: Vec<FakeWfResponses>,
         enforce_correct_number_of_polls: bool,
         num_expected_fails: usize,
@@ -439,24 +417,25 @@ impl MockPollCfg {
             num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
+            activity_responses: None,
         }
     }
 
     /// Builds a config which will hand out each WFT in the history builder one by one
-    pub(crate) fn from_hist_builder(t: TestHistoryBuilder) -> Self {
+    pub fn from_hist_builder(t: TestHistoryBuilder) -> Self {
         let full_hist_info = t.get_full_history_info().unwrap();
         let tasks = 1..=full_hist_info.wf_task_count();
         Self::from_resp_batches("fake_wf_id", t, tasks, mock_worker_client())
     }
 
-    pub(crate) fn from_resps(
+    pub fn from_resps(
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
     ) -> Self {
         Self::from_resp_batches("fake_wf_id", t, resps, mock_worker_client())
     }
 
-    pub(crate) fn from_resp_batches(
+    pub fn from_resp_batches(
         wf_id: &str,
         t: TestHistoryBuilder,
         resps: impl IntoIterator<Item = impl Into<ResponseType>>,
@@ -478,10 +457,11 @@ impl MockPollCfg {
             num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
+            activity_responses: None,
         }
     }
 
-    pub(crate) fn completion_asserts_from_expectations(
+    pub fn completion_asserts_from_expectations(
         &mut self,
         builder_fn: impl FnOnce(CompletionAssertsBuilder<'_>),
     ) {
@@ -494,13 +474,13 @@ impl MockPollCfg {
 }
 
 #[allow(clippy::type_complexity)]
-pub(crate) struct CompletionAssertsBuilder<'a> {
+pub struct CompletionAssertsBuilder<'a> {
     dest: &'a mut Option<Box<WFTCompletionMockFn>>,
     assertions: VecDeque<Box<dyn FnOnce(&WorkflowTaskCompletion) + Send>>,
 }
 
 impl CompletionAssertsBuilder<'_> {
-    pub(crate) fn then(
+    pub fn then(
         &mut self,
         assert: impl FnOnce(&WorkflowTaskCompletion) + Send + 'static,
     ) -> &mut Self {
@@ -522,7 +502,7 @@ impl Drop for CompletionAssertsBuilder<'_> {
 }
 
 #[derive(Default, Clone)]
-pub(crate) struct OutstandingWFTMap {
+pub struct OutstandingWFTMap {
     map: Arc<RwLock<BiMap<String, TaskToken>>>,
     waker: Arc<Notify>,
     all_work_delivered: Arc<AtomicBool>,
@@ -542,12 +522,12 @@ impl OutstandingWFTMap {
         self.waker.notify_one();
     }
 
-    pub(crate) fn release_run(&self, run_id: &str) {
+    pub fn release_run(&self, run_id: &str) {
         self.map.write().remove_by_left(run_id);
         self.waker.notify_waiters();
     }
 
-    pub(crate) fn all_work_delivered(&self) -> bool {
+    pub fn all_work_delivered(&self) -> bool {
         self.all_work_delivered.load(Ordering::Acquire)
     }
 }
@@ -572,7 +552,7 @@ impl Drop for EnsuresWorkDoneWFTStream {
 }
 
 /// Given an iterable of fake responses, return the mocks & associated data to work with them
-pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
+pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let mut task_q_resps: BTreeMap<String, VecDeque<_>> = BTreeMap::new();
     let all_work_delivered = if cfg.enforce_correct_number_of_polls && !cfg.using_rust_sdk {
         Arc::new(AtomicBool::new(false))
@@ -729,14 +709,18 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         inputs: mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
     };
+    if let Some(activity_responses) = cfg.activity_responses {
+        let act_poller = mock_poller_from_resps(activity_responses);
+        mh.set_act_poller(act_poller);
+    }
     if cfg.make_poll_stream_interminable {
         mh.make_wft_stream_interminable();
     }
     mh
 }
 
-pub(crate) struct QueueResponse<T> {
-    pub(crate) resp: T,
+pub struct QueueResponse<T> {
+    pub resp: T,
     pub(crate) delay_until: Option<BoxFuture<'static, ()>>,
 }
 
@@ -821,7 +805,7 @@ impl PollWFTRespExt for PollWorkflowTaskQueueResponse {
     }
 }
 
-pub(crate) fn hist_to_poll_resp(
+pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: impl Into<String>,
     response_type: ResponseType,
@@ -883,6 +867,7 @@ pub(crate) enum WorkflowCachingPolicy {
 /// of eviction or workflow activation failure. Activation failures specifically are only run once,
 /// since they clearly can't be returned every time we replay the workflow, or it could never
 /// proceed
+#[cfg(test)]
 pub(crate) async fn poll_and_reply<'a>(
     worker: &'a Worker,
     eviction_mode: WorkflowCachingPolicy,
@@ -891,6 +876,7 @@ pub(crate) async fn poll_and_reply<'a>(
     poll_and_reply_clears_outstanding_evicts(worker, None, eviction_mode, expect_and_reply).await;
 }
 
+#[cfg(test)]
 pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
     worker: &'a Worker,
     outstanding_map: Option<OutstandingWFTMap>,
@@ -1055,7 +1041,7 @@ macro_rules! prost_dur {
 }
 
 #[async_trait]
-pub(crate) trait WorkerExt {
+pub trait WorkerExt {
     /// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
     async fn drain_pollers_and_shutdown(self);
     /// Initiate shutdown, drain the *activity* poller, and wait for shutdown to complete.
@@ -1077,43 +1063,5 @@ impl WorkerExt for Worker {
             PollError::ShutDown
         );
         self.shutdown().await;
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct ActivationAssertionsInterceptor {
-    #[allow(clippy::type_complexity)]
-    assertions: Mutex<VecDeque<Box<dyn FnOnce(&WorkflowActivation)>>>,
-    used: AtomicBool,
-}
-
-impl ActivationAssertionsInterceptor {
-    pub(crate) fn skip_one(&mut self) -> &mut Self {
-        self.assertions.lock().push_back(Box::new(|_| {}));
-        self
-    }
-
-    pub(crate) fn then(&mut self, assert: impl FnOnce(&WorkflowActivation) + 'static) -> &mut Self {
-        self.assertions.lock().push_back(Box::new(assert));
-        self
-    }
-}
-
-#[async_trait::async_trait(?Send)]
-impl WorkerInterceptor for ActivationAssertionsInterceptor {
-    async fn on_workflow_activation(&self, act: &WorkflowActivation) -> Result<(), anyhow::Error> {
-        self.used.store(true, Ordering::Relaxed);
-        if let Some(fun) = self.assertions.lock().pop_front() {
-            fun(act);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for ActivationAssertionsInterceptor {
-    fn drop(&mut self) {
-        if !self.used.load(Ordering::Relaxed) {
-            panic!("Activation assertions interceptor was never used!")
-        }
     }
 }

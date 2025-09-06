@@ -27,6 +27,8 @@ pub use task_token::TaskToken;
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
 pub static JSON_ENCODING_VAL: &str = "json/plain";
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
+/// The search attribute key used when registering change versions
+pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
 
 #[allow(
     clippy::large_enum_variant,

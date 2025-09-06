@@ -14,12 +14,16 @@ use prost::Message;
 use rand::Rng;
 use std::{
     cell::Cell,
+    collections::VecDeque,
     convert::TryFrom,
     env,
     net::SocketAddr,
     path::PathBuf,
     str::FromStr,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use temporal_client::{
@@ -896,5 +900,79 @@ where
             return Ok(v);
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+use temporal_sdk_core::{
+    WorkerConfig,
+    test_help::{MockPollCfg, build_mock_pollers, mock_worker},
+};
+
+pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
+    let mut mock = build_mock_pollers(mock_cfg);
+    mock.worker_cfg(|c| {
+        c.max_cached_workflows = 1;
+        c.ignore_evicts_on_shutdown = false;
+    });
+    let core = mock_worker(mock);
+    let mut worker = temporal_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+    worker
+}
+
+pub(crate) fn mock_sdk(poll_cfg: MockPollCfg) -> TestWorker {
+    mock_sdk_cfg(poll_cfg, |_| {})
+}
+
+pub(crate) fn mock_sdk_cfg(
+    mut poll_cfg: MockPollCfg,
+    mutator: impl FnOnce(&mut WorkerConfig),
+) -> TestWorker {
+    poll_cfg.using_rust_sdk = true;
+    let mut mock = build_mock_pollers(poll_cfg);
+    mock.worker_cfg(mutator);
+    let core = mock_worker(mock);
+    TestWorker::new(
+        Arc::new(core),
+        temporal_sdk_core::test_utils::TEST_Q.to_string(),
+    )
+}
+
+#[derive(Default)]
+pub(crate) struct ActivationAssertionsInterceptor {
+    #[allow(clippy::type_complexity)]
+    assertions: Mutex<VecDeque<Box<dyn FnOnce(&WorkflowActivation)>>>,
+    used: AtomicBool,
+}
+
+impl ActivationAssertionsInterceptor {
+    pub(crate) fn skip_one(&mut self) -> &mut Self {
+        self.assertions.lock().push_back(Box::new(|_| {}));
+        self
+    }
+
+    pub(crate) fn then(&mut self, assert: impl FnOnce(&WorkflowActivation) + 'static) -> &mut Self {
+        self.assertions.lock().push_back(Box::new(assert));
+        self
+    }
+}
+
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for ActivationAssertionsInterceptor {
+    async fn on_workflow_activation(&self, act: &WorkflowActivation) -> Result<(), anyhow::Error> {
+        self.used.store(true, Ordering::Relaxed);
+        if let Some(fun) = self.assertions.lock().pop_front() {
+            fun(act);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Drop for ActivationAssertionsInterceptor {
+    fn drop(&mut self) {
+        if !self.used.load(Ordering::Relaxed) {
+            panic!("Activation assertions interceptor was never used!")
+        }
     }
 }

@@ -28,9 +28,9 @@ mod worker;
 
 #[cfg(test)]
 mod core_tests;
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 #[macro_use]
-mod test_help;
+pub mod test_help;
 
 pub(crate) use temporal_sdk_core_api::errors;
 

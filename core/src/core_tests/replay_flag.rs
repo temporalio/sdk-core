@@ -1,16 +1,11 @@
 use crate::{
-    test_help::{
-        ActivationAssertionsInterceptor, MockPollCfg, ResponseType, build_fake_sdk,
-        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker,
-    },
+    test_help::{MockPollCfg, ResponseType, build_mock_pollers, hist_to_poll_resp, mock_worker},
     worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
-use rstest::{fixture, rstest};
 use std::{collections::VecDeque, time::Duration};
-use temporal_sdk::{WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+    TestHistoryBuilder, canned_histories,
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_completion::WorkflowActivationCompletion,
@@ -18,58 +13,6 @@ use temporal_sdk_core_protos::{
     temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
     test_utils::{query_ok, start_timer_cmd},
 };
-
-fn timers_wf(num_timers: u32) -> WorkflowFunction {
-    WorkflowFunction::new(move |command_sink: WfContext| async move {
-        for _ in 1..=num_timers {
-            command_sink.timer(Duration::from_secs(1)).await;
-        }
-        Ok(().into())
-    })
-}
-
-#[fixture(num_timers = 1)]
-fn fire_happy_hist(num_timers: u32) -> Worker {
-    let func = timers_wf(num_timers);
-    // Add 1 b/c history takes # wf tasks, not timers
-    let t = canned_histories::long_sequential_timers(num_timers as usize);
-    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-    worker
-}
-
-#[rstest]
-#[case::one_timer(fire_happy_hist(1), 1)]
-#[case::five_timers(fire_happy_hist(5), 5)]
-#[tokio::test]
-async fn replay_flag_is_correct(#[case] mut worker: Worker, #[case] num_timers: usize) {
-    // Verify replay flag is correct by constructing a workflow manager that already has a complete
-    // history fed into it. It should always be replaying, because history is complete.
-
-    let mut aai = ActivationAssertionsInterceptor::default();
-
-    for _ in 1..=num_timers + 1 {
-        aai.then(|a| assert!(a.is_replaying));
-    }
-
-    worker.set_worker_interceptor(aai);
-    worker.run().await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn replay_flag_is_correct_partial_history() {
-    let func = timers_wf(1);
-    // Add 1 b/c history takes # wf tasks, not timers
-    let t = canned_histories::long_sequential_timers(2);
-    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [1]));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-
-    let mut aai = ActivationAssertionsInterceptor::default();
-    aai.then(|a| assert!(!a.is_replaying));
-
-    worker.set_worker_interceptor(aai);
-    worker.run().await.unwrap();
-}
 
 #[tokio::test]
 async fn replay_flag_correct_with_query() {

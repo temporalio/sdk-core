@@ -21,7 +21,7 @@ mod upsert_search_attrs;
 use crate::{
     common::{
         CoreWfStarter, history_from_proto_binary, init_core_and_create_wf,
-        init_core_replay_preloaded, prom_metrics,
+        init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
     },
     integ_tests::{activity_functions::echo, metrics_tests},
 };
@@ -32,11 +32,12 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::{
     CoreRuntime,
     replay::HistoryForReplay,
+    test_help::MockPollCfg,
     test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use temporal_sdk_core_api::{
@@ -46,6 +47,7 @@ use temporal_sdk_core_api::{
     },
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, canned_histories,
     coresdk::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
         activity_result::ActivityExecutionResult,
@@ -57,8 +59,11 @@ use temporal_sdk_core_protos::{
     },
     prost_dur,
     temporal::api::{
-        enums::v1::EventType, failure::v1::Failure, history::v1::history_event,
+        enums::v1::{CommandType, EventType},
+        failure::v1::Failure,
+        history::v1::history_event,
         query::v1::WorkflowQuery,
+        sdk::v1::UserMetadata,
     },
     test_utils::schedule_activity_cmd,
 };
@@ -929,4 +934,51 @@ async fn history_out_of_order_on_restart() {
         .await
         .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Failed(_));
+}
+
+#[tokio::test]
+async fn pass_timer_summary_to_metadata() {
+    let t = canned_histories::single_timer("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let wf_id = mock_cfg.hists[0].wf_id.clone();
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"timer summary".into()),
+        details: None,
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, |ctx: WfContext| async move {
+        ctx.timer(TimerOptions {
+            duration: Duration::from_secs(1),
+            summary: Some("timer summary".to_string()),
+        })
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

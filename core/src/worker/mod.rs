@@ -18,7 +18,7 @@ pub(crate) use activities::{
     NewLocalAct,
 };
 pub(crate) use wft_poller::WFTPollerShared;
-pub(crate) use workflow::LEGACY_QUERY_ID;
+pub use workflow::LEGACY_QUERY_ID;
 
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
@@ -80,7 +80,8 @@ use temporal_sdk_core_protos::{
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-#[cfg(test)]
+
+#[cfg(any(feature = "test-utilities", test))]
 use {
     crate::{
         pollers::{BoxedPoller, MockPermittedPollBuffer},
@@ -110,7 +111,7 @@ pub struct Worker {
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
     #[allow(clippy::type_complexity)] // Sorry clippy, there's no simple way to re-use here.
-    post_activate_hook: Option<Box<dyn Fn(&Self, PostActivateHookData) + Send + Sync>>,
+    post_activate_hook: Option<Box<dyn Fn(&Self, PostActivateHookData<'_>) + Send + Sync>>,
     /// Set when non-local activities are complete and should stop being polled
     non_local_activities_complete: Arc<AtomicBool>,
     /// Set when local activities are complete and should stop being polled
@@ -409,11 +410,11 @@ impl Worker {
                     Some(move |np| np_metrics.record_num_pollers(np)),
                 )) as BoxedNexusPoller;
 
-                #[cfg(test)]
+                #[cfg(any(feature = "test-utilities", test))]
                 let wft_stream = wft_stream.left_stream();
                 (wft_stream, act_poll_buffer, nexus_poll_buffer)
             }
-            #[cfg(test)]
+            #[cfg(any(feature = "test-utilities", test))]
             TaskPollers::Mocked {
                 wft_stream,
                 act_poller,
@@ -809,7 +810,7 @@ impl Worker {
     /// Sets a function to be called at the end of each activation completion
     pub(crate) fn set_post_activate_hook(
         &mut self,
-        callback: impl Fn(&Self, PostActivateHookData) + Send + Sync + 'static,
+        callback: impl Fn(&Self, PostActivateHookData<'_>) + Send + Sync + 'static,
     ) {
         self.post_activate_hook = Some(Box::new(callback))
     }
@@ -864,7 +865,7 @@ pub(crate) struct PostActivateHookData<'a> {
 
 pub(crate) enum TaskPollers {
     Real,
-    #[cfg(test)]
+    #[cfg(any(feature = "test-utilities", test))]
     Mocked {
         wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
         act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
