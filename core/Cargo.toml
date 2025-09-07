@@ -191,6 +191,7 @@ required-features = ["test-utilities"]
 
 [[bench]]
 name = "workflow_replay"
+path = "../tests/workflow_replay_bench.rs"
 harness = false
 
 # The integration test runner should compile with the same configuration as the
