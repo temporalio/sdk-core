@@ -103,18 +103,15 @@ async fn otel_errors_logged_as_errors() {
     );
     assert!(
         log_str.contains("@@@@@@@@@"),
-        "Expected fallback log not found in logs: {}",
-        log_str
+        "Expected fallback log not found in logs: {log_str}",
     );
     // TODO: OTel just doesn't actually log useful errors right now 🤷, see issues at top of test
     assert!(
         log_str.contains("ERROR"),
-        "Expected ERROR log not found in logs: {}",
-        log_str
+        "Expected ERROR log not found in logs: {log_str}",
     );
     assert!(
         log_str.contains("Metrics exporter otlp failed with the grpc server returns error"),
-        "Expected an OTel exporter error message in logs: {}",
-        log_str
+        "Expected an OTel exporter error message in logs: {log_str}",
     );
 }

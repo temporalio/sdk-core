@@ -130,7 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 ])
                 .ui(true)
                 .build()?;
-            println!("Using temporal CLI: {:?}", config);
+            println!("Using temporal CLI: {config:?}");
             (
                 Some(
                     config

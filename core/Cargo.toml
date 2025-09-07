@@ -169,21 +169,25 @@ required-features = [
 name = "heavy_tests"
 path = "../tests/heavy_tests.rs"
 test = false
+required-features = ["test-utilities"]
 
 [[test]]
 name = "manual_tests"
 path = "../tests/manual_tests.rs"
 test = false
+required-features = ["test-utilities"]
 
 [[test]]
 name = "global_metric_tests"
 path = "../tests/global_metric_tests.rs"
 test = false
+required-features = ["test-utilities"]
 
 [[test]]
 name = "cloud_tests"
 path = "../tests/cloud_tests.rs"
 test = false
+required-features = ["test-utilities"]
 
 [[bench]]
 name = "workflow_replay"
