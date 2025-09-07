@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
 use temporal_sdk::{CancellableFuture, WfContext, WorkflowResult};
-use temporal_sdk_core::{
-    test_help::MockPollCfg,
-    test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
-};
+use temporal_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
     coresdk::{

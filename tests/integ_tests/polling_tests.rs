@@ -10,7 +10,7 @@ use temporal_sdk_core::{
     ClientOptionsBuilder,
     ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
     init_worker,
-    test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::{

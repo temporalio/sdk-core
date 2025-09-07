@@ -2,11 +2,10 @@ use crate::{
     ActivityHeartbeat, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, TEST_Q, WorkerExt,
-        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, gen_assert_and_reply,
-        mock_manual_poller, mock_poller, mock_worker, poll_and_reply, single_hist_mock_sg,
-        test_worker_cfg,
+        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, fanout_tasks,
+        gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply,
+        single_hist_mock_sg, test_worker_cfg,
     },
-    test_utils::fanout_tasks,
     worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
 use futures_util::FutureExt;

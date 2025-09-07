@@ -5,7 +5,7 @@ use temporal_client::{
     ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, StartTimeFilter,
     WorkflowClientTrait, WorkflowExecutionFilter,
 };
-use temporal_sdk_core::test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown};
+use temporal_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::coresdk::workflow_activation::{
     WorkflowActivationJob, workflow_activation_job,
 };

@@ -11,7 +11,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     MetricKeyValue, MetricParametersBuilder, NewAttributes,
 };
 use temporal_sdk_core_protos::{DEFAULT_WORKFLOW_TYPE, canned_histories};
-use temporal_sdk_core_test_utils::{DONT_AUTO_INIT_INTEG_TELEM, prom_metrics, replay_sdk_worker};
+use temporal_sdk_core_test_help::{DONT_AUTO_INIT_INTEG_TELEM, prom_metrics, replay_sdk_worker};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()

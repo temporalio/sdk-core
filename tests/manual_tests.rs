@@ -1,6 +1,8 @@
 //! These tests are expensive and meant to be run manually. Use them for things like perf and
 //! load testing.
 
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
 mod common;
 
 use common::{CoreWfStarter, prom_metrics, rand_6_chars};

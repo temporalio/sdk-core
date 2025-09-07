@@ -1,9 +1,8 @@
 use crate::{
     test_help::{
-        MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, hist_to_poll_resp,
-        mock_worker, single_hist_mock_sg,
+        MockPollCfg, MocksHolder, ResponseType, WorkerExt, WorkerTestHelpers, build_mock_pollers,
+        hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
-    test_utils::WorkerTestHelpers,
     worker::{
         LEGACY_QUERY_ID,
         client::{LegacyQueryResult, mocks::mock_worker_client},

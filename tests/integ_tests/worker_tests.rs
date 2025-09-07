@@ -17,10 +17,9 @@ use temporal_sdk::{ActivityOptions, WfContext, interceptors::WorkerInterceptor};
 use temporal_sdk_core::{
     CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker,
     test_help::{
-        FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, hist_to_poll_resp,
-        mock_worker, mock_worker_client,
+        FakeWfResponses, MockPollCfg, ResponseType, TEST_Q, build_mock_pollers,
+        drain_pollers_and_shutdown, hist_to_poll_resp, mock_worker, mock_worker_client,
     },
-    test_utils::{TEST_Q, drain_pollers_and_shutdown},
 };
 use temporal_sdk_core_api::{
     Worker,
@@ -259,7 +258,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
 
     let mut mock = mock_worker_client();
     // Set up two tasks to be returned via normal activity polling
-    let act_tasks = Vec::from(vec![
+    let act_tasks = vec![
         PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
@@ -272,7 +271,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
             ..Default::default()
         }
         .into(),
-    ]);
+    ];
     mock.expect_complete_activity_task()
         .times(2)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));

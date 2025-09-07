@@ -179,8 +179,9 @@ mod tests {
     use super::{super::OnEventWrapper, *};
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, ResponseType, build_mock_pollers, mock_worker},
-        test_utils::WorkerTestHelpers,
+        test_help::{
+            MockPollCfg, ResponseType, WorkerTestHelpers, build_mock_pollers, mock_worker,
+        },
         worker::client::mocks::mock_worker_client,
     };
     use rustfsm::StateMachine;

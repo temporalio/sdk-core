@@ -1,10 +1,9 @@
 use crate::{
     PollError, prost_dur,
     test_help::{
-        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, build_fake_worker,
-        build_mock_pollers, mock_worker, test_worker_cfg,
+        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, WorkerTestHelpers,
+        build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
     },
-    test_utils::WorkerTestHelpers,
     worker::{
         self,
         client::{

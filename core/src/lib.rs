@@ -22,8 +22,6 @@ mod protosext;
 pub mod replay;
 pub(crate) mod retry_logic;
 pub mod telemetry;
-#[cfg(any(feature = "test-utilities", test))]
-pub mod test_utils;
 mod worker;
 
 #[cfg(test)]

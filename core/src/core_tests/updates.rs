@@ -1,10 +1,9 @@
 use crate::{
     prost_dur,
     test_help::{
-        MockPollCfg, PollWFTRespExt, ResponseType, build_mock_pollers, hist_to_poll_resp,
-        mock_worker,
+        MockPollCfg, PollWFTRespExt, ResponseType, WorkerTestHelpers, build_mock_pollers,
+        hist_to_poll_resp, mock_worker,
     },
-    test_utils::WorkerTestHelpers,
     worker::client::mocks::mock_worker_client,
 };
 use temporal_sdk_core_api::Worker;

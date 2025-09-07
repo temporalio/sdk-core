@@ -68,7 +68,7 @@ use tokio::{sync::OnceCell, task::AbortHandle};
 use tracing::{debug, warn};
 use url::Url;
 
-pub(crate) use temporal_sdk_core::test_utils::NAMESPACE;
+pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -934,7 +934,7 @@ pub(crate) fn mock_sdk_cfg(
     let core = mock_worker(mock);
     TestWorker::new(
         Arc::new(core),
-        temporal_sdk_core::test_utils::TEST_Q.to_string(),
+        temporal_sdk_core::test_help::TEST_Q.to_string(),
     )
 }
 

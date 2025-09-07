@@ -26,10 +26,10 @@ use temporal_sdk_core::{
     prost_dur,
     replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
     test_help::{
-        LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, build_mock_pollers,
-        hist_to_poll_resp, mock_worker, mock_worker_client, single_hist_mock_sg,
+        LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
+        build_mock_pollers, hist_to_poll_resp, mock_worker, mock_worker_client,
+        single_hist_mock_sg,
     },
-    test_utils::WorkerTestHelpers,
 };
 use temporal_sdk_core_api::{Worker, errors::PollError};
 use temporal_sdk_core_protos::{

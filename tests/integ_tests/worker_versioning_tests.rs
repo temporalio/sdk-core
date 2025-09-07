@@ -5,7 +5,7 @@ use crate::{
 use std::time::Duration;
 use temporal_client::{NamespacedClient, WorkflowOptions, WorkflowService};
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core::test_utils::WorkerTestHelpers;
+use temporal_sdk_core::test_help::WorkerTestHelpers;
 use temporal_sdk_core_api::worker::{
     WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
 };

@@ -4,13 +4,12 @@ use crate::{
     job_assert,
     replay::TestHistoryBuilder,
     test_help::{
-        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
+        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt, WorkerTestHelpers,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, gen_assert_and_fail,
-        gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
+        build_fake_worker, build_mock_pollers, build_multihist_mock_sg, fanout_tasks,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, test_worker_cfg,
     },
-    test_utils::{WorkerTestHelpers, fanout_tasks},
     worker::{
         TunerBuilder,
         client::mocks::{mock_manual_worker_client, mock_worker_client},

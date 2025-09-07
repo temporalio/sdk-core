@@ -1,3 +1,5 @@
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
 mod common;
 
 use anyhow::{anyhow, bail};

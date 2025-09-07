@@ -17,7 +17,7 @@ use temporal_client::{
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::{
     replay::HistoryForReplay,
-    test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{

@@ -11,8 +11,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use temporal_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
 use temporal_sdk_core::{
     replay::{HistoryFeeder, HistoryForReplay},
-    test_help::{MockPollCfg, ResponseType},
-    test_utils::WorkerTestHelpers,
+    test_help::{MockPollCfg, ResponseType, WorkerTestHelpers},
 };
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{

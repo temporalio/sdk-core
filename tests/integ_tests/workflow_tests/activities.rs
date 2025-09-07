@@ -17,9 +17,8 @@ use temporal_sdk::{
     ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
     WfExitValue, WorkflowFunction, WorkflowResult,
 };
-use temporal_sdk_core::{
-    test_help::{MockPollCfg, ResponseType, mock_worker_client},
-    test_utils::{WorkerTestHelpers, drain_pollers_and_shutdown},
+use temporal_sdk_core::test_help::{
+    MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
 };
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
