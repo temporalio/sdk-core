@@ -1,7 +1,8 @@
-use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options};
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE, get_integ_server_options};
+use uuid::Uuid;
 
 pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
     Ok(().into())
@@ -33,7 +34,7 @@ async fn eager_wf_start_different_clients() {
     worker.register_wf(wf_name.to_owned(), eager_wf);
 
     let client = get_integ_server_options()
-        .connect(NAMESPACE.to_string(), None)
+        .connect(NAMESPACE.to_string(), None, Uuid::new_v4())
         .await
         .expect("Should connect");
     let w = starter.get_worker().await;

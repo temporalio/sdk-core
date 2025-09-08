@@ -48,13 +48,10 @@ pub use worker::{
     WorkerConfigBuilder,
 };
 
-use crate::abstractions::dbg_panic;
-use crate::worker::client::WorkerClientWithHeartbeat;
 /// Expose [WorkerClient] symbols
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-use crate::worker::heartbeat::{HeartbeatFn, SharedNamespaceWorker};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
@@ -65,7 +62,6 @@ use crate::{
 };
 use anyhow::bail;
 use futures_util::Stream;
-use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Duration;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
@@ -123,13 +119,13 @@ where
         client_ident.clone(),
         worker_config.versioning_strategy.clone(),
     ));
-
+    
     let worker = Worker::new(
         worker_config.clone(),
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
-        &runtime.heartbeat_interval,
+        runtime.heartbeat_interval,
     );
 
     Ok(worker)

@@ -39,6 +39,7 @@ use tonic::{
     transport::Server,
 };
 use tracing::info;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn can_use_retry_client() {
@@ -279,7 +280,7 @@ async fn non_retryable_errors() {
             .unwrap();
         opts.target_url = uri;
         opts.skip_get_system_info = true;
-        let client = opts.connect("ns", None).await.unwrap();
+        let client = opts.connect("ns", None, Uuid::new_v4()).await.unwrap();
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
 
@@ -319,7 +320,7 @@ async fn retryable_errors() {
             .unwrap();
         opts.target_url = uri;
         opts.skip_get_system_info = true;
-        let client = opts.connect("ns", None).await.unwrap();
+        let client = opts.connect("ns", None, Uuid::new_v4()).await.unwrap();
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
 
@@ -365,7 +366,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     opts.retry_config = RetryConfig::no_retries();
 
     let namespace = "namespace";
-    let client = opts.connect(namespace, None).await.unwrap();
+    let client = opts.connect(namespace, None, Uuid::new_v4()).await.unwrap();
 
     let _ = client
         .get_workflow_execution_history("hi".to_string(), None, vec![])

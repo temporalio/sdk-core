@@ -216,11 +216,11 @@ async fn grpc_message_too_large_test() {
 #[tokio::test]
 async fn worker_heartbeat_replace_client() {
     // This test prints "client: {:?}" for each heartbeat. Should see the identity change once we
-    // replace the client
-    let wf_name = "worker_heartbeat";
+    // replace the client TODO: replace_client doesn't rename the identity
     let runtime =
         CoreRuntime::new_assume_tokio(get_integ_runtime_options(Some(Duration::from_millis(100))))
             .unwrap();
+
     let mut opts = get_integ_server_options();
     opts.identity = "integ_tester1".to_owned();
 
@@ -233,8 +233,9 @@ async fn worker_heartbeat_replace_client() {
         ])
         .build()
         .unwrap();
+
     let mut server1 = server_config.start_server().await.unwrap();
-    info!("Connecting clients");
+
     let mut client_common_config = ClientOptionsBuilder::default();
     client_common_config
         .identity("integ_tester".to_owned())
@@ -245,20 +246,28 @@ async fn worker_heartbeat_replace_client() {
         .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
         .build()
         .unwrap()
-        .connect("default", None)
+        .connect("default", None, runtime.process_key())
         .await
         .unwrap();
-    client_common_config.identity("integ_tester2".to_owned());
-    let client2 = client_common_config
+
+    let mut client_common_config1 = ClientOptionsBuilder::default();
+    client_common_config1
+        .identity("integ_tester2".to_owned())
+        .client_name("temporal-core".to_owned())
+        .client_version("0.1.1".to_owned());
+
+    // TODO: use telemetry (TemporalMeter) instances with different labels so you can easily differentiate
+    let client2 = client_common_config1
         .clone()
         .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
         .build()
         .unwrap()
-        .connect("default", None)
+        .connect("default", None, Uuid::new_v4())
         .await
         .unwrap();
+    println!("client2 created");
     let worker = init_worker(
-        init_integ_telem().unwrap(),
+        &runtime,
         integ_worker_config("my-task-queue")
             // We want a cache so we don't get extra remove-job activations
             .max_cached_workflows(100_usize)
@@ -267,6 +276,7 @@ async fn worker_heartbeat_replace_client() {
         client1.clone(),
     )
     .unwrap();
+    println!("worker created");
 
     println!("sleeping for 200ms");
     tokio::time::sleep(Duration::from_millis(300)).await;

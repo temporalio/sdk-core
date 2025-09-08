@@ -11,7 +11,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
     HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
     MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal,
-    NewAttributes, NoOpCoreMeter,
+    NewAttributes, NoOpCoreMeter, TemporalMeter,
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -76,10 +76,17 @@ impl MetricsContext {
         }
     }
 
-    // TODO: create a helper that takes in a TemporalMeter and sets up all of these attributes for
-    //  sharedNamespaceWorker creation
+    #[cfg(test)]
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
-        if let Some(mut meter) = telemetry.get_temporal_metric_meter() {
+        MetricsContext::top_level_with_meter(namespace, tq, telemetry.get_temporal_metric_meter())
+    }
+
+    pub(crate) fn top_level_with_meter(
+        namespace: String,
+        tq: String,
+        temporal_meter: Option<TemporalMeter>,
+    ) -> Self {
+        if let Some(mut meter) = temporal_meter {
             meter
                 .default_attribs
                 .attributes

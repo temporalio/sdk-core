@@ -1,19 +1,15 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::{
-    abstractions::dbg_panic, protosext::legacy_query_failure, worker::heartbeat::HeartbeatFn,
-};
-use parking_lot::RwLock;
-use std::{
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use crate::protosext::legacy_query_failure;
+use parking_lot::{RwLock};
+use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
     RetryClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{workflow_commands::QueryResult, workflow_completion},
@@ -33,7 +29,6 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-        worker::v1::WorkerHeartbeat,
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
 };
@@ -53,9 +48,6 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    // TODO: remove
-    /// This is only used in SharedNamespaceWorker
-    heartbeat_callbacks: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
 }
 
 impl WorkerClientBag {
@@ -70,7 +62,6 @@ impl WorkerClientBag {
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_callbacks: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -131,33 +122,11 @@ impl WorkerClientBag {
             None
         }
     }
-
-    fn capture_heartbeat(&self) -> Vec<WorkerHeartbeat> {
-        self.heartbeat_callbacks
-            .lock()
-            .values()
-            .map(|f| f())
-            .collect()
-    }
 }
-
-pub(crate) trait WorkerHeartbeatTrait {
-    fn get_heartbeat_map(&self) -> Arc<Mutex<HashMap<String, HeartbeatFn>>>;
-}
-
-impl WorkerHeartbeatTrait for WorkerClientBag {
-    fn get_heartbeat_map(&self) -> Arc<Mutex<HashMap<String, HeartbeatFn>>> {
-        self.heartbeat_callbacks.clone()
-    }
-}
-
-pub(crate) trait WorkerClientWithHeartbeat: WorkerClient + WorkerHeartbeatTrait {}
-
-impl<T: WorkerClient + WorkerHeartbeatTrait> WorkerClientWithHeartbeat for T {}
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
 /// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
-#[cfg_attr(any(feature = "test-utilities", test), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
 pub trait WorkerClient: Sync + Send {
     /// Poll workflow tasks
@@ -375,14 +344,8 @@ impl WorkerClient for WorkerClientBag {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
-        send_heartbeat: bool,
+        _send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse> {
-        let worker_heartbeat = if send_heartbeat {
-            self.capture_heartbeat()
-        } else {
-            Vec::new()
-        };
-
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -394,7 +357,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat,
+            worker_heartbeat: Vec::new(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -698,13 +661,15 @@ impl WorkerClient for WorkerClientBag {
         namespace: String,
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
+        let request = RecordWorkerHeartbeatRequest {
+            namespace,
+            identity: self.identity.clone(),
+            worker_heartbeat,
+        };
+        println!("Sending RecordWorkerHeartbeatRequest: {:?}", request);
         Ok(self
             .cloned_client()
-            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace,
-                identity: self.identity.clone(),
-                worker_heartbeat,
-            })
+            .record_worker_heartbeat(request)
             .await?
             .into_inner())
     }

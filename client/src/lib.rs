@@ -33,8 +33,7 @@ pub use temporal_sdk_core_protos::temporal::api::{
 };
 pub use tonic;
 pub use worker_registry::{
-    ClientWorkerSet, SharedNamespaceWorkerTrait, Slot, SlotProvider,
-    WorkerKey,
+    ClientWorkerSet, SharedNamespaceWorkerTrait, Slot, SlotProvider, WorkerKey,
 };
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
@@ -588,7 +587,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
-            workers: Arc::new(ClientWorkerSet::new()), // TODO: Pass in callback to create SharedNamespaceWorker?
+            workers: Arc::new(ClientWorkerSet::new()),
         };
         if !self.skip_get_system_info {
             match client

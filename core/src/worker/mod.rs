@@ -20,7 +20,6 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub(crate) use workflow::LEGACY_QUERY_ID;
 
-use crate::worker::client::WorkerHeartbeatTrait;
 use crate::worker::heartbeat::{HeartbeatFn, SharedNamespaceWorker};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
@@ -63,12 +62,15 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics, WorkerKey,
+    ConfiguredClient, NamespacedClient, SharedNamespaceWorkerTrait,
+    TemporalServiceClientWithMetrics, WorkerKey,
 };
+use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
+use temporal_sdk_core_protos::temporal::api::cloud::account::v1::Metrics;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHostInfo;
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -88,6 +90,7 @@ use temporal_sdk_core_protos::{
 use tokio::sync::{OnceCell, mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tracing::Subscriber;
 use uuid::Uuid;
 #[cfg(test)]
 use {
@@ -144,6 +147,26 @@ impl AllPermitsTracker {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct WorkerTelemetry {
+    metric_meter: Option<TemporalMeter>,
+    temporal_metric_meter: Option<TemporalMeter>,
+    trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
+}
+
+impl WorkerTelemetry {
+    fn metric_meter(&self) -> Option<TemporalMeter> {
+        self.metric_meter.as_ref().cloned()
+    }
+
+    fn temporal_metric_meter(&self) -> Option<TemporalMeter> {
+        self.temporal_metric_meter.as_ref().cloned()
+    }
+    fn trace_subscriber(&self) -> Option<Arc<dyn Subscriber + Send + Sync>> {
+        self.trace_subscriber.as_ref().cloned()
+    }
+}
+
 struct WorkerHeartbeat {
     /// Instance key used to identify this worker in worker heartbeating
     worker_instance_key: Uuid,
@@ -152,7 +175,8 @@ struct WorkerHeartbeat {
     shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
     /// Heartbeat interval, defaults to 60s
     heartbeat_interval: Duration,
-    // telemetry_instance: Option<&TelemetryInstance>,
+    /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
+    telemetry: Option<WorkerTelemetry>,
 }
 
 #[async_trait::async_trait]
@@ -291,7 +315,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
-        worker_heartbeat_interval: &Option<Duration>,
+        worker_heartbeat_interval: Option<Duration>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -308,6 +332,7 @@ impl Worker {
     /// Replace client and return a new client. For eager workflow purposes, this new client will
     /// now apply to future eager start requests and the older client will not.
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
+        println!("replacement_client()\n\t{:?}", "a");
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
         let heartbeat_fn = if let Some(worker_heartbeat_mgr) = &self.worker_heartbeat_mgr {
@@ -325,8 +350,14 @@ impl Worker {
             new_client,
             self.client.get_process_key(),
         );
+        // TODO: Figure out if this function should update self.client's identity to match new_client?
+        println!(
+            "new_worker_client.get_identity() {:?}",
+            new_worker_client.get_identity()
+        );
 
         self.client.replace_client(new_worker_client);
+
         *worker_key = slot_provider
             .and_then(|slot_provider| self.client.workers().register_slot(slot_provider));
         if let Some(worker_heartbeat_mgr) = &self.worker_heartbeat_mgr
@@ -336,8 +367,7 @@ impl Worker {
                 self.client.clone(),
                 self.config.namespace.clone(),
                 worker_heartbeat_mgr.heartbeat_interval,
-                None, // TODO: where do I get telemetry from?
-                // I think it has to come from Worker,
+                worker_heartbeat_mgr.telemetry.clone(),
             );
             self.client.workers().register_heartbeat_worker(
                 self.config.namespace.clone(),
@@ -350,7 +380,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, &None)
+        Self::new(config, None, Arc::new(client), None, None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -359,17 +389,54 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
-        worker_heartbeat_interval: &Option<Duration>,
+        worker_heartbeat_interval: Option<Duration>,
+    ) -> Self {
+        let worker_telemetry = if let Some(telem) = telem_instance {
+            Some(WorkerTelemetry {
+                metric_meter: telem.get_metric_meter(),
+                temporal_metric_meter: telem.get_temporal_metric_meter(),
+                trace_subscriber: telem.trace_subscriber(),
+            })
+        } else {
+            None
+        };
+
+        Worker::new_with_pollers_inner(
+            config,
+            sticky_queue_name,
+            client,
+            task_pollers,
+            worker_telemetry,
+            worker_heartbeat_interval,
+        )
+    }
+
+    // TODO: telem needs
+    //  get_metric_meter() - > Option<TemporalMeter>
+    //  get_temporal_metric_meter()
+    //  trace_subscriber()
+    pub(crate) fn new_with_pollers_inner(
+        config: WorkerConfig,
+        sticky_queue_name: Option<String>,
+        client: Arc<dyn WorkerClient>,
+        task_pollers: TaskPollers,
+        worker_telemetry: Option<WorkerTelemetry>,
+        worker_heartbeat_interval: Option<Duration>,
     ) -> Self {
         let shared_namespace_worker = worker_heartbeat_interval.is_none();
-        let (metrics, meter) = if let Some(ti) = telem_instance {
+        let (metrics, meter) = if let Some(wt) = worker_telemetry.as_ref() {
             (
-                MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
-                ti.get_metric_meter(),
+                MetricsContext::top_level_with_meter(
+                    config.namespace.clone(),
+                    config.task_queue.clone(),
+                    wt.temporal_metric_meter(),
+                ),
+                wt.metric_meter(),
             )
         } else {
             (MetricsContext::no_op(), None)
         };
+
         let tuner = config
             .tuner
             .as_ref()
@@ -582,19 +649,24 @@ impl Worker {
                     ..Default::default()
                 }
             });
-            
+
             client.workers().register_heartbeat_worker(
                 config.namespace.clone(),
                 worker_instance_key.to_string(),
                 worker_heartbeat_callback,
-                construct_shared_worker_fn(client.clone(), config.namespace.clone(), *heartbeat_interval, None), // TODO: telemetry
+                construct_shared_worker_fn(
+                    client.clone(),
+                    config.namespace.clone(),
+                    heartbeat_interval,
+                    worker_telemetry.clone(),
+                ),
             );
 
             Some(WorkerHeartbeat {
                 worker_instance_key,
                 shutdown_callback: OnceCell::new(),
-                heartbeat_interval: *heartbeat_interval,
-
+                heartbeat_interval: heartbeat_interval,
+                telemetry: worker_telemetry.clone(),
             })
         } else {
             None
@@ -640,7 +712,9 @@ impl Worker {
                         _ => Some(mgr.get_handle_for_workflows()),
                     }
                 }),
-                telem_instance,
+                worker_telemetry
+                    .as_ref()
+                    .and_then(|telem| telem.trace_subscriber()),
             ),
             at_task_mgr,
             local_act_mgr,
@@ -1005,16 +1079,16 @@ fn construct_shared_worker_fn(
     client: Arc<dyn WorkerClient>,
     namespace: String,
     heartbeat_interval: Duration,
-    telemetry: Option<&TelemetryInstance>,
-) -> Arc<dyn Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync> + Send + Sync + '_> {
-    Arc::new(move || {
+    telemetry: Option<WorkerTelemetry>,
+) -> impl Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync> {
+    move || {
         Box::new(SharedNamespaceWorker::new(
             client.clone(),
             namespace.clone(),
             heartbeat_interval,
-            telemetry,
+            telemetry.clone(),
         ))
-    })
+    }
 }
 
 #[cfg(test)]

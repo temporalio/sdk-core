@@ -28,6 +28,7 @@ use temporal_sdk_core_protos::{
 use tokio::time::timeout;
 use tracing::info;
 use url::Url;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn out_of_order_completion_doesnt_hang() {
@@ -134,7 +135,7 @@ async fn switching_worker_client_changes_poll() {
         .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
         .build()
         .unwrap()
-        .connect("default", None)
+        .connect("default", None, Uuid::new_v4())
         .await
         .unwrap();
     let client2 = client_common_config
@@ -142,7 +143,7 @@ async fn switching_worker_client_changes_poll() {
         .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
         .build()
         .unwrap()
-        .connect("default", None)
+        .connect("default", None, Uuid::new_v4())
         .await
         .unwrap();
 

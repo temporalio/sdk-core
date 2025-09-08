@@ -5,10 +5,8 @@
 use parking_lot::{Mutex, RwLock};
 use slotmap::SlotMap;
 use std::collections::{HashMap, hash_map::Entry::Vacant};
-use std::sync::Arc;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
-use uuid::Uuid;
 
 slotmap::new_key_type! {
     /// Registration key for a worker
@@ -135,7 +133,6 @@ pub trait SharedNamespaceWorkerTrait: std::fmt::Debug {
 #[derive(Default, Debug)]
 pub struct ClientWorkerSet {
     slot_manager: RwLock<SlotManagerImpl>,
-    // key: Namespace, value: SharedNamespaceWorker, but hidden behind HeartbeatTraitThing
     heartbeat_manager: Mutex<HashMap<String, Box<dyn SharedNamespaceWorkerTrait + Send + Sync>>>,
 }
 
@@ -173,18 +170,12 @@ impl ClientWorkerSet {
     }
 
     /// Register a worker with the worker heartbeat manager.
-    /// // TODO: Need to pass namespace, worker's identity, and heartbeat callback
-    ///     namespace - index into client's map
-    ///     worker identity - identify the worker to be able to later remove the callback from
-    ///     callback - to be able to heartbeat when needed.
     pub fn register_heartbeat_worker(
         &self,
         namespace: String,
         worker_instance_key: String,
         heartbeat_callback: Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>,
-        shared_worker_callback: Arc<
-            dyn Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync> + Send + Sync,
-        >,
+        shared_worker_callback: impl Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync>,
     ) {
         let mut shared_namespace_map = self.heartbeat_manager.lock();
         let worker = shared_namespace_map

@@ -94,7 +94,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::Span;
+use tracing::{Span, Subscriber};
 
 /// Id used by server for "legacy" queries. IE: Queries that come in the `query` rather than
 /// `queries` field of a WFT, and are responded to on the separate `respond_query_task_completed`
@@ -166,7 +166,7 @@ impl Workflows {
         local_act_mgr: Arc<LocalActivityManager>,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
-        telem_instance: Option<&TelemetryInstance>,
+        tracing_sub: Option<Arc<dyn Subscriber + Send + Sync>>,
     ) -> Self {
         let (local_tx, local_rx) = unbounded_channel();
         let (fetch_tx, fetch_rx) = unbounded_channel();
@@ -187,7 +187,6 @@ impl Workflows {
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
-        let tracing_sub = telem_instance.and_then(|ti| ti.trace_subscriber());
         let processing_task = thread::Builder::new()
             .name("workflow-processing".to_string())
             .spawn(move || {
