@@ -77,7 +77,7 @@ async fn per_call_timeout_respected_whole_client() {
     let mut raw_client = opts.connect_no_namespace(None).await.unwrap();
     let mut hm = HashMap::new();
     hm.insert("grpc-timeout".to_string(), "0S".to_string());
-    raw_client.get_client().set_headers(hm);
+    raw_client.get_client().set_headers(hm).unwrap();
     let err = raw_client
         .describe_namespace(DescribeNamespaceRequest {
             namespace: NAMESPACE.to_string(),
