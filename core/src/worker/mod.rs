@@ -393,7 +393,7 @@ impl Worker {
                         shutdown_token.child_token(),
                         Some(move |np| act_metrics.record_num_pollers(np)),
                         ActivityTaskOptions {
-                            max_worker_acts_per_second: config.max_task_queue_activities_per_second,
+                            max_worker_acts_per_second: config.max_worker_activities_per_second,
                             max_tps: config.max_task_queue_activities_per_second,
                         },
                     );
