@@ -1,8 +1,5 @@
-use prost::Message;
-use rand::RngCore;
-use std::{fs::File, io::Write, path::PathBuf};
-use temporal_sdk_core::replay::TestHistoryBuilder;
-use temporal_sdk_core_protos::{
+use crate::{
+    TestHistoryBuilder,
     coresdk::common::NamespacedWorkflowExecution,
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
@@ -11,6 +8,9 @@ use temporal_sdk_core_protos::{
         history::v1::*,
     },
 };
+use prost::Message;
+use rand::RngCore;
+use std::{fs::File, io::Write, path::PathBuf};
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED

@@ -1,3 +1,9 @@
+use bytes::Bytes;
+use http_body_util::Empty;
+use hyper::{
+    Request, Response, StatusCode, body::Incoming, server::conn::http1, service::service_fn,
+};
+use hyper_util::rt::TokioIo;
 use std::{
     io,
     sync::{
@@ -5,13 +11,6 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
-
-use bytes::Bytes;
-use http_body_util::Empty;
-use hyper::{
-    Request, Response, StatusCode, body::Incoming, server::conn::http1, service::service_fn,
-};
-use hyper_util::rt::TokioIo;
 use temporal_client::proxy::ProxyStream;
 #[cfg(unix)]
 use tokio::net::UnixListener;
@@ -20,17 +19,17 @@ use tokio::{
     sync::oneshot,
 };
 
-pub struct HttpProxy {
+pub(crate) struct HttpProxy {
     proxy_hits: Arc<AtomicUsize>,
     shutdown_tx: oneshot::Sender<()>,
 }
 impl HttpProxy {
-    pub fn spawn_tcp(listener: TcpListener) -> Self {
+    pub(crate) fn spawn_tcp(listener: TcpListener) -> Self {
         Self::spawn(ProxyListener::Tcp(listener))
     }
 
     #[cfg(unix)]
-    pub fn spawn_unix(listener: UnixListener) -> Self {
+    pub(crate) fn spawn_unix(listener: UnixListener) -> Self {
         Self::spawn(ProxyListener::Unix(listener))
     }
 
@@ -70,12 +69,12 @@ impl HttpProxy {
         }
     }
 
-    pub fn hit_count(&self) -> usize {
+    pub(crate) fn hit_count(&self) -> usize {
         self.proxy_hits.load(Ordering::SeqCst)
     }
 
     /// Returns before shutdown occurs
-    pub fn shutdown(self) {
+    pub(crate) fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
     }
 }

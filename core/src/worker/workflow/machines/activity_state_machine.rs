@@ -803,63 +803,10 @@ mod test {
     use super::*;
     use crate::{
         internal_flags::InternalFlags,
-        replay::TestHistoryBuilder,
-        test_help::{MockPollCfg, ResponseType, build_fake_sdk},
         worker::workflow::{OutgoingJob, machines::Machines},
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
-    use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::{
-        DEFAULT_WORKFLOW_TYPE,
-        coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-    };
-    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
-
-    #[tokio::test]
-    async fn immediate_activity_cancelation() {
-        let func = WorkflowFunction::new(|ctx: WfContext| async move {
-            let cancel_activity_future = ctx.activity(ActivityOptions::default());
-            // Immediately cancel the activity
-            cancel_activity_future.cancel(&ctx);
-            cancel_activity_future.await;
-            Ok(().into())
-        });
-
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        t.add_workflow_execution_completed();
-        let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
-        worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-
-        let mut aai = ActivationAssertionsInterceptor::default();
-        aai.then(|a| {
-            assert_matches!(
-                a.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                }]
-            )
-        });
-        aai.then(|a| {
-            assert_matches!(
-                a.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::ResolveActivity(
-                        ResolveActivity {
-                            result: Some(ActivityResolution {
-                                status: Some(activity_resolution::Status::Cancelled(_))
-                            }),
-                            ..
-                        }
-                    )),
-                },]
-            )
-        });
-
-        worker.set_worker_interceptor(aai);
-        worker.run().await.unwrap();
-    }
+    use temporal_sdk_core_protos::coresdk::workflow_activation::workflow_activation_job;
 
     #[test]
     fn cancels_ignored_terminal() {

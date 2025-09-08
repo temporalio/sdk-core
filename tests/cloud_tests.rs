@@ -1,7 +1,10 @@
-use temporal_client::WorkflowClientTrait;
-use temporal_sdk_core_test_utils::get_cloud_client;
-
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
+mod common;
 mod shared_tests;
+
+use common::get_cloud_client;
+use temporal_client::WorkflowClientTrait;
 
 #[tokio::test]
 async fn tls_test() {
@@ -16,8 +19,7 @@ async fn grpc_message_too_large_test() {
     shared_tests::grpc_message_too_large().await
 }
 
-// Needs https://github.com/temporalio/temporal/pull/8143 to be rolled out in cloud to pass
-// #[tokio::test]
-// async fn priority_values_sent_to_server() {
-//     shared_tests::priority::priority_values_sent_to_server().await
-// }
+#[tokio::test]
+async fn priority_values_sent_to_server() {
+    shared_tests::priority::priority_values_sent_to_server().await
+}

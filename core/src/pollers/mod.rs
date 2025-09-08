@@ -22,16 +22,16 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 use futures_util::Future;
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 pub(crate) use poll_buffer::MockPermittedPollBuffer;
 
 pub(crate) type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// A trait for things that long poll the server.
-#[cfg_attr(test, mockall::automock)]
-#[cfg_attr(test, allow(unused))]
+#[cfg_attr(any(feature = "test-utilities", test), mockall::automock)]
+#[cfg_attr(any(feature = "test-utilities", test), allow(unused))]
 #[async_trait::async_trait]
 pub(crate) trait Poller<PollResult>
 where
@@ -79,7 +79,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 mockall::mock! {
     pub ManualPoller<T: Send + Sync + 'static> {}
     #[allow(unused)]

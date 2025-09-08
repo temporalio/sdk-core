@@ -1,3 +1,11 @@
+//! This bench lives outside of the traditional /benches directory so it can share common code with
+//! integration tests.
+
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
+mod common;
+
+use crate::common::{DONT_AUTO_INIT_INTEG_TELEM, prom_metrics, replay_sdk_worker};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use futures_util::StreamExt;
 use std::{
@@ -10,10 +18,7 @@ use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 use temporal_sdk_core_api::telemetry::metrics::{
     MetricKeyValue, MetricParametersBuilder, NewAttributes,
 };
-use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
-use temporal_sdk_core_test_utils::{
-    DONT_AUTO_INIT_INTEG_TELEM, canned_histories, prom_metrics, replay_sdk_worker,
-};
+use temporal_sdk_core_protos::{DEFAULT_WORKFLOW_TYPE, canned_histories};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()
@@ -73,7 +78,7 @@ pub fn bench_metrics(c: &mut Criterion) {
         .build()
         .unwrap();
     let _tokio = tokio_runtime.enter();
-    let (mut telemopts, addr, _aborter) = prom_metrics(None);
+    let (mut telemopts, _addr, _aborter) = prom_metrics(None);
     telemopts.logging = None;
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let meter = rt.telemetry().get_metric_meter().unwrap();

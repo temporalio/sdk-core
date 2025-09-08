@@ -1,3 +1,4 @@
+use crate::common::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, build_fake_sdk};
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
 use temporal_client::{
@@ -5,8 +6,16 @@ use temporal_client::{
     WorkflowOptions,
 };
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_test_utils::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
+use temporal_sdk_core::test_help::MockPollCfg;
+use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+    coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+    temporal::api::{
+        command::v1::{Command, command},
+        common::v1::Payload,
+        enums::v1::EventType,
+    },
+};
 use uuid::Uuid;
 
 async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
@@ -86,4 +95,55 @@ async fn sends_upsert() {
         .await
         .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+}
+
+#[tokio::test]
+async fn upsert_search_attrs_from_workflow() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let (k1, k2) = ("foo", "bar");
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(|wft| {
+            assert_matches!(
+                wft.commands.as_slice(),
+                [Command { attributes: Some(
+                      command::Attributes::UpsertWorkflowSearchAttributesCommandAttributes(msg)
+                    ), .. }, ..] => {
+                    let fields = &msg.search_attributes.as_ref().unwrap().indexed_fields;
+                    let payload1 = fields.get(k1).unwrap();
+                    let payload2 = fields.get(k2).unwrap();
+                    assert_eq!(payload1.data[0], 0x01);
+                    assert_eq!(payload2.data[0], 0x02);
+                    assert_eq!(fields.len(), 2);
+                }
+            );
+        });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+        ctx.upsert_search_attributes([
+            (
+                String::from(k1),
+                Payload {
+                    data: vec![0x01],
+                    ..Default::default()
+                },
+            ),
+            (
+                String::from(k2),
+                Payload {
+                    data: vec![0x02],
+                    ..Default::default()
+                },
+            ),
+        ]);
+        Ok(().into())
+    });
+    worker.run().await.unwrap();
 }

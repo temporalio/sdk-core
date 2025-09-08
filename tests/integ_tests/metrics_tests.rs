@@ -1,4 +1,10 @@
-use crate::integ_tests::mk_nexus_endpoint;
+use crate::{
+    common::{
+        ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
+        get_integ_server_options, get_integ_telem_options, prom_metrics,
+    },
+    integ_tests::mk_nexus_endpoint,
+};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{
@@ -49,6 +55,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         common::v1::RetryPolicy,
         enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowIdReusePolicy},
@@ -61,10 +68,6 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
         workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
-};
-use temporal_sdk_core_test_utils::{
-    ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
-    get_integ_server_options, get_integ_telem_options, prom_metrics,
 };
 use tokio::{join, sync::Barrier};
 use url::Url;

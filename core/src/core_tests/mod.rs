@@ -1,7 +1,4 @@
 mod activity_tasks;
-mod child_workflows;
-mod determinism;
-mod local_activities;
 mod queries;
 mod replay_flag;
 mod updates;
@@ -13,8 +10,7 @@ use crate::{
     Worker,
     errors::PollError,
     test_help::{
-        MockPollCfg, build_mock_pollers, canned_histories, mock_worker, single_hist_mock_sg,
-        test_worker_cfg,
+        MockPollCfg, build_mock_pollers, mock_worker, single_hist_mock_sg, test_worker_cfg,
     },
     worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
@@ -22,7 +18,7 @@ use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
 use temporal_sdk_core_api::{Worker as WorkerTrait, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
-    TestHistoryBuilder,
+    TestHistoryBuilder, canned_histories,
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_completion::WorkflowActivationCompletion,
@@ -113,8 +109,6 @@ async fn shutdown_interrupts_both_polls() {
 
 #[tokio::test]
 async fn ignores_workflow_options_updated_event() {
-    temporal_sdk_core_test_utils::init_integ_telem();
-
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add(WorkflowExecutionOptionsUpdatedEventAttributes::default());

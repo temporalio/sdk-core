@@ -1,6 +1,11 @@
 //! These tests are expensive and meant to be run manually. Use them for things like perf and
 //! load testing.
 
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
+mod common;
+
+use common::{CoreWfStarter, prom_metrics, rand_6_chars};
 use futures_util::{
     StreamExt,
     future::{AbortHandle, Abortable},
@@ -18,7 +23,6 @@ use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core::CoreRuntime;
 use temporal_sdk_core_api::{telemetry::PrometheusExporterOptionsBuilder, worker::PollerBehavior};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
-use temporal_sdk_core_test_utils::{CoreWfStarter, prom_metrics, rand_6_chars};
 use tracing::info;
 
 #[tokio::test]

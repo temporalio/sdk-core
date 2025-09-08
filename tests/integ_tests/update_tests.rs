@@ -1,3 +1,6 @@
+use crate::common::{
+    CoreWfStarter, WorkflowHandleExt, init_core_and_create_wf, init_core_replay_preloaded,
+};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::{StreamExt, future, future::join_all};
@@ -12,7 +15,10 @@ use temporal_client::{
     Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
 };
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
-use temporal_sdk_core::replay::HistoryForReplay;
+use temporal_sdk_core::{
+    replay::HistoryForReplay,
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
+};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -26,16 +32,14 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         common::v1::WorkflowExecution,
         enums::v1::{EventType, ResetReapplyType, UpdateWorkflowExecutionLifecycleStage},
         update::{self, v1::WaitPolicy},
         workflowservice::v1::ResetWorkflowExecutionRequest,
     },
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt, drain_pollers_and_shutdown,
-    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd,
+    test_utils::start_timer_cmd,
 };
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;

@@ -26,7 +26,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -63,7 +63,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       # Workaround for https://github.com/actions/runner-images/issues/12432
       # from https://github.com/rust-lang/rust/issues/141626#issuecomment-2919419236
@@ -91,7 +91,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -111,9 +111,17 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
+      # Workaround for https://github.com/actions/runner-images/issues/12432
+      # from https://github.com/rust-lang/rust/issues/141626#issuecomment-2919419236
+      # Visual Studio bug tracker https://developercommunity.visualstudio.com/t/Regression-from-1943:-linkexe-crashes/10912960
+      - name: Setup RUSTFLAGS (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('RUSTFLAGS', '-Csymbol-mangling-version=v0');
       - uses: Swatinem/rust-cache@v2
       - run: cargo integ-test
 
@@ -136,11 +144,11 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --test cloud_tests
+      - run: cargo test --features=test-utilities --test cloud_tests
 
   docker-integ-tests:
     name: Docker integ tests
@@ -161,7 +169,7 @@ jobs:
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Start container for otel-collector and prometheus
         uses: hoverkraft-tech/compose-action@v2.0.1

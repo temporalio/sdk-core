@@ -666,14 +666,14 @@ impl TaskPollerResult for PollNexusTaskQueueResponse {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 #[derive(derive_more::Constructor)]
 pub(crate) struct MockPermittedPollBuffer<PT, SK: SlotKind> {
     sem: Arc<MeteredPermitDealer<SK>>,
     inner: PT,
 }
 
-#[cfg(test)]
+#[cfg(any(feature = "test-utilities", test))]
 #[async_trait::async_trait]
 impl<T, PT, SK> Poller<(T, OwnedMeteredSemPermit<SK>)> for MockPermittedPollBuffer<PT, SK>
 where

@@ -20,7 +20,7 @@ use temporal_sdk_core_protos::temporal::api::{
 /// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
 #[repr(u32)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug, enum_iterator::Sequence)]
-pub(crate) enum CoreInternalFlags {
+pub enum CoreInternalFlags {
     /// In this flag additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
     IdAndTypeDeterminismChecks = 1,

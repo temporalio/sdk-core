@@ -96,7 +96,10 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
-pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
+/// Id used by server for "legacy" queries. IE: Queries that come in the `query` rather than
+/// `queries` field of a WFT, and are responded to on the separate `respond_query_task_completed`
+/// rpc.
+pub const LEGACY_QUERY_ID: &str = "legacy_query";
 /// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
 /// necessary.
 const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;

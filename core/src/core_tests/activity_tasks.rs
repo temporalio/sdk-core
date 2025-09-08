@@ -1,10 +1,10 @@
 use crate::{
     ActivityHeartbeat, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
-        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, TEST_Q, WorkerExt,
-        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, canned_histories,
-        gen_assert_and_reply, mock_manual_poller, mock_poller, mock_poller_from_resps,
-        mock_sdk_cfg, mock_worker, poll_and_reply, single_hist_mock_sg, test_worker_cfg,
+        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, TEST_Q, WorkerExt,
+        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, fanout_tasks,
+        gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply,
+        single_hist_mock_sg, test_worker_cfg,
     },
     worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
 };
@@ -21,15 +21,11 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::{
-    Worker as WorkerTrait,
-    errors::{CompleteActivityError, PollError},
-    worker::PollerBehavior,
+    Worker as WorkerTrait, errors::CompleteActivityError, worker::PollerBehavior,
 };
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+    TestHistoryBuilder, canned_histories,
     coresdk::{
         ActivityTaskCompletion,
         activity_result::{
@@ -46,20 +42,16 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{ScheduleActivityTaskCommandAttributes, command::Attributes},
-        enums::v1::{CommandType, EventType},
-        history::v1::{
-            ActivityTaskScheduledEventAttributes, history_event::Attributes as EventAttributes,
-        },
-        sdk::v1::UserMetadata,
+        enums::v1::EventType,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
             RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
+    test_utils::start_timer_cmd,
 };
-use temporal_sdk_core_test_utils::{TestWorker, fanout_tasks, start_timer_cmd};
-use tokio::{join, sync::Barrier, time::sleep};
+use tokio::{join, time::sleep};
 use tokio_util::sync::CancellationToken;
 
 fn three_tasks() -> VecDeque<PollActivityTaskQueueResponse> {
@@ -781,9 +773,11 @@ async fn activity_tasks_from_completion_are_delivered() {
     mock.expect_complete_activity_task()
         .times(3)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
     let act_tasks: Vec<QueueResponse<PollActivityTaskQueueResponse>> = vec![];
-    mock.set_act_poller(mock_poller_from_resps(act_tasks));
+    let mut mh = MockPollCfg::from_resp_batches(wfid, t, [1], mock);
+    mh.enforce_correct_number_of_polls = true;
+    mh.activity_responses = Some(act_tasks);
+    let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 
@@ -846,160 +840,6 @@ async fn activity_tasks_from_completion_are_delivered() {
 
     // Verify only a single eager activity was scheduled (the one on our worker's task queue)
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 3);
-}
-
-#[tokio::test]
-async fn activity_tasks_from_completion_reserve_slots() {
-    let wf_id = "fake_wf_id";
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let schedid = t.add(EventAttributes::ActivityTaskScheduledEventAttributes(
-        ActivityTaskScheduledEventAttributes {
-            activity_id: "1".to_string(),
-            activity_type: Some("act1".into()),
-            ..Default::default()
-        },
-    ));
-    let startid = t.add_activity_task_started(schedid);
-    t.add_activity_task_completed(schedid, startid, b"hi".into());
-    t.add_full_wf_task();
-    let schedid = t.add(EventAttributes::ActivityTaskScheduledEventAttributes(
-        ActivityTaskScheduledEventAttributes {
-            activity_id: "2".to_string(),
-            activity_type: Some("act2".into()),
-            ..Default::default()
-        },
-    ));
-    let startid = t.add_activity_task_started(schedid);
-    t.add_activity_task_completed(schedid, startid, b"hi".into());
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-
-    let mut mock = mock_worker_client();
-    // Set up two tasks to be returned via normal activity polling
-    let act_tasks = VecDeque::from(vec![
-        PollActivityTaskQueueResponse {
-            task_token: vec![1],
-            activity_id: "act1".to_string(),
-            ..Default::default()
-        }
-        .into(),
-        PollActivityTaskQueueResponse {
-            task_token: vec![2],
-            activity_id: "act2".to_string(),
-            ..Default::default()
-        }
-        .into(),
-    ]);
-    mock.expect_complete_activity_task()
-        .times(2)
-        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
-    let mut mh = MockPollCfg::from_resp_batches(
-        wf_id,
-        t,
-        [
-            ResponseType::ToTaskNum(1),
-            // We don't want the second task to be delivered until *after* the activity tasks
-            // have been completed, so that the second activity schedule will have slots available
-            ResponseType::UntilResolved(
-                async {
-                    barr.wait().await;
-                    barr.wait().await;
-                }
-                .boxed(),
-                2,
-            ),
-            ResponseType::AllHistory,
-        ],
-        mock,
-    );
-    mh.completion_mock_fn = Some(Box::new(|wftc| {
-        // Make sure when we see the completion with the schedule act command that it does
-        // not have the eager execution flag set the first time, and does the second.
-        if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) = wftc
-            .commands
-            .first()
-            .and_then(|cmd| cmd.attributes.as_ref())
-        {
-            if attrs.activity_id == "1" {
-                assert!(!attrs.request_eager_execution);
-            } else {
-                assert!(attrs.request_eager_execution);
-            }
-        }
-        Ok(Default::default())
-    }));
-    let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(|cfg| {
-        cfg.max_cached_workflows = 2;
-        cfg.max_outstanding_activities = Some(2);
-    });
-    mock.set_act_poller(mock_poller_from_resps(act_tasks));
-    let core = Arc::new(mock_worker(mock));
-    let mut worker = TestWorker::new(core.clone(), TEST_Q.to_string());
-
-    // First poll for activities twice, occupying both slots
-    let at1 = core.poll_activity_task().await.unwrap();
-    let at2 = core.poll_activity_task().await.unwrap();
-    let workflow_complete_token = CancellationToken::new();
-    let workflow_complete_token_clone = workflow_complete_token.clone();
-
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
-        let complete_token = workflow_complete_token.clone();
-        async move {
-            ctx.activity(ActivityOptions {
-                activity_type: "act1".to_string(),
-                ..Default::default()
-            })
-            .await;
-            ctx.activity(ActivityOptions {
-                activity_type: "act2".to_string(),
-                ..Default::default()
-            })
-            .await;
-            complete_token.cancel();
-            Ok(().into())
-        }
-    });
-
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            DEFAULT_WORKFLOW_TYPE,
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    let act_completer = async {
-        barr.wait().await;
-        core.complete_activity_task(ActivityTaskCompletion {
-            task_token: at1.task_token,
-            result: Some(ActivityExecutionResult::ok("hi".into())),
-        })
-        .await
-        .unwrap();
-        core.complete_activity_task(ActivityTaskCompletion {
-            task_token: at2.task_token,
-            result: Some(ActivityExecutionResult::ok("hi".into())),
-        })
-        .await
-        .unwrap();
-        barr.wait().await;
-        // Wait for workflow to complete in order for all eager activities to be requested before shutting down.
-        // After shutdown, no eager activities slots can be allocated.
-        workflow_complete_token_clone.cancelled().await;
-        core.initiate_shutdown();
-        // Even though this test requests eager activity tasks, none are returned in poll responses.
-        let err = core.poll_activity_task().await.unwrap_err();
-        assert_matches!(err, PollError::ShutDown);
-    };
-    // This wf poll should *not* set the flag that it wants tasks back since both slots are
-    // occupied
-    let run_fut = async { worker.run_until_done().await.unwrap() };
-    join!(run_fut, act_completer);
 }
 
 #[tokio::test]
@@ -1196,57 +1036,6 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
             .unwrap();
     };
     join!(shutdown_task, complete_task);
-}
-
-#[tokio::test]
-async fn pass_activity_summary_to_metadata() {
-    let t = canned_histories::single_activity("1");
-    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
-    let wf_id = mock_cfg.hists[0].wf_id.clone();
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let expected_user_metadata = Some(UserMetadata {
-        summary: Some(b"activity summary".into()),
-        details: None,
-    });
-    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
-        asserts
-            .then(move |wft| {
-                assert_eq!(wft.commands.len(), 1);
-                assert_eq!(
-                    wft.commands[0].command_type(),
-                    CommandType::ScheduleActivityTask
-                );
-                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
-            })
-            .then(move |wft| {
-                assert_eq!(wft.commands.len(), 1);
-                assert_eq!(
-                    wft.commands[0].command_type(),
-                    CommandType::CompleteWorkflowExecution
-                );
-            });
-    });
-
-    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            summary: Some("activity summary".to_string()),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
-    });
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
 }
 
 #[tokio::test]

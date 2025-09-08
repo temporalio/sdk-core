@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use crate::ByteArray;
-use crate::ByteArrayRef;
-use crate::UserDataHandle;
-use crate::runtime::Runtime;
+use crate::{ByteArray, ByteArrayRef, UserDataHandle, runtime::Runtime};
 
 use temporal_sdk_core::ephemeral_server;
 

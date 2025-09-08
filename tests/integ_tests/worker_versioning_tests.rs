@@ -1,7 +1,11 @@
-use crate::integ_tests::activity_functions::echo;
+use crate::{
+    common::{CoreWfStarter, eventually},
+    integ_tests::activity_functions::echo,
+};
 use std::time::Duration;
 use temporal_client::{NamespacedClient, WorkflowOptions, WorkflowService};
 use temporal_sdk::{ActivityOptions, WfContext};
+use temporal_sdk_core::test_help::WorkerTestHelpers;
 use temporal_sdk_core_api::worker::{
     WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
 };
@@ -18,7 +22,6 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, WorkerTestHelpers, eventually};
 use tokio::join;
 
 #[rstest::rstest]

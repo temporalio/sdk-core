@@ -1,5 +1,10 @@
+// All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
+#[allow(dead_code)]
+mod common;
+
 use anyhow::{anyhow, bail};
 use clap::Parser;
+use common::{INTEG_SERVER_TARGET_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
 use std::{
     env,
     path::{Path, PathBuf},
@@ -7,12 +12,14 @@ use std::{
 };
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, TestServerConfigBuilder,
-};
-use temporal_sdk_core_test_utils::{
-    INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
-    INTEG_TEST_SERVER_USED_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, default_cached_download,
+    default_cached_download,
 };
 use tokio::{self, process::Command};
+
+/// This env var is set (to any value) if temporal CLI dev server is in use
+const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
+/// This env var is set (to any value) if the test server is in use
+const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
 
 #[derive(clap::Parser)]
 #[command(author, version, about, long_about = None)]
@@ -58,10 +65,15 @@ async fn main() -> Result<(), anyhow::Error> {
     } = Cli::parse();
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     // Try building first, so that we error early on build failures & don't start server
+    // Unclear why --all-features doesn't work here
     let test_args_preamble = [
         "test",
         "--features",
         "temporal-sdk-core-protos/serde_serialize",
+        "--features",
+        "test-utilities",
+        "--features",
+        "ephemeral-server",
         "--test",
         &test_name,
     ]
@@ -118,7 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 ])
                 .ui(true)
                 .build()?;
-            println!("Using temporal CLI: {:?}", config);
+            println!("Using temporal CLI: {config:?}");
             (
                 Some(
                     config

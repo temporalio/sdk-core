@@ -1,15 +1,13 @@
+use crate::common::{CoreWfStarter, NAMESPACE, eventually, get_integ_server_options};
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, StartTimeFilter,
     WorkflowClientTrait, WorkflowExecutionFilter,
 };
+use temporal_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::coresdk::workflow_activation::{
     WorkflowActivationJob, workflow_activation_job,
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown, eventually,
-    get_integ_server_options,
 };
 use tokio::time::sleep;
 

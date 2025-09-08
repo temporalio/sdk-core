@@ -1,7 +1,12 @@
+use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporal_client::{GetWorkflowResultOpts, WfClientExt, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution};
-use temporal_sdk_core_test_utils::CoreWfStarter;
+use temporal_sdk_core::test_help::MockPollCfg;
+use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+    coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
+    temporal::api::enums::v1::{CommandType, EventType},
+};
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 
@@ -71,4 +76,75 @@ async fn sends_cancel_to_other_wf() {
     .unwrap();
     assert!(res.contains("Cancel requested by workflow"));
     assert!(res.contains("cancel-reason"));
+}
+
+async fn cancel_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
+    let res = ctx
+        .cancel_external(
+            NamespacedWorkflowExecution {
+                namespace: "some_namespace".to_string(),
+                workflow_id: "fake_wid".to_string(),
+                run_id: "fake_rid".to_string(),
+            },
+            "cancel reason".to_string(),
+        )
+        .await;
+    if res.is_err() {
+        Err(anyhow::anyhow!("Cancel fail!"))
+    } else {
+        Ok(().into())
+    }
+}
+
+#[rstest::rstest]
+#[case::succeeds(false)]
+#[case::fails(true)]
+#[tokio::test]
+async fn sends_cancel_canned(#[case] fails: bool) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+        namespace: "some_namespace".to_string(),
+        workflow_id: "fake_wid".to_string(),
+        run_id: "fake_rid".to_string(),
+    });
+    if fails {
+        t.add_cancel_external_wf_failed(id);
+    } else {
+        t.add_cancel_external_wf_completed(id);
+    }
+    t.add_full_wf_task();
+    if fails {
+        t.add_workflow_execution_failed();
+    } else {
+        t.add_workflow_execution_completed();
+    }
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(|wft| {
+                assert_matches!(
+                    wft.commands[0].command_type(),
+                    CommandType::RequestCancelExternalWorkflowExecution
+                );
+            })
+            .then(move |wft| {
+                if fails {
+                    assert_eq!(
+                        wft.commands[0].command_type(),
+                        CommandType::FailWorkflowExecution
+                    );
+                } else {
+                    assert_eq!(
+                        wft.commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                }
+            });
+    });
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, cancel_sender_canned);
+    worker.run().await.unwrap();
 }

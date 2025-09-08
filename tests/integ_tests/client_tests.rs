@@ -1,3 +1,4 @@
+use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options, http_proxy::HttpProxy};
 use assert_matches::assert_matches;
 use futures_util::{FutureExt, future::BoxFuture};
 use http_body_util::Full;
@@ -24,7 +25,6 @@ use temporal_sdk_core_protos::temporal::api::{
         RespondActivityTaskCanceledResponse,
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, HttpProxy, NAMESPACE, get_integ_server_options};
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::{

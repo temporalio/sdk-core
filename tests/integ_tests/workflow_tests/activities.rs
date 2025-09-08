@@ -1,4 +1,10 @@
-use crate::integ_tests::activity_functions::echo;
+use crate::{
+    common::{
+        ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk, init_core_and_create_wf,
+        mock_sdk, mock_sdk_cfg,
+    },
+    integ_tests::activity_functions::echo,
+};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::future::join_all;
@@ -9,11 +15,14 @@ use std::{
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
-    WfExitValue, WorkflowResult,
+    WfExitValue, WorkflowFunction, WorkflowResult,
+};
+use temporal_sdk_core::test_help::{
+    MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
 };
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, TaskToken,
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TaskToken, TestHistoryBuilder, canned_histories,
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         IntoCompletion,
@@ -29,15 +38,14 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    prost_dur,
     temporal::api::{
         common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
-        enums::v1::RetryState,
+        enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
+        sdk::v1::UserMetadata,
     },
-};
-use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
-    schedule_activity_cmd,
+    test_utils::schedule_activity_cmd,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
@@ -1113,4 +1121,149 @@ async fn long_activity_timeout_repro() {
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn pass_activity_summary_to_metadata() {
+    let t = canned_histories::single_activity("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let wf_id = mock_cfg.hists[0].wf_id.clone();
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"activity summary".into()),
+        details: None,
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::ScheduleActivityTask
+                );
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            summary: Some("activity summary".to_string()),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
+#[tokio::test]
+async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [usize]) {
+    let wfid = "fake_wf_id";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let activity_id = "1";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let act_scheduled_event_id = t.add_activity_task_scheduled(activity_id);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
+    t.add_activity_task_completed(
+        act_scheduled_event_id,
+        act_started_event_id,
+        Default::default(),
+    );
+    t.add_full_wf_task();
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let mock = mock_worker_client();
+    let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
+
+    worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
+        let act_fut = ctx.activity(ActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            cancellation_type: ActivityCancellationType::Abandon,
+            ..Default::default()
+        });
+        ctx.timer(Duration::from_secs(1)).await;
+        act_fut.cancel(&ctx);
+        ctx.timer(Duration::from_secs(3)).await;
+        act_fut.await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(wfid, wf_type, vec![], Default::default())
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn immediate_activity_cancelation() {
+    let func = WorkflowFunction::new(|ctx: WfContext| async move {
+        let cancel_activity_future = ctx.activity(ActivityOptions::default());
+        // Immediately cancel the activity
+        cancel_activity_future.cancel(&ctx);
+        cancel_activity_future.await;
+        Ok(().into())
+    });
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+
+    let mut aai = ActivationAssertionsInterceptor::default();
+    aai.then(|a| {
+        assert_matches!(
+            a.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+            }]
+        )
+    });
+    aai.then(|a| {
+        assert_matches!(
+            a.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {
+                        result: Some(ActivityResolution {
+                            status: Some(act_res::Status::Cancelled(_))
+                        }),
+                        ..
+                    }
+                )),
+            },]
+        )
+    });
+
+    worker.set_worker_interceptor(aai);
+    worker.run().await.unwrap();
 }
