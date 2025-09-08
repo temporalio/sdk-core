@@ -19,7 +19,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use temporal_sdk_core_api::{
     Worker as WorkerTrait, errors::CompleteActivityError, worker::PollerBehavior,
@@ -632,6 +632,47 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         .unwrap();
     let worker = Worker::new_test(cfg, mock_client);
     worker.poll_activity_task().await.unwrap();
+}
+
+#[tokio::test]
+async fn max_worker_acts_per_second_respected() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_poll_activity_task()
+        .returning(move |_, _| {
+            Ok(PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "some-id".to_string(),
+                ..Default::default()
+            })
+        });
+    mock_client
+        .expect_complete_activity_task()
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let cfg = test_worker_cfg()
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+        .max_outstanding_activities(10_usize)
+        .max_worker_activities_per_second(1.0)
+        .build()
+        .unwrap();
+    let worker = Worker::new_test(cfg, mock_client);
+    let start = Instant::now();
+    let mut received = 0;
+    while start.elapsed().as_millis() < 900 {
+        let at = worker.poll_activity_task().await.unwrap();
+        received += 1;
+        worker
+            .complete_activity_task(ActivityTaskCompletion {
+                task_token: at.task_token,
+                result: Some(ActivityExecutionResult::ok("hi".into())),
+            })
+            .await
+            .unwrap();
+    }
+    // Two will be allowed because of the initial request. Without ratelimit in effect, this number
+    // would be comically high due to the mocks responding very fast.
+    assert_eq!(received, 2);
 }
 
 #[rstest::rstest]
