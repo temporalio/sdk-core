@@ -1,4 +1,4 @@
-use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
+use crate::abstractions::dbg_panic;
 
 use std::{
     fmt::{Debug, Display},

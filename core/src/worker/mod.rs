@@ -70,7 +70,6 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::temporal::api::cloud::account::v1::Metrics;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHostInfo;
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -87,7 +86,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
 };
-use tokio::sync::{OnceCell, mpsc::unbounded_channel, watch};
+use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Subscriber;
@@ -170,9 +169,6 @@ impl WorkerTelemetry {
 struct WorkerHeartbeat {
     /// Instance key used to identify this worker in worker heartbeating
     worker_instance_key: Uuid,
-    /// Used to remove this worker from the parent map used to track this worker for
-    /// worker heartbeat
-    shutdown_callback: OnceCell<Arc<dyn Fn() + Send + Sync>>,
     /// Heartbeat interval, defaults to 60s
     heartbeat_interval: Duration,
     /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
@@ -391,15 +387,11 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
     ) -> Self {
-        let worker_telemetry = if let Some(telem) = telem_instance {
-            Some(WorkerTelemetry {
-                metric_meter: telem.get_metric_meter(),
-                temporal_metric_meter: telem.get_temporal_metric_meter(),
-                trace_subscriber: telem.trace_subscriber(),
-            })
-        } else {
-            None
-        };
+        let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
+            metric_meter: telem.get_metric_meter(),
+            temporal_metric_meter: telem.get_temporal_metric_meter(),
+            trace_subscriber: telem.trace_subscriber(),
+        });
 
         Worker::new_with_pollers_inner(
             config,
@@ -664,8 +656,7 @@ impl Worker {
 
             Some(WorkerHeartbeat {
                 worker_instance_key,
-                shutdown_callback: OnceCell::new(),
-                heartbeat_interval: heartbeat_interval,
+                heartbeat_interval,
                 telemetry: worker_telemetry.clone(),
             })
         } else {

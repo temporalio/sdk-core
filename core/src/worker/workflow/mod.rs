@@ -23,7 +23,7 @@ use crate::{
     internal_flags::InternalFlags,
     pollers::TrackedPermittedTqResp,
     protosext::{ValidPollWFTQResponse, protocol_messages::IncomingProtocolMessage},
-    telemetry::{TelemetryInstance, VecDisplayer, set_trace_subscriber_for_current_thread},
+    telemetry::{VecDisplayer, set_trace_subscriber_for_current_thread},
     worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
         PostActivateHookData,

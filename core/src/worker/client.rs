@@ -2,14 +2,13 @@
 
 pub(crate) mod mocks;
 use crate::protosext::legacy_query_failure;
-use parking_lot::{RwLock};
+use parking_lot::RwLock;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
     RetryClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{workflow_commands::QueryResult, workflow_completion},
@@ -29,6 +28,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        worker::v1::WorkerHeartbeat,
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
 };
@@ -126,7 +126,7 @@ impl WorkerClientBag {
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
 /// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
-#[cfg_attr(test, mockall::automock)]
+#[cfg_attr(any(feature = "test-utilities", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait WorkerClient: Sync + Send {
     /// Poll workflow tasks

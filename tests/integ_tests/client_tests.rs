@@ -446,7 +446,10 @@ async fn http_proxy() {
     opts.target_url = format!("http://127.0.0.1:{}", server.addr.port())
         .parse()
         .unwrap();
-    let client = opts.connect("my-namespace", None).await.unwrap();
+    let client = opts
+        .connect("my-namespace", None, Uuid::new_v4())
+        .await
+        .unwrap();
     let _ = client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 1);
     assert!(tcp_proxy.hit_count() == 0);
@@ -456,7 +459,10 @@ async fn http_proxy() {
         target_addr: tcp_proxy_addr.to_string(),
         basic_auth: None,
     });
-    let proxied_client = opts.connect("my-namespace", None).await.unwrap();
+    let proxied_client = opts
+        .connect("my-namespace", None, Uuid::new_v4())
+        .await
+        .unwrap();
     let _ = proxied_client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 2);
     assert!(tcp_proxy.hit_count() == 1);
@@ -478,7 +484,10 @@ async fn http_proxy() {
             target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
             basic_auth: None,
         });
-        let proxied_client = opts.connect("my-namespace", None).await.unwrap();
+        let proxied_client = opts
+            .connect("my-namespace", None, Uuid::new_v4())
+            .await
+            .unwrap();
         let _ = proxied_client.list_namespaces().await;
         assert!(call_count.load(Ordering::SeqCst) == 3);
         assert!(unix_proxy.hit_count() == 1);

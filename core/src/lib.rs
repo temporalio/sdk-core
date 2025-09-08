@@ -30,7 +30,6 @@ mod core_tests;
 #[macro_use]
 pub mod test_help;
 
-use std::collections::HashMap;
 pub(crate) use temporal_sdk_core_api::errors;
 
 pub use pollers::{
@@ -119,7 +118,7 @@ where
         client_ident.clone(),
         worker_config.versioning_strategy.clone(),
     ));
-    
+
     let worker = Worker::new(
         worker_config.clone(),
         sticky_q,
@@ -369,10 +368,6 @@ impl CoreRuntime {
     /// Return a mutable reference to the owned [TelemetryInstance]
     pub fn telemetry_mut(&mut self) -> &mut TelemetryInstance {
         &mut self.telemetry
-    }
-
-    fn task_queue_key(&self) -> Uuid {
-        self.process_key
     }
 }
 

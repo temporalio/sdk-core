@@ -3,9 +3,11 @@ use crate::worker::{TaskPollers, WorkerTelemetry};
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
 use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::{
+    fmt,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use temporal_client::SharedNamespaceWorkerTrait;
 use temporal_sdk_core_api::worker::{WorkerConfigBuilder, WorkerVersioningStrategy};
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
@@ -29,12 +31,16 @@ impl SharedNamespaceWorker {
         heartbeat_interval: Duration,
         telemetry: Option<WorkerTelemetry>,
     ) -> Self {
-        println!("SharedNamespaceWorker::new() {:?}\n\tsdk_name_and_version key{:?}", client.get_identity(), client.sdk_name_and_version());
+        println!(
+            "SharedNamespaceWorker::new() {:?}\n\tsdk_name_and_version key{:?}",
+            client.get_identity(),
+            client.sdk_name_and_version()
+        );
         let config = WorkerConfigBuilder::default()
             .namespace(namespace.clone())
             .task_queue(format!(
                 "temporal-sys/worker-commands/{namespace}/{}",
-                client.get_process_key().to_string()
+                client.get_process_key()
             ))
             .no_remote_activities(true)
             .max_outstanding_nexus_tasks(5_usize)
@@ -68,7 +74,9 @@ impl SharedNamespaceWorker {
             loop {
                 // TODO: Race condition here, can technically shut down before anything is ever initialized
                 if heartbeat_map_clone.lock().is_empty() {
-                    println!("// TODO: Race condition here, can technically shut down before anything is ever initialized");
+                    println!(
+                        "// TODO: Race condition here, can technically shut down before anything is ever initialized"
+                    );
                     worker.shutdown().await;
                     return;
                 }
@@ -169,17 +177,20 @@ impl fmt::Debug for SharedNamespaceWorker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::WorkerExt;
-    use crate::test_help::test_worker_cfg;
-    use crate::worker;
-    use crate::worker::client::mocks::mock_worker_client;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::atomic::Ordering;
-    use std::time::Duration;
+    use crate::{
+        test_help::{WorkerExt, test_worker_cfg},
+        worker,
+        worker::client::mocks::mock_worker_client,
+    };
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
-    use uuid::Uuid;
 
     #[tokio::test]
     async fn worker_heartbeat_basic() {
@@ -218,29 +229,13 @@ mod tests {
             .into();
 
         let client = Arc::new(mock);
-        let worker = worker::Worker::new(config, None, client.clone(), None, None);
-
-        let namespace = "test-namespace".to_string();
-        let process_key = Uuid::new_v4();
-        // let mut shared_namespace_worker = SharedNamespaceWorker::new(
-        //     client,
-        //     WorkerHeartbeatIdentity::new(
-        //         "test-endpoint".to_string(),
-        //         namespace.clone(),
-        //         process_key.to_string(),
-        //         "test-identity".to_string(),
-        //     ),
-        //     Duration::from_millis(100),
-        //     None,
-        // );
-        // TODO: translate to new way
-        // let worker_instance_key = worker.worker_instance_key().unwrap();
-        // shared_namespace_worker.register_callback(
-        //     worker_instance_key,
-        //     worker
-        //         .get_heartbeat_callback()
-        //         .expect("heartbeat callback should be set"),
-        // );
+        let worker = worker::Worker::new(
+            config,
+            None,
+            client.clone(),
+            None,
+            Some(Duration::from_millis(100)),
+        );
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;
