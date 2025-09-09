@@ -246,16 +246,6 @@ pub struct RuntimeOptions {
     heartbeat_interval: Option<Duration>,
 }
 
-impl RuntimeOptions {
-    /// Creates new runtime options.
-    pub fn new(telemetry_options: TelemetryOptions, heartbeat_interval: Option<Duration>) -> Self {
-        Self {
-            telemetry_options,
-            heartbeat_interval,
-        }
-    }
-}
-
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions
 pub struct TokioRuntimeBuilder<F> {
     /// The underlying tokio runtime builder

@@ -75,7 +75,7 @@ impl SharedNamespaceWorker {
                     worker.shutdown().await;
                     return;
                 }
-                
+
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
