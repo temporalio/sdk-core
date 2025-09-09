@@ -109,7 +109,9 @@ impl SlotManagerImpl {
     }
 }
 
+/// This trait represents a shared namespace worker that sends worker heartbeats and worker commands.
 pub trait SharedNamespaceWorkerTrait: std::fmt::Debug {
+    /// Namespace that the shared namespace worker is connected to.
     fn namespace(&self) -> String;
 
     /// Unregisters a heartbeat callback. Returns the callback removed, as well as a bool that
@@ -120,6 +122,7 @@ pub trait SharedNamespaceWorkerTrait: std::fmt::Debug {
         worker_instance_key: String,
     ) -> (Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>, bool);
 
+    /// Registers a heartbeat callback.
     fn register_callback(
         &self,
         worker_instance_key: String,
@@ -184,7 +187,7 @@ impl ClientWorkerSet {
         worker.register_callback(worker_instance_key, heartbeat_callback)
     }
 
-    /// Unregister
+    /// Unregister a worker with the worker heartbeat manager.
     pub fn unregister_heartbeat_worker(
         &self,
         namespace: String,

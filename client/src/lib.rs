@@ -390,7 +390,7 @@ pub struct ConfiguredClient<C> {
     headers: Arc<RwLock<ClientHeaders>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
-    workers: Arc<ClientWorkerSet>, // ClientWorkerSet
+    workers: Arc<ClientWorkerSet>,
 }
 
 impl<C> ConfiguredClient<C> {

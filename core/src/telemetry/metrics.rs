@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::TelemetryInstance;
 use crate::abstractions::dbg_panic;
 
 use std::{
