@@ -195,6 +195,10 @@ name = "workflow_replay"
 path = "../tests/workflow_replay_bench.rs"
 harness = false
 
+[[example]]
+name = "sdk-test"
+path = "../tests/sdk_tryout_example.rs"
+
 # The integration test runner should compile with the same configuration as the
 # rest of the integration tests so that artifacts are shared and no additional
 # compilation is required when switching between using the runner and running
