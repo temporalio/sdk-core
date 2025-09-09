@@ -258,6 +258,16 @@ async fn nexus_async(
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
         let mut nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
+        // Verify request header key for timeout exists and is lowercase
+        if outcome == Outcome::Timeout {
+            assert!(
+                nt.request
+                    .as_ref()
+                    .unwrap()
+                    .header
+                    .contains_key("request-timeout")
+            );
+        }
         let start_req = assert_matches!(
             nt.request.unwrap().variant.unwrap(),
             request::Variant::StartOperation(sr) => sr

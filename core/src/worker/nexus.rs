@@ -42,7 +42,7 @@ use tokio::{
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-static REQUEST_TIMEOUT_HEADER: &str = "Request-Timeout";
+static REQUEST_TIMEOUT_HEADER: &str = "request-timeout";
 
 /// Centralizes all state related to received nexus tasks
 pub(super) struct NexusManager {
@@ -245,10 +245,22 @@ where
             .filter_map(move |t| {
                 let res = match t {
                     TaskStreamInput::Poll(t) => match *t {
-                        Ok(t) => {
+                        Ok(mut t) => {
                             if let Some(dur) = t.resp.sched_to_start() {
                                 self.metrics.nexus_task_sched_to_start_latency(dur);
                             };
+
+                            // Lowercase-ify headers. All headers should be lowercase as per http2
+                            // standard, but, not all of them were initially and this papers over
+                            // that for lang.
+                            if let Some(ref mut req) = t.resp.request {
+                                let existing_headers = std::mem::take(&mut req.header);
+                                let mut new_headers = HashMap::new();
+                                for (header_key, val) in existing_headers.into_iter() {
+                                    new_headers.insert(header_key.to_lowercase(), val);
+                                };
+                                req.header = new_headers;
+                            }
 
                             let tt = TaskToken(t.resp.task_token.clone());
                             let mut timeout_task = None;
