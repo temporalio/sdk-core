@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use prost::{EncodeError, Message};
 
 pub trait TryIntoOrNone<F, T> {
@@ -25,4 +27,14 @@ pub fn pack_any<T: Message>(
     let mut value = Vec::new();
     Message::encode(msg, &mut value)?;
     Ok(prost_wkt_types::Any { type_url, value })
+}
+
+/// Given a header map, lowercase all the keys and return it as a new map.
+/// Any keys that are duplicated after lowercasing will clobber each other in underfined ordering.
+pub fn normalize_http_headers(headers: HashMap<String, String>) -> HashMap<String, String> {
+    let mut new_headers = HashMap::new();
+    for (header_key, val) in headers.into_iter() {
+        new_headers.insert(header_key.to_lowercase(), val);
+    }
+    new_headers
 }

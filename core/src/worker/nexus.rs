@@ -32,7 +32,11 @@ use temporal_sdk_core_protos::{
             CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task, nexus_task_completion,
         },
     },
-    temporal::api::nexus::v1::{request::Variant, response, start_operation_response},
+    temporal::api::nexus::{
+        self,
+        v1::{request::Variant, response, start_operation_response},
+    },
+    utilities::normalize_http_headers,
 };
 use tokio::{
     join,
@@ -250,16 +254,11 @@ where
                                 self.metrics.nexus_task_sched_to_start_latency(dur);
                             };
 
-                            // Lowercase-ify headers. All headers should be lowercase as per http2
-                            // standard, but, not all of them were initially and this papers over
-                            // that for lang.
                             if let Some(ref mut req) = t.resp.request {
-                                let existing_headers = std::mem::take(&mut req.header);
-                                let mut new_headers = HashMap::new();
-                                for (header_key, val) in existing_headers.into_iter() {
-                                    new_headers.insert(header_key.to_lowercase(), val);
-                                };
-                                req.header = new_headers;
+                                req.header = normalize_http_headers(std::mem::take(&mut req.header));
+                                if let Some(nexus::v1::request::Variant::StartOperation(ref mut sor)) = req.variant {
+                                    sor.callback_header = normalize_http_headers(std::mem::take(&mut sor.callback_header));
+                                }
                             }
 
                             let tt = TaskToken(t.resp.task_token.clone());
