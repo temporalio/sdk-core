@@ -30,7 +30,7 @@ pub fn pack_any<T: Message>(
 }
 
 /// Given a header map, lowercase all the keys and return it as a new map.
-/// Any keys that are duplicated after lowercasing will clobber each other in underfined ordering.
+/// Any keys that are duplicated after lowercasing will clobber each other in undefined ordering.
 pub fn normalize_http_headers(headers: HashMap<String, String>) -> HashMap<String, String> {
     let mut new_headers = HashMap::new();
     for (header_key, val) in headers.into_iter() {
