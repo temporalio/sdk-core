@@ -26,6 +26,8 @@ tokio-util = "0.7"
 tonic = { workspace = true }
 tracing = "0.1"
 url = "2.5"
+# This is only needed as an explicit dependency so we can enable static as a feature
+xz2 = { version = "0.1" }
 
 [dependencies.temporal-client]
 path = "../client"
@@ -44,6 +46,8 @@ path = "../sdk-core-protos"
 futures-util = "0.3"
 thiserror = { workspace = true }
 
-
 [build-dependencies]
 cbindgen = { version = "0.29", default-features = false }
+
+[features]
+xz2-static = ["xz2/static"]
