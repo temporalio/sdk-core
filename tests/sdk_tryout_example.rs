@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use futures_util::{FutureExt, future::BoxFuture};
 
 // Public types we will expose =====================================================================
@@ -31,19 +33,23 @@ pub trait WorkflowDefinition {
     /// Type of the output of the workflow
     type Output: TemporalSerializable;
     /// The type that implements this definition
-    type Implementation: WorkflowImplementation;
+    type Implementation: WorkflowImplementation + 'static;
 }
 
 // User doesn't really need to understand this trait, as it's impl is generated for them
 // Actual implementation's input/output types are type-erased, so that they can be stored in a
 // collection together (obviously when registering them they need to be)
 pub trait WorkflowImplementation {
-    fn init(input: Payload, ctx: SafeWfContext) -> Self;
+    fn init(input: Payload, ctx: SafeWfContext) -> Self
+    where
+        Self: Sized;
     fn run(&mut self, ctx: WfContext)
     -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>>;
     // This need to appear here too because the this is the only type we can accept in a collection
     // when registering, so we need to use the names to match definitions to implementations.
-    fn name() -> &'static str;
+    fn name() -> &'static str
+    where
+        Self: Sized;
 }
 
 struct Client {}
@@ -63,10 +69,22 @@ impl Client {
     }
 }
 
-struct WorkerOptions {}
+// Just playing around with how I can actually store registered workflows
+type WorkflowInitializer = fn(Payload, SafeWfContext) -> Box<dyn WorkflowImplementation>;
+pub struct WorkerOptions {
+    workflows: HashMap<&'static str, WorkflowInitializer>,
+}
 impl WorkerOptions {
+    pub fn new() -> Self {
+        WorkerOptions {
+            workflows: HashMap::new(),
+        }
+    }
     pub fn register_workflow<WD: WorkflowDefinition>(&mut self) -> &mut Self {
-        todo!()
+        self.workflows.insert(WD::Implementation::name(), |p, c| {
+            Box::new(WD::Implementation::init(p, c))
+        });
+        self
     }
 }
 
@@ -121,7 +139,7 @@ impl WorkflowImplementation for MyWorkflow {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut worker_opts = WorkerOptions {};
+    let mut worker_opts = WorkerOptions::new();
     worker_opts
         .register_workflow::<MyWorkflow>()
         // Obviously IRL they'd be different, but, this is how you register multiple.
