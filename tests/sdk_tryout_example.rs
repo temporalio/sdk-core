@@ -1,34 +1,52 @@
 use futures_util::{FutureExt, future::BoxFuture};
 
-/// TODO: Placeholders, likely belong inside protos crate. These will be auto-implemented for
-///   anything using serde already (which I expect is how virtually everyone will do this).
+// Public types we will expose =====================================================================
+
+// Placeholders, likely belong inside protos crate. These will be auto-implemented for
+//   anything using serde already (which I expect is how virtually everyone will do this).
 pub trait TemporalSerializable {}
 impl<T> TemporalSerializable for T {}
 pub trait TemporalDeserializable {}
 impl<T> TemporalDeserializable for T {}
+pub struct Payload {}
 
-// TODO: How does a heterogenous collection of workflow definitions work?
+// Context placeholders
+pub struct SafeWfContext {}
+pub struct WfContext {}
+
+#[derive(Debug)]
+pub enum WfExitValue<T: TemporalSerializable> {
+    /// Continue the workflow as a new execution
+    ContinueAsNew,
+    /// Confirm the workflow was cancelled
+    Cancelled,
+    /// Finish with a result
+    Normal(T),
+}
+
+// User doesn't really need to understand this trait, as it's impl is generated for them
 pub trait WorkflowDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable;
     /// Type of the output of the workflow
     type Output: TemporalSerializable;
-    /// The workflow's name
-    const NAME: &'static str;
+    /// The type that implements this definition
+    type Implementation: WorkflowImplementation;
 }
 
-// TODO: Could be "WorkflowImplementation"?
-pub trait Workflow: WorkflowDefinition + Sized {
-    fn new(input: Self::Input, ctx: SafeWfContext) -> Self;
-
-    fn run(
-        &mut self,
-        ctx: WfContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Self::Output>, anyhow::Error>>;
+// User doesn't really need to understand this trait, as it's impl is generated for them
+// Actual implementation's input/output types are type-erased, so that they can be stored in a
+// collection together (obviously when registering them they need to be)
+pub trait WorkflowImplementation {
+    fn init(input: Payload, ctx: SafeWfContext) -> Self;
+    fn run(&mut self, ctx: WfContext)
+    -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>>;
+    // This need to appear here too because the this is the only type we can accept in a collection
+    // when registering, so we need to use the names to match definitions to implementations.
+    fn name() -> &'static str;
 }
 
 struct Client {}
-
 impl Client {
     fn new() -> Self {
         Client {}
@@ -45,64 +63,75 @@ impl Client {
     }
 }
 
+struct WorkerOptions {}
+impl WorkerOptions {
+    pub fn register_workflow<WD: WorkflowDefinition>(&mut self) -> &mut Self {
+        todo!()
+    }
+}
+
+// =================================================================================================
+// User's code =====================================================================================
+
 pub struct MyWorkflow {
     // Some internal state
 }
 
 // #[workflow]
 impl MyWorkflow {
+    // #[init]
+    pub fn new(_input: String, _ctx: SafeWfContext) -> Self {
+        todo!()
+    }
+
     // #[run]
-    pub async fn run(
-        &mut self,
-        _ctx: &WfContext,
-        _my_input: &String,
-    ) -> Result<WfExitValue<String>, anyhow::Error> {
+    pub async fn run(&mut self, _ctx: WfContext) -> Result<WfExitValue<String>, anyhow::Error> {
         todo!()
     }
 }
 
-// Generated code =========================================================
+// =================================================================================================
+// Generated code from above =======================================================================
 impl WorkflowDefinition for MyWorkflow {
     type Input = String;
     type Output = String;
-    const NAME: &'static str = "MyWorkflow";
+    type Implementation = MyWorkflow;
 }
-impl Workflow for MyWorkflow {
-    fn new(_input: Self::Input, _ctx: SafeWfContext) -> Self {
-        todo!()
+impl WorkflowImplementation for MyWorkflow {
+    fn init(_input: Payload, ctx: SafeWfContext) -> Self {
+        let deserialzied: <MyWorkflow as WorkflowDefinition>::Input =
+            todo!("deserialize from input");
+        MyWorkflow::new(deserialzied, ctx)
     }
 
     fn run(
         &mut self,
         ctx: WfContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Self::Output>, anyhow::Error>> {
-        self.run(&ctx, todo!("Would be decoded from ctx")).boxed()
+    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>> {
+        self.run(ctx).map(|_| todo!("Serialize output")).boxed()
+    }
+
+    fn name() -> &'static str {
+        return "MyWorkflow";
     }
 }
 
-// ========================================================================
+// =================================================================================================
+// More user code using the definitions from above ===================================================
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut worker_opts = WorkerOptions {};
+    worker_opts
+        .register_workflow::<MyWorkflow>()
+        // Obviously IRL they'd be different, but, this is how you register multiple.
+        // Passing in a collection wouldn't make sense.
+        .register_workflow::<MyWorkflow>()
+        .register_workflow::<MyWorkflow>();
+
     let client = Client::new();
     client
         .start_workflow::<MyWorkflow>("hi".to_string())
         .await?;
     Ok(())
-}
-
-pub struct SafeWfContext {
-    // TODO
-}
-
-pub struct WfContext {}
-
-#[derive(Debug)]
-pub enum WfExitValue<T: TemporalSerializable> {
-    /// Continue the workflow as a new execution
-    ContinueAsNew,
-    /// Confirm the workflow was cancelled
-    Cancelled,
-    /// Finish with a result
-    Normal(T),
 }
