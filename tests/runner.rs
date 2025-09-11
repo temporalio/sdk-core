@@ -2,20 +2,17 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::integ_dev_server_config;
 use anyhow::{anyhow, bail};
 use clap::Parser;
-use common::{INTEG_SERVER_TARGET_ENV_VAR};
+use common::INTEG_SERVER_TARGET_ENV_VAR;
 use std::{
     env,
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporal_sdk_core::ephemeral_server::{
-     TestServerConfigBuilder,
-    default_cached_download,
-};
+use temporal_sdk_core::ephemeral_server::{TestServerConfigBuilder, default_cached_download};
 use tokio::{self, process::Command};
-use crate::common::integ_dev_server_config;
 
 /// This env var is set (to any value) if temporal CLI dev server is in use
 const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
@@ -97,12 +94,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (server, envs) = match server_kind {
         ServerKind::TemporalCLI => {
-            let config = integ_dev_server_config(vec![
-                    "--http-port".to_string(),
-                    "7243".to_string(),
-                ])
-                .ui(true)
-                .build()?;
+            let config =
+                integ_dev_server_config(vec!["--http-port".to_string(), "7243".to_string()])
+                    .ui(true)
+                    .build()?;
             println!("Using temporal CLI: {config:?}");
             (
                 Some(
