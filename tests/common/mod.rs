@@ -39,8 +39,8 @@ use temporal_sdk::{
     },
 };
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
-    init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
@@ -67,6 +67,7 @@ use temporal_sdk_core_protos::{
 use tokio::{sync::OnceCell, task::AbortHandle};
 use tracing::{debug, warn};
 use url::Url;
+use uuid::Uuid;
 
 pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
@@ -164,8 +165,12 @@ pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }
     Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
+        let runtime_options = RuntimeOptionsBuilder::default()
+            .telemetry_options(telemetry_options)
+            .build()
+            .expect("Runtime options build cleanly");
         let rt =
-            CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
+            CoreRuntime::new_assume_tokio(runtime_options).expect("Core runtime inits cleanly");
         if let Some(sub) = rt.telemetry().trace_subscriber() {
             let _ = tracing::subscriber::set_global_default(sub);
         }

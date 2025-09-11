@@ -35,7 +35,7 @@ use temporal_sdk::{
     ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::{
-    CoreRuntime,
+    CoreRuntime, RuntimeOptionsBuilder,
     replay::HistoryForReplay,
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
@@ -764,7 +764,11 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(telemopts)
+        .build()
+        .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.no_remote_activities(true);
