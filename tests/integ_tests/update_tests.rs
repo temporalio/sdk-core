@@ -116,7 +116,7 @@ async fn reapplied_updates_due_to_reset() {
         Arc::make_mut(&mut client_mut),
         #[allow(deprecated)]
         ResetWorkflowExecutionRequest {
-            namespace: client.namespace().into(),
+            namespace: client.namespace(),
             workflow_execution: Some(WorkflowExecution {
                 workflow_id: workflow_id.into(),
                 run_id: pre_reset_run_id.clone(),

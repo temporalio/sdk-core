@@ -1,5 +1,5 @@
 use crate::{
-    Client, ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
     NamespacedClient, NoRetryOnMatching, Result, RetryConfig, raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
@@ -98,13 +98,16 @@ impl<SG> RetryClient<SG> {
     }
 }
 
-impl NamespacedClient for RetryClient<Client> {
-    fn namespace(&self) -> &str {
-        &self.client.namespace
+impl<SG> NamespacedClient for RetryClient<SG>
+where
+    SG: NamespacedClient,
+{
+    fn namespace(&self) -> String {
+        self.client.namespace()
     }
 
-    fn get_identity(&self) -> &str {
-        &self.client.options().identity
+    fn identity(&self) -> String {
+        self.client.identity()
     }
 }
 

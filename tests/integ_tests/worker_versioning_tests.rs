@@ -77,7 +77,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                     .get_client()
                     .clone()
                     .describe_worker_deployment(DescribeWorkerDeploymentRequest {
-                        namespace: client.namespace().to_string(),
+                        namespace: client.namespace(),
                         deployment_name: deploy_name.clone(),
                     })
                     .await
@@ -93,7 +93,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
             .get_client()
             .clone()
             .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
-                namespace: client.namespace().to_owned(),
+                namespace: client.namespace(),
                 deployment_name: deploy_name.clone(),
                 version: format!("{deploy_name}.1.0"),
                 conflict_token: desc_resp.conflict_token,
@@ -179,7 +179,7 @@ async fn activity_has_deployment_stamp() {
                     .get_client()
                     .clone()
                     .describe_worker_deployment(DescribeWorkerDeploymentRequest {
-                        namespace: client.namespace().to_string(),
+                        namespace: client.namespace(),
                         deployment_name: deploy_name.clone(),
                     })
                     .await
@@ -195,7 +195,7 @@ async fn activity_has_deployment_stamp() {
             .get_client()
             .clone()
             .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
-                namespace: client.namespace().to_owned(),
+                namespace: client.namespace(),
                 deployment_name: deploy_name.clone(),
                 version: format!("{deploy_name}.1.0"),
                 conflict_token: desc_resp.conflict_token,
