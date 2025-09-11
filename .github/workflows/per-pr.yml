@@ -177,3 +177,27 @@ jobs:
           compose-file: ./docker/docker-compose-ci.yaml
       - uses: Swatinem/rust-cache@v2
       - run: cargo integ-test docker_
+
+  c-bridge-static-link-test:
+    name: "C bridge static link test"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build crate as static library
+        run: cargo rustc --package temporal-sdk-core-c-bridge --features xz2-static -- --crate-type=staticlib
+
+      - name: Build C test program
+        run: gcc -I./core-c-bridge/include tests/c_bridge_smoke_test.c target/debug/deps/libtemporal_sdk_core_c_bridge.a -lpthread -ldl -lm -o test
+
+      - name: Run C test program
+        run: ./test

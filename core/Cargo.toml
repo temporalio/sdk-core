@@ -116,7 +116,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
-zip = { version = "4.6", optional = true }
+# Only need specific features to decompress zip files for ephemeral server download
+zip = { version = "4.6", optional = true, default-features = false, features = ["deflate", "bzip2", "zstd"] }
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]
