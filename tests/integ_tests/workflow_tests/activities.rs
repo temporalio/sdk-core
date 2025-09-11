@@ -1,3 +1,4 @@
+use crate::common::INTEG_CLIENT_IDENTITY;
 use crate::{
     common::{
         ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk, init_core_and_create_wf,
@@ -48,7 +49,6 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
-use crate::common::INTEG_CLIENT_IDENTITY;
 
 pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {

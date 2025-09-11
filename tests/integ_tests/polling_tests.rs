@@ -1,3 +1,6 @@
+use crate::common::{
+    INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_server_options, integ_dev_server_config,
+};
 use crate::{
     common::{CoreWfStarter, init_core_and_create_wf, init_integ_telem, integ_worker_config},
     integ_tests::activity_functions::echo,
@@ -14,7 +17,14 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core::{ClientOptionsBuilder, ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download}, init_worker, test_help::{WorkerTestHelpers, drain_pollers_and_shutdown}, CoreRuntime};
+use temporal_sdk_core::telemetry::CoreLogStreamConsumer;
+use temporal_sdk_core::test_help::NAMESPACE;
+use temporal_sdk_core::{
+    ClientOptionsBuilder, CoreRuntime,
+    ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
+    init_worker,
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
+};
 use temporal_sdk_core_api::{
     Worker,
     telemetry::{Logger, TelemetryOptionsBuilder},
@@ -35,9 +45,6 @@ use temporal_sdk_core_protos::{
 use tokio::{sync::Notify, time::timeout};
 use tracing::info;
 use url::Url;
-use temporal_sdk_core::telemetry::CoreLogStreamConsumer;
-use temporal_sdk_core::test_help::NAMESPACE;
-use crate::common::{get_integ_server_options, integ_dev_server_config, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION};
 
 #[tokio::test]
 async fn out_of_order_completion_doesnt_hang() {
@@ -139,96 +146,96 @@ async fn switching_worker_client_changes_poll() {
         .unwrap();
 
     let result = std::panic::AssertUnwindSafe(async {
-    // Connect clients to both servers
-    info!("Connecting clients");
-    let mut client_common_config = ClientOptionsBuilder::default();
-    client_common_config
-        .identity("integ_tester".to_owned())
-        .client_name("temporal-core".to_owned())
-        .client_version("0.1.0".to_owned());
-    let client1 = client_common_config
-        .clone()
-        .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
-        .build()
-        .unwrap()
-        .connect("default", None)
-        .await
-        .unwrap();
-    let client2 = client_common_config
-        .clone()
-        .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
-        .build()
-        .unwrap()
-        .connect("default", None)
-        .await
-        .unwrap();
-
-    // Start a workflow on both servers
-    info!("Starting workflows");
-    let wf1 = client1
-        .start_workflow(
-            vec![],
-            "my-task-queue".to_owned(),
-            "my-workflow-1".to_owned(),
-            "my-workflow-type".to_owned(),
-            None,
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    let wf2 = client2
-        .start_workflow(
-            vec![],
-            "my-task-queue".to_owned(),
-            "my-workflow-2".to_owned(),
-            "my-workflow-type".to_owned(),
-            None,
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-
-    // Create a worker only on the first server
-    let worker = init_worker(
-        init_integ_telem().unwrap(),
-        integ_worker_config("my-task-queue")
-            // We want a cache so we don't get extra remove-job activations
-            .max_cached_workflows(100_usize)
+        // Connect clients to both servers
+        info!("Connecting clients");
+        let mut client_common_config = ClientOptionsBuilder::default();
+        client_common_config
+            .identity("integ_tester".to_owned())
+            .client_name("temporal-core".to_owned())
+            .client_version("0.1.0".to_owned());
+        let client1 = client_common_config
+            .clone()
+            .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
             .build()
-            .unwrap(),
-        client1.clone(),
-    )
-    .unwrap();
+            .unwrap()
+            .connect("default", None)
+            .await
+            .unwrap();
+        let client2 = client_common_config
+            .clone()
+            .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
+            .build()
+            .unwrap()
+            .connect("default", None)
+            .await
+            .unwrap();
 
-    // Poll for first task, confirm it's first wf, complete, and wait for complete
-    info!("Doing initial poll");
-    let act1 = worker.poll_workflow_activation().await.unwrap();
-    assert_eq!(wf1.run_id, act1.run_id);
-    worker.complete_execution(&act1.run_id).await;
-    worker.handle_eviction().await;
-    info!("Waiting on first workflow complete");
-    client1
-        .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
-        .get_workflow_result(Default::default())
-        .await
+        // Start a workflow on both servers
+        info!("Starting workflows");
+        let wf1 = client1
+            .start_workflow(
+                vec![],
+                "my-task-queue".to_owned(),
+                "my-workflow-1".to_owned(),
+                "my-workflow-type".to_owned(),
+                None,
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+        let wf2 = client2
+            .start_workflow(
+                vec![],
+                "my-task-queue".to_owned(),
+                "my-workflow-2".to_owned(),
+                "my-workflow-type".to_owned(),
+                None,
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        // Create a worker only on the first server
+        let worker = init_worker(
+            init_integ_telem().unwrap(),
+            integ_worker_config("my-task-queue")
+                // We want a cache so we don't get extra remove-job activations
+                .max_cached_workflows(100_usize)
+                .build()
+                .unwrap(),
+            client1.clone(),
+        )
         .unwrap();
 
-    // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
-    info!("Replacing client and polling again");
-    worker.replace_client(client2.get_client().inner().clone());
-    let act2 = worker.poll_workflow_activation().await.unwrap();
-    assert_eq!(wf2.run_id, act2.run_id);
-    worker.complete_execution(&act2.run_id).await;
-    worker.handle_eviction().await;
-    info!("Waiting on second workflow complete");
-    client2
-        .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+        // Poll for first task, confirm it's first wf, complete, and wait for complete
+        info!("Doing initial poll");
+        let act1 = worker.poll_workflow_activation().await.unwrap();
+        assert_eq!(wf1.run_id, act1.run_id);
+        worker.complete_execution(&act1.run_id).await;
+        worker.handle_eviction().await;
+        info!("Waiting on first workflow complete");
+        client1
+            .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
+            .get_workflow_result(Default::default())
+            .await
+            .unwrap();
 
-    // Shutdown workers and servers
-    drain_pollers_and_shutdown(&(Arc::new(worker) as Arc<dyn Worker>)).await;
+        // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
+        info!("Replacing client and polling again");
+        worker.replace_client(client2.get_client().inner().clone());
+        let act2 = worker.poll_workflow_activation().await.unwrap();
+        assert_eq!(wf2.run_id, act2.run_id);
+        worker.complete_execution(&act2.run_id).await;
+        worker.handle_eviction().await;
+        info!("Waiting on second workflow complete");
+        client2
+            .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)
+            .get_workflow_result(Default::default())
+            .await
+            .unwrap();
+
+        // Shutdown workers and servers
+        drain_pollers_and_shutdown(&(Arc::new(worker) as Arc<dyn Worker>)).await;
     })
     .catch_unwind()
     .await;
@@ -358,7 +365,6 @@ async fn replace_client_works_after_polling_failure() {
                             .message
                             .starts_with("gRPC call poll_workflow_task_queue retried"))
                 {
-                    println!("{}", log.message);
                     poll_retry_log_found.notify_one();
                     break;
                 }

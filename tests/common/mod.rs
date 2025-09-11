@@ -982,10 +982,14 @@ impl Drop for ActivationAssertionsInterceptor {
 }
 
 #[cfg(feature = "ephemeral-server")]
-use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, default_cached_download};
+use temporal_sdk_core::ephemeral_server::{
+    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, default_cached_download,
+};
 
 #[cfg(feature = "ephemeral-server")]
-pub(crate) fn integ_dev_server_config(mut extra_args: Vec<String>) -> TemporalDevServerConfigBuilder {
+pub(crate) fn integ_dev_server_config(
+    mut extra_args: Vec<String>,
+) -> TemporalDevServerConfigBuilder {
     let cli_version = if let Ok(ver_override) = env::var(CLI_VERSION_OVERRIDE_ENV_VAR) {
         EphemeralExe::CachedDownload {
             version: EphemeralExeVersion::Fixed(ver_override.to_owned()),
@@ -1015,7 +1019,7 @@ pub(crate) fn integ_dev_server_config(mut extra_args: Vec<String>) -> TemporalDe
             "--search-attribute".to_string(),
             format!("{SEARCH_ATTR_INT}=Int"),
         ]
-            .map(Into::into),
+        .map(Into::into),
     );
 
     let mut config = TemporalDevServerConfigBuilder::default();
