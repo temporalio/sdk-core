@@ -7,6 +7,7 @@ use slotmap::SlotMap;
 use std::collections::{HashMap, hash_map::Entry::Vacant};
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use uuid::Uuid;
 
 slotmap::new_key_type! {
     /// Registration key for a worker
@@ -131,12 +132,15 @@ pub trait SharedNamespaceWorkerTrait: std::fmt::Debug {
 }
 
 /// Enables local workers to make themselves visible to a shared client instance.
-/// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
+///
+/// For slot managing, there can only be one worker registered per
+/// namespace+queue_name+client, others will get ignored.
 /// It also provides a convenient method to find compatible slots within the collection.
 #[derive(Default, Debug)]
 pub struct ClientWorkerSet {
     slot_manager: RwLock<SlotManagerImpl>,
     heartbeat_manager: Mutex<HashMap<String, Box<dyn SharedNamespaceWorkerTrait + Send + Sync>>>,
+    worker_set_key: Uuid,
 }
 
 impl ClientWorkerSet {
@@ -145,6 +149,7 @@ impl ClientWorkerSet {
         Self {
             slot_manager: RwLock::new(SlotManagerImpl::new()),
             heartbeat_manager: Mutex::new(HashMap::new()),
+            worker_set_key: Uuid::new_v4(),
         }
     }
 
@@ -206,6 +211,11 @@ impl ClientWorkerSet {
             );
             None
         }
+    }
+
+    /// Returns the worker set key, which is unique for each client. Used for worker heartbeating
+    pub fn worker_set_key(&self) -> Uuid {
+        self.worker_set_key
     }
 
     #[cfg(test)]

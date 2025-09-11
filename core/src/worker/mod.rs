@@ -342,7 +342,6 @@ impl Worker {
             self.config.namespace.clone(),
             self.config.client_identity_override.clone(),
             new_client,
-            self.client.get_process_key(),
         );
 
         self.client.replace_client(new_worker_client);
@@ -428,7 +427,7 @@ impl Worker {
         let shutdown_token = CancellationToken::new();
         let slot_context_data = Arc::new(PermitDealerContextData {
             task_queue: config.task_queue.clone(),
-            worker_identity: client.get_identity(),
+            worker_identity: client.identity(),
             worker_deployment_version: config.computed_deployment_version(),
         });
         let wft_slots = MeteredPermitDealer::new(
@@ -592,7 +591,7 @@ impl Worker {
         let worker_heartbeat = if let Some(heartbeat_interval) = worker_heartbeat_interval {
             let worker_instance_key = Uuid::new_v4();
             let worker_instance_key_clone = worker_instance_key.to_string();
-            let worker_identity = client.get_identity();
+            let worker_identity = client.identity();
             let task_queue = config.task_queue.clone();
             let sdk_name_and_ver = sdk_name_and_ver.clone();
 

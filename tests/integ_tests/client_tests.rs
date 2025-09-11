@@ -39,7 +39,6 @@ use tonic::{
     transport::Server,
 };
 use tracing::info;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn can_use_retry_client() {
@@ -280,7 +279,7 @@ async fn non_retryable_errors() {
             .unwrap();
         opts.target_url = uri;
         opts.skip_get_system_info = true;
-        let client = opts.connect("ns", None, Uuid::new_v4()).await.unwrap();
+        let client = opts.connect("ns", None).await.unwrap();
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
 
@@ -320,7 +319,7 @@ async fn retryable_errors() {
             .unwrap();
         opts.target_url = uri;
         opts.skip_get_system_info = true;
-        let client = opts.connect("ns", None, Uuid::new_v4()).await.unwrap();
+        let client = opts.connect("ns", None).await.unwrap();
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
 
@@ -366,7 +365,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     opts.retry_config = RetryConfig::no_retries();
 
     let namespace = "namespace";
-    let client = opts.connect(namespace, None, Uuid::new_v4()).await.unwrap();
+    let client = opts.connect(namespace, None).await.unwrap();
 
     let _ = client
         .get_workflow_execution_history("hi".to_string(), None, vec![])
@@ -446,10 +445,7 @@ async fn http_proxy() {
     opts.target_url = format!("http://127.0.0.1:{}", server.addr.port())
         .parse()
         .unwrap();
-    let client = opts
-        .connect("my-namespace", None, Uuid::new_v4())
-        .await
-        .unwrap();
+    let client = opts.connect("my-namespace", None).await.unwrap();
     let _ = client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 1);
     assert!(tcp_proxy.hit_count() == 0);
@@ -459,10 +455,7 @@ async fn http_proxy() {
         target_addr: tcp_proxy_addr.to_string(),
         basic_auth: None,
     });
-    let proxied_client = opts
-        .connect("my-namespace", None, Uuid::new_v4())
-        .await
-        .unwrap();
+    let proxied_client = opts.connect("my-namespace", None).await.unwrap();
     let _ = proxied_client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 2);
     assert!(tcp_proxy.hit_count() == 1);
@@ -484,10 +477,7 @@ async fn http_proxy() {
             target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
             basic_auth: None,
         });
-        let proxied_client = opts
-            .connect("my-namespace", None, Uuid::new_v4())
-            .await
-            .unwrap();
+        let proxied_client = opts.connect("my-namespace", None).await.unwrap();
         let _ = proxied_client.list_namespaces().await;
         assert!(call_count.load(Ordering::SeqCst) == 3);
         assert!(unix_proxy.hit_count() == 1);

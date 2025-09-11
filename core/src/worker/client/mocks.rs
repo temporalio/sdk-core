@@ -33,9 +33,9 @@ pub fn mock_worker_client() -> MockWorkerClient {
         .returning(|_| Ok(ShutdownWorkerResponse {}));
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
-    r.expect_get_identity()
+    r.expect_identity()
         .returning(|| "test-identity".to_string());
-    r.expect_get_process_key().returning(Uuid::new_v4);
+    r.expect_worker_set_key().returning(Uuid::new_v4);
     r
 }
 
@@ -49,7 +49,7 @@ pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     r.expect_is_mock().returning(|| true);
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
-    r.expect_get_identity()
+    r.expect_identity()
         .returning(|| "test-identity".to_string());
     r
 }
@@ -162,7 +162,7 @@ mockall::mock! {
         fn workers(&self) -> Arc<ClientWorkerSet>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
-        fn get_identity(&self) -> String;
-        fn get_process_key(&self) -> Uuid;
+        fn identity(&self) -> String;
+        fn worker_set_key(&self) -> Uuid;
     }
 }

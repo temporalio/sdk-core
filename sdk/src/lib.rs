@@ -25,7 +25,7 @@
 //!     let runtime_options = RuntimeOptionsBuilder::default().telemetry_options(telemetry_options).build().unwrap();
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
-//!     let client = server_options.connect("default", None, runtime.process_key()).await?;
+//!     let client = server_options.connect("default", None, runtime.runtime_key()).await?;
 //!
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")

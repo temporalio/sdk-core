@@ -10,7 +10,6 @@ use temporal_sdk_core_protos::coresdk::workflow_activation::{
     WorkflowActivationJob, workflow_activation_job,
 };
 use tokio::time::sleep;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn client_list_open_closed_workflow_executions() {
@@ -110,7 +109,7 @@ async fn client_list_open_closed_workflow_executions() {
 async fn client_create_namespace() {
     let client = Arc::new(
         get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None, Uuid::new_v4())
+            .connect(NAMESPACE.to_owned(), None)
             .await
             .expect("Must connect"),
     );
@@ -157,7 +156,7 @@ async fn client_create_namespace() {
 async fn client_describe_namespace() {
     let client = Arc::new(
         get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None, Uuid::new_v4())
+            .connect(NAMESPACE.to_owned(), None)
             .await
             .expect("Must connect"),
     );

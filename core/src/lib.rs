@@ -96,7 +96,6 @@ where
         worker_config.namespace.clone(),
         worker_config.client_identity_override.clone(),
         client_inner,
-        runtime.process_key(),
     );
     let namespace = worker_config.namespace.clone();
     if client.namespace() != namespace {
@@ -151,9 +150,8 @@ pub(crate) fn init_worker_client(
     namespace: String,
     client_identity_override: Option<String>,
     client: ConfiguredClient<TemporalServiceClientWithMetrics>,
-    process_key: Uuid,
 ) -> RetryClient<Client> {
-    let mut client = Client::new(client, namespace, process_key);
+    let mut client = Client::new(client, namespace);
     if let Some(ref id_override) = client_identity_override {
         client.options_mut().identity.clone_from(id_override);
     }
@@ -228,7 +226,6 @@ pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
     runtime_handle: tokio::runtime::Handle,
-    process_key: Uuid,
     heartbeat_interval: Option<Duration>,
 }
 
@@ -335,7 +332,6 @@ impl CoreRuntime {
             telemetry,
             runtime: None,
             runtime_handle,
-            process_key: Uuid::new_v4(),
             heartbeat_interval,
         }
     }
@@ -348,11 +344,6 @@ impl CoreRuntime {
     /// Return a reference to the owned [TelemetryInstance]
     pub fn telemetry(&self) -> &TelemetryInstance {
         &self.telemetry
-    }
-
-    /// Return a process-wide unique key
-    pub fn process_key(&self) -> Uuid {
-        self.process_key
     }
 
     /// Return a mutable reference to the owned [TelemetryInstance]

@@ -443,6 +443,11 @@ impl<C> ConfiguredClient<C> {
     pub fn workers(&self) -> Arc<ClientWorkerSet> {
         self.workers.clone()
     }
+
+    /// Returns the worker set key, this should be unique across each client
+    pub fn worker_set_key(&self) -> Uuid {
+        self.workers.worker_set_key()
+    }
 }
 
 #[derive(Debug)]
@@ -499,10 +504,9 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<TemporalMeter>,
-        process_key: Uuid,
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
-        let client = Client::new(client, namespace.into(), process_key);
+        let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
     }
@@ -851,8 +855,6 @@ pub struct Client {
     inner: ConfiguredClient<TemporalServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
-    /// Process-wide key, used for worker heartbeating
-    process_key: Uuid,
 }
 
 impl Client {
@@ -860,12 +862,10 @@ impl Client {
     pub fn new(
         client: ConfiguredClient<TemporalServiceClientWithMetrics>,
         namespace: String,
-        process_key: Uuid,
     ) -> Self {
         Client {
             inner: client,
             namespace,
-            process_key,
         }
     }
 
@@ -910,8 +910,8 @@ impl Client {
     }
 
     /// Returns the process-wide key
-    pub fn process_key(&self) -> Uuid {
-        self.process_key
+    pub fn worker_set_key(&self) -> Uuid {
+        self.inner.worker_set_key()
     }
 }
 

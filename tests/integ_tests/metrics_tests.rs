@@ -177,7 +177,7 @@ async fn one_slot_worker_reports_available_slot() {
 
     let client = Arc::new(
         get_integ_server_options()
-            .connect(worker_cfg.namespace.clone(), None, rt.process_key())
+            .connect(worker_cfg.namespace.clone(), None)
             .await
             .expect("Must connect"),
     );
@@ -651,11 +651,7 @@ async fn request_fail_codes() {
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
-        .connect(
-            NAMESPACE,
-            rt.telemetry().get_temporal_metric_meter(),
-            rt.process_key(),
-        )
+        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
         .await
         .unwrap();
 
@@ -702,11 +698,7 @@ async fn request_fail_codes_otel() {
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
-        .connect(
-            NAMESPACE,
-            rt.telemetry().get_temporal_metric_meter(),
-            rt.process_key(),
-        )
+        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
         .await
         .unwrap();
 

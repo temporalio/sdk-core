@@ -204,7 +204,6 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
     sgo.connect(
         env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
         None,
-        Uuid::new_v4(),
     )
     .await
     .unwrap()
@@ -456,7 +455,6 @@ impl CoreWfStarter {
                             .connect(
                                 cfg.namespace.clone(),
                                 rt.telemetry().get_temporal_metric_meter(),
-                                rt.process_key(),
                             )
                             .await
                             .expect("Must connect"),
