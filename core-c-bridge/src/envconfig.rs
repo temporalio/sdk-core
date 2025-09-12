@@ -8,13 +8,50 @@ use temporal_sdk_core_api::envconfig::{
     DataSource as CoreDataSource, LoadClientConfigOptions, LoadClientConfigProfileOptions,
 };
 
-/// Callback for client config load operations.
-/// If success or fail are not null, they must be manually freed when done.
-pub type ClientConfigCallback = unsafe extern "C" fn(
-    user_data: *mut libc::c_void,
-    success: *const ByteArray,
-    fail: *const ByteArray,
-);
+/// OrFail result for client config loading operations.
+/// Either success or fail will be null, but never both.
+/// If success is not null, it contains JSON-serialized client configuration data.
+/// If fail is not null, it contains UTF-8 encoded error message.
+/// The returned ByteArrays must be freed by the caller.
+#[repr(C)]
+pub struct ClientConfigOrFail {
+    pub success: *const ByteArray,
+    pub fail: *const ByteArray,
+}
+
+/// OrFail result for client config profile loading operations.
+/// Either success or fail will be null, but never both.
+/// If success is not null, it contains JSON-serialized client configuration profile data.
+/// If fail is not null, it contains UTF-8 encoded error message.
+/// The returned ByteArrays must be freed by the caller.
+#[repr(C)]
+pub struct ClientConfigProfileOrFail {
+    pub success: *const ByteArray,
+    pub fail: *const ByteArray,
+}
+
+
+/// Options for loading client configuration.
+#[repr(C)]
+pub struct ClientConfigLoadOptions {
+    pub path: *const libc::c_char,
+    pub data: ByteArrayRef,
+    pub disable_file: bool,
+    pub config_file_strict: bool,
+    pub env_vars: ByteArrayRef,
+}
+
+/// Options for loading a specific client configuration profile.
+#[repr(C)]
+pub struct ClientConfigProfileLoadOptions {
+    pub profile: *const libc::c_char,
+    pub path: *const libc::c_char,
+    pub data: ByteArrayRef,
+    pub disable_file: bool,
+    pub disable_env: bool,
+    pub config_file_strict: bool,
+    pub env_vars: ByteArrayRef,
+}
 
 // Wrapper types for JSON serialization
 #[derive(Serialize)]
@@ -155,74 +192,93 @@ fn parse_env_vars(env_vars: ByteArrayRef) -> Result<Option<HashMap<String, Strin
         .map_err(|e| format!("Invalid env vars JSON: {e}"))
 }
 
-fn send_result<T: Serialize>(
-    result: Result<T, String>,
-    user_data: *mut libc::c_void,
-    callback: ClientConfigCallback,
-) {
-    match result {
-        Ok(data) => match serde_json::to_vec(&data) {
-            Ok(json_bytes) => {
-                let result = ByteArray::from_vec(json_bytes);
-                unsafe { callback(user_data, result.into_raw(), std::ptr::null()) };
-            }
-            Err(e) => {
-                let err = ByteArray::from_utf8(format!("Failed to serialize: {e}"));
-                unsafe { callback(user_data, std::ptr::null(), err.into_raw()) };
-            }
-        },
+// Simple helper to handle serialization errors consistently
+fn serialize_or_error<T: Serialize>(data: T) -> Result<*const ByteArray, *const ByteArray> {
+    match serde_json::to_vec(&data) {
+        Ok(json_bytes) => {
+            let result = ByteArray::from_vec(json_bytes);
+            Ok(result.into_raw())
+        }
         Err(e) => {
-            let err = ByteArray::from_utf8(e);
-            unsafe { callback(user_data, std::ptr::null(), err.into_raw()) };
+            let err = ByteArray::from_utf8(format!("Failed to serialize: {e}"));
+            Err(err.into_raw())
         }
     }
 }
 
-/// Load all client profiles from given sources
+
+/// Load all client profiles from given sources.
+/// Returns ClientConfigOrFail with either success JSON or error message.
+/// The returned ByteArrays must be freed by the caller.
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_config_load(
-    path: *const libc::c_char,
-    data: ByteArrayRef,
-    disable_file: bool,
-    config_file_strict: bool,
-    env_vars: ByteArrayRef,
-    user_data: *mut libc::c_void,
-    callback: ClientConfigCallback,
-) {
-    let result = || -> Result<ClientConfig, String> {
-        let config_source = parse_config_source(path, data)?;
-        let env_vars_map = parse_env_vars(env_vars)?;
+    options: *const ClientConfigLoadOptions,
+) -> ClientConfigOrFail {
+    if options.is_null() {
+        let err = ByteArray::from_utf8("Options cannot be null".to_string());
+        return ClientConfigOrFail {
+            success: std::ptr::null(),
+            fail: err.into_raw(),
+        };
+    }
 
-        let options = LoadClientConfigOptions {
-            config_source: if disable_file { None } else { config_source },
-            config_file_strict,
+    let result = || -> Result<ClientConfig, String> {
+        let opts = unsafe { &*options };
+        let config_source = parse_config_source(opts.path, opts.data)?;
+        let env_vars_map = parse_env_vars(opts.env_vars)?;
+
+        let load_options = LoadClientConfigOptions {
+            config_source: if opts.disable_file { None } else { config_source },
+            config_file_strict: opts.config_file_strict,
         };
 
-        let core_config = envconfig::load_client_config(options, env_vars_map.as_ref())
+        let core_config = envconfig::load_client_config(load_options, env_vars_map.as_ref())
             .map_err(|e| e.to_string())?;
 
         Ok(core_config.into())
     };
 
-    send_result(result(), user_data, callback);
+    match result() {
+        Ok(data) => match serialize_or_error(data) {
+            Ok(success) => ClientConfigOrFail {
+                success,
+                fail: std::ptr::null(),
+            },
+            Err(fail) => ClientConfigOrFail {
+                success: std::ptr::null(),
+                fail,
+            },
+        },
+        Err(e) => {
+            let err = ByteArray::from_utf8(e);
+            ClientConfigOrFail {
+                success: std::ptr::null(),
+                fail: err.into_raw(),
+            }
+        }
+    }
 }
 
-/// Load a single client profile from given sources with env overrides
+/// Load a single client profile from given sources with env overrides.
+/// Returns ClientConfigProfileOrFail with either success JSON or error message.
+/// The returned ByteArrays must be freed by the caller.
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_config_profile_load(
-    profile: *const libc::c_char,
-    path: *const libc::c_char,
-    data: ByteArrayRef,
-    disable_file: bool,
-    disable_env: bool,
-    config_file_strict: bool,
-    env_vars: ByteArrayRef,
-    user_data: *mut libc::c_void,
-    callback: ClientConfigCallback,
-) {
+    options: *const ClientConfigProfileLoadOptions,
+) -> ClientConfigProfileOrFail {
+    if options.is_null() {
+        let err = ByteArray::from_utf8("Options cannot be null".to_string());
+        return ClientConfigProfileOrFail {
+            success: std::ptr::null(),
+            fail: err.into_raw(),
+        };
+    }
+
     let result = || -> Result<ClientConfigProfile, String> {
-        let profile_name = if !profile.is_null() {
-            match unsafe { CStr::from_ptr(profile) }.to_str() {
+        let opts = unsafe { &*options };
+        
+        let profile_name = if !opts.profile.is_null() {
+            match unsafe { CStr::from_ptr(opts.profile) }.to_str() {
                 Ok(s) => Some(s.to_string()),
                 Err(e) => return Err(format!("Invalid profile UTF-8: {e}")),
             }
@@ -230,22 +286,40 @@ pub extern "C" fn temporal_core_client_config_profile_load(
             None
         };
 
-        let config_source = parse_config_source(path, data)?;
-        let env_vars_map = parse_env_vars(env_vars)?;
+        let config_source = parse_config_source(opts.path, opts.data)?;
+        let env_vars_map = parse_env_vars(opts.env_vars)?;
 
-        let options = LoadClientConfigProfileOptions {
+        let load_options = LoadClientConfigProfileOptions {
             config_source,
             config_file_profile: profile_name,
-            config_file_strict,
-            disable_file,
-            disable_env,
+            config_file_strict: opts.config_file_strict,
+            disable_file: opts.disable_file,
+            disable_env: opts.disable_env,
         };
 
-        let profile = envconfig::load_client_config_profile(options, env_vars_map.as_ref())
+        let profile = envconfig::load_client_config_profile(load_options, env_vars_map.as_ref())
             .map_err(|e| e.to_string())?;
 
         Ok(profile.into())
     };
 
-    send_result(result(), user_data, callback);
+    match result() {
+        Ok(data) => match serialize_or_error(data) {
+            Ok(success) => ClientConfigProfileOrFail {
+                success,
+                fail: std::ptr::null(),
+            },
+            Err(fail) => ClientConfigProfileOrFail {
+                success: std::ptr::null(),
+                fail,
+            },
+        },
+        Err(e) => {
+            let err = ByteArray::from_utf8(e);
+            ClientConfigProfileOrFail {
+                success: std::ptr::null(),
+                fail: err.into_raw(),
+            }
+        }
+    }
 }

@@ -241,12 +241,52 @@ typedef void (*TemporalCoreClientRpcCallCallback)(void *user_data,
                                                   const struct TemporalCoreByteArray *failure_details);
 
 /**
- * Callback for client config load operations.
- * If success or fail are not null, they must be manually freed when done.
+ * OrFail result for client config loading operations.
+ * Either success or fail will be null, but never both.
+ * If success is not null, it contains JSON-serialized client configuration data.
+ * If fail is not null, it contains UTF-8 encoded error message.
+ * The returned ByteArrays must be freed by the caller.
  */
-typedef void (*TemporalCoreClientConfigCallback)(void *user_data,
-                                                 const struct TemporalCoreByteArray *success,
-                                                 const struct TemporalCoreByteArray *fail);
+typedef struct TemporalCoreClientConfigOrFail {
+  const struct TemporalCoreByteArray *success;
+  const struct TemporalCoreByteArray *fail;
+} TemporalCoreClientConfigOrFail;
+
+/**
+ * Options for loading client configuration.
+ */
+typedef struct TemporalCoreClientConfigLoadOptions {
+  const char *path;
+  struct TemporalCoreByteArrayRef data;
+  bool disable_file;
+  bool config_file_strict;
+  struct TemporalCoreByteArrayRef env_vars;
+} TemporalCoreClientConfigLoadOptions;
+
+/**
+ * OrFail result for client config profile loading operations.
+ * Either success or fail will be null, but never both.
+ * If success is not null, it contains JSON-serialized client configuration profile data.
+ * If fail is not null, it contains UTF-8 encoded error message.
+ * The returned ByteArrays must be freed by the caller.
+ */
+typedef struct TemporalCoreClientConfigProfileOrFail {
+  const struct TemporalCoreByteArray *success;
+  const struct TemporalCoreByteArray *fail;
+} TemporalCoreClientConfigProfileOrFail;
+
+/**
+ * Options for loading a specific client configuration profile.
+ */
+typedef struct TemporalCoreClientConfigProfileLoadOptions {
+  const char *profile;
+  const char *path;
+  struct TemporalCoreByteArrayRef data;
+  bool disable_file;
+  bool disable_env;
+  bool config_file_strict;
+  struct TemporalCoreByteArrayRef env_vars;
+} TemporalCoreClientConfigProfileLoadOptions;
 
 typedef union TemporalCoreMetricAttributeValue {
   struct TemporalCoreByteArrayRef string_value;
@@ -780,28 +820,18 @@ void temporal_core_client_rpc_call(struct TemporalCoreClient *client,
                                    TemporalCoreClientRpcCallCallback callback);
 
 /**
- * Load all client profiles from given sources
+ * Load all client profiles from given sources.
+ * Returns ClientConfigOrFail with either success JSON or error message.
+ * The returned ByteArrays must be freed by the caller.
  */
-void temporal_core_client_config_load(const char *path,
-                                      struct TemporalCoreByteArrayRef data,
-                                      bool disable_file,
-                                      bool config_file_strict,
-                                      struct TemporalCoreByteArrayRef env_vars,
-                                      void *user_data,
-                                      TemporalCoreClientConfigCallback callback);
+struct TemporalCoreClientConfigOrFail temporal_core_client_config_load(const struct TemporalCoreClientConfigLoadOptions *options);
 
 /**
- * Load a single client profile from given sources with env overrides
+ * Load a single client profile from given sources with env overrides.
+ * Returns ClientConfigProfileOrFail with either success JSON or error message.
+ * The returned ByteArrays must be freed by the caller.
  */
-void temporal_core_client_config_profile_load(const char *profile,
-                                              const char *path,
-                                              struct TemporalCoreByteArrayRef data,
-                                              bool disable_file,
-                                              bool disable_env,
-                                              bool config_file_strict,
-                                              struct TemporalCoreByteArrayRef env_vars,
-                                              void *user_data,
-                                              TemporalCoreClientConfigCallback callback);
+struct TemporalCoreClientConfigProfileOrFail temporal_core_client_config_profile_load(const struct TemporalCoreClientConfigProfileLoadOptions *options);
 
 struct TemporalCoreMetricMeter *temporal_core_metric_meter_new(struct TemporalCoreRuntime *runtime);
 

@@ -22,6 +22,7 @@ mod tests;
 use std::collections::HashMap;
 
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct ByteArrayRef {
     pub data: *const u8,
     pub size: libc::size_t,
