@@ -33,7 +33,7 @@ pub use temporal_sdk_core_protos::temporal::api::{
 };
 pub use tonic;
 pub use worker_registry::{
-    ClientWorkerSet, SharedNamespaceWorkerTrait, Slot, SlotProvider, WorkerKey,
+    ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot, WorkerKey,
 };
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,

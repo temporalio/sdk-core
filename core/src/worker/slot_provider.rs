@@ -7,7 +7,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-use temporal_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
+use temporal_client::Slot as SlotTrait;
 use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::mpsc::UnboundedSender;
@@ -74,16 +74,13 @@ impl SlotProvider {
             external_wft_tx,
         }
     }
-}
-
-impl SlotProviderTrait for SlotProvider {
-    fn namespace(&self) -> &str {
+    pub(super) fn namespace(&self) -> &str {
         &self.namespace
     }
-    fn task_queue(&self) -> &str {
+    pub(super) fn task_queue(&self) -> &str {
         &self.task_queue
     }
-    fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
+    pub(super) fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
         match self.wft_semaphore.try_acquire_owned().ok() {
             Some(permit) => Some(Box::new(Slot::new(permit, self.external_wft_tx.clone()))),
             None => None,

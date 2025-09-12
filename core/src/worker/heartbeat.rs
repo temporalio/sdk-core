@@ -12,6 +12,7 @@ use temporal_client::SharedNamespaceWorkerTrait;
 use temporal_sdk_core_api::worker::{WorkerConfigBuilder, WorkerVersioningStrategy};
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 /// Callback used to collect heartbeat data from each worker at the time of heartbeat
 pub(crate) type HeartbeatFn = Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
@@ -22,6 +23,7 @@ pub(crate) type HeartbeatFn = Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 pub(crate) struct SharedNamespaceWorker {
     heartbeat_map: Arc<Mutex<HashMap<String, HeartbeatFn>>>,
     namespace: String,
+    cancel: CancellationToken,
 }
 
 impl SharedNamespaceWorker {
@@ -51,12 +53,16 @@ impl SharedNamespaceWorker {
             TaskPollers::Real,
             telemetry,
             None,
+            true,
         );
 
         let last_heartbeat_time_map = Mutex::new(HashMap::new());
 
         // heartbeat task
         let reset_notify = Arc::new(Notify::new());
+        let cancel = CancellationToken::new();
+        let child = cancel.child_token();
+
         let client_clone = client;
         let namespace_clone = namespace.clone();
 
@@ -67,15 +73,6 @@ impl SharedNamespaceWorker {
             let mut ticker = tokio::time::interval(heartbeat_interval);
             ticker.tick().await;
             loop {
-                // TODO: Race condition here, can technically shut down before anything is ever initialized
-                if heartbeat_map_clone.lock().is_empty() {
-                    println!(
-                        "// TODO: Race condition here, can technically shut down before anything is ever initialized"
-                    );
-                    worker.shutdown().await;
-                    return;
-                }
-
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
@@ -94,9 +91,17 @@ impl SharedNamespaceWorker {
                             } else {
                                 None
                             };
+                            let sdk_name_and_ver = client_clone.sdk_name_and_version();
 
                             heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
                             heartbeat.heartbeat_time = Some(now.into());
+
+                            // All of these heartbeat details rely on a client. Due to type limitations
+                            // from the dependency graph of worker_registry, this must be populated
+                            // from within SharedNamespaceWorker to get the current and proper client
+                            heartbeat.worker_identity = client_clone.identity();
+                            heartbeat.sdk_name = sdk_name_and_ver.0;
+                            heartbeat.sdk_version = sdk_name_and_ver.1;
 
                             hb_to_send.push(heartbeat);
 
@@ -115,6 +120,10 @@ impl SharedNamespaceWorker {
                     _ = reset_notify.notified() => {
                         ticker.reset();
                     }
+                    _ = child.cancelled() => {
+                        worker.shutdown().await;
+                        return;
+                    }
                 }
             }
         });
@@ -122,6 +131,7 @@ impl SharedNamespaceWorker {
         Self {
             heartbeat_map,
             namespace,
+            cancel,
         }
     }
 }
@@ -136,10 +146,11 @@ impl SharedNamespaceWorkerTrait for SharedNamespaceWorker {
         worker_instance_key: String,
     ) -> (Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>, bool) {
         let mut heartbeat_map = self.heartbeat_map.lock();
-        (
-            heartbeat_map.remove(&worker_instance_key),
-            heartbeat_map.is_empty(),
-        )
+        let heartbeat_callback = heartbeat_map.remove(&worker_instance_key);
+        if heartbeat_map.is_empty() {
+            self.cancel.cancel();
+        }
+        (heartbeat_callback, heartbeat_map.is_empty())
     }
     fn register_callback(
         &self,
@@ -230,6 +241,7 @@ mod tests {
             client.clone(),
             None,
             Some(Duration::from_millis(100)),
+            false,
         );
 
         tokio::time::sleep(Duration::from_millis(250)).await;

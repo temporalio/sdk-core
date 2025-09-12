@@ -67,7 +67,6 @@ use temporal_sdk_core_protos::{
 use tokio::{sync::OnceCell, task::AbortHandle};
 use tracing::{debug, warn};
 use url::Url;
-use uuid::Uuid;
 
 pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point

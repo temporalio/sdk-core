@@ -2996,6 +2996,7 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         Arc::new(mock_client),
         None,
         None,
+        false,
     );
 
     for _ in 1..50 {

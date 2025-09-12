@@ -70,7 +70,6 @@ use temporal_sdk_core_api::{
     telemetry::TelemetryOptions,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
-use uuid::Uuid;
 
 /// Initialize a worker bound to a task queue.
 ///
@@ -124,6 +123,7 @@ where
         client_bag.clone(),
         Some(&runtime.telemetry),
         runtime.heartbeat_interval,
+        false,
     );
 
     Ok(worker)

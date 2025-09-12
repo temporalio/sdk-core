@@ -50,8 +50,9 @@ use crate::{
 use activities::WorkerActivityTasks;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
+use std::fmt::{Debug, Formatter};
 use std::{
     convert::TryInto,
     future,
@@ -61,6 +62,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
     ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics, WorkerKey,
 };
@@ -69,7 +71,7 @@ use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHostInfo;
+use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -116,8 +118,6 @@ pub struct Worker {
     local_act_mgr: Arc<LocalActivityManager>,
     /// Manages Nexus tasks
     nexus_mgr: NexusManager,
-    /// Manages worker heartbeat. Will be None for [SharedNamespaceWorker] workers
-    worker_heartbeat_mgr: Option<WorkerHeartbeatManager>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -129,6 +129,8 @@ pub struct Worker {
     local_activities_complete: Arc<AtomicBool>,
     /// Used to track all permits have been released
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
+    /// Used to track worker client
+    client_worker_register: Arc<ClientWorkerRegister>,
 }
 
 struct AllPermitsTracker {
@@ -172,6 +174,17 @@ struct WorkerHeartbeatManager {
     heartbeat_interval: Duration,
     /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
     telemetry: Option<WorkerTelemetry>,
+    /// Heartbeat callback
+    heartbeat_callback: Mutex<Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>>,
+}
+
+impl Debug for WorkerHeartbeatManager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorkerHeartbeatManager")
+            .field("worker_instance_key", &self.worker_instance_key)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .finish()
+    }
 }
 
 #[async_trait::async_trait]
@@ -269,9 +282,9 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        // First, disable Eager Workflow Start
+        // First, unregister worker from the client
         if let Some(key) = *self.worker_key.lock() {
-            self.client.workers().unregister_slot(key);
+            self.client.workers().unregister_worker(key);
         }
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
@@ -311,6 +324,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
+        shared_namespace_worker: bool,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -321,23 +335,23 @@ impl Worker {
             TaskPollers::Real,
             telem_instance,
             worker_heartbeat_interval,
+            shared_namespace_worker,
         )
     }
 
-    /// Replace client and return a new client. For eager workflow purposes, this new client will
-    /// now apply to future eager start requests and the older client will not.
+    /// Replace client and return a new client.
+    ///
+    /// For eager workflow purposes, this new client will now apply to future eager start requests
+    /// and the older client will not. Note, if this registration fails, the worker heartbeat will
+    /// also not be registered.
+    ///
+    /// For worker heartbeat, this will remove an existing nexus worker if it is the last worker of
+    /// the old client and create a new nexus worker if it's the first client of the namespace on
+    /// the new client.
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
-        let heartbeat_fn = if let Some(worker_heartbeat_mgr) = &self.worker_heartbeat_mgr {
-            self.client.workers().unregister_heartbeat_worker(
-                self.config.namespace.clone(),
-                worker_heartbeat_mgr.worker_instance_key.to_string(),
-            )
-        } else {
-            None
-        };
-        let slot_provider = (*worker_key).and_then(|k| self.client.workers().unregister_slot(k));
+        let client_worker = (*worker_key).and_then(|k| self.client.workers().unregister_worker(k));
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
             self.config.client_identity_override.clone(),
@@ -345,30 +359,14 @@ impl Worker {
         );
 
         self.client.replace_client(new_worker_client);
-
-        *worker_key = slot_provider
-            .and_then(|slot_provider| self.client.workers().register_slot(slot_provider));
-        if let Some(worker_heartbeat_mgr) = &self.worker_heartbeat_mgr
-            && let Some(heartbeat_fn) = heartbeat_fn
-        {
-            let shared_worker_fn = construct_shared_worker_fn(
-                self.client.clone(),
-                self.config.namespace.clone(),
-                worker_heartbeat_mgr.heartbeat_interval,
-                worker_heartbeat_mgr.telemetry.clone(),
-            );
-            self.client.workers().register_heartbeat_worker(
-                self.config.namespace.clone(),
-                worker_heartbeat_mgr.worker_instance_key.to_string(),
-                heartbeat_fn,
-                shared_worker_fn,
-            );
-        }
+        *self.client_worker_register.client.write() = self.client.clone();
+        *worker_key = client_worker
+            .and_then(|client_worker| self.client.workers().register_worker(client_worker));
     }
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None)
+        Self::new(config, None, Arc::new(client), None, None, false)
     }
 
     pub(crate) fn new_with_pollers(
@@ -378,6 +376,7 @@ impl Worker {
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
+        shared_namespace_worker: bool,
     ) -> Self {
         let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
             metric_meter: telem.get_metric_meter(),
@@ -392,6 +391,7 @@ impl Worker {
             task_pollers,
             worker_telemetry,
             worker_heartbeat_interval,
+            shared_namespace_worker,
         )
     }
 
@@ -402,8 +402,8 @@ impl Worker {
         task_pollers: TaskPollers,
         worker_telemetry: Option<WorkerTelemetry>,
         worker_heartbeat_interval: Option<Duration>,
+        shared_namespace_worker: bool,
     ) -> Self {
-        let shared_namespace_worker = worker_heartbeat_interval.is_none();
         let (metrics, meter) = if let Some(wt) = worker_telemetry.as_ref() {
             (
                 MetricsContext::top_level_with_meter(
@@ -585,21 +585,17 @@ impl Worker {
             wft_slots.clone(),
             external_wft_tx,
         );
-        let worker_key = Mutex::new(client.workers().register_slot(Box::new(provider)));
-        let sdk_name_and_ver = client.sdk_name_and_version();
 
+        let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = if let Some(heartbeat_interval) = worker_heartbeat_interval {
             let worker_instance_key = Uuid::new_v4();
             let worker_instance_key_clone = worker_instance_key.to_string();
-            let worker_identity = client.identity();
             let task_queue = config.task_queue.clone();
-            let sdk_name_and_ver = sdk_name_and_ver.clone();
 
             // TODO: requires the metrics changes to get the rest of these fields
             let worker_heartbeat_callback: HeartbeatFn = Box::new(move || {
-                temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat {
+                WorkerHeartbeat {
                     worker_instance_key: worker_instance_key_clone.clone(),
-                    worker_identity: worker_identity.clone(),
                     host_info: Some(WorkerHostInfo {
                         host_name: gethostname().to_string_lossy().to_string(),
                         process_id: std::process::id().to_string(),
@@ -607,8 +603,7 @@ impl Worker {
                     }),
                     task_queue: task_queue.clone(),
                     deployment_version: None,
-                    sdk_name: sdk_name_and_ver.clone().0,
-                    sdk_version: sdk_name_and_ver.clone().1,
+
                     status: 0,
                     start_time: Some(std::time::SystemTime::now().into()),
                     workflow_task_slots_info: None,
@@ -623,29 +618,38 @@ impl Worker {
                     total_sticky_cache_miss: 0,
                     current_sticky_cache_size: 0,
                     plugins: vec![],
+
+                    // sdk_name, sdk_version, and worker_identity must be set by
+                    // SharedNamespaceWorker because they rely on the client, and
+                    // need to be pulled from the current client used by SharedNamespaceWorker
                     ..Default::default()
                 }
             });
-
-            client.workers().register_heartbeat_worker(
-                config.namespace.clone(),
-                worker_instance_key.to_string(),
-                worker_heartbeat_callback,
-                construct_shared_worker_fn(
-                    client.clone(),
-                    config.namespace.clone(),
-                    heartbeat_interval,
-                    worker_telemetry.clone(),
-                ),
-            );
 
             Some(WorkerHeartbeatManager {
                 worker_instance_key,
                 heartbeat_interval,
                 telemetry: worker_telemetry.clone(),
+                heartbeat_callback: Mutex::new(Some(worker_heartbeat_callback)),
             })
         } else {
             None
+        };
+
+        let client_worker_register = Arc::new(ClientWorkerRegister {
+            slot_provider: provider,
+            heartbeat_manager: worker_heartbeat,
+            client: RwLock::new(client.clone()),
+        });
+
+        let worker_key = if !shared_namespace_worker {
+            Mutex::new(
+                client
+                    .workers()
+                    .register_worker(client_worker_register.clone()),
+            )
+        } else {
+            Mutex::new(None)
         };
 
         Self {
@@ -706,7 +710,7 @@ impl Worker {
                 la_permits,
             }),
             nexus_mgr,
-            worker_heartbeat_mgr: worker_heartbeat,
+            client_worker_register,
         }
     }
 
@@ -750,12 +754,6 @@ impl Worker {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
-        }
-        if let Some(worker_heartbeat) = self.worker_heartbeat_mgr.as_ref() {
-            self.client.workers().unregister_heartbeat_worker(
-                self.config.namespace.clone(),
-                worker_heartbeat.worker_instance_key.to_string(),
-            );
         }
     }
 
@@ -1013,6 +1011,74 @@ impl Worker {
     }
 }
 
+struct ClientWorkerRegister {
+    slot_provider: SlotProvider,
+    heartbeat_manager: Option<WorkerHeartbeatManager>,
+    client: RwLock<Arc<dyn WorkerClient>>,
+}
+
+impl Debug for ClientWorkerRegister {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientWorkerRegister")
+            .field("slot_provider", &self.slot_provider)
+            .field("heartbeat_manager", &self.heartbeat_manager)
+            .finish()
+    }
+}
+
+impl ClientWorker for ClientWorkerRegister {
+    fn namespace(&self) -> &str {
+        self.slot_provider.namespace()
+    }
+    fn task_queue(&self) -> &str {
+        self.slot_provider.task_queue()
+    }
+
+    fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
+        self.slot_provider.try_reserve_wft_slot()
+    }
+
+    fn worker_instance_key(&self) -> Option<String> {
+        self.heartbeat_manager
+            .as_ref()
+            .map(|hb_mgr| hb_mgr.worker_instance_key.to_string())
+    }
+
+    fn heartbeat_enabled(&self) -> bool {
+        self.heartbeat_manager.is_some()
+    }
+
+    fn heartbeat_callback(&self) -> Option<HeartbeatCallback> {
+        if let Some(hb_mgr) = self.heartbeat_manager.as_ref() {
+            let mut heartbeat_manager = hb_mgr.heartbeat_callback.lock();
+            heartbeat_manager.take().map(HeartbeatCallback)
+        } else {
+            None
+        }
+    }
+    fn new_shared_namespace_worker(
+        &self,
+    ) -> Option<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>> {
+        if let Some(ref hb_mgr) = self.heartbeat_manager {
+            Some(Box::new(SharedNamespaceWorker::new(
+                self.client.read().clone(),
+                self.namespace().to_string(),
+                hb_mgr.heartbeat_interval,
+                hb_mgr.telemetry.clone(),
+            )))
+        } else {
+            dbg_panic!("Should never be called without a heartbeat manager");
+            None
+        }
+    }
+
+    fn register_callback(&self, callback: HeartbeatCallback) {
+        if let Some(hb_mgr) = self.heartbeat_manager.as_ref() {
+            hb_mgr.heartbeat_callback.lock().replace(callback.0);
+        }
+    }
+}
+
 pub(crate) struct PostActivateHookData<'a> {
     pub(crate) run_id: &'a str,
     pub(crate) replaying: bool,
@@ -1047,22 +1113,6 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
         }
     } else {
         config.workflow_task_poller_behavior
-    }
-}
-
-fn construct_shared_worker_fn(
-    client: Arc<dyn WorkerClient>,
-    namespace: String,
-    heartbeat_interval: Duration,
-    telemetry: Option<WorkerTelemetry>,
-) -> impl Fn() -> Box<dyn SharedNamespaceWorkerTrait + Send + Sync> {
-    move || {
-        Box::new(SharedNamespaceWorker::new(
-            client.clone(),
-            namespace.clone(),
-            heartbeat_interval,
-            telemetry.clone(),
-        ))
     }
 }
 
