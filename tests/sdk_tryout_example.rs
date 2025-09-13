@@ -1,6 +1,5 @@
-use std::collections::HashMap;
-
 use futures_util::{FutureExt, future::BoxFuture};
+use std::{collections::HashMap, sync::Arc};
 
 // Public types we will expose =====================================================================
 
@@ -11,10 +10,14 @@ impl<T> TemporalSerializable for T {}
 pub trait TemporalDeserializable {}
 impl<T> TemporalDeserializable for T {}
 pub struct Payload {}
+impl Payload {
+    fn deserialize<T>(self) -> T {
+        todo!("just here to make unreachable warnings go away");
+    }
+}
 
-// Context placeholders
-pub struct SafeWfContext {}
-pub struct WfContext {}
+pub struct SafeWorkflowContext {}
+pub struct WorkflowContext {}
 
 #[derive(Debug)]
 pub enum WfExitValue<T: TemporalSerializable> {
@@ -26,7 +29,8 @@ pub enum WfExitValue<T: TemporalSerializable> {
     Normal(T),
 }
 
-// User doesn't really need to understand this trait, as it's impl is generated for them
+// User doesn't really need to understand this trait, as its impl is generated for them. All such
+// traits can be hidden in docs by default.
 pub trait WorkflowDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable;
@@ -36,21 +40,52 @@ pub trait WorkflowDefinition {
     type Implementation: WorkflowImplementation + 'static;
 }
 
-// User doesn't really need to understand this trait, as it's impl is generated for them
+// User doesn't really need to understand this trait, as its impl is generated for them
 // Actual implementation's input/output types are type-erased, so that they can be stored in a
 // collection together (obviously when registering them they need to be)
 pub trait WorkflowImplementation {
-    fn init(input: Payload, ctx: SafeWfContext) -> Self
+    fn init(input: Payload, ctx: SafeWorkflowContext) -> Self
     where
         Self: Sized;
-    fn run(&mut self, ctx: WfContext)
-    -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>>;
-    // This need to appear here too because the this is the only type we can accept in a collection
-    // when registering, so we need to use the names to match definitions to implementations.
+    fn run(
+        &mut self,
+        ctx: WorkflowContext,
+    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>>;
     fn name() -> &'static str
     where
         Self: Sized;
 }
+
+pub struct ActivityContext {}
+pub type ActivityError = Box<dyn std::error::Error + Send + Sync>;
+
+// User doesn't really need to understand this trait, as its impl is generated for them
+pub trait ActivityDefinition {
+    /// Type of the input argument to the workflow
+    type Input: TemporalDeserializable;
+    /// Type of the output of the workflow
+    type Output: TemporalSerializable + 'static;
+    type Implementer: ActivityImplementer + 'static;
+
+    fn name() -> &'static str
+    where
+        Self: Sized;
+
+    fn execute(
+        receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>>;
+}
+
+// User doesn't really need to understand this trait, as its impl is generated for them
+pub trait ActivityImplementer {
+    fn register_all_static(worker_options: &mut WorkerOptions);
+    fn register_all_instance(self: Arc<Self>, worker_options: &mut WorkerOptions);
+}
+
+/// Marker trait for activity structs that only have static methods
+pub trait HasOnlyStaticMethods: ActivityImplementer {}
 
 struct Client {}
 impl Client {
@@ -70,20 +105,67 @@ impl Client {
 }
 
 // Just playing around with how I can actually store registered workflows
-type WorkflowInitializer = fn(Payload, SafeWfContext) -> Box<dyn WorkflowImplementation>;
+type WorkflowInitializer = fn(Payload, SafeWorkflowContext) -> Box<dyn WorkflowImplementation>;
+type ActivityInvocation =
+    Box<dyn Fn(Payload, ActivityContext) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
 pub struct WorkerOptions {
     workflows: HashMap<&'static str, WorkflowInitializer>,
+    activities: HashMap<&'static str, ActivityInvocation>,
 }
 impl WorkerOptions {
     pub fn new() -> Self {
         WorkerOptions {
             workflows: HashMap::new(),
+            activities: HashMap::new(),
         }
     }
     pub fn register_workflow<WD: WorkflowDefinition>(&mut self) -> &mut Self {
         self.workflows.insert(WD::Implementation::name(), |p, c| {
             Box::new(WD::Implementation::init(p, c))
         });
+        self
+    }
+    pub fn register_activities<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        AI::register_all_static(self);
+        self
+    }
+    pub fn register_activities_with_instance<AI: ActivityImplementer>(
+        &mut self,
+        instance: AI,
+    ) -> &mut Self {
+        AI::register_all_static(self);
+        let arcd = Arc::new(instance);
+        AI::register_all_instance(arcd, self);
+        self
+    }
+    pub fn register_activity<AD: ActivityDefinition>(&mut self) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Box::new(|p, c| {
+                let deserialized = p.deserialize();
+                AD::execute(None, c, deserialized)
+                    .map(|_| todo!("serialize"))
+                    .boxed()
+            }),
+        );
+        self
+    }
+    pub fn register_activity_with_instance<AD: ActivityDefinition>(
+        &mut self,
+        instance: Arc<AD::Implementer>,
+    ) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Box::new(move |p, c| {
+                let deserialized = p.deserialize();
+                AD::execute(Some(instance.clone()), c, deserialized)
+                    .map(|_| todo!("serialize"))
+                    .boxed()
+            }),
+        );
         self
     }
 }
@@ -95,18 +177,67 @@ pub struct MyWorkflow {
     // Some internal state
 }
 
-// #[workflow]
+// #[workflow] -- Can override name
 impl MyWorkflow {
     // #[init]
-    pub fn new(_input: String, _ctx: SafeWfContext) -> Self {
+    pub fn new(_input: String, _ctx: SafeWorkflowContext) -> Self {
         todo!()
     }
 
     // #[run]
-    pub async fn run(&mut self, _ctx: WfContext) -> Result<WfExitValue<String>, anyhow::Error> {
+    pub async fn run(
+        &mut self,
+        _ctx: WorkflowContext,
+    ) -> Result<WfExitValue<String>, anyhow::Error> {
         todo!()
     }
 }
+
+pub struct MyActivities {
+    // Some internal state
+}
+// This will likely be necessary because procmacros can't access things outside their scope
+// #[activities]
+impl MyActivities {
+    // #[activity] -- Can override name
+    pub async fn static_activity(
+        _ctx: ActivityContext,
+        _in: String,
+    ) -> Result<&'static str, ActivityError> {
+        Ok("Can be static")
+    }
+    // #[activity]
+    pub async fn activity(
+        // Activities that want to manipulate shared state must do it through an Arc. We can't allow
+        // mut access because we can't guarantee concurrent tasks won't need to be executed.
+        // We could maybe allow `&self` access, but, I think that just obscures the fact that
+        // instances will need to be stored in Arcs. Macro can reject any other receiver type.
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        _in: bool,
+    ) -> Result<&'static str, ActivityError> {
+        Ok("Can also take &self or &mut self")
+    }
+    // #[activity]
+    pub fn sync_activity(_ctx: ActivityContext, _in: bool) -> Result<&'static str, ActivityError> {
+        Ok("Sync activities are supported too")
+    }
+}
+
+pub struct MyActivitiesStatic;
+impl MyActivitiesStatic {
+    // #[activity]
+    pub async fn static_activity(
+        _ctx: ActivityContext,
+        _in: String,
+    ) -> Result<&'static str, ActivityError> {
+        Ok("Can be static")
+    }
+}
+
+// TODO: It'd definitely be _possible_ to support top-level activities, but they would either need
+// more dedicated APIs, or we'd need to generate marker structs that "hold" them so they can be
+// registered via the static path. That's simple enough that I skip demonstrating it here.
 
 // =================================================================================================
 // Generated code from above =======================================================================
@@ -116,15 +247,14 @@ impl WorkflowDefinition for MyWorkflow {
     type Implementation = MyWorkflow;
 }
 impl WorkflowImplementation for MyWorkflow {
-    fn init(_input: Payload, ctx: SafeWfContext) -> Self {
-        let deserialzied: <MyWorkflow as WorkflowDefinition>::Input =
-            todo!("deserialize from input");
+    fn init(input: Payload, ctx: SafeWorkflowContext) -> Self {
+        let deserialzied: <MyWorkflow as WorkflowDefinition>::Input = input.deserialize();
         MyWorkflow::new(deserialzied, ctx)
     }
 
     fn run(
         &mut self,
-        ctx: WfContext,
+        ctx: WorkflowContext,
     ) -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>> {
         self.run(ctx).map(|_| todo!("Serialize output")).boxed()
     }
@@ -134,18 +264,139 @@ impl WorkflowImplementation for MyWorkflow {
     }
 }
 
+// Exact struct naming format TBD
+#[allow(non_camel_case_types)]
+struct MyActivities_static_activity {}
+impl ActivityDefinition for MyActivities_static_activity {
+    type Input = String;
+    type Output = &'static str;
+    type Implementer = MyActivities;
+    fn name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "MyActivities::static_activity"
+    }
+    fn execute(
+        _receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+        MyActivities::static_activity(ctx, input).boxed()
+    }
+}
+
+#[allow(non_camel_case_types)]
+struct MyActivities_activity {}
+impl ActivityDefinition for MyActivities_activity {
+    type Input = bool;
+    type Output = &'static str;
+    type Implementer = MyActivities;
+    fn name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "MyActivities::activity"
+    }
+    fn execute(
+        receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+        MyActivities::activity(receiver.unwrap(), ctx, input).boxed()
+    }
+}
+
+#[allow(non_camel_case_types)]
+struct MyActivities_sync_activity {}
+impl ActivityDefinition for MyActivities_sync_activity {
+    type Input = bool;
+    type Output = &'static str;
+    type Implementer = MyActivities;
+    fn name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "MyActivities::sync_activity"
+    }
+    fn execute(
+        _receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+        // Here we spawn any sync activities as blocking via tokio. All the normal caveats with that
+        // apply, and we'll say so to users.
+        tokio::task::spawn_blocking(move || MyActivities::sync_activity(ctx, input))
+            .map(|jh| match jh {
+                Err(err) => Err(ActivityError::from(err)),
+                Ok(v) => v,
+            })
+            .boxed()
+    }
+}
+
+impl ActivityImplementer for MyActivities {
+    fn register_all_static(worker_options: &mut WorkerOptions) {
+        worker_options.register_activity::<MyActivities_static_activity>();
+        worker_options.register_activity::<MyActivities_sync_activity>();
+    }
+    fn register_all_instance(self: Arc<Self>, worker_options: &mut WorkerOptions) {
+        worker_options.register_activity_with_instance::<MyActivities_activity>(self.clone());
+    }
+}
+
+#[allow(non_camel_case_types)]
+struct MyActivitiesStatic_static_activity {}
+impl ActivityDefinition for MyActivitiesStatic_static_activity {
+    type Input = String;
+    type Output = &'static str;
+    type Implementer = MyActivities;
+    fn name() -> &'static str
+    where
+        Self: Sized,
+    {
+        "MyActivitiesStatic::static_activity"
+    }
+    fn execute(
+        _receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+        MyActivities::static_activity(ctx, input).boxed()
+    }
+}
+
+impl ActivityImplementer for MyActivitiesStatic {
+    fn register_all_static(worker_options: &mut WorkerOptions) {
+        worker_options.register_activity::<MyActivitiesStatic_static_activity>();
+    }
+    fn register_all_instance(self: Arc<Self>, _: &mut WorkerOptions) {
+        unreachable!()
+    }
+}
+impl HasOnlyStaticMethods for MyActivitiesStatic {}
+
 // =================================================================================================
 // More user code using the definitions from above ===================================================
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let activity_instance = MyActivities {};
     let mut worker_opts = WorkerOptions::new();
     worker_opts
         .register_workflow::<MyWorkflow>()
-        // Obviously IRL they'd be different, but, this is how you register multiple.
+        // Obviously IRL they'd be different, but, this is how you register multiple definitions.
         // Passing in a collection wouldn't make sense.
         .register_workflow::<MyWorkflow>()
-        .register_workflow::<MyWorkflow>();
+        .register_workflow::<MyWorkflow>()
+        // This also registers the static activity
+        .register_activities_with_instance(activity_instance)
+        // ----
+        // This is a compile error, since MyActivities is known to have non static-methods
+        // .register_activities::<MyActivities>();
+        // ----
+        // But this works
+        .register_activities::<MyActivitiesStatic>();
 
     let client = Client::new();
     client
