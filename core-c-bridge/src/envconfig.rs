@@ -98,8 +98,8 @@ impl From<CoreClientConfigProfile> for ClientConfigProfile {
 
 #[derive(Serialize)]
 struct ClientConfigTLS {
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    disabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     server_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
