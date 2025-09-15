@@ -117,15 +117,15 @@ A sequence diagram of this process is shown below. Not everything may make sense
 refer back to this diagram during later explanations.
 
 ```mermaid
-%%{ init :
-{"theme" : "default", "themeVariables" : { "background" : "#fff" }},
-{'themeCSS': 'svg {background: white;}'
-}%%
+%%{ init : { "theme" : "default", "themeVariables" : { "background" : "#fff" }}}%%
 sequenceDiagram
-    participant Client
-    participant Server
-    participant SDK
-    participant UserCode as "User Code"
+    box rgb(255, 255, 255)
+      participant Client
+      participant Server
+      participant SDK
+      participant UserCode as "User Code"
+    end
+
     Client ->> Server: StartWorkflowExecution RPC
     Server ->> Server: Generate Workflow Task & persist
     Server -->> Client: runID
