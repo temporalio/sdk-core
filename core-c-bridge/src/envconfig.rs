@@ -30,13 +30,11 @@ pub struct ClientConfigProfileOrFail {
     pub fail: *const ByteArray,
 }
 
-
 /// Options for loading client configuration.
 #[repr(C)]
 pub struct ClientConfigLoadOptions {
     pub path: *const libc::c_char,
     pub data: ByteArrayRef,
-    pub disable_file: bool,
     pub config_file_strict: bool,
     pub env_vars: ByteArrayRef,
 }
@@ -144,7 +142,7 @@ struct DataSource {
     #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    data: Option<String>,
+    data: Option<Vec<u8>>,
 }
 
 impl From<CoreDataSource> for DataSource {
@@ -156,7 +154,7 @@ impl From<CoreDataSource> for DataSource {
             },
             CoreDataSource::Data(d) => Self {
                 path: None,
-                data: Some(String::from_utf8_lossy(&d).to_string()),
+                data: Some(d),
             },
         }
     }
@@ -206,7 +204,6 @@ fn serialize_or_error<T: Serialize>(data: T) -> Result<*const ByteArray, *const 
     }
 }
 
-
 /// Load all client profiles from given sources.
 /// Returns ClientConfigOrFail with either success JSON or error message.
 /// The returned ByteArrays must be freed by the caller.
@@ -224,11 +221,10 @@ pub extern "C" fn temporal_core_client_config_load(
 
     let result = || -> Result<ClientConfig, String> {
         let opts = unsafe { &*options };
-        let config_source = parse_config_source(opts.path, opts.data)?;
         let env_vars_map = parse_env_vars(opts.env_vars)?;
 
         let load_options = LoadClientConfigOptions {
-            config_source: if opts.disable_file { None } else { config_source },
+            config_source: parse_config_source(opts.path, opts.data)?,
             config_file_strict: opts.config_file_strict,
         };
 
@@ -276,7 +272,7 @@ pub extern "C" fn temporal_core_client_config_profile_load(
 
     let result = || -> Result<ClientConfigProfile, String> {
         let opts = unsafe { &*options };
-        
+
         let profile_name = if !opts.profile.is_null() {
             match unsafe { CStr::from_ptr(opts.profile) }.to_str() {
                 Ok(s) => Some(s.to_string()),

@@ -258,7 +258,6 @@ typedef struct TemporalCoreClientConfigOrFail {
 typedef struct TemporalCoreClientConfigLoadOptions {
   const char *path;
   struct TemporalCoreByteArrayRef data;
-  bool disable_file;
   bool config_file_strict;
   struct TemporalCoreByteArrayRef env_vars;
 } TemporalCoreClientConfigLoadOptions;
