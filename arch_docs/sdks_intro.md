@@ -119,10 +119,13 @@ refer back to this diagram during later explanations.
 ```mermaid
 %%{ init : { "theme" : "default", "themeVariables" : { "background" : "#fff" }}}%%
 sequenceDiagram
-    participant Client
-    participant Server
-    participant SDK
-    participant UserCode as "User Code"
+    box rgb(255, 255, 255)
+      participant Client
+      participant Server
+      participant SDK
+      participant UserCode as "User Code"
+    end
+
     Client ->> Server: StartWorkflowExecution RPC
     Server ->> Server: Generate Workflow Task & persist
     Server -->> Client: runID
@@ -280,7 +283,7 @@ with a command already in history.
 If the order of arguments to `asyncio.gather` is swapped in the previous example Workflow, replaying
 the Workflow will result in a nondeterminism error (often referred to as an "NDE"):
 
-``` 
+```
 temporalio.workflow.NondeterminismError: Workflow activation completion failed: Failure { failure:
 Some(Failure { message: "[TMPRL1100] Nondeterminism error: Timer machine does not handle this event:
 HistoryEvent(id: 5, ActivityTaskScheduled)", source: "", stack_trace: "", encoded_attributes: None,

@@ -358,9 +358,6 @@ pub fn load_client_config_profile(
         profile.load_from_env(env_vars)?;
     }
 
-    // Apply API key → TLS auto-enabling logic
-    profile.apply_api_key_tls_logic();
-
     Ok(profile)
 }
 
@@ -527,14 +524,6 @@ impl ClientConfigProfile {
             }
         }
         Ok(())
-    }
-
-    /// Apply automatic TLS enabling when API key is present
-    pub fn apply_api_key_tls_logic(&mut self) {
-        if self.api_key.is_some() && self.tls.is_none() {
-            // If API key is present but no TLS config exists, create one with TLS enabled
-            self.tls = Some(ClientConfigTLS::default());
-        }
     }
 }
 
@@ -1580,27 +1569,6 @@ address = "localhost:7233"
         let profile = load_client_config_profile(options, Some(&vars)).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "env-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "env-namespace");
-    }
-
-    #[test]
-    fn test_api_key_tls_auto_enable() {
-        // Test 1: When API key is present, TLS should be automatically enabled
-        let toml_str = r#"
-[profile.default]
-api_key = "my-api-key"
-"#;
-
-        let options = LoadClientConfigProfileOptions {
-            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
-            ..Default::default()
-        };
-
-        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
-
-        // TLS should be enabled due to API key presence
-        assert!(profile.tls.is_some());
-        let tls = profile.tls.as_ref().unwrap();
-        assert_eq!(tls.disabled, None); // Not explicitly set
     }
 
     #[test]
