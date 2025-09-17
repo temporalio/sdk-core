@@ -1,8 +1,7 @@
-use crate::common::INTEG_CLIENT_IDENTITY;
 use crate::{
     common::{
-        ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk, init_core_and_create_wf,
-        mock_sdk, mock_sdk_cfg,
+        ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
+        init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
     integ_tests::activity_functions::echo,
 };

@@ -1,7 +1,11 @@
 use crate::NamespacedClient;
-use std::borrow::Cow;
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, RwLock};
+use std::{
+    borrow::Cow,
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicU32, Ordering},
+    },
+};
 
 /// A client wrapper that allows replacing the underlying client at a later point in time.
 /// Clones of this struct have a shared reference to the underlying client, and each clone also
@@ -83,10 +87,10 @@ where
         self.inner_cow().into_owned()
     }
 
-    /// Returns a reference to this instance's cached clone of the underlying client if it's up to
-    /// date, or a fresh clone of the shared client otherwise. Because it's an immutable method,
-    /// it will not update this instance's cached clone. For this reason, prefer to use
-    /// [`refresh_inner()`](Self::refresh_inner) when possible.
+    /// Returns an immutable reference to this instance's cached clone of the underlying client if
+    /// it's up to date, or a fresh clone of the shared client otherwise. Because it's an immutable
+    /// method, it will not update this instance's cached clone. For this reason, prefer to use
+    /// [`inner_mut_refreshed()`](Self::inner_mut_refreshed) when possible.
     pub fn inner_cow(&self) -> Cow<'_, C> {
         self.shared_data
             .fetch_newer_than(self.cloned_generation)
@@ -94,13 +98,15 @@ where
             .unwrap_or_else(|| Cow::Borrowed(&self.cloned_client))
     }
 
-    /// Refreshes this instance's cached clone of the underlying client. Returns a mutable reference
-    /// to it. Called automatically by other mutable methods, in particular by all RPC calls.
+    /// Returns a mutable reference to this instance's cached clone of the underlying client. If the
+    /// cached clone is not up to date, it's refreshed before the reference is returned. This method
+    /// is called automatically by most other mutable methods, in particular by all service calls,
+    /// so most of the time it doesn't need to be called directly.
     ///
     /// While this method allows mutable access to the underlying client, any configuration changes
     /// will not be shared with other instances, and will be lost if the client gets replaced from
-    /// anywhere. To make configuration changes, use [`replace_client()`](Self::refresh_client) instead.
-    pub fn refresh_inner(&mut self) -> &mut C {
+    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client) instead.
+    pub fn inner_mut_refreshed(&mut self) -> &mut C {
         if let Some((client, generation)) =
             self.shared_data.fetch_newer_than(self.cloned_generation)
         {
@@ -145,7 +151,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::{NamespacedClient, SharedReplaceableClient};
+    use super::*;
+    use crate::NamespacedClient;
     use std::borrow::Cow;
 
     #[derive(Debug, Clone)]
@@ -185,7 +192,7 @@ mod tests {
         };
         assert_eq!(inner.identity, "2");
 
-        assert_eq!(client.refresh_inner().identity, "2");
+        assert_eq!(client.inner_mut_refreshed().identity, "2");
         let Cow::Borrowed(inner) = client.inner_cow() else {
             panic!("expected borrowed inner");
         };
@@ -213,5 +220,34 @@ mod tests {
         assert_eq!(clone2.identity(), "4");
         assert_eq!(original1.identity(), "2");
         assert_eq!(clone1.identity(), "2");
+    }
+
+    #[test]
+    fn client_replaced_from_multiple_threads() {
+        let mut client = SharedReplaceableClient::new(StubClient::new("original"));
+        std::thread::scope(|scope| {
+            for thread_no in 0..100 {
+                let mut client = client.clone();
+                scope.spawn(move || {
+                    for i in 0..1000 {
+                        let old_generation = client.cloned_generation;
+                        client.inner_mut_refreshed();
+                        let current_generation = client.cloned_generation;
+                        assert!(current_generation >= old_generation);
+                        let replace_identity = format!("{thread_no}-{i}");
+                        client.replace_client(StubClient::new(&replace_identity));
+                        client.inner_mut_refreshed();
+                        assert!(client.cloned_generation > current_generation);
+                        let refreshed_identity = client.identity();
+                        if refreshed_identity.split('-').next().unwrap() == thread_no.to_string() {
+                            assert_eq!(replace_identity, refreshed_identity);
+                        }
+                    }
+                });
+            }
+        });
+        client.inner_mut_refreshed();
+        assert_eq!(client.cloned_generation, 100_000);
+        assert!(client.identity().ends_with("-999"));
     }
 }

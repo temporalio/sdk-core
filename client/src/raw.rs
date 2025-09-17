@@ -137,23 +137,23 @@ where
     type SvcType = T;
 
     fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.refresh_inner().workflow_client_mut()
+        self.inner_mut_refreshed().workflow_client_mut()
     }
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.refresh_inner().operator_client_mut()
+        self.inner_mut_refreshed().operator_client_mut()
     }
 
     fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.refresh_inner().cloud_client_mut()
+        self.inner_mut_refreshed().cloud_client_mut()
     }
 
     fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.refresh_inner().test_client_mut()
+        self.inner_mut_refreshed().test_client_mut()
     }
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.refresh_inner().health_client_mut()
+        self.inner_mut_refreshed().health_client_mut()
     }
 
     fn get_workers_info(&self) -> Option<Arc<SlotManager>> {

@@ -1,8 +1,8 @@
-use crate::common::{
-    INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_server_options, integ_dev_server_config,
-};
 use crate::{
-    common::{CoreWfStarter, init_core_and_create_wf, init_integ_telem, integ_worker_config},
+    common::{
+        CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_server_options,
+        init_core_and_create_wf, init_integ_telem, integ_dev_server_config, integ_worker_config,
+    },
     integ_tests::activity_functions::echo,
 };
 use assert_matches::assert_matches;
@@ -17,13 +17,12 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core::telemetry::CoreLogStreamConsumer;
-use temporal_sdk_core::test_help::NAMESPACE;
 use temporal_sdk_core::{
     ClientOptionsBuilder, CoreRuntime,
     ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
     init_worker,
-    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
+    telemetry::CoreLogStreamConsumer,
+    test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use temporal_sdk_core_api::{
     Worker,
