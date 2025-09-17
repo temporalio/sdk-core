@@ -62,6 +62,10 @@ pub trait WorkflowImplementation {
 pub trait UpdateDefinition {
     type Input: TemporalDeserializable;
     type Output: TemporalSerializable + 'static;
+
+    fn name() -> &'static str
+    where
+        Self: Sized;
 }
 
 pub struct ActivityContext {}
@@ -117,12 +121,12 @@ impl Client {
 }
 
 #[derive(Debug)]
-enum WorkflowResultError {
+pub enum WorkflowResultError {
     // Needs to be different from WorkflowError, since, for example a continue-as-new variant needs
     // to exist there, but should not here. Unless we don't make that an error.
 }
 
-struct WorkflowHandle<T> {
+pub struct WorkflowHandle<T> {
     _rt: PhantomData<T>,
 }
 impl<T> WorkflowHandle<T> {
@@ -130,13 +134,19 @@ impl<T> WorkflowHandle<T> {
         todo!()
     }
 
-    pub async fn update<SD>() {}
+    pub async fn execute_update<UD>(&self, _input: UD::Input) -> Result<UD::Output, ClientError>
+    where
+        UD: UpdateDefinition,
+    {
+        todo!()
+    }
 }
 
 // Just playing around with how I can actually store registered workflows
 type WorkflowInitializer = fn(Payload, SafeWorkflowContext) -> Box<dyn WorkflowImplementation>;
 type ActivityInvocation =
     Box<dyn Fn(Payload, ActivityContext) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
+
 pub struct WorkerOptions {
     workflows: HashMap<&'static str, WorkflowInitializer>,
     activities: HashMap<&'static str, ActivityInvocation>,
@@ -290,31 +300,46 @@ impl MyActivitiesStatic {
 pub mod my_workflow {
     use super::*;
 
+    #[allow(non_camel_case_types)]
     pub struct signal;
+    #[allow(non_camel_case_types)]
     pub struct query;
+    #[allow(non_camel_case_types)]
     pub struct update;
-}
 
-impl WorkflowDefinition for MyWorkflow {
-    type Input = String;
-    type Output = String;
-    type Implementation = MyWorkflow;
-}
-impl WorkflowImplementation for MyWorkflow {
-    fn init(input: Payload, ctx: SafeWorkflowContext) -> Self {
-        let deserialzied: <MyWorkflow as WorkflowDefinition>::Input = input.deserialize();
-        MyWorkflow::new(deserialzied, ctx)
+    impl UpdateDefinition for update {
+        type Input = String;
+        type Output = String;
+
+        fn name() -> &'static str
+        where
+            Self: Sized,
+        {
+            "update"
+        }
     }
 
-    fn run(
-        &mut self,
-        ctx: WorkflowContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>> {
-        self.run(ctx).map(|_| todo!("Serialize output")).boxed()
+    impl WorkflowDefinition for MyWorkflow {
+        type Input = String;
+        type Output = String;
+        type Implementation = MyWorkflow;
     }
+    impl WorkflowImplementation for MyWorkflow {
+        fn init(input: Payload, ctx: SafeWorkflowContext) -> Self {
+            let deserialzied: <MyWorkflow as WorkflowDefinition>::Input = input.deserialize();
+            MyWorkflow::new(deserialzied, ctx)
+        }
 
-    fn name() -> &'static str {
-        return "MyWorkflow";
+        fn run(
+            &mut self,
+            ctx: WorkflowContext,
+        ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>> {
+            self.run(ctx).map(|_| todo!("Serialize output")).boxed()
+        }
+
+        fn name() -> &'static str {
+            return "MyWorkflow";
+        }
     }
 }
 
@@ -462,6 +487,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new();
     let handle = client
         .start_workflow::<MyWorkflow>("hi".to_string())
+        .await?;
+    let _update_res = handle
+        .execute_update::<my_workflow::update>("hello".to_string())
         .await?;
     // Activity invocation will also look very similar like
     // ctx.execute_activity::<my_activities::Activity>(input).await?;
