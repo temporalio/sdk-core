@@ -1118,7 +1118,7 @@ namespace = "my-namespace"
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "my-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace");
     }
@@ -1508,7 +1508,7 @@ address = "localhost:7233"
         };
 
         // Should not error, just returns an empty profile
-        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile, ClientConfigProfile::default());
     }
 
@@ -1584,7 +1584,7 @@ address = "some-address"
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options, Some(&HashMap::new())).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
 
         // TLS should not be enabled
         assert!(profile.tls.is_none());
