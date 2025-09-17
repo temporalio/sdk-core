@@ -64,7 +64,7 @@ use std::{
 };
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
-    ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics, WorkerKey,
+    ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
 };
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_api::{
@@ -108,8 +108,8 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     client: Arc<dyn WorkerClient>,
-    /// Registration key to enable eager workflow start for this worker
-    worker_key: Mutex<Option<WorkerKey>>,
+    /// Worker instance key, unique identifier for this worker
+    worker_instance_key: Uuid,
     /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
@@ -168,8 +168,6 @@ impl WorkerTelemetry {
 }
 
 struct WorkerHeartbeatManager {
-    /// Instance key used to identify this worker in worker heartbeating
-    worker_instance_key: Uuid,
     /// Heartbeat interval, defaults to 60s
     heartbeat_interval: Duration,
     /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
@@ -181,7 +179,6 @@ struct WorkerHeartbeatManager {
 impl Debug for WorkerHeartbeatManager {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WorkerHeartbeatManager")
-            .field("worker_instance_key", &self.worker_instance_key)
             .field("heartbeat_interval", &self.heartbeat_interval)
             .finish()
     }
@@ -283,9 +280,10 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, unregister worker from the client
-        if let Some(key) = *self.worker_key.lock() {
-            self.client.workers().unregister_worker(key);
-        }
+        self.client
+            .workers()
+            .unregister_worker(self.worker_instance_key);
+
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
@@ -350,8 +348,10 @@ impl Worker {
     /// the new client.
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
         // Unregister worker from current client, register in new client at the end
-        let mut worker_key = self.worker_key.lock();
-        let client_worker = (*worker_key).and_then(|k| self.client.workers().unregister_worker(k));
+        let client_worker = self
+            .client
+            .workers()
+            .unregister_worker(self.worker_instance_key);
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
             self.config.client_identity_override.clone(),
@@ -360,8 +360,9 @@ impl Worker {
 
         self.client.replace_client(new_worker_client);
         *self.client_worker_register.client.write() = self.client.clone();
-        *worker_key = client_worker
-            .and_then(|client_worker| self.client.workers().register_worker(client_worker));
+        if let Some(cw) = client_worker {
+            self.client.workers().register_worker(cw);
+        }
     }
 
     #[cfg(test)]
@@ -585,10 +586,10 @@ impl Worker {
             wft_slots.clone(),
             external_wft_tx,
         );
+        let worker_instance_key = Uuid::new_v4();
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = if let Some(heartbeat_interval) = worker_heartbeat_interval {
-            let worker_instance_key = Uuid::new_v4();
             let worker_instance_key_clone = worker_instance_key.to_string();
             let task_queue = config.task_queue.clone();
 
@@ -627,7 +628,6 @@ impl Worker {
             });
 
             Some(WorkerHeartbeatManager {
-                worker_instance_key,
                 heartbeat_interval,
                 telemetry: worker_telemetry.clone(),
                 heartbeat_callback: Mutex::new(Some(worker_heartbeat_callback)),
@@ -637,23 +637,18 @@ impl Worker {
         };
 
         let client_worker_register = Arc::new(ClientWorkerRegister {
+            worker_instance_key,
             slot_provider: provider,
             heartbeat_manager: worker_heartbeat,
             client: RwLock::new(client.clone()),
         });
 
-        let worker_key = if !shared_namespace_worker {
-            Mutex::new(
-                client
-                    .workers()
-                    .register_worker(client_worker_register.clone()),
-            )
-        } else {
-            Mutex::new(None)
-        };
+        client
+            .workers()
+            .register_worker(client_worker_register.clone());
 
         Self {
-            worker_key,
+            worker_instance_key,
             client: client.clone(),
             workflows: Workflows::new(
                 WorkflowBasics {
@@ -1012,6 +1007,7 @@ impl Worker {
 }
 
 struct ClientWorkerRegister {
+    worker_instance_key: Uuid,
     slot_provider: SlotProvider,
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     client: RwLock<Arc<dyn WorkerClient>>,
@@ -1038,10 +1034,8 @@ impl ClientWorker for ClientWorkerRegister {
         self.slot_provider.try_reserve_wft_slot()
     }
 
-    fn worker_instance_key(&self) -> Option<String> {
-        self.heartbeat_manager
-            .as_ref()
-            .map(|hb_mgr| hb_mgr.worker_instance_key.to_string())
+    fn worker_instance_key(&self) -> Uuid {
+        self.worker_instance_key
     }
 
     fn heartbeat_enabled(&self) -> bool {
