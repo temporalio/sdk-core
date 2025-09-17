@@ -1,5 +1,5 @@
 use futures_util::{FutureExt, future::BoxFuture};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, marker::PhantomData, sync::Arc};
 
 // Public types we will expose =====================================================================
 
@@ -18,6 +18,9 @@ impl Payload {
 
 pub struct SafeWorkflowContext {}
 pub struct WorkflowContext {}
+pub enum WorkflowError {
+    // Variants for panic, bubbled up failure, etc
+}
 
 #[derive(Debug)]
 pub enum WfExitValue<T: TemporalSerializable> {
@@ -50,10 +53,15 @@ pub trait WorkflowImplementation {
     fn run(
         &mut self,
         ctx: WorkflowContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>>;
+    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
     fn name() -> &'static str
     where
         Self: Sized;
+}
+
+pub trait UpdateDefinition {
+    type Input: TemporalDeserializable;
+    type Output: TemporalSerializable + 'static;
 }
 
 pub struct ActivityContext {}
@@ -88,20 +96,40 @@ pub trait ActivityImplementer {
 pub trait HasOnlyStaticMethods: ActivityImplementer {}
 
 struct Client {}
+// TODO: It probably makes sense to have more specific error per-call, but not going to enumerate
+//   all of them here.
+type ClientError = Box<dyn std::error::Error + Send + Sync>;
 impl Client {
     fn new() -> Self {
         Client {}
     }
 
+    // Would return a more specific error type
     async fn start_workflow<WD>(
         &self,
         _input: WD::Input,
-    ) -> Result<WD::Output, Box<dyn std::error::Error>>
+    ) -> Result<WorkflowHandle<WD::Output>, ClientError>
     where
         WD: WorkflowDefinition,
     {
         todo!()
     }
+}
+
+enum WorkflowResultError {
+    // Needs to be different from WorkflowError, since, for example a continue-as-new variant needs
+    // to exist there, but should not here. Unless we don't make that an error.
+}
+
+struct WorkflowHandle<T> {
+    _rt: PhantomData<T>,
+}
+impl<T> WorkflowHandle<T> {
+    pub async fn result(self) -> Result<T, WorkflowResultError> {
+        todo!()
+    }
+
+    pub async fn update<SD>() {}
 }
 
 // Just playing around with how I can actually store registered workflows
@@ -191,6 +219,21 @@ impl MyWorkflow {
     ) -> Result<WfExitValue<String>, anyhow::Error> {
         todo!()
     }
+
+    // #[signal] -- May be sync or async
+    pub fn signal(&mut self, _input: bool) {
+        todo!()
+    }
+
+    // #[query] -- Glory, finally, immutable-guaranteed queries. Can't be async.
+    pub fn query(&self, _input: String) -> String {
+        todo!()
+    }
+
+    // #[update] -- May also be sync or async
+    pub fn update(&mut self, _input: String) -> String {
+        todo!()
+    }
 }
 
 pub struct MyActivities {
@@ -255,7 +298,7 @@ impl WorkflowImplementation for MyWorkflow {
     fn run(
         &mut self,
         ctx: WorkflowContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, anyhow::Error>> {
+    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>> {
         self.run(ctx).map(|_| todo!("Serialize output")).boxed()
     }
 
@@ -399,8 +442,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register_activities::<MyActivitiesStatic>();
 
     let client = Client::new();
-    client
+    let handle = client
         .start_workflow::<MyWorkflow>("hi".to_string())
         .await?;
+    let _result = handle.result().await?;
     Ok(())
 }
