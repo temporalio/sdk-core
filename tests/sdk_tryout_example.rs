@@ -98,7 +98,7 @@ pub trait HasOnlyStaticMethods: ActivityImplementer {}
 struct Client {}
 // TODO: It probably makes sense to have more specific error per-call, but not going to enumerate
 //   all of them here.
-type ClientError = Box<dyn std::error::Error + Send + Sync>;
+type ClientError = Box<dyn std::error::Error>;
 impl Client {
     fn new() -> Self {
         Client {}
@@ -116,6 +116,7 @@ impl Client {
     }
 }
 
+#[derive(Debug)]
 enum WorkflowResultError {
     // Needs to be different from WorkflowError, since, for example a continue-as-new variant needs
     // to exist there, but should not here. Unless we don't make that an error.
@@ -284,6 +285,16 @@ impl MyActivitiesStatic {
 
 // =================================================================================================
 // Generated code from above =======================================================================
+
+// Generated module for MyWorkflow signals/queries/updates
+pub mod my_workflow {
+    use super::*;
+
+    pub struct signal;
+    pub struct query;
+    pub struct update;
+}
+
 impl WorkflowDefinition for MyWorkflow {
     type Input = String;
     type Output = String;
@@ -307,117 +318,124 @@ impl WorkflowImplementation for MyWorkflow {
     }
 }
 
-// Exact struct naming format TBD
-#[allow(non_camel_case_types)]
-struct MyActivities_static_activity {}
-impl ActivityDefinition for MyActivities_static_activity {
-    type Input = String;
-    type Output = &'static str;
-    type Implementer = MyActivities;
-    fn name() -> &'static str
-    where
-        Self: Sized,
-    {
-        "MyActivities::static_activity"
+// Generated module for MyActivities activity definitions
+pub mod my_activities {
+    use super::*;
+
+    pub struct StaticActivity;
+    pub struct Activity;
+    pub struct SyncActivity;
+
+    impl ActivityDefinition for StaticActivity {
+        type Input = String;
+        type Output = &'static str;
+        type Implementer = MyActivities;
+        fn name() -> &'static str
+        where
+            Self: Sized,
+        {
+            "my_activities_static::StaticActivity"
+        }
+        fn execute(
+            _receiver: Option<Arc<Self::Implementer>>,
+            ctx: ActivityContext,
+            input: Self::Input,
+        ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+            MyActivities::static_activity(ctx, input).boxed()
+        }
     }
-    fn execute(
-        _receiver: Option<Arc<Self::Implementer>>,
-        ctx: ActivityContext,
-        input: Self::Input,
-    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
-        MyActivities::static_activity(ctx, input).boxed()
+
+    impl ActivityDefinition for Activity {
+        type Input = bool;
+        type Output = &'static str;
+        type Implementer = MyActivities;
+        fn name() -> &'static str
+        where
+            Self: Sized,
+        {
+            "my_activities::Activity"
+        }
+        fn execute(
+            receiver: Option<Arc<Self::Implementer>>,
+            ctx: ActivityContext,
+            input: Self::Input,
+        ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+            MyActivities::activity(receiver.unwrap(), ctx, input).boxed()
+        }
+    }
+
+    impl ActivityDefinition for SyncActivity {
+        type Input = bool;
+        type Output = &'static str;
+        type Implementer = MyActivities;
+        fn name() -> &'static str
+        where
+            Self: Sized,
+        {
+            "my_activities_static::StaticActivity"
+        }
+        fn execute(
+            _receiver: Option<Arc<Self::Implementer>>,
+            ctx: ActivityContext,
+            input: Self::Input,
+        ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+            // Here we spawn any sync activities as blocking via tokio. All the normal caveats with that
+            // apply, and we'll say so to users.
+            tokio::task::spawn_blocking(move || MyActivities::sync_activity(ctx, input))
+                .map(|jh| match jh {
+                    Err(err) => Err(ActivityError::from(err)),
+                    Ok(v) => v,
+                })
+                .boxed()
+        }
+    }
+
+    impl ActivityImplementer for MyActivities {
+        fn register_all_static(worker_options: &mut WorkerOptions) {
+            worker_options.register_activity::<StaticActivity>();
+            worker_options.register_activity::<SyncActivity>();
+        }
+        fn register_all_instance(self: Arc<Self>, worker_options: &mut WorkerOptions) {
+            worker_options.register_activity_with_instance::<Activity>(self.clone());
+        }
     }
 }
 
-#[allow(non_camel_case_types)]
-struct MyActivities_activity {}
-impl ActivityDefinition for MyActivities_activity {
-    type Input = bool;
-    type Output = &'static str;
-    type Implementer = MyActivities;
-    fn name() -> &'static str
-    where
-        Self: Sized,
-    {
-        "MyActivities::activity"
-    }
-    fn execute(
-        receiver: Option<Arc<Self::Implementer>>,
-        ctx: ActivityContext,
-        input: Self::Input,
-    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
-        MyActivities::activity(receiver.unwrap(), ctx, input).boxed()
-    }
-}
+// Generated module for MyActivitiesStatic activity definitions
+pub mod my_activities_static {
+    use super::*;
 
-#[allow(non_camel_case_types)]
-struct MyActivities_sync_activity {}
-impl ActivityDefinition for MyActivities_sync_activity {
-    type Input = bool;
-    type Output = &'static str;
-    type Implementer = MyActivities;
-    fn name() -> &'static str
-    where
-        Self: Sized,
-    {
-        "MyActivities::sync_activity"
-    }
-    fn execute(
-        _receiver: Option<Arc<Self::Implementer>>,
-        ctx: ActivityContext,
-        input: Self::Input,
-    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
-        // Here we spawn any sync activities as blocking via tokio. All the normal caveats with that
-        // apply, and we'll say so to users.
-        tokio::task::spawn_blocking(move || MyActivities::sync_activity(ctx, input))
-            .map(|jh| match jh {
-                Err(err) => Err(ActivityError::from(err)),
-                Ok(v) => v,
-            })
-            .boxed()
-    }
-}
+    pub struct StaticActivity;
 
-impl ActivityImplementer for MyActivities {
-    fn register_all_static(worker_options: &mut WorkerOptions) {
-        worker_options.register_activity::<MyActivities_static_activity>();
-        worker_options.register_activity::<MyActivities_sync_activity>();
+    impl ActivityDefinition for StaticActivity {
+        type Input = String;
+        type Output = &'static str;
+        type Implementer = MyActivities;
+        fn name() -> &'static str
+        where
+            Self: Sized,
+        {
+            "my_activities_static::StaticActivity"
+        }
+        fn execute(
+            _receiver: Option<Arc<Self::Implementer>>,
+            ctx: ActivityContext,
+            input: Self::Input,
+        ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
+            MyActivities::static_activity(ctx, input).boxed()
+        }
     }
-    fn register_all_instance(self: Arc<Self>, worker_options: &mut WorkerOptions) {
-        worker_options.register_activity_with_instance::<MyActivities_activity>(self.clone());
-    }
-}
 
-#[allow(non_camel_case_types)]
-struct MyActivitiesStatic_static_activity {}
-impl ActivityDefinition for MyActivitiesStatic_static_activity {
-    type Input = String;
-    type Output = &'static str;
-    type Implementer = MyActivities;
-    fn name() -> &'static str
-    where
-        Self: Sized,
-    {
-        "MyActivitiesStatic::static_activity"
+    impl ActivityImplementer for MyActivitiesStatic {
+        fn register_all_static(worker_options: &mut WorkerOptions) {
+            worker_options.register_activity::<StaticActivity>();
+        }
+        fn register_all_instance(self: Arc<Self>, _: &mut WorkerOptions) {
+            unreachable!()
+        }
     }
-    fn execute(
-        _receiver: Option<Arc<Self::Implementer>>,
-        ctx: ActivityContext,
-        input: Self::Input,
-    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>> {
-        MyActivities::static_activity(ctx, input).boxed()
-    }
+    impl HasOnlyStaticMethods for MyActivitiesStatic {}
 }
-
-impl ActivityImplementer for MyActivitiesStatic {
-    fn register_all_static(worker_options: &mut WorkerOptions) {
-        worker_options.register_activity::<MyActivitiesStatic_static_activity>();
-    }
-    fn register_all_instance(self: Arc<Self>, _: &mut WorkerOptions) {
-        unreachable!()
-    }
-}
-impl HasOnlyStaticMethods for MyActivitiesStatic {}
 
 // =================================================================================================
 // More user code using the definitions from above ===================================================
@@ -445,6 +463,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let handle = client
         .start_workflow::<MyWorkflow>("hi".to_string())
         .await?;
+    // Activity invocation will also look very similar like
+    // ctx.execute_activity::<my_activities::Activity>(input).await?;
     let _result = handle.result().await?;
     Ok(())
+}
+
+// Stuff to just make compile work, not worth reviewing ============================================
+impl std::error::Error for WorkflowResultError {}
+impl std::fmt::Display for WorkflowResultError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "WorkflowResultError")
+    }
 }
