@@ -231,8 +231,7 @@ mod tests {
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .max_outstanding_activities(1_usize)
             .build()
-            .unwrap()
-            .into();
+            .unwrap();
 
         let client = Arc::new(mock);
         let worker = worker::Worker::new(
