@@ -45,7 +45,7 @@ pub mod coresdk {
     use crate::{
         ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
-            common::v1::{Payload, Payloads, WorkflowExecution},
+            common::v1::{Payload, Payloads, RetryPolicy, WorkflowExecution},
             enums::v1::{
                 ApplicationErrorCategory, TimeoutType, VersioningBehavior, WorkflowTaskFailedCause,
             },
@@ -481,6 +481,7 @@ pub mod coresdk {
                 FromPayloadsExt,
                 activity_result::{ActivityResolution, activity_resolution},
                 common::NamespacedWorkflowExecution,
+                fix_retry_policy,
                 workflow_activation::remove_from_cache::EvictionReason,
             },
             temporal::api::{
@@ -745,7 +746,7 @@ pub mod coresdk {
                 continued_failure: attrs.continued_failure,
                 last_completion_result: attrs.last_completion_result,
                 first_execution_run_id: attrs.first_execution_run_id,
-                retry_policy: attrs.retry_policy,
+                retry_policy: attrs.retry_policy.map(fix_retry_policy),
                 attempt: attrs.attempt,
                 cron_schedule: attrs.cron_schedule,
                 workflow_execution_expiration_time: attrs.workflow_execution_expiration_time,
@@ -1298,7 +1299,7 @@ pub mod coresdk {
                         schedule_to_close_timeout: r.schedule_to_close_timeout,
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
-                        retry_policy: r.retry_policy,
+                        retry_policy: r.retry_policy.map(fix_retry_policy),
                         priority: r.priority,
                         is_local: false,
                     },
@@ -1577,6 +1578,15 @@ pub mod coresdk {
                 }
             }
         }
+    }
+
+    /// If initial_interval is missing, fills it with zero value to prevent crashes
+    /// (lang assumes that RetryPolicy always has initial_interval set).
+    fn fix_retry_policy(mut retry_policy: RetryPolicy) -> RetryPolicy {
+        if retry_policy.initial_interval.is_none() {
+            retry_policy.initial_interval = Default::default();
+        }
+        retry_policy
     }
 }
 
