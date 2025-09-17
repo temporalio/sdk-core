@@ -10,11 +10,6 @@ impl<T> TemporalSerializable for T {}
 pub trait TemporalDeserializable {}
 impl<T> TemporalDeserializable for T {}
 pub struct Payload {}
-impl Payload {
-    fn deserialize<T>(self) -> T {
-        todo!("just here to make unreachable warnings go away");
-    }
-}
 
 pub struct SafeWorkflowContext {}
 pub struct WorkflowContext {}
@@ -145,7 +140,7 @@ impl<T> WorkflowHandle<T> {
 // Just playing around with how I can actually store registered workflows
 type WorkflowInitializer = fn(Payload, SafeWorkflowContext) -> Box<dyn WorkflowImplementation>;
 type ActivityInvocation =
-    Box<dyn Fn(Payload, ActivityContext) -> BoxFuture<'static, Result<Payload, anyhow::Error>>>;
+    Box<dyn Fn(Payload, ActivityContext) -> BoxFuture<'static, Result<Payload, ActivityError>>>;
 
 pub struct WorkerOptions {
     workflows: HashMap<&'static str, WorkflowInitializer>,
@@ -294,9 +289,42 @@ impl MyActivitiesStatic {
 // registered via the static path. That's simple enough that I skip demonstrating it here.
 
 // =================================================================================================
-// Generated code from above =======================================================================
+// More user code using the definitions from above ===================================================
 
-// Generated module for MyWorkflow signals/queries/updates
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let activity_instance = MyActivities {};
+    let mut worker_opts = WorkerOptions::new();
+    worker_opts
+        .register_workflow::<MyWorkflow>()
+        // Obviously IRL they'd be different, but, this is how you register multiple definitions.
+        // Passing in a collection wouldn't make sense.
+        .register_workflow::<MyWorkflow>()
+        .register_workflow::<MyWorkflow>()
+        // This also registers the static activity
+        .register_activities_with_instance(activity_instance)
+        // ----
+        // This is a compile error, since MyActivities is known to have non static-methods
+        // .register_activities::<MyActivities>();
+        // ----
+        // But this works
+        .register_activities::<MyActivitiesStatic>();
+
+    let client = Client::new();
+    let handle = client
+        .start_workflow::<MyWorkflow>("hi".to_string())
+        .await?;
+    let _update_res = handle
+        .execute_update::<my_workflow::update>("hello".to_string())
+        .await?;
+    // Activity invocation will also look very similar like
+    // ctx.execute_activity::<my_activities::Activity>(input).await?;
+    let _result = handle.result().await?;
+    Ok(())
+}
+// =================================================================================================
+// Generated code from procmacros ==================================================================
+
 pub mod my_workflow {
     use super::*;
 
@@ -343,7 +371,6 @@ pub mod my_workflow {
     }
 }
 
-// Generated module for MyActivities activity definitions
 pub mod my_activities {
     use super::*;
 
@@ -426,7 +453,6 @@ pub mod my_activities {
     }
 }
 
-// Generated module for MyActivitiesStatic activity definitions
 pub mod my_activities_static {
     use super::*;
 
@@ -461,43 +487,13 @@ pub mod my_activities_static {
     }
     impl HasOnlyStaticMethods for MyActivitiesStatic {}
 }
-
 // =================================================================================================
-// More user code using the definitions from above ===================================================
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let activity_instance = MyActivities {};
-    let mut worker_opts = WorkerOptions::new();
-    worker_opts
-        .register_workflow::<MyWorkflow>()
-        // Obviously IRL they'd be different, but, this is how you register multiple definitions.
-        // Passing in a collection wouldn't make sense.
-        .register_workflow::<MyWorkflow>()
-        .register_workflow::<MyWorkflow>()
-        // This also registers the static activity
-        .register_activities_with_instance(activity_instance)
-        // ----
-        // This is a compile error, since MyActivities is known to have non static-methods
-        // .register_activities::<MyActivities>();
-        // ----
-        // But this works
-        .register_activities::<MyActivitiesStatic>();
-
-    let client = Client::new();
-    let handle = client
-        .start_workflow::<MyWorkflow>("hi".to_string())
-        .await?;
-    let _update_res = handle
-        .execute_update::<my_workflow::update>("hello".to_string())
-        .await?;
-    // Activity invocation will also look very similar like
-    // ctx.execute_activity::<my_activities::Activity>(input).await?;
-    let _result = handle.result().await?;
-    Ok(())
-}
-
 // Stuff to just make compile work, not worth reviewing ============================================
+impl Payload {
+    fn deserialize<T>(self) -> T {
+        todo!("just here to make unreachable warnings go away");
+    }
+}
 impl std::error::Error for WorkflowResultError {}
 impl std::fmt::Display for WorkflowResultError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
