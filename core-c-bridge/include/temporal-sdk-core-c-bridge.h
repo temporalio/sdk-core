@@ -256,7 +256,7 @@ typedef struct TemporalCoreClientConfigOrFail {
  * Options for loading client configuration.
  */
 typedef struct TemporalCoreClientConfigLoadOptions {
-  const char *path;
+  struct TemporalCoreByteArrayRef path;
   struct TemporalCoreByteArrayRef data;
   bool config_file_strict;
   struct TemporalCoreByteArrayRef env_vars;
@@ -278,8 +278,8 @@ typedef struct TemporalCoreClientConfigProfileOrFail {
  * Options for loading a specific client configuration profile.
  */
 typedef struct TemporalCoreClientConfigProfileLoadOptions {
-  const char *profile;
-  const char *path;
+  struct TemporalCoreByteArrayRef profile;
+  struct TemporalCoreByteArrayRef path;
   struct TemporalCoreByteArrayRef data;
   bool disable_file;
   bool disable_env;

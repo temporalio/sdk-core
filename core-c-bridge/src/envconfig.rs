@@ -1,7 +1,6 @@
 use crate::{ByteArray, ByteArrayRef};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::ffi::CStr;
 use temporal_sdk_core_api::envconfig::{
     self, ClientConfig as CoreClientConfig, ClientConfigCodec as CoreClientConfigCodec,
     ClientConfigProfile as CoreClientConfigProfile, ClientConfigTLS as CoreClientConfigTLS,
@@ -33,7 +32,7 @@ pub struct ClientConfigProfileOrFail {
 /// Options for loading client configuration.
 #[repr(C)]
 pub struct ClientConfigLoadOptions {
-    pub path: *const libc::c_char,
+    pub path: ByteArrayRef,
     pub data: ByteArrayRef,
     pub config_file_strict: bool,
     pub env_vars: ByteArrayRef,
@@ -42,8 +41,8 @@ pub struct ClientConfigLoadOptions {
 /// Options for loading a specific client configuration profile.
 #[repr(C)]
 pub struct ClientConfigProfileLoadOptions {
-    pub profile: *const libc::c_char,
-    pub path: *const libc::c_char,
+    pub profile: ByteArrayRef,
+    pub path: ByteArrayRef,
     pub data: ByteArrayRef,
     pub disable_file: bool,
     pub disable_env: bool,
@@ -162,14 +161,11 @@ impl From<CoreDataSource> for DataSource {
 
 // Helper functions
 fn parse_config_source(
-    path: *const libc::c_char,
-    data: ByteArrayRef,
+    path: &ByteArrayRef,
+    data: &ByteArrayRef,
 ) -> Result<Option<CoreDataSource>, String> {
-    if !path.is_null() {
-        match unsafe { CStr::from_ptr(path) }.to_str() {
-            Ok(path_str) => Ok(Some(CoreDataSource::Path(path_str.to_string()))),
-            Err(e) => Err(format!("Invalid path UTF-8: {e}")),
-        }
+    if !path.data.is_null() && path.size > 0 {
+        Ok(Some(CoreDataSource::Path(path.to_string())))
     } else if !data.data.is_null() && data.size > 0 {
         Ok(Some(CoreDataSource::Data(data.to_vec())))
     } else {
@@ -177,7 +173,7 @@ fn parse_config_source(
     }
 }
 
-fn parse_env_vars(env_vars: ByteArrayRef) -> Result<Option<HashMap<String, String>>, String> {
+fn parse_env_vars(env_vars: &ByteArrayRef) -> Result<Option<HashMap<String, String>>, String> {
     if env_vars.data.is_null() || env_vars.size == 0 {
         return Ok(None);
     }
@@ -221,10 +217,10 @@ pub extern "C" fn temporal_core_client_config_load(
 
     let result = || -> Result<ClientConfig, String> {
         let opts = unsafe { &*options };
-        let env_vars_map = parse_env_vars(opts.env_vars)?;
+        let env_vars_map = parse_env_vars(&opts.env_vars)?;
 
         let load_options = LoadClientConfigOptions {
-            config_source: parse_config_source(opts.path, opts.data)?,
+            config_source: parse_config_source(&opts.path, &opts.data)?,
             config_file_strict: opts.config_file_strict,
         };
 
@@ -273,17 +269,14 @@ pub extern "C" fn temporal_core_client_config_profile_load(
     let result = || -> Result<ClientConfigProfile, String> {
         let opts = unsafe { &*options };
 
-        let profile_name = if !opts.profile.is_null() {
-            match unsafe { CStr::from_ptr(opts.profile) }.to_str() {
-                Ok(s) => Some(s.to_string()),
-                Err(e) => return Err(format!("Invalid profile UTF-8: {e}")),
-            }
+        let profile_name = if !opts.profile.data.is_null() && opts.profile.size > 0 {
+            Some(opts.profile.to_string())
         } else {
             None
         };
 
-        let config_source = parse_config_source(opts.path, opts.data)?;
-        let env_vars_map = parse_env_vars(opts.env_vars)?;
+        let config_source = parse_config_source(&opts.path, &opts.data)?;
+        let env_vars_map = parse_env_vars(&opts.env_vars)?;
 
         let load_options = LoadClientConfigProfileOptions {
             config_source,
