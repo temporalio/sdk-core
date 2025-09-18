@@ -1,45 +1,87 @@
-use std::time::Duration;
-use temporal_sdk_core_protos::{
-    temporal::api::{common::v1::RetryPolicy, failure::v1::ApplicationFailureInfo},
-    utilities::TryIntoOrNone,
+use std::{num::NonZero, time::Duration};
+use temporal_sdk_core_protos::temporal::api::{
+    common::v1::RetryPolicy, failure::v1::ApplicationFailureInfo,
 };
 
-pub(crate) trait RetryPolicyExt {
+/// Represents a retry policy where all fields have valid values. Durations are stored in std type.
+/// Upholds the following invariants:
+/// - `maximum_interval` >= `initial_interval`
+/// - `backoff_coefficient` >= 1
+/// - `maximum_attempts` >= 0
+#[derive(Debug, Clone)]
+pub(crate) struct ValidatedRetryPolicy {
+    initial_interval: Duration,
+    backoff_coefficient: f64,
+    maximum_interval: Duration,
+    maximum_attempts: u32,
+    non_retryable_error_types: Vec<String>,
+}
+
+impl ValidatedRetryPolicy {
+    /// Validates and converts retry policy. If some field is invalid, it's replaced with a default value:
+    /// - `initial_interval`: 1 second
+    /// - `backoff_coefficient`: 2.0
+    /// - `maximum_interval`: 100 * `initial_interval` if missing or inconvertible, 1 * `initial_interval` if too small
+    /// - `maximum_attempts`: 0 (unlimited)
+    pub(crate) fn from_proto_with_defaults(retry_policy: RetryPolicy) -> Self {
+        let initial_interval = retry_policy
+            .initial_interval
+            .and_then(|i| i.try_into().ok())
+            .unwrap_or_else(|| Duration::from_secs(1));
+
+        let backoff_coefficient = if retry_policy.backoff_coefficient >= 1.0 {
+            retry_policy.backoff_coefficient
+        } else {
+            2.0
+        };
+
+        let maximum_interval = if let Some(maximum_interval) = retry_policy
+            .maximum_interval
+            .and_then(|i| Duration::try_from(i).ok())
+        {
+            maximum_interval.max(initial_interval)
+        } else {
+            let maximum_interval = initial_interval.saturating_mul(100);
+            // Verifying that serialization to proto will work. It may fail for extremely large
+            // durations, so in that case we fall back to maximum_interval = initial_interval.
+            if prost_types::Duration::try_from(maximum_interval).is_ok() {
+                maximum_interval
+            } else {
+                initial_interval
+            }
+        };
+
+        Self {
+            initial_interval,
+            backoff_coefficient,
+            maximum_interval,
+            maximum_attempts: retry_policy.maximum_attempts.try_into().unwrap_or(0),
+            non_retryable_error_types: retry_policy.non_retryable_error_types,
+        }
+    }
+
     /// Ask this retry policy if a retry should be performed. Caller provides the current attempt
     /// number - the first attempt should start at 1.
     ///
-    /// Returns `None` if it should not, otherwise a duration indicating how long to wait before
-    /// performing the retry.
-    ///
-    /// Applies defaults to missing fields:
-    /// `initial_interval` - 1 second
-    /// `maximum_interval` - 100 x initial_interval
-    /// `backoff_coefficient` - 2.0
-    fn should_retry(
+    /// Returns `None` if it should not retry, otherwise returns a duration indicating how long to
+    /// wait before performing the retry.
+    pub(crate) fn should_retry(
         &self,
-        attempt_number: usize,
-        application_failure: Option<&ApplicationFailureInfo>,
-    ) -> Option<Duration>;
-}
-
-impl RetryPolicyExt for RetryPolicy {
-    fn should_retry(
-        &self,
-        attempt_number: usize,
+        attempt_number: NonZero<u32>,
         application_failure: Option<&ApplicationFailureInfo>,
     ) -> Option<Duration> {
+        if self.maximum_attempts > 0 && attempt_number.get() >= self.maximum_attempts {
+            return None;
+        }
+
         let non_retryable = application_failure
             .map(|f| f.non_retryable)
             .unwrap_or_default();
         if non_retryable {
             return None;
         }
-        let err_type_str = application_failure.map_or("", |f| &f.r#type);
-        let realmax = self.maximum_attempts.max(0);
-        if realmax > 0 && attempt_number >= realmax as usize {
-            return None;
-        }
 
+        let err_type_str = application_failure.map_or("", |f| &f.r#type);
         for pat in &self.non_retryable_error_types {
             if err_type_str.to_lowercase() == pat.to_lowercase() {
                 return None;
@@ -47,46 +89,48 @@ impl RetryPolicyExt for RetryPolicy {
         }
 
         if let Some(explicit_delay) = application_failure.and_then(|af| af.next_retry_delay) {
-            return explicit_delay.try_into().ok();
+            match explicit_delay.try_into() {
+                Ok(delay) => return Some(delay),
+                Err(e) => error!(
+                    "Failed to convert retry delay of application failure. Normal delay calculation will be used. Conversion error: `{}`. Application failure: {:?}",
+                    e, application_failure
+                ),
+            }
         }
 
-        let converted_interval = self
-            .initial_interval
-            .try_into_or_none()
-            .or(Some(Duration::from_secs(1)));
-        if attempt_number == 1 {
-            return converted_interval;
+        if attempt_number.get() == 1 {
+            return Some(self.initial_interval);
         }
-        let coeff = if self.backoff_coefficient != 0. {
-            self.backoff_coefficient
-        } else {
-            2.0
-        };
 
-        if let Some(interval) = converted_interval {
-            let max_iv = self
-                .maximum_interval
-                .try_into_or_none()
-                .unwrap_or_else(|| interval.saturating_mul(100));
-            let mul_factor = coeff.powi(attempt_number as i32 - 1);
-            let tried_mul = try_from_secs_f64(mul_factor * interval.as_secs_f64());
-            Some(tried_mul.unwrap_or(max_iv).min(max_iv))
-        } else {
-            // No retries if initial interval is not specified
-            None
-        }
+        let delay = i32::try_from(attempt_number.get())
+            .ok()
+            .and_then(|attempt| {
+                let factor = self.backoff_coefficient.powi(attempt - 1);
+                Duration::try_from_secs_f64(factor * self.initial_interval.as_secs_f64()).ok()
+            })
+            .map(|interval| interval.min(self.maximum_interval))
+            .unwrap_or(self.maximum_interval);
+
+        Some(delay)
     }
 }
 
-const NANOS_PER_SEC: u32 = 1_000_000_000;
-/// modified from rust stdlib since this feature is currently nightly only
-fn try_from_secs_f64(secs: f64) -> Option<Duration> {
-    const MAX_NANOS_F64: f64 = ((u64::MAX as u128 + 1) * (NANOS_PER_SEC as u128)) as f64;
-    let nanos = secs * (NANOS_PER_SEC as f64);
-    if !nanos.is_finite() || !(0.0..MAX_NANOS_F64).contains(&nanos) {
-        None
-    } else {
-        Some(Duration::from_secs_f64(secs))
+impl Default for ValidatedRetryPolicy {
+    fn default() -> Self {
+        Self::from_proto_with_defaults(RetryPolicy::default())
+    }
+}
+
+impl From<ValidatedRetryPolicy> for RetryPolicy {
+    fn from(value: ValidatedRetryPolicy) -> Self {
+        // All fields were tested on struct initialization to convert successfully. Unwraps are safe.
+        Self {
+            initial_interval: Some(value.initial_interval.try_into().unwrap()),
+            backoff_coefficient: value.backoff_coefficient,
+            maximum_interval: Some(value.maximum_interval.try_into().unwrap()),
+            maximum_attempts: value.maximum_attempts.try_into().unwrap(),
+            non_retryable_error_types: value.non_retryable_error_types,
+        }
     }
 }
 
@@ -94,84 +138,186 @@ fn try_from_secs_f64(secs: f64) -> Option<Duration> {
 mod tests {
     use super::*;
     use crate::prost_dur;
+    use std::{num::NonZero, time::Duration};
+
+    macro_rules! nz {
+        ($x:expr) => {
+            NonZero::new($x).unwrap()
+        };
+    }
+
+    #[test]
+    fn applies_defaults_to_default_retry_policy() {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy::default());
+        assert_eq!(rp.initial_interval, Duration::from_secs(1));
+        assert_eq!(rp.backoff_coefficient, 2.0);
+        assert_eq!(rp.maximum_interval, Duration::from_secs(100));
+        assert_eq!(rp.maximum_attempts, 0);
+        assert!(rp.non_retryable_error_types.is_empty());
+
+        let rp = ValidatedRetryPolicy::default();
+        assert_eq!(rp.initial_interval, Duration::from_secs(1));
+        assert_eq!(rp.backoff_coefficient, 2.0);
+        assert_eq!(rp.maximum_interval, Duration::from_secs(100));
+        assert_eq!(rp.maximum_attempts, 0);
+        assert!(rp.non_retryable_error_types.is_empty());
+    }
+
+    #[test]
+    fn applies_defaults_to_invalid_fields_only() {
+        let base_rp = RetryPolicy {
+            initial_interval: Some(prost_dur!(from_secs(2))),
+            backoff_coefficient: 1.5,
+            maximum_interval: Some(prost_dur!(from_secs(4))),
+            maximum_attempts: 2,
+            non_retryable_error_types: vec!["error".into()],
+        };
+        let base_values = ValidatedRetryPolicy::from_proto_with_defaults(base_rp.clone());
+        assert_eq!(base_values.initial_interval, Duration::from_secs(2));
+        assert_eq!(base_values.backoff_coefficient, 1.5);
+        assert_eq!(base_values.maximum_interval, Duration::from_secs(4));
+        assert_eq!(base_values.maximum_attempts, 2);
+        assert_eq!(
+            base_values.non_retryable_error_types,
+            vec!["error".to_owned()]
+        );
+
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
+            initial_interval: Some(prost_types::Duration {
+                seconds: -5,
+                nanos: 0,
+            }),
+            ..base_rp.clone()
+        });
+        assert_eq!(rp.initial_interval, Duration::from_secs(1));
+        assert_eq!(rp.backoff_coefficient, base_values.backoff_coefficient);
+        assert_eq!(rp.maximum_interval, base_values.maximum_interval);
+        assert_eq!(rp.maximum_attempts, base_values.maximum_attempts);
+        assert_eq!(
+            rp.non_retryable_error_types,
+            base_values.non_retryable_error_types
+        );
+
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
+            backoff_coefficient: 0.5,
+            ..base_rp.clone()
+        });
+        assert_eq!(rp.initial_interval, base_values.initial_interval);
+        assert_eq!(rp.backoff_coefficient, 2.0);
+        assert_eq!(rp.maximum_interval, base_values.maximum_interval);
+        assert_eq!(rp.maximum_attempts, base_values.maximum_attempts);
+        assert_eq!(
+            rp.non_retryable_error_types,
+            base_values.non_retryable_error_types
+        );
+
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
+            maximum_interval: Some(prost_types::Duration {
+                seconds: -5,
+                nanos: 0,
+            }),
+            ..base_rp.clone()
+        });
+        assert_eq!(rp.initial_interval, base_values.initial_interval);
+        assert_eq!(rp.backoff_coefficient, base_values.backoff_coefficient);
+        assert_eq!(rp.maximum_interval, 100 * base_values.initial_interval);
+        assert_eq!(rp.maximum_attempts, base_values.maximum_attempts);
+        assert_eq!(
+            rp.non_retryable_error_types,
+            base_values.non_retryable_error_types
+        );
+
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
+            maximum_interval: Some(prost_dur!(from_secs(1))), // valid but less than initial interval
+            ..base_rp.clone()
+        });
+        assert_eq!(rp.initial_interval, base_values.initial_interval);
+        assert_eq!(rp.backoff_coefficient, base_values.backoff_coefficient);
+        assert_eq!(rp.maximum_interval, base_values.initial_interval);
+        assert_eq!(rp.maximum_attempts, base_values.maximum_attempts);
+        assert_eq!(
+            rp.non_retryable_error_types,
+            base_values.non_retryable_error_types
+        );
+
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
+            maximum_attempts: -5,
+            ..base_rp.clone()
+        });
+        assert_eq!(rp.initial_interval, base_values.initial_interval);
+        assert_eq!(rp.backoff_coefficient, base_values.backoff_coefficient);
+        assert_eq!(rp.maximum_interval, base_values.maximum_interval);
+        assert_eq!(rp.maximum_attempts, 0);
+        assert_eq!(
+            rp.non_retryable_error_types,
+            base_values.non_retryable_error_types
+        );
+
+        // non_retryable_error_types is always valid
+    }
 
     #[test]
     fn calcs_backoffs_properly() {
-        let rp = RetryPolicy {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
             maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
-        };
-        let res = rp.should_retry(1, None).unwrap();
-        assert_eq!(res.as_millis(), 1_000);
-        let res = rp.should_retry(2, None).unwrap();
-        assert_eq!(res.as_millis(), 2_000);
-        let res = rp.should_retry(3, None).unwrap();
-        assert_eq!(res.as_millis(), 4_000);
-        let res = rp.should_retry(4, None).unwrap();
-        assert_eq!(res.as_millis(), 8_000);
-        let res = rp.should_retry(5, None).unwrap();
-        assert_eq!(res.as_millis(), 10_000);
-        let res = rp.should_retry(6, None).unwrap();
-        assert_eq!(res.as_millis(), 10_000);
+        });
+        assert_eq!(rp.should_retry(nz!(1), None), Some(Duration::from_secs(1)));
+        assert_eq!(rp.should_retry(nz!(2), None), Some(Duration::from_secs(2)));
+        assert_eq!(rp.should_retry(nz!(3), None), Some(Duration::from_secs(4)));
+        assert_eq!(rp.should_retry(nz!(4), None), Some(Duration::from_secs(8)));
+        assert_eq!(rp.should_retry(nz!(5), None), Some(Duration::from_secs(10)));
+        assert_eq!(rp.should_retry(nz!(6), None), Some(Duration::from_secs(10)));
         // Max attempts - no retry
-        assert!(rp.should_retry(10, None).is_none());
-    }
-
-    #[test]
-    fn no_interval_no_backoff() {
-        let rp = RetryPolicy {
-            initial_interval: None,
-            backoff_coefficient: 0.,
-            maximum_interval: None,
-            maximum_attempts: 10,
-            non_retryable_error_types: vec![],
-        };
-        assert!(rp.should_retry(1, None).is_some());
+        assert!(rp.should_retry(nz!(10), None).is_none());
     }
 
     #[test]
     fn max_attempts_zero_retry_forever() {
-        let rp = RetryPolicy {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 1.2,
             maximum_interval: None,
             maximum_attempts: 0,
             non_retryable_error_types: vec![],
-        };
-        for i in 0..50 {
-            assert!(rp.should_retry(i, None).is_some());
+        });
+        for i in 1..50 {
+            assert!(rp.should_retry(nz!(i), None).is_some());
         }
     }
 
     #[test]
-    fn no_overflows() {
-        let rp = RetryPolicy {
+    fn delay_calculation_does_not_overflow() {
+        let maximum_interval = Duration::from_secs(1000 * 365 * 24 * 60 * 60);
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 10.,
-            maximum_interval: None,
+            maximum_interval: Some(maximum_interval.try_into().unwrap()),
             maximum_attempts: 0,
             non_retryable_error_types: vec![],
-        };
-        for i in 0..50 {
-            assert!(rp.should_retry(i, None).is_some());
+        });
+        for i in 1..50 {
+            assert!(rp.should_retry(nz!(i), None).unwrap() <= maximum_interval);
         }
+        assert_eq!(rp.should_retry(nz!(50), None), Some(maximum_interval));
+        assert_eq!(rp.should_retry(nz!(u32::MAX), None), Some(maximum_interval));
     }
 
     #[test]
     fn no_retry_err_str_match() {
-        let rp = RetryPolicy {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
             maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec!["no retry".to_string()],
-        };
+        });
         assert!(
             rp.should_retry(
-                1,
+                nz!(1),
                 Some(&ApplicationFailureInfo {
                     r#type: "no retry".to_string(),
                     non_retryable: false,
@@ -184,16 +330,16 @@ mod tests {
 
     #[test]
     fn no_non_retryable_application_failure() {
-        let rp = RetryPolicy {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
             maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
-        };
+        });
         assert!(
             rp.should_retry(
-                1,
+                nz!(1),
                 Some(&ApplicationFailureInfo {
                     r#type: "".to_string(),
                     non_retryable: true,
@@ -206,19 +352,21 @@ mod tests {
 
     #[test]
     fn explicit_delay_is_used() {
-        let rp = RetryPolicy {
+        let rp = ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
             initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
             maximum_attempts: 2,
             ..Default::default()
-        };
+        });
         let afi = &ApplicationFailureInfo {
             r#type: "".to_string(),
             next_retry_delay: Some(prost_dur!(from_secs(50))),
             ..Default::default()
         };
-        let res = rp.should_retry(1, Some(afi)).unwrap();
-        assert_eq!(res.as_millis(), 50_000);
-        assert!(rp.should_retry(2, Some(afi)).is_none());
+        assert_eq!(
+            rp.should_retry(nz!(1), Some(afi)),
+            Some(Duration::from_secs(50))
+        );
+        assert!(rp.should_retry(nz!(2), Some(afi)).is_none());
     }
 }

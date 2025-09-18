@@ -2,7 +2,6 @@ use crate::{
     MetricsContext, TaskToken,
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic},
     protosext::ValidScheduleLA,
-    retry_logic::RetryPolicyExt,
     telemetry::metrics::{activity_type, should_record_failure_metric, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
 };
@@ -13,6 +12,7 @@ use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{HashMap, hash_map::Entry},
     fmt::{Debug, Formatter},
+    num::NonZero,
     pin::Pin,
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
@@ -525,7 +525,7 @@ impl LocalActivityManager {
                     .or(schedule_to_close)
                     .and_then(|t| t.try_into().ok()),
                 heartbeat_timeout: None,
-                retry_policy: Some(sa.retry_policy),
+                retry_policy: Some(sa.retry_policy.into()),
                 priority: Some(Default::default()),
                 is_local: true,
             })),
@@ -570,7 +570,7 @@ impl LocalActivityManager {
             macro_rules! calc_backoff {
                 ($fail: ident) => {
                     info.la_info.schedule_cmd.retry_policy.should_retry(
-                        info.attempt as usize,
+                        info.attempt.try_into().unwrap_or(NonZero::<u32>::MIN),
                         $fail
                             .failure
                             .as_ref()
@@ -976,7 +976,7 @@ impl Drop for TimeoutBag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{prost_dur, protosext::LACloseTimeouts};
+    use crate::{prost_dur, protosext::LACloseTimeouts, retry_logic::ValidatedRetryPolicy};
     use futures_util::FutureExt;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::RetryPolicy,
@@ -1111,13 +1111,13 @@ mod tests {
                 seq: 1,
                 activity_id: 1.to_string(),
                 attempt: 5,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_secs(1))),
                     backoff_coefficient: 10.0,
                     maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec![],
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(5),
                 ..Default::default()
             },
@@ -1146,13 +1146,13 @@ mod tests {
                 seq: 1,
                 activity_id: "1".to_string(),
                 attempt: 1,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_secs(1))),
                     backoff_coefficient: 10.0,
                     maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec!["TestError".to_string()],
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(5),
                 ..Default::default()
             },
@@ -1190,13 +1190,13 @@ mod tests {
                 seq: 1,
                 activity_id: 1.to_string(),
                 attempt: 5,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_secs(10))),
                     backoff_coefficient: 1.0,
                     maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec![],
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(500),
                 ..Default::default()
             },
@@ -1239,11 +1239,11 @@ mod tests {
                 seq: 1,
                 activity_id: 1.to_string(),
                 attempt: 5,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(500),
                 ..Default::default()
             },
@@ -1276,11 +1276,11 @@ mod tests {
                 seq: 1,
                 activity_id: 1.to_string(),
                 attempt: 5,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(500),
                 schedule_to_start_timeout: Some(timeout),
                 ..Default::default()
@@ -1319,12 +1319,12 @@ mod tests {
                 seq: 1,
                 activity_id: 1.to_string(),
                 attempt: 5,
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     maximum_attempts: 1,
                     ..Default::default()
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(500),
                 close_timeouts,
                 ..Default::default()
@@ -1400,11 +1400,11 @@ mod tests {
             schedule_cmd: ValidScheduleLA {
                 seq: 1,
                 activity_id: 1.to_string(),
-                retry_policy: RetryPolicy {
+                retry_policy: ValidatedRetryPolicy::from_proto_with_defaults(RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(1))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
-                },
+                }),
                 local_retry_threshold: Duration::from_secs(500),
                 ..Default::default()
             },
