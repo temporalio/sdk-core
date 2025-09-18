@@ -909,7 +909,7 @@ impl Client {
         self.inner
     }
 
-    /// Returns the process-wide key
+    /// Returns the client-wide key
     pub fn worker_set_key(&self) -> Uuid {
         self.inner.worker_set_key()
     }
