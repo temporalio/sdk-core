@@ -39,8 +39,8 @@ use temporal_sdk::{
     },
 };
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder, WorkerConfigBuilder,
-    init_replay_worker, init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
+    WorkerConfigBuilder, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
@@ -809,6 +809,13 @@ pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
     })
     .build()
     .unwrap()
+}
+
+pub(crate) fn get_integ_runtime_options(telemopts: TelemetryOptions) -> RuntimeOptions {
+    RuntimeOptionsBuilder::default()
+        .telemetry_options(telemopts)
+        .build()
+        .unwrap()
 }
 
 #[async_trait::async_trait(?Send)]

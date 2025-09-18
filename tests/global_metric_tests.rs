@@ -2,11 +2,12 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::get_integ_runtime_options;
 use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 use temporal_sdk_core::{
-    CoreRuntime, RuntimeOptionsBuilder,
+    CoreRuntime,
     telemetry::{build_otlp_metric_exporter, construct_filter_string, telemetry_init_global},
 };
 use temporal_sdk_core_api::telemetry::{
@@ -79,12 +80,8 @@ async fn otel_errors_logged_as_errors() {
         })
         .build()
         .unwrap();
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(telemopts)
-        .build()
-        .unwrap();
 
-    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);
     let _worker = starter.get_worker().await;
 

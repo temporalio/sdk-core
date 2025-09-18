@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::get_integ_runtime_options;
 use common::{
     CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
 };
@@ -19,9 +20,7 @@ use std::{
 };
 use temporal_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder,
-};
+use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
@@ -196,11 +195,7 @@ async fn workflow_load() {
     // cause us to encounter the tracing span drop bug
     telemopts.logging = None;
     init_integ_telem();
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(telemopts)
-        .build()
-        .unwrap();
-    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("workflow_load", rt);
     starter
         .worker_config

@@ -5,7 +5,9 @@
 #[allow(dead_code)]
 mod common;
 
-use crate::common::{DONT_AUTO_INIT_INTEG_TELEM, prom_metrics, replay_sdk_worker};
+use crate::common::{
+    DONT_AUTO_INIT_INTEG_TELEM, get_integ_runtime_options, prom_metrics, replay_sdk_worker,
+};
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use futures_util::StreamExt;
 use std::{
@@ -82,11 +84,7 @@ pub fn bench_metrics(c: &mut Criterion) {
     let _tokio = tokio_runtime.enter();
     let (mut telemopts, _addr, _aborter) = prom_metrics(None);
     telemopts.logging = None;
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(telemopts)
-        .build()
-        .unwrap();
-    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let meter = rt.telemetry().get_metric_meter().unwrap();
 
     c.bench_function("Record with new attributes on each call", move |b| {

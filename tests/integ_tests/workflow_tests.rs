@@ -18,6 +18,7 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
+use crate::common::get_integ_runtime_options;
 use crate::{
     common::{
         CoreWfStarter, history_from_proto_binary, init_core_and_create_wf,
@@ -35,7 +36,7 @@ use temporal_sdk::{
     ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::{
-    CoreRuntime, RuntimeOptionsBuilder,
+    CoreRuntime,
     replay::HistoryForReplay,
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
@@ -67,7 +68,6 @@ use temporal_sdk_core_protos::{
     test_utils::schedule_activity_cmd,
 };
 use tokio::{join, sync::Notify, time::sleep};
-
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
 
@@ -764,11 +764,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(telemopts)
-        .build()
-        .unwrap();
-    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.no_remote_activities(true);
