@@ -12,7 +12,7 @@ mod metrics;
 /// Visible only for tests
 #[doc(hidden)]
 pub mod proxy;
-mod raw;
+pub mod raw;
 mod replaceable;
 mod retry;
 mod worker_registry;
