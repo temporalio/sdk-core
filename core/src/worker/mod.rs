@@ -26,6 +26,7 @@ use crate::{
     errors::CompleteWfError,
     pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
+    sealed::AnyClient,
     telemetry::{
         TelemetryInstance,
         metrics::{
@@ -57,7 +58,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
+use temporal_client::WorkerKey;
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
@@ -286,9 +287,12 @@ impl Worker {
         )
     }
 
-    /// Replace client and return a new client. For eager workflow purposes, this new client will
-    /// now apply to future eager start requests and the older client will not.
-    pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
+    /// Replace client. For eager workflow purposes, this new client will now apply to future
+    /// eager start requests and the older client will not.
+    pub fn replace_client<CT>(&self, new_client: CT)
+    where
+        CT: Into<AnyClient>,
+    {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
         let slot_provider = (*worker_key).and_then(|k| self.client.workers().unregister(k));
