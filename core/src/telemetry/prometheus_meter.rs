@@ -315,8 +315,7 @@ where
             Ok(labels)
         } else {
             let e = anyhow!(
-                "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
-                attributes
+                "Must use Prometheus attributes with a Prometheus metric implementation. Got: {attributes:?}"
             );
             dbg_panic!("{:?}", e);
             Err(e)
