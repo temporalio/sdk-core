@@ -188,18 +188,15 @@ impl Workflows {
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
         let tracing_sub = telem_instance.and_then(|ti| ti.trace_subscriber());
+        let rt_handle = tokio::runtime::Handle::current();
         let processing_task = thread::Builder::new()
             .name("workflow-processing".to_string())
             .spawn(move || {
                 if let Some(ts) = tracing_sub {
                     set_trace_subscriber_for_current_thread(ts);
                 }
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
                 let local = LocalSet::new();
-                local.block_on(&rt, async move {
+                rt_handle.block_on(local.run_until(async move {
                     let mut stream = WFStream::build(
                         basics,
                         extracted_wft_stream,
@@ -241,7 +238,7 @@ impl Workflows {
                             }
                         }
                     }
-                });
+                }));
             })
             .expect("Must be able to spawn workflow processing thread");
         Self {
