@@ -1617,6 +1617,13 @@ address = "some-address"
     #[test]
     #[ignore] // Only run when explicitly called
     fn test_load_client_config_profile_from_system_env_impl() {
+        // Check if we're in the right context
+        if std::env::var("TEMPORAL_ADDRESS").is_err()
+            || std::env::var("TEMPORAL_NAMESPACE").is_err()
+        {
+            eprintln!("Skipping test - required env vars not set");
+            return; // Early return instead of panic
+        }
         let options = LoadClientConfigProfileOptions {
             disable_file: true, // Don't load from any files
             ..Default::default()
