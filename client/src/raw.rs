@@ -4,7 +4,7 @@
 
 use crate::{
     Client, ConfiguredClient, InterceptedMetricsSvc, LONG_POLL_TIMEOUT, RequestExt, RetryClient,
-    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
+    SharedReplaceableClient, TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
     worker_registry::{Slot, SlotManager},
@@ -37,32 +37,17 @@ pub(super) mod sealed {
     pub trait RawClientLike: Send {
         type SvcType: Send + Sync + Clone + 'static;
 
-        /// Return a ref to the workflow service client instance
-        fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType>;
-
         /// Return a mutable ref to the workflow service client instance
         fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
-
-        /// Return a ref to the operator service client instance
-        fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType>;
 
         /// Return a mutable ref to the operator service client instance
         fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
 
-        /// Return a ref to the cloud service client instance
-        fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType>;
-
         /// Return a mutable ref to the cloud service client instance
         fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType>;
 
-        /// Return a ref to the test service client instance
-        fn test_client(&self) -> &TestServiceClient<Self::SvcType>;
-
         /// Return a mutable ref to the test service client instance
         fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType>;
-
-        /// Return a ref to the health service client instance
-        fn health_client(&self) -> &HealthClient<Self::SvcType>;
 
         /// Return a mutable ref to the health service client instance
         fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
@@ -94,40 +79,20 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
-        self.get_client().workflow_client()
-    }
-
     fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.get_client_mut().workflow_client_mut()
-    }
-
-    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
-        self.get_client().operator_client()
     }
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.get_client_mut().operator_client_mut()
     }
 
-    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
-        self.get_client().cloud_client()
-    }
-
     fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
         self.get_client_mut().cloud_client_mut()
     }
 
-    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
-        self.get_client().test_client()
-    }
-
     fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.get_client_mut().test_client_mut()
-    }
-
-    fn health_client(&self) -> &HealthClient<Self::SvcType> {
-        self.get_client().health_client()
     }
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
@@ -163,6 +128,39 @@ where
     }
 }
 
+#[async_trait::async_trait]
+impl<RC, T> RawClientLike for SharedReplaceableClient<RC>
+where
+    RC: RawClientLike<SvcType = T> + Clone + Sync + 'static,
+    T: Send + Sync + Clone + 'static,
+{
+    type SvcType = T;
+
+    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.inner_mut_refreshed().workflow_client_mut()
+    }
+
+    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.inner_mut_refreshed().operator_client_mut()
+    }
+
+    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
+        self.inner_mut_refreshed().cloud_client_mut()
+    }
+
+    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.inner_mut_refreshed().test_client_mut()
+    }
+
+    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.inner_mut_refreshed().health_client_mut()
+    }
+
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        self.inner_cow().get_workers_info()
+    }
+}
+
 impl<T> RawClientLike for TemporalServiceClient<T>
 where
     T: Send + Sync + Clone + 'static,
@@ -173,40 +171,20 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
-        self.workflow_svc()
-    }
-
     fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.workflow_svc_mut()
-    }
-
-    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
-        self.operator_svc()
     }
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.operator_svc_mut()
     }
 
-    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
-        self.cloud_svc()
-    }
-
     fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
         self.cloud_svc_mut()
     }
 
-    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
-        self.test_svc()
-    }
-
     fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.test_svc_mut()
-    }
-
-    fn health_client(&self) -> &HealthClient<Self::SvcType> {
-        self.health_svc()
     }
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
@@ -228,40 +206,20 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
-        self.client.workflow_client()
-    }
-
     fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.client.workflow_client_mut()
-    }
-
-    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
-        self.client.operator_client()
     }
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.client.operator_client_mut()
     }
 
-    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
-        self.client.cloud_client()
-    }
-
     fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
         self.client.cloud_client_mut()
     }
 
-    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
-        self.client.test_client()
-    }
-
     fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.client.test_client_mut()
-    }
-
-    fn health_client(&self) -> &HealthClient<Self::SvcType> {
-        self.client.health_client()
     }
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
@@ -276,40 +234,20 @@ where
 impl RawClientLike for Client {
     type SvcType = InterceptedMetricsSvc;
 
-    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
-        self.inner.workflow_client()
-    }
-
     fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.inner.workflow_client_mut()
-    }
-
-    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
-        self.inner.operator_client()
     }
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.inner.operator_client_mut()
     }
 
-    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
-        self.inner.cloud_client()
-    }
-
     fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
         self.inner.cloud_client_mut()
     }
 
-    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
-        self.inner.test_client()
-    }
-
     fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.inner.test_client_mut()
-    }
-
-    fn health_client(&self) -> &HealthClient<Self::SvcType> {
-        self.inner.health_client()
     }
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {

@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk, init_core_and_create_wf,
-        mock_sdk, mock_sdk_cfg,
+        ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
+        init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
     integ_tests::activity_functions::echo,
 };
@@ -206,7 +206,7 @@ async fn activity_non_retryable_failure() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
@@ -273,7 +273,7 @@ async fn activity_non_retryable_failure_with_error() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
