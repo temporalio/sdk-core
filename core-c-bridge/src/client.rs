@@ -685,7 +685,7 @@ async fn call_workflow_service(
         "UpdateWorkerBuildIdCompatibility" => {
             rpc_call!(client, call, update_worker_build_id_compatibility)
         }
-        rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
+        rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
 
@@ -715,7 +715,7 @@ async fn call_operator_service(
         "UpdateNexusEndpoint" => {
             rpc_call_on_trait!(client, call, OperatorService, update_nexus_endpoint)
         }
-        rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
+        rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
 
@@ -785,7 +785,7 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
         "GetConnectivityRule" => rpc_call!(client, call, get_connectivity_rule),
         "GetConnectivityRules" => rpc_call!(client, call, get_connectivity_rules),
         "DeleteConnectivityRule" => rpc_call!(client, call, delete_connectivity_rule),
-        rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
+        rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
 
@@ -799,7 +799,7 @@ async fn call_test_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow
         "Sleep" => rpc_call!(client, call, sleep),
         "UnlockTimeSkippingWithSleep" => rpc_call!(client, call, unlock_time_skipping_with_sleep),
         "UnlockTimeSkipping" => rpc_call!(client, call, unlock_time_skipping),
-        rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
+        rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
 
@@ -814,7 +814,7 @@ async fn call_health_service(
         "Watch" => Err(anyhow::anyhow!(
             "Health service Watch method is not implemented in C bridge"
         )),
-        rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
+        rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
 
