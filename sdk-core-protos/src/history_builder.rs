@@ -621,7 +621,7 @@ fn default_attribs(et: EventType) -> Result<Attributes> {
         EventType::WorkflowExecutionStarted => default_wes_attribs().into(),
         EventType::WorkflowTaskScheduled => WorkflowTaskScheduledEventAttributes::default().into(),
         EventType::TimerStarted => TimerStartedEventAttributes::default().into(),
-        _ => bail!("Don't know how to construct default attrs for {:?}", et),
+        _ => bail!("Don't know how to construct default attrs for {et:?}"),
     })
 }
 
