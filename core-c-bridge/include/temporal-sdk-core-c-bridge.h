@@ -240,6 +240,53 @@ typedef void (*TemporalCoreClientRpcCallCallback)(void *user_data,
                                                   const struct TemporalCoreByteArray *failure_message,
                                                   const struct TemporalCoreByteArray *failure_details);
 
+/**
+ * OrFail result for client config loading operations.
+ * Either success or fail will be null, but never both.
+ * If success is not null, it contains JSON-serialized client configuration data.
+ * If fail is not null, it contains UTF-8 encoded error message.
+ * The returned ByteArrays must be freed by the caller.
+ */
+typedef struct TemporalCoreClientEnvConfigOrFail {
+  const struct TemporalCoreByteArray *success;
+  const struct TemporalCoreByteArray *fail;
+} TemporalCoreClientEnvConfigOrFail;
+
+/**
+ * Options for loading client configuration.
+ */
+typedef struct TemporalCoreClientEnvConfigLoadOptions {
+  struct TemporalCoreByteArrayRef path;
+  struct TemporalCoreByteArrayRef data;
+  bool config_file_strict;
+  struct TemporalCoreByteArrayRef env_vars;
+} TemporalCoreClientEnvConfigLoadOptions;
+
+/**
+ * OrFail result for client config profile loading operations.
+ * Either success or fail will be null, but never both.
+ * If success is not null, it contains JSON-serialized client configuration profile data.
+ * If fail is not null, it contains UTF-8 encoded error message.
+ * The returned ByteArrays must be freed by the caller.
+ */
+typedef struct TemporalCoreClientEnvConfigProfileOrFail {
+  const struct TemporalCoreByteArray *success;
+  const struct TemporalCoreByteArray *fail;
+} TemporalCoreClientEnvConfigProfileOrFail;
+
+/**
+ * Options for loading a specific client configuration profile.
+ */
+typedef struct TemporalCoreClientEnvConfigProfileLoadOptions {
+  struct TemporalCoreByteArrayRef profile;
+  struct TemporalCoreByteArrayRef path;
+  struct TemporalCoreByteArrayRef data;
+  bool disable_file;
+  bool disable_env;
+  bool config_file_strict;
+  struct TemporalCoreByteArrayRef env_vars;
+} TemporalCoreClientEnvConfigProfileLoadOptions;
+
 typedef union TemporalCoreMetricAttributeValue {
   struct TemporalCoreByteArrayRef string_value;
   int64_t int_value;
@@ -770,6 +817,20 @@ void temporal_core_client_rpc_call(struct TemporalCoreClient *client,
                                    const struct TemporalCoreRpcCallOptions *options,
                                    void *user_data,
                                    TemporalCoreClientRpcCallCallback callback);
+
+/**
+ * Load all client profiles from given sources.
+ * Returns ClientConfigOrFail with either success JSON or error message.
+ * The returned ByteArrays must be freed by the caller.
+ */
+struct TemporalCoreClientEnvConfigOrFail temporal_core_client_env_config_load(const struct TemporalCoreClientEnvConfigLoadOptions *options);
+
+/**
+ * Load a single client profile from given sources with env overrides.
+ * Returns ClientConfigProfileOrFail with either success JSON or error message.
+ * The returned ByteArrays must be freed by the caller.
+ */
+struct TemporalCoreClientEnvConfigProfileOrFail temporal_core_client_env_config_profile_load(const struct TemporalCoreClientEnvConfigProfileLoadOptions *options);
 
 struct TemporalCoreMetricMeter *temporal_core_metric_meter_new(struct TemporalCoreRuntime *runtime);
 

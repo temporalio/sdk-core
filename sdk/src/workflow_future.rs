@@ -135,7 +135,7 @@ impl WorkflowFuture {
         };
         let unblocker = self.command_status.remove(&cmd_id);
         let _ = unblocker
-            .ok_or_else(|| anyhow!("Command {:?} not found to unblock!", cmd_id))?
+            .ok_or_else(|| anyhow!("Command {cmd_id:?} not found to unblock!"))?
             .unblocker
             .send(event);
         Ok(())
