@@ -185,7 +185,7 @@ pub fn build_fake_worker(
 }
 
 pub fn mock_worker(mocks: MocksHolder) -> Worker {
-    let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
+    let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
     let act_poller = if mocks.inputs.config.no_remote_activities {
         None
     } else {
@@ -205,7 +205,9 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
         },
         None,
         None,
+        false,
     )
+    .unwrap()
 }
 
 pub struct FakeWfResponses {

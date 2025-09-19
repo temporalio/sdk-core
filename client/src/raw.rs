@@ -7,7 +7,7 @@ use crate::{
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
-    worker_registry::{Slot, SlotManager},
+    worker_registry::{ClientWorkerSet, Slot},
 };
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub(super) mod sealed {
         fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
 
         /// Return a registry with workers using this client instance
-        fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
+        fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>>;
 
         async fn call<F, Req, Resp>(
             &mut self,
@@ -134,7 +134,7 @@ where
         self.get_client_mut().health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         self.get_client().get_workers_info()
     }
 
@@ -213,7 +213,7 @@ where
         self.health_svc_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         None
     }
 }
@@ -268,7 +268,7 @@ where
         self.client.health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         Some(self.workers())
     }
 }
@@ -316,7 +316,7 @@ impl RawClientLike for Client {
         self.inner.health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         self.inner.get_workers_info()
     }
 }
