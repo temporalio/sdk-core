@@ -13,7 +13,7 @@ use temporal_sdk_core_api::envconfig::{
 /// If fail is not null, it contains UTF-8 encoded error message.
 /// The returned ByteArrays must be freed by the caller.
 #[repr(C)]
-pub struct ClientConfigOrFail {
+pub struct ClientEnvConfigOrFail {
     pub success: *const ByteArray,
     pub fail: *const ByteArray,
 }
@@ -24,14 +24,14 @@ pub struct ClientConfigOrFail {
 /// If fail is not null, it contains UTF-8 encoded error message.
 /// The returned ByteArrays must be freed by the caller.
 #[repr(C)]
-pub struct ClientConfigProfileOrFail {
+pub struct ClientEnvConfigProfileOrFail {
     pub success: *const ByteArray,
     pub fail: *const ByteArray,
 }
 
 /// Options for loading client configuration.
 #[repr(C)]
-pub struct ClientConfigLoadOptions {
+pub struct ClientEnvConfigLoadOptions {
     pub path: ByteArrayRef,
     pub data: ByteArrayRef,
     pub config_file_strict: bool,
@@ -40,7 +40,7 @@ pub struct ClientConfigLoadOptions {
 
 /// Options for loading a specific client configuration profile.
 #[repr(C)]
-pub struct ClientConfigProfileLoadOptions {
+pub struct ClientEnvConfigProfileLoadOptions {
     pub profile: ByteArrayRef,
     pub path: ByteArrayRef,
     pub data: ByteArrayRef,
@@ -52,11 +52,11 @@ pub struct ClientConfigProfileLoadOptions {
 
 // Wrapper types for JSON serialization
 #[derive(Serialize)]
-struct ClientConfig {
-    profiles: HashMap<String, ClientConfigProfile>,
+struct ClientEnvConfig {
+    profiles: HashMap<String, ClientEnvConfigProfile>,
 }
 
-impl From<CoreClientConfig> for ClientConfig {
+impl From<CoreClientConfig> for ClientEnvConfig {
     fn from(c: CoreClientConfig) -> Self {
         Self {
             profiles: c.profiles.into_iter().map(|(k, v)| (k, v.into())).collect(),
@@ -65,7 +65,7 @@ impl From<CoreClientConfig> for ClientConfig {
 }
 
 #[derive(Serialize)]
-struct ClientConfigProfile {
+struct ClientEnvConfigProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -73,14 +73,14 @@ struct ClientConfigProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tls: Option<ClientConfigTLS>,
+    tls: Option<ClientEnvConfigTLS>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    codec: Option<ClientConfigCodec>,
+    codec: Option<ClientEnvConfigCodec>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     grpc_meta: HashMap<String, String>,
 }
 
-impl From<CoreClientConfigProfile> for ClientConfigProfile {
+impl From<CoreClientConfigProfile> for ClientEnvConfigProfile {
     fn from(c: CoreClientConfigProfile) -> Self {
         Self {
             address: c.address,
@@ -94,7 +94,7 @@ impl From<CoreClientConfigProfile> for ClientConfigProfile {
 }
 
 #[derive(Serialize)]
-struct ClientConfigTLS {
+struct ClientEnvConfigTLS {
     #[serde(skip_serializing_if = "Option::is_none")]
     disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -107,7 +107,7 @@ struct ClientConfigTLS {
     client_key: Option<DataSource>,
 }
 
-impl From<CoreClientConfigTLS> for ClientConfigTLS {
+impl From<CoreClientConfigTLS> for ClientEnvConfigTLS {
     fn from(c: CoreClientConfigTLS) -> Self {
         Self {
             disabled: c.disabled,
@@ -120,14 +120,14 @@ impl From<CoreClientConfigTLS> for ClientConfigTLS {
 }
 
 #[derive(Serialize)]
-struct ClientConfigCodec {
+struct ClientEnvConfigCodec {
     #[serde(skip_serializing_if = "Option::is_none")]
     endpoint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     auth: Option<String>,
 }
 
-impl From<CoreClientConfigCodec> for ClientConfigCodec {
+impl From<CoreClientConfigCodec> for ClientEnvConfigCodec {
     fn from(c: CoreClientConfigCodec) -> Self {
         Self {
             endpoint: c.endpoint,
@@ -204,18 +204,18 @@ fn serialize_or_error<T: Serialize>(data: T) -> Result<*const ByteArray, *const 
 /// Returns ClientConfigOrFail with either success JSON or error message.
 /// The returned ByteArrays must be freed by the caller.
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_config_load(
-    options: *const ClientConfigLoadOptions,
-) -> ClientConfigOrFail {
+pub extern "C" fn temporal_core_client_env_config_load(
+    options: *const ClientEnvConfigLoadOptions,
+) -> ClientEnvConfigOrFail {
     if options.is_null() {
         let err = ByteArray::from_utf8("Options cannot be null".to_string());
-        return ClientConfigOrFail {
+        return ClientEnvConfigOrFail {
             success: std::ptr::null(),
             fail: err.into_raw(),
         };
     }
 
-    let result = || -> Result<ClientConfig, String> {
+    let result = || -> Result<ClientEnvConfig, String> {
         let opts = unsafe { &*options };
         let env_vars_map = parse_env_vars(&opts.env_vars)?;
 
@@ -232,18 +232,18 @@ pub extern "C" fn temporal_core_client_config_load(
 
     match result() {
         Ok(data) => match serialize_or_error(data) {
-            Ok(success) => ClientConfigOrFail {
+            Ok(success) => ClientEnvConfigOrFail {
                 success,
                 fail: std::ptr::null(),
             },
-            Err(fail) => ClientConfigOrFail {
+            Err(fail) => ClientEnvConfigOrFail {
                 success: std::ptr::null(),
                 fail,
             },
         },
         Err(e) => {
             let err = ByteArray::from_utf8(e);
-            ClientConfigOrFail {
+            ClientEnvConfigOrFail {
                 success: std::ptr::null(),
                 fail: err.into_raw(),
             }
@@ -255,18 +255,18 @@ pub extern "C" fn temporal_core_client_config_load(
 /// Returns ClientConfigProfileOrFail with either success JSON or error message.
 /// The returned ByteArrays must be freed by the caller.
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_config_profile_load(
-    options: *const ClientConfigProfileLoadOptions,
-) -> ClientConfigProfileOrFail {
+pub extern "C" fn temporal_core_client_env_config_profile_load(
+    options: *const ClientEnvConfigProfileLoadOptions,
+) -> ClientEnvConfigProfileOrFail {
     if options.is_null() {
         let err = ByteArray::from_utf8("Options cannot be null".to_string());
-        return ClientConfigProfileOrFail {
+        return ClientEnvConfigProfileOrFail {
             success: std::ptr::null(),
             fail: err.into_raw(),
         };
     }
 
-    let result = || -> Result<ClientConfigProfile, String> {
+    let result = || -> Result<ClientEnvConfigProfile, String> {
         let opts = unsafe { &*options };
 
         let profile_name = if !opts.profile.data.is_null() && opts.profile.size > 0 {
@@ -294,18 +294,18 @@ pub extern "C" fn temporal_core_client_config_profile_load(
 
     match result() {
         Ok(data) => match serialize_or_error(data) {
-            Ok(success) => ClientConfigProfileOrFail {
+            Ok(success) => ClientEnvConfigProfileOrFail {
                 success,
                 fail: std::ptr::null(),
             },
-            Err(fail) => ClientConfigProfileOrFail {
+            Err(fail) => ClientEnvConfigProfileOrFail {
                 success: std::ptr::null(),
                 fail,
             },
         },
         Err(e) => {
             let err = ByteArray::from_utf8(e);
-            ClientConfigProfileOrFail {
+            ClientEnvConfigProfileOrFail {
                 success: std::ptr::null(),
                 fail: err.into_raw(),
             }

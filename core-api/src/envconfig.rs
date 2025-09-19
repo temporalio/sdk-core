@@ -1592,15 +1592,31 @@ address = "some-address"
 
     #[test]
     fn test_load_client_config_profile_from_system_env() {
-        // WARNING: This test modifies system environment variables which can cause
-        // test pollution if tests run in parallel.
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let output = std::process::Command::new(cargo)
+            .arg("test")
+            .arg("-F")
+            .arg("envconfig")
+            .arg("envconfig::tests::test_load_client_config_profile_from_system_env_impl")
+            .arg("--")
+            .arg("--exact")
+            .arg("--ignored")
+            .env("TEMPORAL_ADDRESS", "system-address")
+            .env("TEMPORAL_NAMESPACE", "system-namespace")
+            .output()
+            .expect("Failed to execute subprocess test");
 
-        // Set up system env vars. These tests can't be run in parallel.
-        unsafe {
-            std::env::set_var("TEMPORAL_ADDRESS", "system-address");
-            std::env::set_var("TEMPORAL_NAMESPACE", "system-namespace");
-        }
+        assert!(
+            output.status.success(),
+            "Subprocess test failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
 
+    #[test]
+    #[ignore] // Only run when explicitly called
+    fn test_load_client_config_profile_from_system_env_impl() {
         let options = LoadClientConfigProfileOptions {
             disable_file: true, // Don't load from any files
             ..Default::default()
@@ -1610,12 +1626,6 @@ address = "some-address"
         let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "system-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "system-namespace");
-
-        // Clean up
-        unsafe {
-            std::env::remove_var("TEMPORAL_ADDRESS");
-            std::env::remove_var("TEMPORAL_NAMESPACE");
-        }
     }
 
     #[test]
