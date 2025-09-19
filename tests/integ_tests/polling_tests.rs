@@ -198,7 +198,9 @@ async fn switching_worker_client_changes_poll() {
 
     // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
     info!("Replacing client and polling again");
-    worker.replace_client(client2.get_client().inner().clone());
+    worker
+        .replace_client(client2.get_client().inner().clone())
+        .unwrap();
     let act2 = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(wf2.run_id, act2.run_id);
     worker.complete_execution(&act2.run_id).await;

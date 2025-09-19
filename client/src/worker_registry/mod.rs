@@ -2,10 +2,13 @@
 //! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
-use parking_lot::RwLock;
-use std::collections::{HashMap, hash_map::Entry::{ Occupied, Vacant}};
-use std::sync::Arc;
 use anyhow::bail;
+use parking_lot::RwLock;
+use std::collections::{
+    HashMap,
+    hash_map::Entry::{Occupied, Vacant},
+};
+use std::sync::Arc;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use uuid::Uuid;
@@ -70,7 +73,10 @@ impl ClientWorkerSetImpl {
         None
     }
 
-    fn register(&mut self, worker: Arc<dyn ClientWorker + Send + Sync>) -> Result<(), anyhow::Error> {
+    fn register(
+        &mut self,
+        worker: Arc<dyn ClientWorker + Send + Sync>,
+    ) -> Result<(), anyhow::Error> {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
@@ -78,7 +84,10 @@ impl ClientWorkerSetImpl {
         if let Vacant(p) = self.slot_providers.entry(slot_key.clone()) {
             p.insert(worker.worker_instance_key());
         } else {
-            bail!("Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.", worker.worker_instance_key());
+            bail!(
+                "Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.",
+                worker.worker_instance_key()
+            );
         }
 
         if worker.heartbeat_enabled()
@@ -107,12 +116,15 @@ impl ClientWorkerSetImpl {
         &mut self,
         worker_instance_key: Uuid,
     ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
-        let worker = self.all_workers.remove(&worker_instance_key).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Worker with worker_instance_key {} not found",
-                worker_instance_key
-            )
-        })?;
+        let worker = self
+            .all_workers
+            .remove(&worker_instance_key)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Worker with worker_instance_key {} not found",
+                    worker_instance_key
+                )
+            })?;
 
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
@@ -211,7 +223,10 @@ impl ClientWorkerSet {
     }
 
     /// Register a local worker that can provide WFT processing slots and potentially worker heartbeating.
-    pub fn register_worker(&self, worker: Arc<dyn ClientWorker + Send + Sync>) -> Result<(), anyhow::Error> {
+    pub fn register_worker(
+        &self,
+        worker: Arc<dyn ClientWorker + Send + Sync>,
+    ) -> Result<(), anyhow::Error> {
         self.worker_manager.write().register(worker)
     }
 
@@ -343,7 +358,9 @@ mod tests {
                 worker_keys.push(worker_instance_key);
             } else {
                 // Should get error for duplicate namespace+task_queue combinations
-                assert!(result.unwrap_err().to_string().contains("Registration of multiple workers on the same namespace and task queue"));
+                assert!(result.unwrap_err().to_string().contains(
+                    "Registration of multiple workers on the same namespace and task queue"
+                ));
             }
         }
 
@@ -479,7 +496,12 @@ mod tests {
         // second worker register should fail due to duplicate namespace+task_queue
         let result = manager.register_worker(Arc::new(worker2));
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Registration of multiple workers on the same namespace and task queue"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Registration of multiple workers on the same namespace and task queue")
+        );
 
         assert_eq!((1, 1), manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 1);
@@ -487,7 +509,7 @@ mod tests {
         let impl_ref = manager.worker_manager.read();
         assert_eq!(impl_ref.shared_worker.len(), 1);
         assert!(impl_ref.shared_worker.contains_key("test_namespace"));
-}
+    }
 
     #[test]
     fn multiple_workers_same_namespace_share_heartbeat_manager() {

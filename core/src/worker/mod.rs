@@ -48,6 +48,7 @@ use crate::{
     worker::workflow::wft_poller,
 };
 use activities::WorkerActivityTasks;
+use anyhow::bail;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
@@ -61,7 +62,6 @@ use std::{
     },
     time::Duration,
 };
-use anyhow::bail;
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
     ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
@@ -311,9 +311,11 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, unregister worker from the client
-        if let Err(e) = self.client
+        if let Err(e) = self
+            .client
             .workers()
-            .unregister_worker(self.worker_instance_key) {
+            .unregister_worker(self.worker_instance_key)
+        {
             error!(
                 task_queue=%self.config.task_queue,
                 namespace=%self.config.namespace,
@@ -384,7 +386,10 @@ impl Worker {
     /// For worker heartbeat, this will remove an existing shared worker if it is the last worker of
     /// the old client and create a new nexus worker if it's the first client of the namespace on
     /// the new client.
-    pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Result<(), anyhow::Error> {
+    pub fn replace_client(
+        &self,
+        new_client: ConfiguredClient<TemporalServiceClientWithMetrics>,
+    ) -> Result<(), anyhow::Error> {
         // Unregister worker from current client, register in new client at the end
         let client_worker = self
             .client

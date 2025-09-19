@@ -2997,7 +2997,8 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         None,
         None,
         false,
-    ).unwrap();
+    )
+    .unwrap();
 
     for _ in 1..50 {
         let activation = worker.poll_workflow_activation().await.unwrap();

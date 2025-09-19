@@ -227,7 +227,8 @@ mod tests {
             None,
             Some(Duration::from_millis(100)),
             false,
-        ).unwrap();
+        )
+        .unwrap();
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;
