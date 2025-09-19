@@ -61,6 +61,7 @@ use std::{
     },
     time::Duration,
 };
+use anyhow::bail;
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
     ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
@@ -310,9 +311,16 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, unregister worker from the client
-        self.client
+        if let Err(e) = self.client
             .workers()
-            .unregister_worker(self.worker_instance_key);
+            .unregister_worker(self.worker_instance_key) {
+            error!(
+                task_queue=%self.config.task_queue,
+                namespace=%self.config.namespace,
+                error=%e,
+                "Failed to unregister worker on shutdown",
+            );
+        }
 
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
@@ -353,7 +361,7 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
         shared_namespace_worker: bool,
-    ) -> Self {
+    ) -> Result<Worker, anyhow::Error> {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
         Self::new_with_pollers(
@@ -376,12 +384,12 @@ impl Worker {
     /// For worker heartbeat, this will remove an existing shared worker if it is the last worker of
     /// the old client and create a new nexus worker if it's the first client of the namespace on
     /// the new client.
-    pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
+    pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Result<(), anyhow::Error> {
         // Unregister worker from current client, register in new client at the end
         let client_worker = self
             .client
             .workers()
-            .unregister_worker(self.worker_instance_key);
+            .unregister_worker(self.worker_instance_key)?;
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
             self.config.client_identity_override.clone(),
@@ -390,14 +398,12 @@ impl Worker {
 
         self.client.replace_client(new_worker_client);
         *self.client_worker_registrator.client.write() = self.client.clone();
-        if let Some(cw) = client_worker {
-            self.client.workers().register_worker(cw);
-        }
+        self.client.workers().register_worker(client_worker)
     }
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None, false)
+        Self::new(config, None, Arc::new(client), None, None, false).unwrap()
     }
 
     pub(crate) fn new_with_pollers(
@@ -408,7 +414,7 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
         shared_namespace_worker: bool,
-    ) -> Self {
+    ) -> Result<Worker, anyhow::Error> {
         let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
             metric_meter: telem.get_metric_meter(),
             temporal_metric_meter: telem.get_temporal_metric_meter(),
@@ -434,7 +440,7 @@ impl Worker {
         worker_telemetry: Option<WorkerTelemetry>,
         worker_heartbeat_interval: Option<Duration>,
         shared_namespace_worker: bool,
-    ) -> Self {
+    ) -> Result<Worker, anyhow::Error> {
         let (metrics, meter) = if let Some(wt) = worker_telemetry.as_ref() {
             (
                 MetricsContext::top_level_with_meter(
@@ -638,10 +644,10 @@ impl Worker {
         if !shared_namespace_worker {
             client
                 .workers()
-                .register_worker(client_worker_registrator.clone());
+                .register_worker(client_worker_registrator.clone())?;
         }
 
-        Self {
+        Ok(Self {
             worker_instance_key,
             client: client.clone(),
             workflows: Workflows::new(
@@ -700,7 +706,7 @@ impl Worker {
             }),
             nexus_mgr,
             client_worker_registrator,
-        }
+        })
     }
 
     /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
@@ -1037,17 +1043,16 @@ impl ClientWorker for ClientWorkerRegistrator {
     }
     fn new_shared_namespace_worker(
         &self,
-    ) -> Option<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>> {
+    ) -> Result<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>, anyhow::Error> {
         if let Some(ref hb_mgr) = self.heartbeat_manager {
-            Some(Box::new(SharedNamespaceWorker::new(
+            Ok(Box::new(SharedNamespaceWorker::new(
                 self.client.read().clone(),
                 self.namespace().to_string(),
                 hb_mgr.heartbeat_interval,
                 hb_mgr.telemetry.clone(),
-            )))
+            )?))
         } else {
-            dbg_panic!("Should never be called without a heartbeat manager");
-            None
+            bail!("Shared namespace worker creation never be called without a heartbeat manager");
         }
     }
 

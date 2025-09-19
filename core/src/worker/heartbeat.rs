@@ -34,7 +34,7 @@ impl SharedNamespaceWorker {
         namespace: String,
         heartbeat_interval: Duration,
         telemetry: Option<WorkerTelemetry>,
-    ) -> Self {
+    ) -> Result<Self, anyhow::Error> {
         let config = WorkerConfigBuilder::default()
             .namespace(namespace.clone())
             .task_queue(format!(
@@ -57,7 +57,7 @@ impl SharedNamespaceWorker {
             telemetry,
             None,
             true,
-        );
+        )?;
 
         let last_heartbeat_time_map = Mutex::new(HashMap::new());
 
@@ -124,11 +124,11 @@ impl SharedNamespaceWorker {
             }
         });
 
-        Self {
+        Ok(Self {
             heartbeat_map,
             namespace,
             cancel,
-        }
+        })
     }
 }
 
@@ -227,7 +227,7 @@ mod tests {
             None,
             Some(Duration::from_millis(100)),
             false,
-        );
+        ).unwrap();
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         worker.drain_activity_poller_and_shutdown().await;

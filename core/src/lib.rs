@@ -117,14 +117,14 @@ where
         worker_config.versioning_strategy.clone(),
     ));
 
-    Ok(Worker::new(
+    Worker::new(
         worker_config.clone(),
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
         runtime.heartbeat_interval,
         false,
-    ))
+    )
 }
 
 /// Create a worker for replaying one or more existing histories. It will auto-shutdown as soon as

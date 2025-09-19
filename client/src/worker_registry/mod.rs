@@ -3,8 +3,9 @@
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
 use parking_lot::RwLock;
-use std::collections::{HashMap, hash_map::Entry::Vacant};
+use std::collections::{HashMap, hash_map::Entry::{ Occupied, Vacant}};
 use std::sync::Arc;
+use anyhow::bail;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use uuid::Uuid;
@@ -69,7 +70,7 @@ impl ClientWorkerSetImpl {
         None
     }
 
-    fn register(&mut self, worker: Arc<dyn ClientWorker + Send + Sync>) {
+    fn register(&mut self, worker: Arc<dyn ClientWorker + Send + Sync>) -> Result<(), anyhow::Error> {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
@@ -77,8 +78,7 @@ impl ClientWorkerSetImpl {
         if let Vacant(p) = self.slot_providers.entry(slot_key.clone()) {
             p.insert(worker.worker_instance_key());
         } else {
-            // TODO: hard error?
-            warn!("Ignoring slot registration for worker: {slot_key:?}.");
+            bail!("Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.", worker.worker_instance_key());
         }
 
         if worker.heartbeat_enabled()
@@ -87,22 +87,32 @@ impl ClientWorkerSetImpl {
             let worker_instance_key = worker.worker_instance_key();
             let namespace = worker.namespace().to_string();
 
-            let shared_worker = self
-                .shared_worker
-                .entry(namespace.clone())
-                .or_insert_with(|| worker.new_shared_namespace_worker().unwrap());
+            let shared_worker = match self.shared_worker.entry(namespace.clone()) {
+                Occupied(o) => o.into_mut(),
+                Vacant(v) => {
+                    let shared_worker = worker.new_shared_namespace_worker()?;
+                    v.insert(shared_worker)
+                }
+            };
             shared_worker.register_callback(worker_instance_key, heartbeat_callback);
         }
 
         self.all_workers
             .insert(worker.worker_instance_key(), worker);
+
+        Ok(())
     }
 
     fn unregister(
         &mut self,
         worker_instance_key: Uuid,
-    ) -> Option<Arc<dyn ClientWorker + Send + Sync>> {
-        let worker = self.all_workers.remove(&worker_instance_key)?;
+    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
+        let worker = self.all_workers.remove(&worker_instance_key).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Worker with worker_instance_key {} not found",
+                worker_instance_key
+            )
+        })?;
 
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
@@ -124,7 +134,7 @@ impl ClientWorkerSetImpl {
             }
         }
 
-        Some(worker)
+        Ok(worker)
     }
 
     #[cfg(test)]
@@ -196,13 +206,13 @@ impl ClientWorkerSet {
     pub fn unregister_worker(
         &self,
         worker_instance_key: Uuid,
-    ) -> Option<Arc<dyn ClientWorker + Send + Sync>> {
+    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
         self.worker_manager.write().unregister(worker_instance_key)
     }
 
     /// Register a local worker that can provide WFT processing slots and potentially worker heartbeating.
-    pub fn register_worker(&self, worker: Arc<dyn ClientWorker + Send + Sync>) {
-        self.worker_manager.write().register(worker);
+    pub fn register_worker(&self, worker: Arc<dyn ClientWorker + Send + Sync>) -> Result<(), anyhow::Error> {
+        self.worker_manager.write().register(worker)
     }
 
     /// Returns the worker set key, which is unique for each worker.
@@ -265,7 +275,7 @@ pub trait ClientWorker: Send + Sync {
     /// Creates a new worker that implements the [SharedNamespaceWorkerTrait]
     fn new_shared_namespace_worker(
         &self,
-    ) -> Option<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>>;
+    ) -> Result<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>, anyhow::Error>;
 
     /// Registers a worker heartbeat callback, typically when a worker is unregistered from a client
     fn register_callback(&self, callback: HeartbeatCallback);
@@ -316,77 +326,38 @@ mod tests {
     }
 
     #[test]
-    fn registry_respects_registration_order() {
-        let mock_provider1 =
-            new_mock_provider("foo".to_string(), "bar_q".to_string(), false, false, false);
-        let worker_instance_key1 = mock_provider1.worker_instance_key();
-        let mock_provider2 =
-            new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true, false);
-
-        let manager = ClientWorkerSet::new();
-        manager.register_worker(Arc::new(mock_provider1));
-        manager.register_worker(Arc::new(mock_provider2));
-
-        let mut found = 0;
-        for _ in 0..10 {
-            if manager
-                .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
-                .is_some()
-            {
-                found += 1;
-            }
-        }
-        assert_eq!(found, 10);
-        assert_eq!((1, 1), manager.num_providers());
-
-        manager.unregister_worker(worker_instance_key1);
-        assert_eq!((0, 0), manager.num_providers());
-
-        let mock_provider1 =
-            new_mock_provider("foo".to_string(), "bar_q".to_string(), false, false, false);
-        let mock_provider2 =
-            new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true, false);
-        let worker_instance_key2 = mock_provider2.worker_instance_key();
-
-        manager.register_worker(Arc::new(mock_provider2));
-        manager.register_worker(Arc::new(mock_provider1));
-
-        let mut not_found = 0;
-        for _ in 0..10 {
-            if manager
-                .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
-                .is_none()
-            {
-                not_found += 1;
-            }
-        }
-        assert_eq!(not_found, 10);
-        assert_eq!((1, 1), manager.num_providers());
-        manager.unregister_worker(worker_instance_key2);
-        assert_eq!((0, 0), manager.num_providers());
-    }
-
-    #[test]
     fn registry_keeps_one_provider_per_namespace() {
         let manager = ClientWorkerSet::new();
         let mut worker_keys = vec![];
+        let mut successful_registrations = 0;
+
         for i in 0..10 {
             let namespace = format!("myId{}", i % 3);
             let mock_provider =
                 new_mock_provider(namespace, "bar_q".to_string(), false, false, false);
             let worker_instance_key = mock_provider.worker_instance_key();
-            manager.register_worker(Arc::new(mock_provider));
-            worker_keys.push(worker_instance_key);
+
+            let result = manager.register_worker(Arc::new(mock_provider));
+            if result.is_ok() {
+                successful_registrations += 1;
+                worker_keys.push(worker_instance_key);
+            } else {
+                // Should get error for duplicate namespace+task_queue combinations
+                assert!(result.unwrap_err().to_string().contains("Registration of multiple workers on the same namespace and task queue"));
+            }
         }
+
+        assert_eq!(successful_registrations, 3);
         assert_eq!((3, 3), manager.num_providers());
 
         let count = worker_keys.iter().fold(0, |count, key| {
-            manager.unregister_worker(*key);
-            // Should be idempotent
-            manager.unregister_worker(*key);
+            manager.unregister_worker(*key).unwrap();
+            // expect error since worker is already unregistered
+            let result = manager.unregister_worker(*key);
+            assert!(result.is_err());
             count + 1
         });
-        assert_eq!(10, count);
+        assert_eq!(3, count);
         assert_eq!((0, 0), manager.num_providers());
     }
 
@@ -448,7 +419,6 @@ mod tests {
         task_queue: String,
         heartbeat_enabled: bool,
         worker_instance_key: Uuid,
-        provide_shared_worker: bool,
     ) -> MockClientWorker {
         let mut mock_provider = MockClientWorker::new();
         mock_provider
@@ -470,20 +440,14 @@ mod tests {
                 .expect_heartbeat_callback()
                 .returning(|| Some(Box::new(WorkerHeartbeat::default)));
 
-            if provide_shared_worker {
-                let namespace_clone = namespace.clone();
-                mock_provider
-                    .expect_new_shared_namespace_worker()
-                    .returning(move || {
-                        Some(Box::new(MockSharedNamespaceWorker::new(
-                            namespace_clone.clone(),
-                        )))
-                    });
-            } else {
-                mock_provider
-                    .expect_new_shared_namespace_worker()
-                    .returning(|| None);
-            }
+            let namespace_clone = namespace.clone();
+            mock_provider
+                .expect_new_shared_namespace_worker()
+                .returning(move || {
+                    Ok(Box::new(MockSharedNamespaceWorker::new(
+                        namespace_clone.clone(),
+                    )))
+                });
 
             mock_provider.expect_register_callback().returning(|_| {});
         }
@@ -492,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_slot_register_still_allows_heartbeat_register() {
+    fn duplicate_namespace_task_queue_registration_fails() {
         let manager = ClientWorkerSet::new();
 
         let worker1 = new_mock_provider_with_heartbeat(
@@ -500,7 +464,6 @@ mod tests {
             "test_queue".to_string(),
             true,
             Uuid::new_v4(),
-            true,
         );
 
         // Same namespace+task_queue but different worker instance
@@ -509,21 +472,22 @@ mod tests {
             "test_queue".to_string(),
             true,
             Uuid::new_v4(),
-            false,
         );
 
-        manager.register_worker(Arc::new(worker1));
+        manager.register_worker(Arc::new(worker1)).unwrap();
 
-        // second worker register should fail slot registration but pass heartbeat registration
-        manager.register_worker(Arc::new(worker2));
+        // second worker register should fail due to duplicate namespace+task_queue
+        let result = manager.register_worker(Arc::new(worker2));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Registration of multiple workers on the same namespace and task queue"));
 
         assert_eq!((1, 1), manager.num_providers());
-        assert_eq!(manager.num_heartbeat_workers(), 2);
+        assert_eq!(manager.num_heartbeat_workers(), 1);
 
         let impl_ref = manager.worker_manager.read();
         assert_eq!(impl_ref.shared_worker.len(), 1);
         assert!(impl_ref.shared_worker.contains_key("test_namespace"));
-    }
+}
 
     #[test]
     fn multiple_workers_same_namespace_share_heartbeat_manager() {
@@ -534,7 +498,6 @@ mod tests {
             "queue1".to_string(),
             true,
             Uuid::new_v4(),
-            true,
         );
 
         // Same namespace but different task queue
@@ -543,11 +506,10 @@ mod tests {
             "queue2".to_string(),
             true,
             Uuid::new_v4(),
-            false,
         );
 
-        manager.register_worker(Arc::new(worker1));
-        manager.register_worker(Arc::new(worker2));
+        manager.register_worker(Arc::new(worker1)).unwrap();
+        manager.register_worker(Arc::new(worker2)).unwrap();
 
         assert_eq!((2, 2), manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 2);
@@ -568,18 +530,16 @@ mod tests {
             "queue1".to_string(),
             true,
             Uuid::new_v4(),
-            true,
         );
         let worker2 = new_mock_provider_with_heartbeat(
             "namespace2".to_string(),
             "queue1".to_string(),
             true,
             Uuid::new_v4(),
-            true,
         );
 
-        manager.register_worker(Arc::new(worker1));
-        manager.register_worker(Arc::new(worker2));
+        manager.register_worker(Arc::new(worker1)).unwrap();
+        manager.register_worker(Arc::new(worker2)).unwrap();
 
         assert_eq!((2, 2), manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 2);
@@ -600,20 +560,18 @@ mod tests {
             "queue1".to_string(),
             true,
             Uuid::new_v4(),
-            true,
         );
         let worker2 = new_mock_provider_with_heartbeat(
             "test_namespace".to_string(),
             "queue2".to_string(),
             true,
             Uuid::new_v4(),
-            false,
         );
         let worker_instance_key1 = worker1.worker_instance_key();
         let worker_instance_key2 = worker2.worker_instance_key();
 
-        manager.register_worker(Arc::new(worker1));
-        manager.register_worker(Arc::new(worker2));
+        manager.register_worker(Arc::new(worker1)).unwrap();
+        manager.register_worker(Arc::new(worker2)).unwrap();
 
         // Verify initial state: 2 slot providers, 2 heartbeat workers, 1 shared worker
         assert_eq!((2, 2), manager.num_providers());
@@ -633,8 +591,7 @@ mod tests {
         drop(impl_ref);
 
         // Unregister first worker
-        let unregistered_worker1 = manager.unregister_worker(worker_instance_key1);
-        assert!(unregistered_worker1.is_some());
+        manager.unregister_worker(worker_instance_key1).unwrap();
 
         // After unregistering first worker: 1 slot provider, 1 heartbeat worker, shared worker still exists
         assert_eq!((1, 1), manager.num_providers());
@@ -654,117 +611,9 @@ mod tests {
         drop(impl_ref);
 
         // Unregister second worker
-        let unregistered_worker2 = manager.unregister_worker(worker_instance_key2);
-        assert!(unregistered_worker2.is_some());
+        manager.unregister_worker(worker_instance_key2).unwrap();
 
         // After unregistering last worker: 0 slot providers, 0 heartbeat workers, shared worker is removed
-        assert_eq!((0, 0), manager.num_providers());
-        assert_eq!(manager.num_heartbeat_workers(), 0);
-
-        let impl_ref = manager.worker_manager.read();
-        assert_eq!(impl_ref.shared_worker.len(), 0); // SharedNamespaceWorker is cleaned up
-        assert!(!impl_ref.shared_worker.contains_key("test_namespace"));
-    }
-
-    #[test]
-    fn unregister_heartbeat_only_workers_with_failed_slot_registration() {
-        let manager = ClientWorkerSet::new();
-
-        // Create three workers with same namespace+task_queue - only first gets slot registration
-        let worker1 = new_mock_provider_with_heartbeat(
-            "test_namespace".to_string(),
-            "test_queue".to_string(),
-            true,
-            Uuid::new_v4(),
-            true,
-        );
-        let worker2 = new_mock_provider_with_heartbeat(
-            "test_namespace".to_string(),
-            "test_queue".to_string(),
-            true,
-            Uuid::new_v4(),
-            false,
-        );
-        let worker3 = new_mock_provider_with_heartbeat(
-            "test_namespace".to_string(),
-            "test_queue".to_string(),
-            true,
-            Uuid::new_v4(),
-            false,
-        );
-
-        let worker_instance_key1 = worker1.worker_instance_key();
-        let worker_instance_key2 = worker2.worker_instance_key();
-        let worker_instance_key3 = worker3.worker_instance_key();
-
-        // Register all workers
-        manager.register_worker(Arc::new(worker1));
-        manager.register_worker(Arc::new(worker2));
-        manager.register_worker(Arc::new(worker3));
-
-        // Verify initial state: 1 slot provider, 3 heartbeat workers, 1 shared worker
-        assert_eq!((1, 1), manager.num_providers());
-        assert_eq!(manager.num_heartbeat_workers(), 3);
-
-        let impl_ref = manager.worker_manager.read();
-        assert_eq!(impl_ref.shared_worker.len(), 1);
-        assert!(impl_ref.shared_worker.contains_key("test_namespace"));
-        assert_eq!(
-            impl_ref
-                .shared_worker
-                .get("test_namespace")
-                .unwrap()
-                .num_workers(),
-            3
-        );
-        drop(impl_ref);
-
-        // Unregister the slot-providing worker (worker1)
-        let unregistered_worker1 = manager.unregister_worker(worker_instance_key1);
-        assert!(unregistered_worker1.is_some());
-
-        // After unregistering slot provider: 0 slot providers, 2 heartbeat workers, shared worker still exists
-        assert_eq!((0, 0), manager.num_providers());
-        assert_eq!(manager.num_heartbeat_workers(), 2);
-
-        let impl_ref = manager.worker_manager.read();
-        assert_eq!(impl_ref.shared_worker.len(), 1); // SharedNamespaceWorker still exists
-        assert!(impl_ref.shared_worker.contains_key("test_namespace"));
-        assert_eq!(
-            impl_ref
-                .shared_worker
-                .get("test_namespace")
-                .unwrap()
-                .num_workers(),
-            2
-        );
-        drop(impl_ref);
-
-        // // Unregister worker2
-        let unregistered_worker2 = manager.unregister_worker(worker_instance_key2);
-        assert!(unregistered_worker2.is_some());
-
-        // After unregistering worker2: 0 slot providers, 1 heartbeat worker, shared worker still exists
-        assert_eq!((0, 0), manager.num_providers());
-        assert_eq!(manager.num_heartbeat_workers(), 1);
-
-        let impl_ref = manager.worker_manager.read();
-        assert_eq!(impl_ref.num_heartbeat_workers(), 1); // SharedNamespaceWorker still exists
-        assert!(impl_ref.shared_worker.contains_key("test_namespace"));
-        assert_eq!(
-            impl_ref
-                .shared_worker
-                .get("test_namespace")
-                .unwrap()
-                .num_workers(),
-            1
-        );
-        drop(impl_ref);
-
-        // Unregister last worker
-        let unregistered_worker3 = manager.unregister_worker(worker_instance_key3);
-        assert!(unregistered_worker3.is_some());
-
         assert_eq!((0, 0), manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 0);
 
