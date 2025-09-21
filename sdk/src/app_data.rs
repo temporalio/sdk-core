@@ -6,7 +6,7 @@ use std::{
 
 /// A Wrapper Type for workflow and activity app data
 #[derive(Default)]
-pub(crate) struct AppData {
+pub struct AppData {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
