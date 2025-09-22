@@ -318,8 +318,7 @@ impl CoreWfStarter {
 
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
-        let tq = w.get_config().task_queue.clone();
-        let mut w = TestWorker::new(w, tq);
+        let mut w = TestWorker::new(w);
         w.client = Some(self.get_client().await);
 
         w
@@ -481,8 +480,11 @@ pub(crate) struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
-        let inner = Worker::new_from_core(core_worker.clone(), task_queue);
+    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>) -> Self {
+        let inner = Worker::new_from_core(
+            core_worker.clone(),
+            core_worker.get_config().task_queue.clone(),
+        );
         Self {
             inner,
             core_worker,
@@ -943,10 +945,7 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(
-        Arc::new(core),
-        temporal_sdk_core::test_help::TEST_Q.to_string(),
-    )
+    TestWorker::new(Arc::new(core))
 }
 
 #[derive(Default)]

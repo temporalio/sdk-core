@@ -1,7 +1,7 @@
 use crate::{
     ActivityHeartbeat, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
-        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, TEST_Q, WorkerExt,
+        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, WorkerExt,
         WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, fanout_tasks,
         gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg,

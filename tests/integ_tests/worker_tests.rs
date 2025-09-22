@@ -17,8 +17,8 @@ use temporal_sdk::{ActivityOptions, WfContext, interceptors::WorkerInterceptor};
 use temporal_sdk_core::{
     CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder, init_worker,
     test_help::{
-        FakeWfResponses, MockPollCfg, ResponseType, TEST_Q, build_mock_pollers,
-        drain_pollers_and_shutdown, hist_to_poll_resp, mock_worker, mock_worker_client,
+        FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
+        hist_to_poll_resp, mock_worker, mock_worker_client,
     },
 };
 use temporal_sdk_core_api::{
@@ -322,7 +322,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         cfg.max_outstanding_activities = Some(2);
     });
     let core = Arc::new(mock_worker(mock));
-    let mut worker = crate::common::TestWorker::new(core.clone(), TEST_Q.to_string());
+    let mut worker = crate::common::TestWorker::new(core.clone());
 
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();

@@ -141,8 +141,8 @@ impl ClientWorkerSetImpl {
                     self.shared_worker.remove(worker.namespace());
                 }
 
-                // Callback unregistered must be passed back to ClientWorker to pass onto the next
-                // client used for registration
+                // To maintain single ownership of the callback, we must re-register the callback
+                // back to the ClientWorker
                 worker.register_callback(cb);
             }
         }

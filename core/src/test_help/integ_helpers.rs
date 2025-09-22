@@ -67,9 +67,6 @@ use uuid::Uuid;
 /// Default namespace for testing
 pub const NAMESPACE: &str = "default";
 
-/// Default task queue for testing
-pub const TEST_Q: &str = "q";
-
 /// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
     worker.initiate_shutdown();
