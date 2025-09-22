@@ -62,6 +62,7 @@ use temporal_sdk_core_protos::{
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use uuid::Uuid;
 
 /// Default namespace for testing
 pub const NAMESPACE: &str = "default";
@@ -102,7 +103,7 @@ pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
 pub fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
     wcb.namespace(NAMESPACE)
-        .task_queue(TEST_Q)
+        .task_queue(Uuid::new_v4().to_string())
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_bin_id".to_string(),
         })
@@ -277,7 +278,7 @@ impl MocksHolder {
         }
     }
 
-    /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
+    /// Uses the provided list of tasks to create a mock poller with a randomly generated task queue
     pub fn from_client_with_activities<ACT>(
         client: impl WorkerClient + 'static,
         act_tasks: ACT,

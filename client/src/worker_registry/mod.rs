@@ -81,9 +81,7 @@ impl ClientWorkerSetImpl {
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
         );
-        if let Vacant(p) = self.slot_providers.entry(slot_key.clone()) {
-            p.insert(worker.worker_instance_key());
-        } else {
+        if self.slot_providers.contains_key(&slot_key) {
             bail!(
                 "Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.",
                 worker.worker_instance_key()
@@ -105,6 +103,9 @@ impl ClientWorkerSetImpl {
             };
             shared_worker.register_callback(worker_instance_key, heartbeat_callback);
         }
+
+        self.slot_providers
+            .insert(slot_key.clone(), worker.worker_instance_key());
 
         self.all_workers
             .insert(worker.worker_instance_key(), worker);

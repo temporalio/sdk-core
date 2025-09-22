@@ -203,7 +203,6 @@ mod tests {
                 assert_eq!(host_info.process_id, std::process::id().to_string());
                 assert_eq!(heartbeat.sdk_name, "test-core");
                 assert_eq!(heartbeat.sdk_version, "0.0.0");
-                assert_eq!(heartbeat.task_queue, "q");
                 assert!(heartbeat.heartbeat_time.is_some());
                 assert!(heartbeat.start_time.is_some());
 

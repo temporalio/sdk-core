@@ -734,7 +734,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_it(
         ScheduleActivity {
             seq: 1,
             activity_id: "act_id".to_string(),
-            task_queue: TEST_Q.to_string(),
+            task_queue: core.get_config().task_queue.clone(),
             cancellation_type: ActivityCancellationType::TryCancel as i32,
             ..Default::default()
         }
@@ -821,6 +821,7 @@ async fn activity_tasks_from_completion_are_delivered() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
+    let task_queue = core.get_config().task_queue.clone();
 
     // Test start
     let wf_task = core.poll_workflow_activation().await.unwrap();
@@ -829,7 +830,7 @@ async fn activity_tasks_from_completion_are_delivered() {
             ScheduleActivity {
                 seq,
                 activity_id: format!("act_id_{seq}_same_queue"),
-                task_queue: TEST_Q.to_string(),
+                task_queue: task_queue.clone(),
                 cancellation_type: ActivityCancellationType::TryCancel as i32,
                 ..Default::default()
             }
@@ -840,7 +841,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         ScheduleActivity {
             seq: 4,
             activity_id: "act_id_same_queue_not_eager".to_string(),
-            task_queue: TEST_Q.to_string(),
+            task_queue: task_queue.clone(),
             cancellation_type: ActivityCancellationType::TryCancel as i32,
             ..Default::default()
         }
