@@ -3,14 +3,14 @@
 //! happen.
 
 use crate::{
-    Client, ConfiguredClient, InterceptedMetricsSvc, LONG_POLL_TIMEOUT, RequestExt, RetryClient,
-    SharedReplaceableClient, TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
+    Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
+    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::{namespace_kv, task_queue_kv},
-    raw::sealed::RawClientLike,
     worker_registry::{Slot, SlotManager},
 };
+use dyn_clone::DynClone;
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
-use std::sync::Arc;
+use std::{any::Any, marker::PhantomData, sync::Arc};
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
@@ -29,80 +29,182 @@ use tonic::{
     metadata::{AsciiMetadataValue, KeyAndValueRef},
 };
 
-pub(super) mod sealed {
-    use super::*;
+/// Something that has access to the raw grpc services
+trait RawClientProducer {
+    /// Returns information about workers associated with this client. Implementers outside of
+    /// core can safely return `None`.
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
 
-    /// Something that has access to the raw grpc services
-    #[async_trait::async_trait]
-    pub trait RawClientLike: Send {
-        type SvcType: Send + Sync + Clone + 'static;
+    /// Return a workflow service client instance
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService>;
 
-        /// Return a mutable ref to the workflow service client instance
-        fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+    /// Return a mutable ref to the operator service client instance
+    fn operator_client(&mut self) -> Box<dyn OperatorService>;
 
-        /// Return a mutable ref to the operator service client instance
-        fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+    /// Return a mutable ref to the cloud service client instance
+    fn cloud_client(&mut self) -> Box<dyn CloudService>;
 
-        /// Return a mutable ref to the cloud service client instance
-        fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType>;
+    /// Return a mutable ref to the test service client instance
+    fn test_client(&mut self) -> Box<dyn TestService>;
 
-        /// Return a mutable ref to the test service client instance
-        fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+    /// Return a mutable ref to the health service client instance
+    fn health_client(&mut self) -> Box<dyn HealthService>;
+}
 
-        /// Return a mutable ref to the health service client instance
-        fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
+/// Any client that can make gRPC calls. The default implementation simply invokes the passed-in
+/// function. Implementers may override this to provide things like retry behavior, ex:
+/// [RetryClient].
+#[async_trait::async_trait]
+trait RawGrpcCaller: Send + Sync + 'static {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        _call_name: &'static str,
+        mut callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: Send + Sync + Unpin + 'static,
+        for<'a> F:
+            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+    {
+        callfn(self, req).await
+    }
+}
 
-        /// Return a registry with workers using this client instance
-        fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
+trait ErasedRawClient: Send + Sync + 'static {
+    fn erased_call(
+        &mut self,
+        call_name: &'static str,
+        op: &mut dyn ErasedCallOp,
+    ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>>;
+}
 
-        async fn call<F, Req, Resp>(
-            &mut self,
-            _call_name: &'static str,
-            mut callfn: F,
-            req: Request<Req>,
-        ) -> Result<Response<Resp>, Status>
-        where
-            Req: Clone + Unpin + Send + Sync + 'static,
-            F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-            F: Send + Sync + Unpin + 'static,
-        {
-            callfn(self, req).await
+trait ErasedCallOp: Send {
+    fn invoke(
+        &mut self,
+        raw: &mut dyn ErasedRawClient,
+        call_name: &'static str,
+    ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>>;
+}
+
+struct CallShim<F, Req, Resp> {
+    callfn: F,
+    seed_req: Option<Request<Req>>,
+    _resp: PhantomData<Resp>,
+}
+
+impl<F, Req, Resp> CallShim<F, Req, Resp> {
+    fn new(callfn: F, seed_req: Request<Req>) -> Self {
+        Self {
+            callfn,
+            seed_req: Some(seed_req),
+            _resp: PhantomData,
         }
+    }
+}
+impl<F, Req, Resp> ErasedCallOp for CallShim<F, Req, Resp>
+where
+    Req: Clone + Unpin + Send + Sync + 'static,
+    Resp: Send + 'static,
+    F: Send + Sync + Unpin + 'static,
+    for<'a> F: FnMut(
+        &'a mut dyn ErasedRawClient,
+        Request<Req>,
+    ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+{
+    fn invoke(
+        &mut self,
+        raw: &mut dyn ErasedRawClient,
+        _call_name: &'static str,
+    ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>> {
+        (self.callfn)(
+            raw,
+            self.seed_req
+                .take()
+                .expect("CallShim must have request populated"),
+        )
+        .map(|res| res.map(|payload| payload.map(|t| Box::new(t) as Box<dyn Any + Send>)))
+        .boxed()
     }
 }
 
 #[async_trait::async_trait]
-impl<RC, T> RawClientLike for RetryClient<RC>
+impl RawGrpcCaller for dyn ErasedRawClient {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: Send + Sync + Unpin + 'static,
+        for<'a> F: FnMut(
+            &'a mut dyn ErasedRawClient,
+            Request<Req>,
+        ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+    {
+        let mut shim = CallShim::new(callfn, req);
+        let erased_resp = ErasedRawClient::erased_call(self, call_name, &mut shim).await?;
+        Ok(erased_resp.map(|boxed| {
+            *boxed
+                .downcast()
+                .expect("RawGrpcCaller erased response type mismatch")
+        }))
+    }
+}
+
+impl<T> ErasedRawClient for T
 where
-    RC: RawClientLike<SvcType = T> + 'static,
-    T: Send + Sync + Clone + 'static,
+    T: RawGrpcCaller + 'static,
 {
-    type SvcType = T;
-
-    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.get_client_mut().workflow_client_mut()
+    fn erased_call(
+        &mut self,
+        call_name: &'static str,
+        op: &mut dyn ErasedCallOp,
+    ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>> {
+        let raw: &mut dyn ErasedRawClient = self;
+        op.invoke(raw, call_name)
     }
+}
 
-    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.get_client_mut().operator_client_mut()
-    }
-
-    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.get_client_mut().cloud_client_mut()
-    }
-
-    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.get_client_mut().test_client_mut()
-    }
-
-    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.get_client_mut().health_client_mut()
-    }
-
+impl<RC> RawClientProducer for RetryClient<RC>
+where
+    RC: RawClientProducer + 'static,
+{
     fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
         self.get_client().get_workers_info()
     }
 
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.get_client_mut().workflow_client()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.get_client_mut().operator_client()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.get_client_mut().cloud_client()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.get_client_mut().test_client()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.get_client_mut().health_client()
+    }
+}
+
+#[async_trait::async_trait]
+impl<RC> RawGrpcCaller for RetryClient<RC>
+where
+    RC: RawGrpcCaller + 'static,
+{
     async fn call<F, Req, Resp>(
         &mut self,
         call_name: &'static str,
@@ -128,137 +230,6 @@ where
     }
 }
 
-#[async_trait::async_trait]
-impl<RC, T> RawClientLike for SharedReplaceableClient<RC>
-where
-    RC: RawClientLike<SvcType = T> + Clone + Sync + 'static,
-    T: Send + Sync + Clone + 'static,
-{
-    type SvcType = T;
-
-    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.inner_mut_refreshed().workflow_client_mut()
-    }
-
-    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.inner_mut_refreshed().operator_client_mut()
-    }
-
-    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.inner_mut_refreshed().cloud_client_mut()
-    }
-
-    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.inner_mut_refreshed().test_client_mut()
-    }
-
-    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.inner_mut_refreshed().health_client_mut()
-    }
-
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
-        self.inner_cow().get_workers_info()
-    }
-}
-
-impl<T> RawClientLike for TemporalServiceClient<T>
-where
-    T: Send + Sync + Clone + 'static,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-    type SvcType = T;
-
-    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.workflow_svc_mut()
-    }
-
-    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.operator_svc_mut()
-    }
-
-    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.cloud_svc_mut()
-    }
-
-    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.test_svc_mut()
-    }
-
-    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.health_svc_mut()
-    }
-
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
-        None
-    }
-}
-
-impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
-where
-    T: Send + Sync + Clone + 'static,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-    type SvcType = T;
-
-    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.client.workflow_client_mut()
-    }
-
-    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.client.operator_client_mut()
-    }
-
-    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.client.cloud_client_mut()
-    }
-
-    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.client.test_client_mut()
-    }
-
-    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.client.health_client_mut()
-    }
-
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
-        Some(self.workers())
-    }
-}
-
-impl RawClientLike for Client {
-    type SvcType = InterceptedMetricsSvc;
-
-    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.inner.workflow_client_mut()
-    }
-
-    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.inner.operator_client_mut()
-    }
-
-    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
-        self.inner.cloud_client_mut()
-    }
-
-    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.inner.test_client_mut()
-    }
-
-    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.inner.health_client_mut()
-    }
-
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
-        self.inner.get_workers_info()
-    }
-}
-
 /// Helper for cloning a tonic request as long as the inner message may be cloned.
 fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
     let msg = cloneme.get_ref().clone();
@@ -277,6 +248,124 @@ fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
     *new_req.extensions_mut() = cloneme.extensions().clone();
     new_req
 }
+
+impl<RC> RawClientProducer for SharedReplaceableClient<RC>
+where
+    RC: RawClientProducer + Clone + Send + Sync + 'static,
+{
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        self.inner_cow().get_workers_info()
+    }
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.inner_mut_refreshed().workflow_client()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.inner_mut_refreshed().operator_client()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.inner_mut_refreshed().cloud_client()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.inner_mut_refreshed().test_client()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.inner_mut_refreshed().health_client()
+    }
+}
+
+#[async_trait::async_trait]
+impl<RC> RawGrpcCaller for SharedReplaceableClient<RC> where
+    RC: RawGrpcCaller + Clone + Sync + 'static
+{
+}
+
+impl RawClientProducer for TemporalServiceClient {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        None
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.workflow_svc()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.operator_svc()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.cloud_svc()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.test_svc()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.health_svc()
+    }
+}
+
+impl RawGrpcCaller for TemporalServiceClient {}
+
+impl RawClientProducer for ConfiguredClient<TemporalServiceClient> {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        Some(self.workers())
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.client.workflow_client()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.client.operator_client()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.client.cloud_client()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.client.test_client()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.client.health_client()
+    }
+}
+
+impl RawGrpcCaller for ConfiguredClient<TemporalServiceClient> {}
+
+impl RawClientProducer for Client {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        self.inner.get_workers_info()
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.inner.workflow_client()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.inner.operator_client()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.inner.cloud_client()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.inner.test_client()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.inner.health_client()
+    }
+}
+
+impl RawGrpcCaller for Client {}
 
 #[derive(Clone, Debug)]
 pub(super) struct AttachMetricLabels {
@@ -306,62 +395,27 @@ impl AttachMetricLabels {
 #[derive(Copy, Clone, Debug)]
 pub(super) struct IsUserLongPoll;
 
-// Blanket impl the trait for all raw-client-like things. Since the trait default-implements
-// everything, there's nothing to actually implement.
-impl<RC, T> WorkflowService for RC
-where
-    RC: RawClientLike<SvcType = T>,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
+macro_rules! proxy_def {
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty, defaults) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            _request: tonic::Request<$req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
+            async { Ok(tonic::Response::new(<$resp>::default())) }.boxed()
+        }
+    };
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            _request: tonic::Request<$req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>>;
+    };
 }
-impl<RC, T> OperatorService for RC
-where
-    RC: RawClientLike<SvcType = T>,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-}
-impl<RC, T> CloudService for RC
-where
-    RC: RawClientLike<SvcType = T>,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-}
-impl<RC, T> TestService for RC
-where
-    RC: RawClientLike<SvcType = T>,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-}
-impl<RC, T> HealthService for RC
-where
-    RC: RawClientLike<SvcType = T>,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    T::Future: Send,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-}
-
 /// Helps re-declare gRPC client methods
 ///
-/// There are two forms:
+/// There are four forms:
 ///
 /// * The first takes a closure that can modify the request. This is only called once, before the
 ///   actual rpc call is made, and before determinations are made about the kind of call (long poll
@@ -369,22 +423,23 @@ where
 /// * The second takes three closures. The first can modify the request like in the first form.
 ///   The second can modify the request and return a value, and is called right before every call
 ///   (including on retries). The third is called with the response to the call after it resolves.
-macro_rules! proxy {
+/// * The third and fourth are equivalents of the above that skip calling through the `call` method
+///   and are implemented directly on the generated gRPC clients (IE: the bottom of the stack).
+macro_rules! proxy_impl {
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
-            request: impl tonic::IntoRequest<$req>,
-        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
-            let mut as_req = request.into_request();
-            $( type_closure_arg(&mut as_req, $closure); )*
+            mut request: tonic::Request<$req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
+            $( type_closure_arg(&mut request, $closure); )*
             #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let mut c = c.$client_meth().clone();
+                let mut c = c.$client_meth();
                 async move { c.$method(req).await }.boxed()
             };
-            self.call(stringify!($method), fact, as_req)
+            self.call(stringify!($method), fact, request)
         }
     };
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty,
@@ -392,49 +447,105 @@ macro_rules! proxy {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
-            request: impl tonic::IntoRequest<$req>,
+            mut request: tonic::Request<$req>,
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
-            #[allow(unused_mut)]
-            let mut as_req = request.into_request();
-            type_closure_arg(&mut as_req, $closure_request);
+            type_closure_arg(&mut request, $closure_request);
             #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(),
-                                                $closure_before);
-                let mut c = c.$client_meth().clone();
+                let data = type_closure_two_arg(&mut req, c.get_workers_info(), $closure_before);
+                let mut c = c.$client_meth();
                 async move {
                     type_closure_two_arg(c.$method(req).await, data, $closure_after)
                 }.boxed()
             };
-            self.call(stringify!($method), fact, as_req)
+            self.call(stringify!($method), fact, request)
+        }
+    };
+    ($client_type:tt, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            #[allow(unused_mut)]
+            mut request: tonic::Request<$req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
+            $( type_closure_arg(&mut request, $closure); )*
+            async move { <$client_type<_>>::$method(self, request).await }.boxed()
+        }
+    };
+    ($client_type:tt, $method:ident, $req:ty, $resp:ty,
+     $closure_request:expr, $closure_before:expr, $closure_after:expr) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            mut request: tonic::Request<$req>,
+        ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
+            type_closure_arg(&mut request, $closure_request);
+            let data = type_closure_two_arg(&mut request, Option::<Arc<SlotManager>>::None,
+                                            $closure_before);
+            async move {
+                type_closure_two_arg(<$client_type<_>>::$method(self, request).await,
+                                     data, $closure_after)
+            }.boxed()
         }
     };
 }
+macro_rules! proxier_impl {
+    ($trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
+     [$( proxy_def!($($def_args:tt)*); )*];
+     $(($method:ident, $req:ty, $resp:ty
+       $(, $closure:expr $(, $closure_before:expr, $closure_after:expr)?)? );)* ) => {
+        #[cfg(test)]
+        const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
+
+        #[doc = concat!("Trait version of [", stringify!($client_type), "]")]
+        pub trait $trait_name: Send + Sync + DynClone
+        {
+            $( proxy_def!($($def_args)*); )*
+        }
+        dyn_clone::clone_trait_object!($trait_name);
+
+        impl<RC> $trait_name for RC
+        where
+            RC: RawGrpcCaller + RawClientProducer + Clone,
+        {
+            $(
+                proxy_impl!($client_type, $client_meth, $method, $req, $resp
+                            $(,$closure $(,$closure_before, $closure_after)*)*);
+            )*
+        }
+
+        impl<T: Send + Sync + 'static> RawGrpcCaller for $client_type<T> {}
+
+        impl<T> $trait_name for $client_type<T>
+        where
+            T: GrpcService<Body> + Clone + Send + Sync + 'static,
+            T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+            T::Error: Into<tonic::codegen::StdError>,
+            <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+            <T as tonic::client::GrpcService<Body>>::Future: Send
+        {
+            $(
+                proxy_impl!($client_type, $method, $req, $resp
+                            $(,$closure $(,$closure_before, $closure_after)*)*);
+            )*
+        }
+    };
+}
+
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
       $(($method:ident, $req:ty, $resp:ty
          $(, $closure:expr $(, $closure_before:expr, $closure_after:expr)?)? );)* ) => {
-        #[cfg(test)]
-        const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
-        /// Trait version of the generated client with modifications to attach appropriate metric
-        /// labels or whatever else to requests
-        pub trait $trait_name: RawClientLike
-        where
-            // Yo this is wild
-            <Self as RawClientLike>::SvcType: GrpcService<Body> + Send + Clone + 'static,
-            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody:
-                tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Error:
-                Into<tonic::codegen::StdError>,
-            <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Future: Send,
-            <<<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody
-                as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-        {
-            $(
-               proxy!($client_type, $client_meth, $method, $req, $resp
-                      $(,$closure $(,$closure_before, $closure_after)*)*);
-            )*
-        }
+        proxier_impl!($trait_name; $impl_list_name; $client_type; $client_meth;
+                      [$(proxy_def!($client_type, $client_meth, $method, $req, $resp);)*];
+                      $(($method, $req, $resp $(, $closure $(, $closure_before, $closure_after)?)?);)*);
+    };
+    ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident; defaults;
+      $(($method:ident, $req:ty, $resp:ty
+         $(, $closure:expr $(, $closure_before:expr, $closure_after:expr)?)? );)* ) => {
+        proxier_impl!($trait_name; $impl_list_name; $client_type; $client_meth;
+                      [$(proxy_def!($client_type, $client_meth, $method, $req, $resp, defaults);)*];
+                      $(($method, $req, $resp $(, $closure $(, $closure_before, $closure_after)?)?);)*);
     };
 }
 
@@ -464,7 +575,7 @@ fn type_closure_two_arg<T, R, S>(arg1: R, arg2: T, f: impl FnOnce(R, T) -> S) ->
 }
 
 proxier! {
-    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client_mut;
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client; defaults;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -516,21 +627,25 @@ proxier! {
             r.extensions_mut().insert(labels);
         },
         |r, workers| {
-            let mut slot: Option<Box<dyn Slot + Send>> = None;
-            let req_mut = r.get_mut();
-            if req_mut.request_eager_execution {
-                let namespace = req_mut.namespace.clone();
-                let task_queue = req_mut.task_queue.as_ref()
-                                    .map(|tq| tq.name.clone()).unwrap_or_default();
-                match workers.try_reserve_wft_slot(namespace, task_queue) {
-                    Some(s) => slot = Some(s),
-                    None => req_mut.request_eager_execution = false
+            if let Some(workers) = workers {
+                let mut slot: Option<Box<dyn Slot + Send>> = None;
+                let req_mut = r.get_mut();
+                if req_mut.request_eager_execution {
+                    let namespace = req_mut.namespace.clone();
+                    let task_queue = req_mut.task_queue.as_ref()
+                                        .map(|tq| tq.name.clone()).unwrap_or_default();
+                    match workers.try_reserve_wft_slot(namespace, task_queue) {
+                        Some(s) => slot = Some(s),
+                        None => req_mut.request_eager_execution = false
+                    }
                 }
+                slot
+            } else {
+                None
             }
-            slot
         },
         |resp, slot| {
-            if let Some(mut s) = slot
+            if let Some(s) = slot
                 && let Ok(response) = resp.as_ref()
                     && let Some(task) = response.get_ref().clone().eager_workflow_task
                         && let Err(e) = s.schedule_wft(task) {
@@ -1323,7 +1438,7 @@ proxier! {
 }
 
 proxier! {
-    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; operator_client_mut;
+    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; operator_client; defaults;
     (add_search_attributes, AddSearchAttributesRequest, AddSearchAttributesResponse);
     (remove_search_attributes, RemoveSearchAttributesRequest, RemoveSearchAttributesResponse);
     (list_search_attributes, ListSearchAttributesRequest, ListSearchAttributesResponse);
@@ -1344,7 +1459,7 @@ proxier! {
 }
 
 proxier! {
-    CloudService; ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS; CloudServiceClient; cloud_client_mut;
+    CloudService; ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS; CloudServiceClient; cloud_client; defaults;
     (get_users, cloudreq::GetUsersRequest, cloudreq::GetUsersResponse);
     (get_user, cloudreq::GetUserRequest, cloudreq::GetUserResponse);
     (create_user, cloudreq::CreateUserRequest, cloudreq::CreateUserResponse);
@@ -1419,7 +1534,7 @@ proxier! {
 }
 
 proxier! {
-    TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client_mut;
+    TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client; defaults;
     (lock_time_skipping, LockTimeSkippingRequest, LockTimeSkippingResponse);
     (unlock_time_skipping, UnlockTimeSkippingRequest, UnlockTimeSkippingResponse);
     (sleep, SleepRequest, SleepResponse);
@@ -1429,7 +1544,7 @@ proxier! {
 }
 
 proxier! {
-    HealthService; ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS; HealthClient; health_client_mut;
+    HealthService; ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS; HealthClient; health_client;
     (check, HealthCheckRequest, HealthCheckResponse);
     (watch, HealthCheckRequest, tonic::codec::Streaming<HealthCheckResponse>);
 }
@@ -1442,6 +1557,7 @@ mod tests {
     use temporal_sdk_core_protos::temporal::api::{
         operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
     };
+    use tonic::IntoRequest;
 
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
@@ -1452,7 +1568,7 @@ mod tests {
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.workflow_client_mut().clone();
+            let mut c = c.workflow_client();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
@@ -1463,7 +1579,7 @@ mod tests {
         // Operator svc method
         let op_del_ns_req = DeleteNamespaceRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.operator_client_mut().clone();
+            let mut c = c.operator_client();
             async move { c.delete_namespace(req).await }.boxed()
         };
         retry_client
@@ -1474,7 +1590,7 @@ mod tests {
         // Cloud svc method
         let cloud_del_ns_req = cloudreq::DeleteNamespaceRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.cloud_client_mut().clone();
+            let mut c = c.cloud_client();
             async move { c.delete_namespace(req).await }.boxed()
         };
         retry_client
@@ -1483,17 +1599,23 @@ mod tests {
             .unwrap();
 
         // Verify calling through traits works
-        retry_client.list_namespaces(list_ns_req).await.unwrap();
-        // Have to disambiguate operator and cloud service
-        OperatorService::delete_namespace(&mut retry_client, op_del_ns_req)
-            .await
-            .unwrap();
-        CloudService::delete_namespace(&mut retry_client, cloud_del_ns_req)
-            .await
-            .unwrap();
-        retry_client.get_current_time(()).await.unwrap();
         retry_client
-            .check(HealthCheckRequest::default())
+            .list_namespaces(list_ns_req.into_request())
+            .await
+            .unwrap();
+        // Have to disambiguate operator and cloud service
+        OperatorService::delete_namespace(&mut retry_client, op_del_ns_req.into_request())
+            .await
+            .unwrap();
+        CloudService::delete_namespace(&mut retry_client, cloud_del_ns_req.into_request())
+            .await
+            .unwrap();
+        retry_client
+            .get_current_time(().into_request())
+            .await
+            .unwrap();
+        retry_client
+            .check(HealthCheckRequest::default().into_request())
             .await
             .unwrap();
     }
@@ -1558,5 +1680,66 @@ mod tests {
     fn verify_all_health_service_methods_implemented() {
         let proto_def = include_str!("../../sdk-core-protos/protos/grpc/health/v1/health.proto");
         verify_methods(proto_def, ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS);
+    }
+
+    #[tokio::test]
+    async fn can_mock_workflow_service() {
+        #[derive(Clone)]
+        struct MyFakeServices {}
+        impl RawGrpcCaller for MyFakeServices {}
+        impl WorkflowService for MyFakeServices {
+            fn list_namespaces(
+                &mut self,
+                _request: Request<ListNamespacesRequest>,
+            ) -> BoxFuture<'_, Result<Response<ListNamespacesResponse>, Status>> {
+                async {
+                    Ok(Response::new(ListNamespacesResponse {
+                        namespaces: vec![DescribeNamespaceResponse {
+                            failover_version: 12345,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }))
+                }
+                .boxed()
+            }
+        }
+        impl OperatorService for MyFakeServices {}
+        impl CloudService for MyFakeServices {}
+        impl TestService for MyFakeServices {}
+        // Health service isn't possible to create a default impl for.
+        impl HealthService for MyFakeServices {
+            fn check(
+                &mut self,
+                _request: tonic::Request<HealthCheckRequest>,
+            ) -> BoxFuture<'_, Result<tonic::Response<HealthCheckResponse>, tonic::Status>>
+            {
+                todo!()
+            }
+            fn watch(
+                &mut self,
+                _request: tonic::Request<HealthCheckRequest>,
+            ) -> BoxFuture<
+                '_,
+                Result<
+                    tonic::Response<tonic::codec::Streaming<HealthCheckResponse>>,
+                    tonic::Status,
+                >,
+            > {
+                todo!()
+            }
+        }
+        let mut mocked_client = TemporalServiceClient::from_services(
+            Box::new(MyFakeServices {}),
+            Box::new(MyFakeServices {}),
+            Box::new(MyFakeServices {}),
+            Box::new(MyFakeServices {}),
+            Box::new(MyFakeServices {}),
+        );
+        let r = mocked_client
+            .list_namespaces(ListNamespacesRequest::default().into_request())
+            .await
+            .unwrap();
+        assert_eq!(r.into_inner().namespaces[0].failover_version, 12345);
     }
 }

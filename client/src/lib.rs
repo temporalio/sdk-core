@@ -41,7 +41,7 @@ pub use workflow_handle::{
 
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
-    raw::{AttachMetricLabels, sealed::RawClientLike},
+    raw::AttachMetricLabels,
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };
@@ -76,7 +76,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
-    Code,
+    Code, IntoRequest,
     body::Body,
     client::GrpcService,
     codegen::InterceptedService,
@@ -513,8 +513,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<TemporalMeter>,
-    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
-    {
+    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClient>>, ClientInitError> {
         self.connect_no_namespace_with_service_override(metrics_meter, None)
             .await
     }
@@ -529,8 +528,7 @@ impl ClientOptions {
         &self,
         metrics_meter: Option<TemporalMeter>,
         service_override: Option<callback_based::CallbackBasedGrpcService>,
-    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
-    {
+    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClient>>, ClientInitError> {
         let service = if let Some(service_override) = service_override {
             GrpcMetricSvc {
                 inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
@@ -590,7 +588,7 @@ impl ClientOptions {
         };
         if !self.skip_get_system_info {
             match client
-                .get_system_info(GetSystemInfoRequest::default())
+                .get_system_info(GetSystemInfoRequest::default().into_request())
                 .await
             {
                 Ok(sysinfo) => {
@@ -734,14 +732,13 @@ impl Interceptor for ServiceCallInterceptor {
 }
 
 /// Aggregates various services exposed by the Temporal server
-#[derive(Debug, Clone)]
-pub struct TemporalServiceClient<T> {
-    svc: T,
-    workflow_svc_client: OnceLock<WorkflowServiceClient<T>>,
-    operator_svc_client: OnceLock<OperatorServiceClient<T>>,
-    cloud_svc_client: OnceLock<CloudServiceClient<T>>,
-    test_svc_client: OnceLock<TestServiceClient<T>>,
-    health_svc_client: OnceLock<HealthClient<T>>,
+#[derive(Clone)]
+pub struct TemporalServiceClient {
+    workflow_svc_client: Box<dyn WorkflowService>,
+    operator_svc_client: Box<dyn OperatorService>,
+    cloud_svc_client: Box<dyn CloudService>,
+    test_svc_client: Box<dyn TestService>,
+    health_svc_client: Box<dyn HealthService>,
 }
 
 /// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
@@ -756,134 +753,98 @@ fn get_decode_max_size() -> usize {
     })
 }
 
-impl<T> TemporalServiceClient<T>
-where
-    T: Clone,
-    T: GrpcService<Body> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    T::Error: Into<tonic::codegen::StdError>,
-    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-{
-    fn new(svc: T) -> Self {
+impl TemporalServiceClient {
+    fn new<T>(svc: T) -> Self
+    where
+        T: GrpcService<Body> + Send + Sync + Clone + 'static,
+        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+        T::Error: Into<tonic::codegen::StdError>,
+        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+        <T as GrpcService<Body>>::Future: Send,
+    {
+        let workflow_svc_client = Box::new(
+            WorkflowServiceClient::new(svc.clone())
+                .max_decoding_message_size(get_decode_max_size()),
+        );
+        let operator_svc_client = Box::new(
+            OperatorServiceClient::new(svc.clone())
+                .max_decoding_message_size(get_decode_max_size()),
+        );
+        let cloud_svc_client = Box::new(
+            CloudServiceClient::new(svc.clone()).max_decoding_message_size(get_decode_max_size()),
+        );
+        let test_svc_client = Box::new(
+            TestServiceClient::new(svc.clone()).max_decoding_message_size(get_decode_max_size()),
+        );
+        let health_svc_client = Box::new(
+            HealthClient::new(svc.clone()).max_decoding_message_size(get_decode_max_size()),
+        );
+
         Self {
-            svc,
-            workflow_svc_client: OnceLock::new(),
-            operator_svc_client: OnceLock::new(),
-            cloud_svc_client: OnceLock::new(),
-            test_svc_client: OnceLock::new(),
-            health_svc_client: OnceLock::new(),
+            workflow_svc_client,
+            operator_svc_client,
+            cloud_svc_client,
+            test_svc_client,
+            health_svc_client,
         }
     }
+
+    /// Create a service client from implementations of the individual underlying services. Useful
+    /// for mocking out service implementations.
+    pub fn from_services(
+        workflow: Box<dyn WorkflowService>,
+        operator: Box<dyn OperatorService>,
+        cloud: Box<dyn CloudService>,
+        test: Box<dyn TestService>,
+        health: Box<dyn HealthService>,
+    ) -> Self {
+        Self {
+            workflow_svc_client: workflow,
+            operator_svc_client: operator,
+            cloud_svc_client: cloud,
+            test_svc_client: test,
+            health_svc_client: health,
+        }
+    }
+
     /// Get the underlying workflow service client
-    pub fn workflow_svc(&self) -> &WorkflowServiceClient<T> {
-        self.workflow_svc_client.get_or_init(|| {
-            WorkflowServiceClient::new(self.svc.clone())
-                .max_decoding_message_size(get_decode_max_size())
-        })
+    pub fn workflow_svc(&self) -> Box<dyn WorkflowService> {
+        self.workflow_svc_client.clone()
     }
     /// Get the underlying operator service client
-    pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
-        self.operator_svc_client.get_or_init(|| {
-            OperatorServiceClient::new(self.svc.clone())
-                .max_decoding_message_size(get_decode_max_size())
-        })
+    pub fn operator_svc(&self) -> Box<dyn OperatorService> {
+        self.operator_svc_client.clone()
     }
     /// Get the underlying cloud service client
-    pub fn cloud_svc(&self) -> &CloudServiceClient<T> {
-        self.cloud_svc_client.get_or_init(|| {
-            CloudServiceClient::new(self.svc.clone())
-                .max_decoding_message_size(get_decode_max_size())
-        })
+    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
+        self.cloud_svc_client.clone()
     }
     /// Get the underlying test service client
-    pub fn test_svc(&self) -> &TestServiceClient<T> {
-        self.test_svc_client.get_or_init(|| {
-            TestServiceClient::new(self.svc.clone())
-                .max_decoding_message_size(get_decode_max_size())
-        })
+    pub fn test_svc(&self) -> Box<dyn TestService> {
+        self.test_svc_client.clone()
     }
     /// Get the underlying health service client
-    pub fn health_svc(&self) -> &HealthClient<T> {
-        self.health_svc_client.get_or_init(|| {
-            HealthClient::new(self.svc.clone()).max_decoding_message_size(get_decode_max_size())
-        })
-    }
-    /// Get the underlying workflow service client mutably
-    pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
-        let _ = self.workflow_svc();
-        self.workflow_svc_client.get_mut().unwrap()
-    }
-    /// Get the underlying operator service client mutably
-    pub fn operator_svc_mut(&mut self) -> &mut OperatorServiceClient<T> {
-        let _ = self.operator_svc();
-        self.operator_svc_client.get_mut().unwrap()
-    }
-    /// Get the underlying cloud service client mutably
-    pub fn cloud_svc_mut(&mut self) -> &mut CloudServiceClient<T> {
-        let _ = self.cloud_svc();
-        self.cloud_svc_client.get_mut().unwrap()
-    }
-    /// Get the underlying test service client mutably
-    pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {
-        let _ = self.test_svc();
-        self.test_svc_client.get_mut().unwrap()
-    }
-    /// Get the underlying health service client mutably
-    pub fn health_svc_mut(&mut self) -> &mut HealthClient<T> {
-        let _ = self.health_svc();
-        self.health_svc_client.get_mut().unwrap()
+    pub fn health_svc(&self) -> Box<dyn HealthService> {
+        self.health_svc_client.clone()
     }
 }
 
-/// A [WorkflowServiceClient] with the default interceptors attached.
-pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
-/// An [OperatorServiceClient] with the default interceptors attached.
-pub type OperatorServiceClientWithMetrics = OperatorServiceClient<InterceptedMetricsSvc>;
-/// An [TestServiceClient] with the default interceptors attached.
-pub type TestServiceClientWithMetrics = TestServiceClient<InterceptedMetricsSvc>;
-/// A [TemporalServiceClient] with the default interceptors attached.
-pub type TemporalServiceClientWithMetrics = TemporalServiceClient<InterceptedMetricsSvc>;
-type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
-
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     /// Client for interacting with workflow service
-    inner: ConfiguredClient<TemporalServiceClientWithMetrics>,
+    inner: ConfiguredClient<TemporalServiceClient>,
     /// The namespace this client interacts with
     namespace: String,
 }
 
 impl Client {
     /// Create a new client from an existing configured lower level client and a namespace
-    pub fn new(
-        client: ConfiguredClient<TemporalServiceClientWithMetrics>,
-        namespace: String,
-    ) -> Self {
+    pub fn new(client: ConfiguredClient<TemporalServiceClient>, namespace: String) -> Self {
         Client {
             inner: client,
             namespace,
         }
-    }
-
-    /// Return an auto-retrying version of the underling grpc client (instrumented with metrics
-    /// collection, if enabled).
-    ///
-    /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
-    /// clones will keep re-using the same channel.
-    pub fn raw_retry_client(&self) -> RetryClient<WorkflowServiceClientWithMetrics> {
-        RetryClient::new(
-            self.raw_client().clone(),
-            self.inner.options.retry_config.clone(),
-        )
-    }
-
-    /// Access the underling grpc client. This raw client is not bound to a specific namespace.
-    ///
-    /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
-    /// clones will keep re-using the same channel.
-    pub fn raw_client(&self) -> &WorkflowServiceClientWithMetrics {
-        self.inner.workflow_svc()
     }
 
     /// Return the options this client was initialized with
@@ -897,12 +858,12 @@ impl Client {
     }
 
     /// Returns a reference to the underlying client
-    pub fn inner(&self) -> &ConfiguredClient<TemporalServiceClientWithMetrics> {
+    pub fn inner(&self) -> &ConfiguredClient<TemporalServiceClient> {
         &self.inner
     }
 
     /// Consumes self and returns the underlying client
-    pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClientWithMetrics> {
+    pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClient> {
         self.inner
     }
 }
@@ -1378,15 +1339,7 @@ impl From<common::v1::Priority> for Priority {
 #[async_trait::async_trait]
 impl<T> WorkflowClientTrait for T
 where
-    T: RawClientLike + NamespacedClient + Clone + Send + Sync + 'static,
-    <Self as RawClientLike>::SvcType: GrpcService<Body> + Send + Clone + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody:
-    tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Error:
-    Into<tonic::codegen::StdError>,
-    <<Self as RawClientLike>::SvcType as GrpcService<Body>>::Future: Send,
-    <<<Self as RawClientLike>::SvcType as GrpcService<Body>>::ResponseBody
-    as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+    T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
 {
     async fn start_workflow(
         &self,
@@ -1399,35 +1352,38 @@ where
     ) -> Result<StartWorkflowExecutionResponse> {
         Ok(self
             .clone()
-            .start_workflow_execution(StartWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                input: input.into_payloads(),
-                workflow_id,
-                workflow_type: Some(WorkflowType {
-                    name: workflow_type,
-                }),
-                task_queue: Some(TaskQueue {
-                    name: task_queue,
-                    kind: TaskQueueKind::Unspecified as i32,
-                    normal_name: "".to_string(),
-                }),
-                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                workflow_id_conflict_policy: options.id_conflict_policy as i32,
-                workflow_execution_timeout: options
-                    .execution_timeout
-                    .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
-                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                search_attributes: options.search_attributes.map(|d| d.into()),
-                cron_schedule: options.cron_schedule.unwrap_or_default(),
-                request_eager_execution: options.enable_eager_workflow_start,
-                retry_policy: options.retry_policy,
-                links: options.links,
-                completion_callbacks: options.completion_callbacks,
-                priority: options.priority.map(Into::into),
-                ..Default::default()
-            })
+            .start_workflow_execution(
+                StartWorkflowExecutionRequest {
+                    namespace: self.namespace(),
+                    input: input.into_payloads(),
+                    workflow_id,
+                    workflow_type: Some(WorkflowType {
+                        name: workflow_type,
+                    }),
+                    task_queue: Some(TaskQueue {
+                        name: task_queue,
+                        kind: TaskQueueKind::Unspecified as i32,
+                        normal_name: "".to_string(),
+                    }),
+                    request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                    workflow_id_conflict_policy: options.id_conflict_policy as i32,
+                    workflow_execution_timeout: options
+                        .execution_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                    search_attributes: options.search_attributes.map(|d| d.into()),
+                    cron_schedule: options.cron_schedule.unwrap_or_default(),
+                    request_eager_execution: options.enable_eager_workflow_start,
+                    retry_policy: options.retry_policy,
+                    links: options.links,
+                    completion_callbacks: options.completion_callbacks,
+                    priority: options.priority.map(Into::into),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -1445,7 +1401,7 @@ where
             }),
         };
         Ok(
-            WorkflowService::reset_sticky_task_queue(&mut self.clone(), request)
+            WorkflowService::reset_sticky_task_queue(&mut self.clone(), request.into_request())
                 .await?
                 .into_inner(),
         )
@@ -1456,17 +1412,20 @@ where
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        Ok(self.clone().respond_activity_task_completed(
-            RespondActivityTaskCompletedRequest {
-                task_token: task_token.0,
-                result,
-                identity: self.identity(),
-                namespace: self.namespace(),
-                ..Default::default()
-            },
-        )
-        .await?
-        .into_inner())
+        Ok(self
+            .clone()
+            .respond_activity_task_completed(
+                RespondActivityTaskCompletedRequest {
+                    task_token: task_token.0,
+                    result,
+                    identity: self.identity(),
+                    namespace: self.namespace(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn record_activity_heartbeat(
@@ -1474,16 +1433,19 @@ where
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        Ok(self.clone().record_activity_task_heartbeat(
-            RecordActivityTaskHeartbeatRequest {
-                task_token: task_token.0,
-                details,
-                identity: self.identity(),
-                namespace: self.namespace(),
-            },
-        )
-        .await?
-        .into_inner())
+        Ok(self
+            .clone()
+            .record_activity_task_heartbeat(
+                RecordActivityTaskHeartbeatRequest {
+                    task_token: task_token.0,
+                    details,
+                    identity: self.identity(),
+                    namespace: self.namespace(),
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn cancel_activity_task(
@@ -1491,17 +1453,20 @@ where
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        Ok(self.clone().respond_activity_task_canceled(
-            RespondActivityTaskCanceledRequest {
-                task_token: task_token.0,
-                details,
-                identity: self.identity(),
-                namespace: self.namespace(),
-                ..Default::default()
-            },
-        )
-        .await?
-        .into_inner())
+        Ok(self
+            .clone()
+            .respond_activity_task_canceled(
+                RespondActivityTaskCanceledRequest {
+                    task_token: task_token.0,
+                    details,
+                    identity: self.identity(),
+                    namespace: self.namespace(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn signal_workflow_execution(
@@ -1512,7 +1477,8 @@ where
         payloads: Option<Payloads>,
         request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse> {
-        Ok(WorkflowService::signal_workflow_execution(&mut self.clone(),
+        Ok(WorkflowService::signal_workflow_execution(
+            &mut self.clone(),
             SignalWorkflowExecutionRequest {
                 namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
@@ -1524,7 +1490,8 @@ where
                 identity: self.identity(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 ..Default::default()
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1535,7 +1502,8 @@ where
         options: SignalWithStartOptions,
         workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
-        Ok(WorkflowService::signal_with_start_workflow_execution(&mut self.clone(),
+        Ok(WorkflowService::signal_with_start_workflow_execution(
+            &mut self.clone(),
             SignalWithStartWorkflowExecutionRequest {
                 namespace: self.namespace(),
                 workflow_id: options.workflow_id,
@@ -1567,7 +1535,8 @@ where
                 cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
                 header: options.signal_header,
                 ..Default::default()
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1579,19 +1548,22 @@ where
         run_id: String,
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse> {
-        Ok(self.clone().query_workflow(
-            QueryWorkflowRequest {
-                namespace: self.namespace(),
-                execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id,
-                }),
-                query: Some(query),
-                query_reject_condition: 1,
-            },
-        )
-        .await?
-        .into_inner())
+        Ok(self
+            .clone()
+            .query_workflow(
+                QueryWorkflowRequest {
+                    namespace: self.namespace(),
+                    execution: Some(WorkflowExecution {
+                        workflow_id,
+                        run_id,
+                    }),
+                    query: Some(query),
+                    query_reject_condition: 1,
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn describe_workflow_execution(
@@ -1599,14 +1571,16 @@ where
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse> {
-        Ok(WorkflowService::describe_workflow_execution(&mut self.clone(),
+        Ok(WorkflowService::describe_workflow_execution(
+            &mut self.clone(),
             DescribeWorkflowExecutionRequest {
                 namespace: self.namespace(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1618,7 +1592,8 @@ where
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        Ok(WorkflowService::get_workflow_execution_history(&mut self.clone(),
+        Ok(WorkflowService::get_workflow_execution_history(
+            &mut self.clone(),
             GetWorkflowExecutionHistoryRequest {
                 namespace: self.namespace(),
                 execution: Some(WorkflowExecution {
@@ -1627,7 +1602,8 @@ where
                 }),
                 next_page_token: page_token,
                 ..Default::default()
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1640,22 +1616,25 @@ where
         reason: String,
         request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
-        Ok(self.clone().request_cancel_workflow_execution(
-            RequestCancelWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id: run_id.unwrap_or_default(),
-                }),
-                identity: self.identity(),
-                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                first_execution_run_id: "".to_string(),
-                reason,
-                links: vec![],
-            },
-        )
-        .await?
-        .into_inner())
+        Ok(self
+            .clone()
+            .request_cancel_workflow_execution(
+                RequestCancelWorkflowExecutionRequest {
+                    namespace: self.namespace(),
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id,
+                        run_id: run_id.unwrap_or_default(),
+                    }),
+                    identity: self.identity(),
+                    request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    first_execution_run_id: "".to_string(),
+                    reason,
+                    links: vec![],
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn terminate_workflow_execution(
@@ -1663,7 +1642,8 @@ where
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse> {
-        Ok(WorkflowService::terminate_workflow_execution(&mut self.clone(),
+        Ok(WorkflowService::terminate_workflow_execution(
+            &mut self.clone(),
             TerminateWorkflowExecutionRequest {
                 namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
@@ -1675,7 +1655,8 @@ where
                 identity: self.identity(),
                 first_execution_run_id: "".to_string(),
                 links: vec![],
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1687,23 +1668,25 @@ where
     ) -> Result<RegisterNamespaceResponse> {
         let req = Into::<RegisterNamespaceRequest>::into(options);
         Ok(
-            WorkflowService::register_namespace(&mut self.clone(),req)
+            WorkflowService::register_namespace(&mut self.clone(), req.into_request())
                 .await?
                 .into_inner(),
         )
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        Ok(WorkflowService::list_namespaces(&mut self.clone(),
-            ListNamespacesRequest::default(),
+        Ok(WorkflowService::list_namespaces(
+            &mut self.clone(),
+            ListNamespacesRequest::default().into_request(),
         )
         .await?
         .into_inner())
     }
 
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
-        Ok(WorkflowService::describe_namespace(&mut self.clone(),
-            namespace.into_describe_namespace_request(),
+        Ok(WorkflowService::describe_namespace(
+            &mut self.clone(),
+            namespace.into_describe_namespace_request().into_request(),
         )
         .await?
         .into_inner())
@@ -1716,14 +1699,16 @@ where
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_open_workflow_executions(&mut self.clone(),
+        Ok(WorkflowService::list_open_workflow_executions(
+            &mut self.clone(),
             ListOpenWorkflowExecutionsRequest {
                 namespace: self.namespace(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
                 filters,
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1736,14 +1721,16 @@ where
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_closed_workflow_executions(&mut self.clone(),
+        Ok(WorkflowService::list_closed_workflow_executions(
+            &mut self.clone(),
             ListClosedWorkflowExecutionsRequest {
                 namespace: self.namespace(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
                 filters,
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1755,13 +1742,15 @@ where
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_workflow_executions(&mut self.clone(),
+        Ok(WorkflowService::list_workflow_executions(
+            &mut self.clone(),
             ListWorkflowExecutionsRequest {
                 namespace: self.namespace(),
                 page_size,
                 next_page_token,
                 query,
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1773,21 +1762,24 @@ where
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListArchivedWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_archived_workflow_executions(&mut self.clone(),
+        Ok(WorkflowService::list_archived_workflow_executions(
+            &mut self.clone(),
             ListArchivedWorkflowExecutionsRequest {
                 namespace: self.namespace(),
                 page_size,
                 next_page_token,
                 query,
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
     }
 
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
-        Ok(WorkflowService::get_search_attributes(&mut self.clone(),
-            GetSearchAttributesRequest {},
+        Ok(WorkflowService::get_search_attributes(
+            &mut self.clone(),
+            GetSearchAttributesRequest {}.into_request(),
         )
         .await?
         .into_inner())
@@ -1801,7 +1793,8 @@ where
         wait_policy: update::v1::WaitPolicy,
         args: Option<Payloads>,
     ) -> Result<UpdateWorkflowExecutionResponse> {
-        Ok(WorkflowService::update_workflow_execution(&mut self.clone(),
+        Ok(WorkflowService::update_workflow_execution(
+            &mut self.clone(),
             UpdateWorkflowExecutionRequest {
                 namespace: self.namespace(),
                 workflow_execution: Some(WorkflowExecution {
@@ -1821,7 +1814,8 @@ where
                     }),
                 }),
                 ..Default::default()
-            },
+            }
+            .into_request(),
         )
         .await?
         .into_inner())
@@ -1829,17 +1823,9 @@ where
 }
 
 mod sealed {
-    use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowClientTrait};
-
-    pub trait WfHandleClient:
-        WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
-    {
-    }
-
-    impl<T> WfHandleClient for T where
-        T: WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
-    {
-    }
+    use crate::{WorkflowClientTrait, WorkflowService};
+    pub trait WfHandleClient: WorkflowClientTrait + WorkflowService {}
+    impl<T> WfHandleClient for T where T: WorkflowClientTrait + WorkflowService {}
 }
 
 /// Additional methods for workflow clients

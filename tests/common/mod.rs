@@ -65,6 +65,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
+use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 
@@ -256,8 +257,7 @@ impl CoreWfStarter {
                 .get_client()
                 .inner()
                 .workflow_svc()
-                .clone()
-                .get_cluster_info(GetClusterInfoRequest::default())
+                .get_cluster_info(GetClusterInfoRequest::default().into_request())
                 .await;
             let srv_ver = semver::Version::parse(
                 &clustinfo
