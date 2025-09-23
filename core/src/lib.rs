@@ -237,7 +237,7 @@ pub struct RuntimeOptions {
     telemetry_options: TelemetryOptions,
     /// Optional worker heartbeat interval - This configures the heartbeat setting of all
     /// workers created using this runtime.
-    #[builder(default = Some(Duration::from_secs(60)))]
+    #[builder(default = "Some(Duration::from_secs(60))")]
     heartbeat_interval: Option<Duration>,
 }
 
