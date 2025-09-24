@@ -150,6 +150,7 @@ impl WorkerTrait for Worker {
 
     #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollError> {
+        info!("Worker activity poll loop");
         loop {
             match self.activity_poll().await.transpose() {
                 Some(r) => break r,
@@ -654,10 +655,12 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollError> {
+        info!("Core activity poll");
         let local_activities_complete = self.local_activities_complete.load(Ordering::Relaxed);
         let non_local_activities_complete =
             self.non_local_activities_complete.load(Ordering::Relaxed);
         if local_activities_complete && non_local_activities_complete {
+            info!("Core activity poll shutdown error");
             return Err(PollError::ShutDown);
         }
         let act_mgr_poll = async {

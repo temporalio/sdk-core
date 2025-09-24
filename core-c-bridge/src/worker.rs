@@ -32,6 +32,7 @@ use tokio::sync::{
     oneshot,
 };
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::info;
 
 #[repr(C)]
 pub struct WorkerOptions {
@@ -577,11 +578,15 @@ pub extern "C" fn temporal_core_worker_poll_activity_task(
     user_data: *mut libc::c_void,
     callback: WorkerPollCallback,
 ) {
+    info!("Worker poll activity task");
     let worker = unsafe { &*worker };
     let user_data = UserDataHandle(user_data);
     let core_worker = worker.worker.as_ref().unwrap().clone();
     worker.runtime.core.tokio_handle().spawn(async move {
-        let (success, fail) = match core_worker.poll_activity_task().await {
+        info!("Core worker poll activity task");
+        let res =  core_worker.poll_activity_task().await;
+        info!("Core worker polled activity task");
+        let (success, fail) = match res {
             Ok(act) => (
                 ByteArray::from_vec(act.encode_to_vec())
                     .into_raw()
