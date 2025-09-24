@@ -664,7 +664,7 @@ where
                         self.start_tasks_stream_complete.cancelled().await;
                         info!("Notify outstanding");
                         while !outstanding_tasks_clone.is_empty() {
-                            let keys: Vec<TaskToken> = outstanding_tasks_clone.iter().map(|x| x.key().clone()).collect()
+                            let keys: Vec<TaskToken> = outstanding_tasks_clone.iter().map(|x| x.key().clone()).collect();
                             info!("Waiting for outstanding: {:?}", keys);
                             self.complete_notify.notified().await
                         }
