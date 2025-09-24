@@ -401,8 +401,6 @@ impl WorkerActivityTasks {
                     }
                 };
 
-                self.complete_notify.notify_waiters();
-
                 if let Some(e) = maybe_net_err {
                     if e.code() == tonic::Code::NotFound {
                         warn!(task_token=?task_token, details=?e, "Activity not found on \
@@ -419,6 +417,8 @@ impl WorkerActivityTasks {
                 &task_token
             );
         }
+        
+        self.complete_notify.notify_waiters();
     }
 
     /// Attempt to record an activity heartbeat
