@@ -88,10 +88,7 @@ impl WorkerInterceptor for FailOnNondeterminismInterceptor {
             activation.eviction_reason(),
             Some(EvictionReason::Nondeterminism)
         ) {
-            bail!(
-                "Workflow is being evicted because of nondeterminism! {}",
-                activation
-            );
+            bail!("Workflow is being evicted because of nondeterminism! {activation}");
         }
         Ok(())
     }

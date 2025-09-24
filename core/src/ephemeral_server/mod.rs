@@ -241,8 +241,7 @@ impl EphemeralServer {
             }
         }
         Err(anyhow!(
-            "Failed connecting to test server after 5 seconds, last error: {:?}",
-            last_error
+            "Failed connecting to test server after 5 seconds, last error: {last_error:?}"
         ))
     }
 
@@ -368,7 +367,7 @@ impl EphemeralExe {
                 let arch = match std::env::consts::ARCH {
                     "x86_64" => "amd64",
                     "arm" | "aarch64" => "arm64",
-                    other => return Err(anyhow!("Unsupported arch: {}", other)),
+                    other => return Err(anyhow!("Unsupported arch: {other}")),
                 };
                 let mut get_info_params = vec![("arch", arch), ("platform", platform)];
                 if let Some(format) = preferred_format {

@@ -135,7 +135,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     _cant_construct_me: (),
                 })
             }
-            _ => Err(anyhow!("Unable to interpret poll response: {:?}", value)),
+            _ => Err(anyhow!("Unable to interpret poll response: {value:?}",)),
         }
     }
 }

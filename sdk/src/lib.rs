@@ -498,11 +498,7 @@ impl WorkflowHalf {
 
             // In all other cases, we want to error as the runtime could be in an inconsistent state
             // at this point.
-            bail!(
-                "Got activation {:?} for unknown workflow {}",
-                activation,
-                run_id
-            );
+            bail!("Got activation {activation:?} for unknown workflow {run_id}");
         };
 
         Ok(res)
