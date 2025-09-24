@@ -444,9 +444,9 @@ impl<C> ConfiguredClient<C> {
         self.workers.clone()
     }
 
-    /// Returns the worker set key, this should be unique across each client
-    pub fn worker_set_key(&self) -> Uuid {
-        self.workers.worker_set_key()
+    /// Returns the worker grouping key, this should be unique across each client
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.workers.worker_grouping_key()
     }
 }
 
@@ -910,8 +910,8 @@ impl Client {
     }
 
     /// Returns the client-wide key
-    pub fn worker_set_key(&self) -> Uuid {
-        self.inner.worker_set_key()
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.inner.worker_grouping_key()
     }
 }
 

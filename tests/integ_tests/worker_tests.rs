@@ -1,3 +1,4 @@
+use crate::common::get_integ_runtime_options;
 use crate::{
     common::{CoreWfStarter, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg},
     shared_tests,
@@ -15,7 +16,7 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext, interceptors::WorkerInterceptor};
 use temporal_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder, init_worker,
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker,
     test_help::{
         FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
         hist_to_poll_resp, mock_worker, mock_worker_client,
@@ -61,11 +62,9 @@ use uuid::Uuid;
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
     let opts = get_integ_server_options();
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(get_integ_telem_options())
-        .build()
-        .unwrap();
-    let runtime = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let runtime =
+        CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
+            .unwrap();
     let retrying_client = opts
         .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
         .await

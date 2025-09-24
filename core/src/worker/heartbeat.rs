@@ -39,7 +39,7 @@ impl SharedNamespaceWorker {
             .namespace(namespace.clone())
             .task_queue(format!(
                 "temporal-sys/worker-commands/{namespace}/{}",
-                client.worker_set_key(),
+                client.worker_grouping_key(),
             ))
             .no_remote_activities(true)
             .max_outstanding_nexus_tasks(5_usize)

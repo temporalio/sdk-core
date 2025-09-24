@@ -154,67 +154,6 @@ pub(crate) struct WorkerTelemetry {
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
 }
 
-struct WorkerHeartbeatManager {
-    /// Heartbeat interval, defaults to 60s
-    heartbeat_interval: Duration,
-    /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
-    telemetry: Option<WorkerTelemetry>,
-    /// Heartbeat callback
-    heartbeat_callback: Mutex<Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>>,
-}
-
-impl WorkerHeartbeatManager {
-    fn new(
-        config: WorkerConfig,
-        worker_instance_key: Uuid,
-        heartbeat_interval: Duration,
-        telemetry_instance: Option<WorkerTelemetry>,
-    ) -> Self {
-        let worker_instance_key_clone = worker_instance_key.to_string();
-        let task_queue = config.task_queue.clone();
-
-        // TODO: requires the metrics changes to get the rest of these fields
-        let worker_heartbeat_callback: HeartbeatFn = Box::new(move || {
-            WorkerHeartbeat {
-                worker_instance_key: worker_instance_key_clone.clone(),
-                host_info: Some(WorkerHostInfo {
-                    host_name: gethostname().to_string_lossy().to_string(),
-                    process_id: std::process::id().to_string(),
-                    ..Default::default()
-                }),
-                task_queue: task_queue.clone(),
-                deployment_version: None,
-
-                status: 0,
-                start_time: Some(std::time::SystemTime::now().into()),
-                workflow_task_slots_info: None,
-                activity_task_slots_info: None,
-                nexus_task_slots_info: None,
-                local_activity_slots_info: None,
-                workflow_poller_info: None,
-                workflow_sticky_poller_info: None,
-                activity_poller_info: None,
-                nexus_poller_info: None,
-                total_sticky_cache_hit: 0,
-                total_sticky_cache_miss: 0,
-                current_sticky_cache_size: 0,
-                plugins: vec![],
-
-                // sdk_name, sdk_version, and worker_identity must be set by
-                // SharedNamespaceWorker because they rely on the client, and
-                // need to be pulled from the current client used by SharedNamespaceWorker
-                ..Default::default()
-            }
-        });
-
-        WorkerHeartbeatManager {
-            heartbeat_interval,
-            telemetry: telemetry_instance,
-            heartbeat_callback: Mutex::new(Some(worker_heartbeat_callback)),
-        }
-    }
-}
-
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn validate(&self) -> Result<(), WorkerValidationError> {
@@ -1064,6 +1003,67 @@ impl ClientWorker for ClientWorkerRegistrator {
     fn register_callback(&self, callback: HeartbeatCallback) {
         if let Some(hb_mgr) = self.heartbeat_manager.as_ref() {
             hb_mgr.heartbeat_callback.lock().replace(callback);
+        }
+    }
+}
+
+struct WorkerHeartbeatManager {
+    /// Heartbeat interval, defaults to 60s
+    heartbeat_interval: Duration,
+    /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
+    telemetry: Option<WorkerTelemetry>,
+    /// Heartbeat callback
+    heartbeat_callback: Mutex<Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>>,
+}
+
+impl WorkerHeartbeatManager {
+    fn new(
+        config: WorkerConfig,
+        worker_instance_key: Uuid,
+        heartbeat_interval: Duration,
+        telemetry_instance: Option<WorkerTelemetry>,
+    ) -> Self {
+        let worker_instance_key_clone = worker_instance_key.to_string();
+        let task_queue = config.task_queue.clone();
+
+        // TODO: requires the metrics changes to get the rest of these fields
+        let worker_heartbeat_callback: HeartbeatFn = Box::new(move || {
+            WorkerHeartbeat {
+                worker_instance_key: worker_instance_key_clone.clone(),
+                host_info: Some(WorkerHostInfo {
+                    host_name: gethostname().to_string_lossy().to_string(),
+                    process_id: std::process::id().to_string(),
+                    ..Default::default()
+                }),
+                task_queue: task_queue.clone(),
+                deployment_version: None,
+
+                status: 0,
+                start_time: Some(std::time::SystemTime::now().into()),
+                workflow_task_slots_info: None,
+                activity_task_slots_info: None,
+                nexus_task_slots_info: None,
+                local_activity_slots_info: None,
+                workflow_poller_info: None,
+                workflow_sticky_poller_info: None,
+                activity_poller_info: None,
+                nexus_poller_info: None,
+                total_sticky_cache_hit: 0,
+                total_sticky_cache_miss: 0,
+                current_sticky_cache_size: 0,
+                plugins: vec![],
+
+                // sdk_name, sdk_version, and worker_identity must be set by
+                // SharedNamespaceWorker because they rely on the client, and
+                // need to be pulled from the current client used by SharedNamespaceWorker
+                ..Default::default()
+            }
+        });
+
+        WorkerHeartbeatManager {
+            heartbeat_interval,
+            telemetry: telemetry_instance,
+            heartbeat_callback: Mutex::new(Some(worker_heartbeat_callback)),
         }
     }
 }

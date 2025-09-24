@@ -762,8 +762,15 @@ async fn docker_metrics_with_prometheus(
         assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
         assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
         assert_eq!(data[0]["metric"]["job"], "otel-collector");
+        // Worker heartbeating nexus worker
         assert!(
             data[0]["metric"]["task_queue"]
+                .as_str()
+                .unwrap()
+                .starts_with("temporal-sys/worker-commands/default/")
+        );
+        assert!(
+            data[1]["metric"]["task_queue"]
                 .as_str()
                 .unwrap()
                 .starts_with(test_name)

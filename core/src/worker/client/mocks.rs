@@ -35,7 +35,7 @@ pub fn mock_worker_client() -> MockWorkerClient {
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r.expect_identity()
         .returning(|| "test-identity".to_string());
-    r.expect_worker_set_key().returning(Uuid::new_v4);
+    r.expect_worker_grouping_key().returning(Uuid::new_v4);
     r
 }
 
@@ -163,6 +163,6 @@ mockall::mock! {
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
         fn identity(&self) -> String;
-        fn worker_set_key(&self) -> Uuid;
+        fn worker_grouping_key(&self) -> Uuid;
     }
 }

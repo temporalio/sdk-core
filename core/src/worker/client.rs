@@ -231,8 +231,8 @@ pub trait WorkerClient: Sync + Send {
     fn sdk_name_and_version(&self) -> (String, String);
     /// Get worker identity
     fn identity(&self) -> String;
-    /// Get worker set key
-    fn worker_set_key(&self) -> Uuid;
+    /// Get worker grouping key
+    fn worker_grouping_key(&self) -> Uuid;
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -702,8 +702,11 @@ impl WorkerClient for WorkerClientBag {
         self.identity.clone()
     }
 
-    fn worker_set_key(&self) -> Uuid {
-        self.replaceable_client.read().get_client().worker_set_key()
+    fn worker_grouping_key(&self) -> Uuid {
+        self.replaceable_client
+            .read()
+            .get_client()
+            .worker_grouping_key()
     }
 }
 

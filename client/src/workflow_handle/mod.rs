@@ -200,8 +200,7 @@ where
                 o => Err(anyhow!(
                     "Server returned an event that didn't match the CloseEvent filter. \
                      This is either a server bug or a new event the SDK does not understand. \
-                     Event details: {:?}",
-                    o
+                     Event details: {o:?}"
                 )),
             };
         }

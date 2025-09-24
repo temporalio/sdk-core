@@ -121,10 +121,7 @@ impl ClientWorkerSetImpl {
             .all_workers
             .remove(&worker_instance_key)
             .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Worker with worker_instance_key {} not found",
-                    worker_instance_key
-                )
+                anyhow::anyhow!("Worker with worker_instance_key {worker_instance_key} not found")
             })?;
 
         let slot_key = SlotKey::new(
@@ -151,8 +148,8 @@ impl ClientWorkerSetImpl {
     }
 
     #[cfg(test)]
-    fn num_providers(&self) -> (usize, usize) {
-        (self.slot_providers.len(), self.slot_providers.len())
+    fn num_providers(&self) -> usize {
+        self.slot_providers.len()
     }
 
     #[cfg(test)]
@@ -182,10 +179,10 @@ pub trait SharedNamespaceWorkerTrait {
 /// Enables local workers to make themselves visible to a shared client instance.
 ///
 /// For slot managing, there can only be one worker registered per
-/// namespace+queue_name+client, others will get ignored.
+/// namespace+queue_name+client, others will return an error.
 /// It also provides a convenient method to find compatible slots within the collection.
 pub struct ClientWorkerSet {
-    worker_set_key: Uuid,
+    worker_grouping_key: Uuid,
     worker_manager: RwLock<ClientWorkerSetImpl>,
 }
 
@@ -199,7 +196,7 @@ impl ClientWorkerSet {
     /// Factory method.
     pub fn new() -> Self {
         Self {
-            worker_set_key: Uuid::new_v4(),
+            worker_grouping_key: Uuid::new_v4(),
             worker_manager: RwLock::new(ClientWorkerSetImpl::new()),
         }
     }
@@ -231,15 +228,15 @@ impl ClientWorkerSet {
         self.worker_manager.write().register(worker)
     }
 
-    /// Returns the worker set key, which is unique for each worker.
-    pub fn worker_set_key(&self) -> Uuid {
-        self.worker_set_key
+    /// Returns the worker grouping key, which is unique for each worker.
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.worker_grouping_key
     }
 
     #[cfg(test)]
     /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
     /// There is only one provider per bucket so `num_providers` should be equal to `num_buckets`.
-    pub fn num_providers(&self) -> (usize, usize) {
+    pub fn num_providers(&self) -> usize {
         self.worker_manager.read().num_providers()
     }
 
@@ -253,7 +250,7 @@ impl ClientWorkerSet {
 impl std::fmt::Debug for ClientWorkerSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ClientWorkerSet")
-            .field("worker_set_key", &self.worker_set_key)
+            .field("worker_grouping_key", &self.worker_grouping_key)
             .finish()
     }
 }
@@ -366,7 +363,7 @@ mod tests {
         }
 
         assert_eq!(successful_registrations, 3);
-        assert_eq!((3, 3), manager.num_providers());
+        assert_eq!(3, manager.num_providers());
 
         let count = worker_keys.iter().fold(0, |count, key| {
             manager.unregister_worker(*key).unwrap();
@@ -376,7 +373,7 @@ mod tests {
             count + 1
         });
         assert_eq!(3, count);
-        assert_eq!((0, 0), manager.num_providers());
+        assert_eq!(0, manager.num_providers());
     }
 
     struct MockSharedNamespaceWorker {
@@ -504,7 +501,7 @@ mod tests {
                 .contains("Registration of multiple workers on the same namespace and task queue")
         );
 
-        assert_eq!((1, 1), manager.num_providers());
+        assert_eq!(1, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 1);
 
         let impl_ref = manager.worker_manager.read();
@@ -534,7 +531,7 @@ mod tests {
         manager.register_worker(Arc::new(worker1)).unwrap();
         manager.register_worker(Arc::new(worker2)).unwrap();
 
-        assert_eq!((2, 2), manager.num_providers());
+        assert_eq!(2, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 2);
 
         let impl_ref = manager.worker_manager.read();
@@ -564,7 +561,7 @@ mod tests {
         manager.register_worker(Arc::new(worker1)).unwrap();
         manager.register_worker(Arc::new(worker2)).unwrap();
 
-        assert_eq!((2, 2), manager.num_providers());
+        assert_eq!(2, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 2);
 
         let impl_ref = manager.worker_manager.read();
@@ -597,7 +594,7 @@ mod tests {
         manager.register_worker(Arc::new(worker2)).unwrap();
 
         // Verify initial state: 2 slot providers, 2 heartbeat workers, 1 shared worker
-        assert_eq!((2, 2), manager.num_providers());
+        assert_eq!(2, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 2);
 
         let impl_ref = manager.worker_manager.read();
@@ -617,7 +614,7 @@ mod tests {
         manager.unregister_worker(worker_instance_key1).unwrap();
 
         // After unregistering first worker: 1 slot provider, 1 heartbeat worker, shared worker still exists
-        assert_eq!((1, 1), manager.num_providers());
+        assert_eq!(1, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 1);
 
         let impl_ref = manager.worker_manager.read();
@@ -637,7 +634,7 @@ mod tests {
         manager.unregister_worker(worker_instance_key2).unwrap();
 
         // After unregistering last worker: 0 slot providers, 0 heartbeat workers, shared worker is removed
-        assert_eq!((0, 0), manager.num_providers());
+        assert_eq!(0, manager.num_providers());
         assert_eq!(manager.num_heartbeat_workers(), 0);
 
         let impl_ref = manager.worker_manager.read();
