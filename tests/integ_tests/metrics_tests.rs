@@ -1,3 +1,4 @@
+use crate::common::get_integ_runtime_options;
 use crate::{
     common::{
         ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
@@ -97,7 +98,7 @@ async fn prometheus_metrics_exported(
         });
     }
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
         .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
@@ -148,7 +149,7 @@ async fn prometheus_metrics_exported(
 async fn one_slot_worker_reports_available_slot() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let tq = "one_slot_worker_tq";
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
 
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
@@ -401,7 +402,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     completion: workflow_command::Variant,
 ) {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
     // Disable cache to ensure replay happens completely
@@ -523,8 +524,11 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
 
 #[test]
 fn runtime_new() {
-    let mut rt =
-        CoreRuntime::new(get_integ_telem_options(), TokioRuntimeBuilder::default()).unwrap();
+    let mut rt = CoreRuntime::new(
+        get_integ_runtime_options(get_integ_telem_options()),
+        TokioRuntimeBuilder::default(),
+    )
+    .unwrap();
     let handle = rt.tokio_handle();
     let _rt = handle.enter();
     let (telemopts, addr, _aborter) = prom_metrics(None);
@@ -570,7 +574,7 @@ async fn latency_metrics(
             .build()
             .unwrap(),
     ));
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("latency_metrics", rt);
     let worker = starter.get_worker().await;
     starter.start_wf().await;
@@ -624,7 +628,7 @@ async fn latency_metrics(
 #[tokio::test]
 async fn request_fail_codes() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
         .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
@@ -667,8 +671,8 @@ async fn request_fail_codes_otel() {
     let mut telemopts = TelemetryOptionsBuilder::default();
     let exporter = Arc::new(exporter);
     telemopts.metrics(exporter as Arc<dyn CoreMeter>);
-
-    let rt = CoreRuntime::new_assume_tokio(telemopts.build().unwrap()).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build().unwrap()))
+        .unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
         .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
@@ -718,7 +722,7 @@ async fn docker_metrics_with_prometheus(
         .metric_prefix(test_uid.clone())
         .build()
         .unwrap();
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let test_name = "docker_metrics_with_prometheus";
     let mut starter = CoreWfStarter::new_with_runtime(test_name, rt);
     let worker = starter.get_worker().await;
@@ -758,8 +762,15 @@ async fn docker_metrics_with_prometheus(
         assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
         assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
         assert_eq!(data[0]["metric"]["job"], "otel-collector");
+        // Worker heartbeating nexus worker
         assert!(
             data[0]["metric"]["task_queue"]
+                .as_str()
+                .unwrap()
+                .starts_with("temporal-sys/worker-commands/default/")
+        );
+        assert!(
+            data[1]["metric"]["task_queue"]
                 .as_str()
                 .unwrap()
                 .starts_with(test_name)
@@ -772,7 +783,7 @@ async fn docker_metrics_with_prometheus(
 #[tokio::test]
 async fn activity_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter
@@ -906,7 +917,7 @@ async fn activity_metrics() {
 #[tokio::test]
 async fn nexus_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nexus_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.no_remote_activities(true);
@@ -1083,7 +1094,7 @@ async fn nexus_metrics() {
 #[tokio::test]
 async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.no_remote_activities(true);
@@ -1166,7 +1177,7 @@ where
 #[tokio::test]
 async fn metrics_available_from_custom_slot_supplier() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("metrics_available_from_custom_slot_supplier", rt);
     starter.worker_config.no_remote_activities(true);

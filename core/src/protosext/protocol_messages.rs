@@ -116,7 +116,7 @@ impl TryFrom<Option<prost_types::Any>> for IncomingProtocolMessageBody {
                     v.unpack_as(update::v1::Request::default())?.try_into()?,
                 )
             }
-            o => bail!("Could not understand protocol message type {}", o),
+            o => bail!("Could not understand protocol message type {o}"),
         })
     }
 }

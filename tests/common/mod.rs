@@ -39,8 +39,8 @@ use temporal_sdk::{
     },
 };
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
-    init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
+    WorkerConfigBuilder, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
@@ -164,8 +164,12 @@ pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }
     Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
+        let runtime_options = RuntimeOptionsBuilder::default()
+            .telemetry_options(telemetry_options)
+            .build()
+            .expect("Runtime options build cleanly");
         let rt =
-            CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
+            CoreRuntime::new_assume_tokio(runtime_options).expect("Core runtime inits cleanly");
         if let Some(sub) = rt.telemetry().trace_subscriber() {
             let _ = tracing::subscriber::set_global_default(sub);
         }
@@ -314,8 +318,7 @@ impl CoreWfStarter {
 
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
-        let tq = w.get_config().task_queue.clone();
-        let mut w = TestWorker::new(w, tq);
+        let mut w = TestWorker::new(w);
         w.client = Some(self.get_client().await);
 
         w
@@ -477,8 +480,11 @@ pub(crate) struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
-        let inner = Worker::new_from_core(core_worker.clone(), task_queue);
+    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>) -> Self {
+        let inner = Worker::new_from_core(
+            core_worker.clone(),
+            core_worker.get_config().task_queue.clone(),
+        );
         Self {
             inner,
             core_worker,
@@ -807,6 +813,13 @@ pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
     .unwrap()
 }
 
+pub(crate) fn get_integ_runtime_options(telemopts: TelemetryOptions) -> RuntimeOptions {
+    RuntimeOptionsBuilder::default()
+        .telemetry_options(telemopts)
+        .build()
+        .unwrap()
+}
+
 #[async_trait::async_trait(?Send)]
 pub(crate) trait WorkflowHandleExt {
     async fn fetch_history_and_replay(
@@ -932,10 +945,7 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(
-        Arc::new(core),
-        temporal_sdk_core::test_help::TEST_Q.to_string(),
-    )
+    TestWorker::new(Arc::new(core))
 }
 
 #[derive(Default)]

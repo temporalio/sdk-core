@@ -1,17 +1,12 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::{
-    abstractions::dbg_panic, protosext::legacy_query_failure, worker::heartbeat::HeartbeatFn,
-};
+use crate::protosext::legacy_query_failure;
 use parking_lot::RwLock;
-use std::{
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
-    SlotManager, WorkflowService,
+    Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
+    RetryClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
 use temporal_sdk_core_protos::{
@@ -38,6 +33,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use uuid::Uuid;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -52,7 +48,6 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Option<Arc<OnceLock<HeartbeatFn>>>,
 }
 
 impl WorkerClientBag {
@@ -61,14 +56,12 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_data,
         }
     }
 
@@ -129,19 +122,6 @@ impl WorkerClientBag {
             None
         }
     }
-
-    fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        if let Some(heartbeat_data) = self.heartbeat_data.as_ref() {
-            if let Some(hb) = heartbeat_data.get() {
-                hb()
-            } else {
-                dbg_panic!("Heartbeat function never set");
-                None
-            }
-        } else {
-            None
-        }
-    }
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
@@ -165,6 +145,7 @@ pub trait WorkerClient: Sync + Send {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse>;
     /// Complete a workflow task
     async fn complete_workflow_task(
@@ -234,7 +215,8 @@ pub trait WorkerClient: Sync + Send {
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
@@ -242,13 +224,15 @@ pub trait WorkerClient: Sync + Send {
     /// Return server capabilities
     fn capabilities(&self) -> Option<Capabilities>;
     /// Return workers using this client
-    fn workers(&self) -> Arc<SlotManager>;
+    fn workers(&self) -> Arc<ClientWorkerSet>;
     /// Indicates if this is a mock client
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
     /// Get worker identity
-    fn get_identity(&self) -> String;
+    fn identity(&self) -> String;
+    /// Get worker grouping key
+    fn worker_grouping_key(&self) -> Uuid;
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -360,6 +344,7 @@ impl WorkerClient for WorkerClientBag {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        _send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
@@ -372,7 +357,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
+            worker_heartbeat: Vec::new(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -661,7 +646,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: None,
         };
 
         Ok(
@@ -671,24 +656,26 @@ impl WorkerClient for WorkerClientBag {
         )
     }
 
+    async fn record_worker_heartbeat(
+        &self,
+        namespace: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
+    ) -> Result<RecordWorkerHeartbeatResponse> {
+        let request = RecordWorkerHeartbeatRequest {
+            namespace,
+            identity: self.identity.clone(),
+            worker_heartbeat,
+        };
+        Ok(self
+            .cloned_client()
+            .record_worker_heartbeat(request)
+            .await?
+            .into_inner())
+    }
+
     fn replace_client(&self, new_client: RetryClient<Client>) {
         let mut replaceable_client = self.replaceable_client.write();
         *replaceable_client = new_client;
-    }
-
-    async fn record_worker_heartbeat(
-        &self,
-        heartbeat: WorkerHeartbeat,
-    ) -> Result<RecordWorkerHeartbeatResponse> {
-        Ok(self
-            .cloned_client()
-            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: vec![heartbeat],
-            })
-            .await?
-            .into_inner())
     }
 
     fn capabilities(&self) -> Option<Capabilities> {
@@ -696,7 +683,7 @@ impl WorkerClient for WorkerClientBag {
         client.get_client().inner().capabilities().cloned()
     }
 
-    fn workers(&self) -> Arc<SlotManager> {
+    fn workers(&self) -> Arc<ClientWorkerSet> {
         let client = self.replaceable_client.read();
         client.get_client().inner().workers()
     }
@@ -711,8 +698,15 @@ impl WorkerClient for WorkerClientBag {
         (opts.client_name.clone(), opts.client_version.clone())
     }
 
-    fn get_identity(&self) -> String {
+    fn identity(&self) -> String {
         self.identity.clone()
+    }
+
+    fn worker_grouping_key(&self) -> Uuid {
+        self.replaceable_client
+            .read()
+            .get_client()
+            .worker_grouping_key()
     }
 }
 

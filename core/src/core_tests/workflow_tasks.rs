@@ -2996,7 +2996,9 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         Arc::new(mock_client),
         None,
         None,
-    );
+        false,
+    )
+    .unwrap();
 
     for _ in 1..50 {
         let activation = worker.poll_workflow_activation().await.unwrap();

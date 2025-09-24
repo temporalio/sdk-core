@@ -522,11 +522,20 @@ pub extern "C" fn temporal_core_worker_validate(
 pub extern "C" fn temporal_core_worker_replace_client(
     worker: *mut Worker,
     new_client: *mut Client,
-) {
+) -> *const ByteArray {
     let worker = unsafe { &*worker };
     let core_worker = worker.worker.as_ref().expect("missing worker").clone();
     let client = unsafe { &*new_client };
-    core_worker.replace_client(client.core.get_client().clone());
+
+    match core_worker.replace_client(client.core.get_client().clone()) {
+        Ok(()) => std::ptr::null(),
+        Err(err) => worker
+            .runtime
+            .clone()
+            .alloc_utf8(&format!("Replace client failed: {err}"))
+            .into_raw()
+            .cast_const(),
+    }
 }
 
 /// If success or fail are present, they must be freed. They will both be null

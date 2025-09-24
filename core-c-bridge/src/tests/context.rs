@@ -153,6 +153,7 @@ impl Context {
 
         let RuntimeOrFail { runtime, fail } = temporal_core_runtime_new(&RuntimeOptions {
             telemetry: std::ptr::null(),
+            worker_heartbeat_duration_millis: 0,
         });
 
         if let Some(fail) = byte_array_to_string(runtime, fail) {
@@ -162,11 +163,7 @@ impl Context {
                 temporal_core_runtime_free(runtime);
                 ""
             };
-            Err(anyhow!(
-                "Runtime creation failed: {}{}",
-                runtime_is_null,
-                fail
-            ))
+            Err(anyhow!("Runtime creation failed: {runtime_is_null}{fail}"))
         } else if runtime.is_null() {
             Err(anyhow!("Runtime creation failed: runtime is null"))
         } else {
@@ -522,8 +519,7 @@ extern "C" fn ephemeral_server_start_callback(
 
             if let Some(fail) = fail {
                 ContextOperationState::CallbackError(anyhow!(
-                    "Ephemeral server start failed: {}",
-                    fail
+                    "Ephemeral server start failed: {fail}"
                 ))
             } else if server.is_null() {
                 ContextOperationState::CallbackError(anyhow!(
@@ -568,8 +564,7 @@ extern "C" fn ephemeral_server_shutdown_callback(
         let _ = context.complete_operation_catch_unwind(|guard| {
             if let Some(fail) = byte_array_to_string(guard.runtime, std::mem::take(&mut fail)) {
                 ContextOperationState::CallbackError(anyhow!(
-                    "Ephemeral server shutdown failed: {}",
-                    fail
+                    "Ephemeral server shutdown failed: {fail}"
                 ))
             } else {
                 ContextOperationState::CallbackOk(None)
@@ -591,7 +586,7 @@ extern "C" fn client_connect_callback(
     if let Some(context) = user_data.context.upgrade() {
         let _ = context.complete_operation_catch_unwind(|guard| {
             if let Some(fail) = byte_array_to_string(guard.runtime, std::mem::take(&mut fail)) {
-                ContextOperationState::CallbackError(anyhow!("Client connect failed: {}", fail))
+                ContextOperationState::CallbackError(anyhow!("Client connect failed: {fail}"))
             } else {
                 guard.client = std::mem::take(&mut client);
                 ContextOperationState::CallbackOk(None)
