@@ -333,7 +333,14 @@ impl WorkerActivityTasks {
             if let Some(jh) = act_info.local_timeouts_task {
                 jh.abort()
             };
-            self.heartbeat_manager.evict(task_token.clone()).await;
+            let should_flush = !known_not_found
+                && !matches!(
+                    &status,
+                    aer::Status::Completed(_) | aer::Status::WillCompleteAsync(_)
+                );
+            self.heartbeat_manager
+                .evict(task_token.clone(), should_flush)
+                .await;
 
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {

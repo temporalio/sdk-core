@@ -42,6 +42,7 @@ enum HeartbeatAction {
     Evict {
         token: TaskToken,
         on_complete: Arc<Notify>,
+        should_flush: bool,
     },
     CompleteReport(TaskToken),
     CompleteThrottle(TaskToken),
@@ -118,7 +119,7 @@ impl ActivityHeartbeatManager {
                             HeartbeatAction::SendHeartbeat(hb) => hb_states.record(hb),
                             HeartbeatAction::CompleteReport(tt) => hb_states.handle_report_completed(tt),
                             HeartbeatAction::CompleteThrottle(tt) => hb_states.handle_throttle_completed(tt),
-                            HeartbeatAction::Evict{ token, on_complete } => hb_states.evict(token, on_complete),
+                            HeartbeatAction::Evict{ token, on_complete, should_flush } => hb_states.evict(token, on_complete, should_flush),
                         },
                         hb_states,
                     ))
@@ -141,9 +142,10 @@ impl ActivityHeartbeatManager {
                             };
                             }
                             HeartbeatExecutorAction::Report { task_token: tt, details } => {
-                                match sg
+                                dbg!("reporting", &details);
+                                match dbg!(sg
                                     .record_activity_heartbeat(tt.clone(), details.into_payloads())
-                                    .await
+                                    .await)
                                 {
                                     Ok(RecordActivityTaskHeartbeatResponse {
                                            cancel_requested, activity_paused, activity_reset
@@ -230,13 +232,14 @@ impl ActivityHeartbeatManager {
     }
 
     /// Tell the heartbeat manager we are done forever with a certain task, so it may be forgotten.
-    /// This will also force-flush the most recently provided details.
+    /// If should_flush is true, will also force-flush the most recently provided details.
     /// Record *should* not be called with the same TaskToken after calling this.
-    pub(super) async fn evict(&self, task_token: TaskToken) {
+    pub(super) async fn evict(&self, task_token: TaskToken, should_flush: bool) {
         let completed = Arc::new(Notify::new());
         let _ = self.heartbeat_tx.send(HeartbeatAction::Evict {
             token: task_token,
             on_complete: completed.clone(),
+            should_flush,
         });
         completed.notified().await;
     }
@@ -334,6 +337,7 @@ impl HeartbeatStreamState {
             }
             Entry::Occupied(mut o) => {
                 let state = o.get_mut();
+                dbg!(&hb.details);
                 state.last_recorded_details = Some(hb.details);
                 state.timeout_resetter = hb.timeout_resetter;
                 None
@@ -397,12 +401,17 @@ impl HeartbeatStreamState {
         &mut self,
         tt: TaskToken,
         on_complete: Arc<Notify>,
+        should_flush: bool,
     ) -> Option<HeartbeatExecutorAction> {
+        dbg!("Evicting", should_flush);
         if let Some(state) = self.tt_to_state.remove(&tt) {
             if let Some(cancel_tok) = state.throttled_cancellation_token {
                 cancel_tok.cancel();
             }
-            if let Some(last_deets) = state.last_recorded_details {
+            if let Some(last_deets) = state.last_recorded_details
+                && should_flush
+            {
+                dbg!("Will report");
                 self.tt_needs_flush.insert(tt.clone(), on_complete);
                 return Some(HeartbeatExecutorAction::Report {
                     task_token: tt,
@@ -524,7 +533,7 @@ mod test {
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         // Let it propagate
         sleep(Duration::from_millis(10)).await;
-        hm.evict(fake_task_token.clone().into()).await;
+        hm.evict(fake_task_token.clone().into(), true).await;
         record_heartbeat(&hm, fake_task_token, 0, Duration::from_millis(100));
         // Let it propagate
         sleep(Duration::from_millis(10)).await;
@@ -543,7 +552,38 @@ mod test {
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
-        hm.evict(fake_task_token.clone().into()).await;
+        hm.evict(fake_task_token.clone().into(), true).await;
+        hm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn no_flush_on_successful_completion() {
+        let mut mock_client = mock_worker_client();
+        // Should only expect 1 heartbeat call, not 2 (the second would be from evict flushing)
+        mock_client
+            .expect_record_activity_heartbeat()
+            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .times(1);
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
+        let fake_task_token = vec![1, 2, 3];
+
+        // Record initial heartbeat - this should be sent immediately
+        record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
+
+        // Wait a bit for initial heartbeat to process and enter throttling phase
+        sleep(Duration::from_millis(50)).await;
+
+        // Record another heartbeat while throttled - this should be stored in last_recorded_details
+        record_heartbeat(&hm, fake_task_token.clone(), 1, Duration::from_millis(100));
+
+        // Wait a bit to ensure the second heartbeat is recorded but not sent
+        sleep(Duration::from_millis(10)).await;
+
+        // Evict the activity with should_flush false
+        // This should NOT send the stored heartbeat details since the activity completed successfully
+        hm.evict(fake_task_token.into(), false).await;
+
         hm.shutdown().await;
     }
 
