@@ -584,7 +584,7 @@ pub extern "C" fn temporal_core_worker_poll_activity_task(
     let core_worker = worker.worker.as_ref().unwrap().clone();
     worker.runtime.core.tokio_handle().spawn(async move {
         info!("Core worker poll activity task");
-        let res =  core_worker.poll_activity_task().await;
+        let res = core_worker.poll_activity_task().await;
         info!("Core worker polled activity task");
         let (success, fail) = match res {
             Ok(act) => (
