@@ -320,6 +320,7 @@ impl WorkerActivityTasks {
         status: aer::Status,
         client: &dyn WorkerClient,
     ) {
+        info!("Completing task:  {:?}", task_token);
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
                 activity_type(act_info.base.activity_type),
