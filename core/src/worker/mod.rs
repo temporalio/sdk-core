@@ -659,6 +659,10 @@ impl Worker {
         let local_activities_complete = self.local_activities_complete.load(Ordering::Relaxed);
         let non_local_activities_complete =
             self.non_local_activities_complete.load(Ordering::Relaxed);
+        info!(
+            "Core activity poll completions: local: {:?} non:{:?}",
+            local_activities_complete, non_local_activities_complete
+        );
         if local_activities_complete && non_local_activities_complete {
             info!("Core activity poll shutdown error");
             return Err(PollError::ShutDown);
@@ -673,6 +677,7 @@ impl Worker {
                 if let Err(err) = res.as_ref()
                     && matches!(err, PollError::ShutDown)
                 {
+                    info!("Core non local activities complete");
                     self.non_local_activities_complete
                         .store(true, Ordering::Relaxed);
                     return Ok(None);
@@ -697,6 +702,7 @@ impl Worker {
                 }
                 None => {
                     if self.shutdown_token.is_cancelled() {
+                        info!("Core local activities complete");
                         self.local_activities_complete
                             .store(true, Ordering::Relaxed);
                     }
