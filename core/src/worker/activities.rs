@@ -641,6 +641,7 @@ where
             .take_until(async move {
                 // Once we've been told to begin cancelling, wait the grace period and then start
                 // cancelling anything outstanding.
+                info!("Cancelling with grace period: {:?}", self.grace_period);
                 let (grace_killer, stop_grace) = futures_util::future::abortable(async {
                     if let Some(gp) = self.grace_period {
                         self.shutdown_initiated_token.cancelled().await;
@@ -659,13 +660,16 @@ where
                 });
                 join!(
                     async {
+                        info!("Cancelling stream");
                         self.start_tasks_stream_complete.cancelled().await;
+                        info!("Notify outstanding");
                         while !outstanding_tasks_clone.is_empty() {
                             self.complete_notify.notified().await
                         }
                         // If we were waiting for the grace period but everything already finished,
                         // we don't need to keep waiting.
                         stop_grace.abort();
+                        info!("Cancelled stream");
                     },
                     grace_killer
                 )
