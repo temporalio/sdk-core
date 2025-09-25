@@ -490,7 +490,7 @@ impl LocalActivityManager {
                 dispatch_time: Instant::now(),
                 attempt,
                 _permit: permit.into_used(LocalActivitySlotInfo {
-                    activity_type: new_la.workflow_type.clone(),
+                    activity_type: sa.activity_type.clone(),
                 }),
             },
         );
