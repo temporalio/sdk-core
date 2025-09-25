@@ -142,10 +142,9 @@ impl ActivityHeartbeatManager {
                             };
                             }
                             HeartbeatExecutorAction::Report { task_token: tt, details } => {
-                                dbg!("reporting", &details);
-                                match dbg!(sg
+                                match sg
                                     .record_activity_heartbeat(tt.clone(), details.into_payloads())
-                                    .await)
+                                    .await
                                 {
                                     Ok(RecordActivityTaskHeartbeatResponse {
                                            cancel_requested, activity_paused, activity_reset
@@ -337,7 +336,6 @@ impl HeartbeatStreamState {
             }
             Entry::Occupied(mut o) => {
                 let state = o.get_mut();
-                dbg!(&hb.details);
                 state.last_recorded_details = Some(hb.details);
                 state.timeout_resetter = hb.timeout_resetter;
                 None
@@ -403,7 +401,6 @@ impl HeartbeatStreamState {
         on_complete: Arc<Notify>,
         should_flush: bool,
     ) -> Option<HeartbeatExecutorAction> {
-        dbg!("Evicting", should_flush);
         if let Some(state) = self.tt_to_state.remove(&tt) {
             if let Some(cancel_tok) = state.throttled_cancellation_token {
                 cancel_tok.cancel();
@@ -411,7 +408,6 @@ impl HeartbeatStreamState {
             if let Some(last_deets) = state.last_recorded_details
                 && should_flush
             {
-                dbg!("Will report");
                 self.tt_needs_flush.insert(tt.clone(), on_complete);
                 return Some(HeartbeatExecutorAction::Report {
                     task_token: tt,
