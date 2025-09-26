@@ -91,6 +91,7 @@ impl RunCache {
 
     pub(super) fn remove(&mut self, k: &str) -> Option<ManagedRun> {
         let r = self.runs.pop(k);
+        info!("Removing managed run {:?}", r);
         self.metrics.cache_size(self.len() as u64);
         if let Some(rh) = &r {
             // A workflow completing normally doesn't count as a forced eviction.
