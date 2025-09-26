@@ -154,6 +154,7 @@ where
                 metric_rec(false)
             }),
             release_fn: Box::new(move |info| {
+                info!("Core release slot: {:?}", info.permit);
                 supp_c_c.release_slot(info);
                 ep_tx_c.send_modify(|ep| *ep -= 1);
                 mrc(true)
