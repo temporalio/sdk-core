@@ -34,6 +34,9 @@ prost-types = "0.13"
 [workspace.lints.rust]
 unreachable_pub = "warn"
 
+[workspace.lints.clippy]
+dbg_macro = "warn"
+
 [profile.release-lto]
 inherits = "release"
 lto = true
