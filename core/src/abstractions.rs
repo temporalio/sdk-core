@@ -154,7 +154,7 @@ where
                 metric_rec(false)
             }),
             release_fn: Box::new(move |info| {
-                info!("Core release slot: {:?}", info.stored_info);
+                info!("Core release slot: {:?}", info.permit);
                 supp_c_c.release_slot(info);
                 ep_tx_c.send_modify(|ep| *ep -= 1);
                 mrc(true)
@@ -357,6 +357,7 @@ impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
+        info!("Dropping Permit");
         (self.release_fn)(&self.release_ctx);
     }
 }

@@ -288,6 +288,7 @@ where
                             _ = shutdown_clone.cancelled() => break,
                         }
                     }
+                    info!("Create permit scope");
                     let permit = tokio::select! {
                         p = permit_dealer.acquire_owned() => p,
                         _ = shutdown_clone.cancelled() => break,
@@ -326,6 +327,7 @@ where
                         }
                     });
                     let _ = spawned_tx.send(poll_task);
+                    info!("Leaving permit scope");
                 }
                 drop(spawned_tx);
                 poll_task_awaiter.await.unwrap();
