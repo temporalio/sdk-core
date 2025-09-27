@@ -7,6 +7,7 @@ use temporal_sdk_core::ephemeral_server::{
     default_cached_download,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
+use tonic::IntoRequest;
 use url::Url;
 
 #[tokio::test]
@@ -147,17 +148,20 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
         .await
         .unwrap();
     let resp = client
-        .describe_namespace(DescribeNamespaceRequest {
-            namespace: NAMESPACE.to_string(),
-            ..Default::default()
-        })
+        .describe_namespace(
+            DescribeNamespaceRequest {
+                namespace: NAMESPACE.to_string(),
+                ..Default::default()
+            }
+            .into_request(),
+        )
         .await
         .unwrap();
     assert!(resp.into_inner().namespace_info.unwrap().name == "default");
 
     // If it has test service, make sure we can use it too
     if server.has_test_service {
-        let resp = client.get_current_time(()).await.unwrap();
+        let resp = client.get_current_time(().into_request()).await.unwrap();
         // Make sure it's within 5 mins of now
         let resp_seconds = resp.get_ref().time.as_ref().unwrap().seconds as u64;
         let curr_seconds = SystemTime::now()

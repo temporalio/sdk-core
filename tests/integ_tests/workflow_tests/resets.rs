@@ -19,6 +19,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::Notify;
+use tonic::IntoRequest;
 
 const POST_RESET_SIG: &str = "post-reset";
 
@@ -65,17 +66,20 @@ async fn reset_workflow() {
         notify.notified().await;
         // Do the reset
         client
-            .reset_workflow_execution(ResetWorkflowExecutionRequest {
-                namespace: NAMESPACE.to_owned(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id: wf_name.to_owned(),
-                    run_id: run_id.clone(),
-                }),
-                // End of first WFT
-                workflow_task_finish_event_id: 4,
-                request_id: "test-req-id".to_owned(),
-                ..Default::default()
-            })
+            .reset_workflow_execution(
+                ResetWorkflowExecutionRequest {
+                    namespace: NAMESPACE.to_owned(),
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id: wf_name.to_owned(),
+                        run_id: run_id.clone(),
+                    }),
+                    // End of first WFT
+                    workflow_task_finish_event_id: 4,
+                    request_id: "test-req-id".to_owned(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await
             .unwrap();
 
@@ -191,16 +195,19 @@ async fn reset_randomseed() {
         notify.notified().await;
         // Reset the workflow to be after first timer has fired
         client
-            .reset_workflow_execution(ResetWorkflowExecutionRequest {
-                namespace: NAMESPACE.to_owned(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id: wf_name.to_owned(),
-                    run_id: run_id.clone(),
-                }),
-                workflow_task_finish_event_id: 14,
-                request_id: "test-req-id".to_owned(),
-                ..Default::default()
-            })
+            .reset_workflow_execution(
+                ResetWorkflowExecutionRequest {
+                    namespace: NAMESPACE.to_owned(),
+                    workflow_execution: Some(WorkflowExecution {
+                        workflow_id: wf_name.to_owned(),
+                        run_id: run_id.clone(),
+                    }),
+                    workflow_task_finish_event_id: 14,
+                    request_id: "test-req-id".to_owned(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await
             .unwrap();
 
