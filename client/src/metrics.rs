@@ -208,7 +208,7 @@ fn code_as_screaming_snake(code: &Code) -> &'static str {
 
 /// Implements metrics functionality for gRPC (really, any http) calls
 #[derive(Debug, Clone)]
-pub struct GrpcMetricSvc {
+pub(crate) struct GrpcMetricSvc {
     pub(crate) inner: ChannelOrGrpcOverride,
     // If set to none, metrics are a no-op
     pub(crate) metrics: Option<MetricsContext>,
@@ -230,6 +230,7 @@ impl fmt::Debug for ChannelOrGrpcOverride {
     }
 }
 
+// TODO: Rewrite as a RawGrpcCaller implementation
 impl Service<http::Request<Body>> for GrpcMetricSvc {
     type Response = http::Response<Body>;
     type Error = Box<dyn std::error::Error + Send + Sync>;

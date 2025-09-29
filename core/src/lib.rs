@@ -62,9 +62,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::sync::{Arc, OnceLock};
-use temporal_client::{
-    ConfiguredClient, NamespacedClient, SharedReplaceableClient, TemporalServiceClientWithMetrics,
-};
+use temporal_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
@@ -174,23 +172,23 @@ pub(crate) fn sticky_q_name_for_worker(
 
 mod sealed {
     use super::*;
-    use temporal_client::SharedReplaceableClient;
+    use temporal_client::{SharedReplaceableClient, TemporalServiceClient};
 
     /// Allows passing different kinds of clients into things that want to be flexible. Motivating
     /// use-case was worker initialization.
     ///
     /// Needs to exist in this crate to avoid blanket impl conflicts.
     pub struct AnyClient {
-        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClientWithMetrics>>,
+        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClient>>,
     }
     impl AnyClient {
-        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClientWithMetrics>> {
+        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClient>> {
             self.inner
         }
     }
 
-    impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
-        fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
+    impl From<ConfiguredClient<TemporalServiceClient>> for AnyClient {
+        fn from(c: ConfiguredClient<TemporalServiceClient>) -> Self {
             Self { inner: Box::new(c) }
         }
     }

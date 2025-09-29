@@ -32,7 +32,7 @@ use tokio::{
     sync::{mpsc::UnboundedSender, oneshot},
 };
 use tonic::{
-    Code, Request, Status,
+    Code, IntoRequest, Request, Status,
     body::Body,
     codegen::{Service, http::Response},
     server::NamedService,
@@ -56,10 +56,13 @@ async fn can_use_retry_raw_client() {
     let opts = get_integ_server_options();
     let mut client = opts.connect_no_namespace(None).await.unwrap();
     client
-        .describe_namespace(DescribeNamespaceRequest {
-            namespace: NAMESPACE.to_string(),
-            ..Default::default()
-        })
+        .describe_namespace(
+            DescribeNamespaceRequest {
+                namespace: NAMESPACE.to_string(),
+                ..Default::default()
+            }
+            .into_request(),
+        )
         .await
         .unwrap();
 }
@@ -79,10 +82,13 @@ async fn per_call_timeout_respected_whole_client() {
     hm.insert("grpc-timeout".to_string(), "0S".to_string());
     raw_client.get_client().set_headers(hm).unwrap();
     let err = raw_client
-        .describe_namespace(DescribeNamespaceRequest {
-            namespace: NAMESPACE.to_string(),
-            ..Default::default()
-        })
+        .describe_namespace(
+            DescribeNamespaceRequest {
+                namespace: NAMESPACE.to_string(),
+                ..Default::default()
+            }
+            .into_request(),
+        )
         .await
         .unwrap_err();
     assert_matches!(err.code(), Code::DeadlineExceeded | Code::Cancelled);
@@ -409,12 +415,15 @@ async fn cloud_ops_test() {
         hm.insert("temporal-cloud-api-version".to_string(), api_version);
         hm
     });
-    let mut client = opts.connect_no_namespace(None).await.unwrap().into_inner();
-    let cloud_client = client.cloud_svc_mut();
+    let client = opts.connect_no_namespace(None).await.unwrap().into_inner();
+    let mut cloud_client = client.cloud_svc();
     let res = cloud_client
-        .get_namespace(GetNamespaceRequest {
-            namespace: namespace.clone(),
-        })
+        .get_namespace(
+            GetNamespaceRequest {
+                namespace: namespace.clone(),
+            }
+            .into_request(),
+        )
         .await
         .unwrap();
     assert_eq!(res.into_inner().namespace.unwrap().namespace, namespace);
