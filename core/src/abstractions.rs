@@ -96,7 +96,9 @@ where
                 .await
                 .expect("Extant permit channel is never closed");
         }
+        dbg!("About to reserve slot");
         let res = self.supplier.reserve_slot(self).await;
+        dbg!("Slot reserved");
         self.build_owned(res)
     }
 
@@ -106,9 +108,12 @@ where
         {
             return Err(());
         }
+        dbg!("About to try reserve slot");
         if let Some(res) = self.supplier.try_reserve_slot(self) {
+            dbg!("Try reserve slot complete");
             Ok(self.build_owned(res))
         } else {
+            dbg!("Try reserve slot failed");
             Err(())
         }
     }
