@@ -1,6 +1,7 @@
 use crate::{ByteArrayRef, runtime::Runtime};
 use std::{any::Any, error::Error, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics;
+use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
 
 pub struct MetricMeter {
     core: metrics::TemporalMeter,
@@ -364,6 +365,10 @@ impl metrics::CoreMeter for CustomMetricMeterRef {
 
     fn gauge_f64(&self, params: metrics::MetricParameters) -> metrics::GaugeF64 {
         metrics::GaugeF64::new(Arc::new(self.new_metric(params, MetricKind::GaugeFloat)))
+    }
+
+    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
+        todo!()
     }
 }
 

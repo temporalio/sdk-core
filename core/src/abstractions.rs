@@ -160,6 +160,10 @@ where
             }),
         }
     }
+
+    pub(crate) fn max_permits(&self) -> Option<usize> {
+        self.max_permits
+    }
 }
 
 impl MeteredPermitDealer<WorkflowSlotKind> {

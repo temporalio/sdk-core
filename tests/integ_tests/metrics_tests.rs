@@ -22,8 +22,10 @@ use temporal_sdk::{
     ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
     NexusOperationOptions, WfContext,
 };
+use temporal_sdk_core::telemetry::start_prometheus_metric_exporter;
 use temporal_sdk_core::{
-    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
+    CoreRuntime, FixedSizeSlotSupplier, RuntimeOptionsBuilder, TokioRuntimeBuilder, TunerBuilder,
+    init_worker,
     telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
 };
 use temporal_sdk_core_api::{
@@ -1326,4 +1328,100 @@ async fn prometheus_label_nonsense() {
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("some_counter{thing=\"foo\"} 2"));
     assert!(body.contains("some_counter{blerp=\"baz\"} 2"));
+}
+
+// Tests that rely on Prometheus running in a docker container need to start
+// with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
+#[rstest::rstest]
+#[tokio::test]
+async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) {
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(get_integ_telem_options())
+        .heartbeat_interval(Some(Duration::from_millis(100)))
+        .build()
+        .unwrap();
+    let mut rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    match backing {
+        "otel" => {
+            let url = Some("grpc://localhost:4317")
+                .map(|x| x.parse::<Url>().unwrap())
+                .unwrap();
+            let mut opts_build = OtelCollectorOptionsBuilder::default();
+            let opts = opts_build.url(url).build().unwrap();
+            // If wanna add more options: https://github.com/temporalio/sdk-ruby/blob/143e421d82d16e58bd45226998363d55e4bc3bbb/temporalio/ext/src/runtime.rs#L113C21-L135C22
+
+            rt.telemetry_mut()
+                .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
+        }
+        "prom" => {
+            let mut opts_build = PrometheusExporterOptionsBuilder::default();
+            opts_build.socket_addr(ANY_PORT.parse().unwrap());
+            let opts = opts_build.build().unwrap();
+            rt.telemetry_mut()
+                .attach_late_init_metrics(start_prometheus_metric_exporter(opts).unwrap().meter);
+        }
+        _ => unreachable!(),
+    }
+    let wf_name = "runtime_new_otel";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter
+        .worker_config
+        .max_outstanding_workflow_tasks(5_usize)
+        .max_cached_workflows(5_usize)
+        .max_outstanding_activities(5_usize);
+    let mut worker = starter.worker().await;
+    let worker_instance_key = worker.worker_instance_key();
+
+    // Run a workflow
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "pass".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
+        println!("STARTING ACTIVITY");
+        Ok(i)
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+
+    // for i in 1..5 {
+    //     worker.submit_wf(
+    //         format!("{wf_name}-{i}"),
+    //         wf_name,
+    //         vec![],
+    //         starter.workflow_options.clone(),
+    //     )
+    //         .await
+    //         .unwrap();
+    // }
+    worker.run_until_done().await.unwrap();
+
+    // TODO: clone_no_worker() for new worker
+
+    // TODO: ListWorkers
+    let client = starter.get_client().await;
+    let workers_list = client
+        .list_workers(100, Vec::new(), String::new())
+        .await
+        .unwrap();
+    // println!("workers_list: {workers_list:#?}");
+
+    // TODO: need to find worker with matching worker_heartbeat
+    let worker_info = workers_list.workers_info.iter().find(|worker_info| {
+        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+            hb.worker_instance_key == worker_instance_key.to_string()
+        } else {
+            false
+        }
+    });
+    println!("worker_instance_key {worker_instance_key:?}");
+    println!("worker_info: {worker_info:#?}");
+
+    // TODO: add some asserts to ensure data shows up
 }

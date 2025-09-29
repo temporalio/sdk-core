@@ -30,7 +30,7 @@ pub fn mock_worker_client() -> MockWorkerClient {
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
     r.expect_shutdown_worker()
-        .returning(|_| Ok(ShutdownWorkerResponse {}));
+        .returning(|_, _| Ok(ShutdownWorkerResponse {}));
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r.expect_identity()
@@ -148,7 +148,7 @@ mockall::mock! {
           impl Future<Output = Result<DescribeNamespaceResponse>> + Send + 'b
           where 'a: 'b, Self: 'b;
 
-        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
+        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String, worker_heartbeat: Option<WorkerHeartbeat>) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn record_worker_heartbeat<'a, 'b>(

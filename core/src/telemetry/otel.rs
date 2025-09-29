@@ -1,5 +1,5 @@
 use super::{
-    TELEM_SERVICE_NAME, default_buckets_for,
+    TELEM_SERVICE_NAME, WorkerHeartbeatMetrics, default_buckets_for,
     metrics::{
         ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
         DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
@@ -153,13 +153,15 @@ pub fn build_otlp_metric_exporter(
         MeterProviderBuilder::default().with_reader(reader),
         &opts.global_tags,
         opts.use_seconds_for_durations,
-        opts.histogram_bucket_overrides,
+        opts.histogram_bucket_overrides.clone(),
     )?
     .build();
+
     Ok::<_, anyhow::Error>(CoreOtelMeter {
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,
         _mp: mp,
+        in_memory_metrics: Arc::new(WorkerHeartbeatMetrics::default()),
     })
 }
 
@@ -170,6 +172,7 @@ pub struct CoreOtelMeter {
     // we have to hold on to the provider otherwise otel automatically shuts it down on drop
     // for whatever crazy reason
     _mp: SdkMeterProvider,
+    pub in_memory_metrics: Arc<WorkerHeartbeatMetrics>,
 }
 
 impl CoreMeter for CoreOtelMeter {
@@ -240,6 +243,10 @@ impl CoreMeter for CoreOtelMeter {
                 .build(),
         ))
     }
+
+    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
+        self.in_memory_metrics.clone()
+    }
 }
 
 impl CoreOtelMeter {
@@ -263,7 +270,7 @@ impl CoreOtelMeter {
     }
 }
 
-enum DurationHistogram {
+pub(crate) enum DurationHistogram {
     Milliseconds(opentelemetry::metrics::Histogram<u64>),
     Seconds(opentelemetry::metrics::Histogram<f64>),
 }

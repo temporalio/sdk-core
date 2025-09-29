@@ -16,7 +16,9 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::{WfContext, WorkflowFunction};
-use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
+use temporal_sdk_core::{
+    CoreRuntime, replay::HistoryForReplay,
+};
 use temporal_sdk_core_api::telemetry::metrics::{
     MetricKeyValue, MetricParametersBuilder, NewAttributes,
 };

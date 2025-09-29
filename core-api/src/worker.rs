@@ -11,6 +11,7 @@ use temporal_sdk_core_protos::{
     coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
     temporal,
     temporal::api::enums::v1::VersioningBehavior,
+    temporal::api::worker::v1::PluginInfo,
 };
 
 /// Defines per-worker configuration options
@@ -161,6 +162,10 @@ pub struct WorkerConfig {
 
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
+
+    /// List of plugins used by lang
+    #[builder(default)]
+    pub plugins: Vec<PluginInfo>,
 }
 
 impl WorkerConfig {

@@ -39,6 +39,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+pub(crate) use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
@@ -67,6 +68,7 @@ pub struct TelemetryInstance {
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
+    in_memory_metrics: Option<Arc<WorkerHeartbeatMetrics>>, // TODO: Should this even be option?
 }
 
 impl TelemetryInstance {
@@ -83,6 +85,7 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             attach_service_name,
+            in_memory_metrics: None,
         }
     }
 
@@ -96,6 +99,7 @@ impl TelemetryInstance {
     /// Some metric meters cannot be initialized until after a tokio runtime has started and after
     /// other telemetry has initted (ex: prometheus). They can be attached here.
     pub fn attach_late_init_metrics(&mut self, meter: Arc<dyn CoreMeter + 'static>) {
+        self.in_memory_metrics = Some(meter.in_memory_metrics().clone());
         self.metrics = Some(meter);
     }
 
@@ -129,6 +133,11 @@ impl TelemetryInstance {
         } else {
             vec![]
         }
+    }
+
+    /// Returns all in memory metrics, used for worker heartbeating.
+    pub fn in_memory_metrics(&self) -> Option<Arc<WorkerHeartbeatMetrics>> {
+        self.in_memory_metrics.clone()
     }
 }
 

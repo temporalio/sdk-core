@@ -13,7 +13,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
     HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
     MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal,
-    NewAttributes, NoOpCoreMeter, TemporalMeter,
+    NewAttributes, NoOpCoreMeter, TemporalMeter, WorkerHeartbeatMetrics,
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -64,13 +64,14 @@ struct Instruments {
     sticky_cache_miss: Counter,
     sticky_cache_size: Gauge,
     sticky_cache_forced_evictions: Counter,
+    last_successful_poll_time: HistogramDuration,
 }
 
 impl MetricsContext {
     pub(crate) fn no_op() -> Self {
         let meter = Arc::new(NoOpCoreMeter);
         let kvs = meter.new_attributes(Default::default());
-        let instruments = Arc::new(Instruments::new(meter.as_ref()));
+        let instruments = Arc::new(Instruments::new(meter.as_ref(), None));
         Self {
             kvs,
             instruments,
@@ -80,13 +81,19 @@ impl MetricsContext {
 
     #[cfg(test)]
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
-        MetricsContext::top_level_with_meter(namespace, tq, telemetry.get_temporal_metric_meter())
+        MetricsContext::top_level_with_meter(
+            namespace,
+            tq,
+            telemetry.get_temporal_metric_meter(),
+            telemetry.in_memory_metrics(),
+        )
     }
 
     pub(crate) fn top_level_with_meter(
         namespace: String,
         tq: String,
         temporal_meter: Option<TemporalMeter>,
+        in_memory_meter: Option<Arc<WorkerHeartbeatMetrics>>,
     ) -> Self {
         if let Some(mut meter) = temporal_meter {
             meter
@@ -95,7 +102,7 @@ impl MetricsContext {
                 .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
             meter.default_attribs.attributes.push(task_queue(tq));
             let kvs = meter.inner.new_attributes(meter.default_attribs);
-            let mut instruments = Instruments::new(meter.inner.as_ref());
+            let mut instruments = Instruments::new(meter.inner.as_ref(), in_memory_meter);
             instruments.update_attributes(&kvs);
             Self {
                 kvs,
@@ -299,7 +306,37 @@ impl MetricsContext {
 }
 
 impl Instruments {
-    fn new(meter: &dyn CoreMeter) -> Self {
+    fn new(meter: &dyn CoreMeter, in_memory: Option<Arc<WorkerHeartbeatMetrics>>) -> Self {
+        let create_counter = |params: MetricParameters| -> Counter {
+            if let Some(in_mem) = in_memory.clone()
+                && let Some(metric) = in_mem.get_metric(&params.name)
+            {
+                meter.counter_with_in_memory(params, metric)
+            } else {
+                meter.counter(params)
+            }
+        };
+
+        let create_gauge = |params: MetricParameters| -> Gauge {
+            if let Some(in_mem) = in_memory.clone()
+                && let Some(metric) = in_mem.get_metric(&params.name)
+            {
+                meter.gauge_with_in_memory(params, metric)
+            } else {
+                meter.gauge(params)
+            }
+        };
+
+        let create_histogram_duration = |params: MetricParameters| -> HistogramDuration {
+            if let Some(in_mem) = in_memory.clone()
+                && let Some(metric) = in_mem.get_metric(&params.name)
+            {
+                meter.histogram_duration_with_in_memory(params, metric)
+            } else {
+                meter.histogram_duration(params)
+            }
+        };
+
         Self {
             wf_completed_counter: meter.counter(MetricParameters {
                 name: "workflow_completed".into(),
@@ -331,12 +368,12 @@ impl Instruments {
                 description: "Count of workflow task queue poll timeouts (no new task)".into(),
                 unit: "".into(),
             }),
-            wf_task_queue_poll_succeed_counter: meter.counter(MetricParameters {
+            wf_task_queue_poll_succeed_counter: create_counter(MetricParameters {
                 name: "workflow_task_queue_poll_succeed".into(),
                 description: "Count of workflow task queue poll successes".into(),
                 unit: "".into(),
             }),
-            wf_task_execution_failure_counter: meter.counter(MetricParameters {
+            wf_task_execution_failure_counter: create_counter(MetricParameters {
                 name: "workflow_task_execution_failed".into(),
                 description: "Count of workflow task execution failures".into(),
                 unit: "".into(),
@@ -351,7 +388,7 @@ impl Instruments {
                 unit: "duration".into(),
                 description: "Histogram of workflow task replay latencies".into(),
             }),
-            wf_task_execution_latency: meter.histogram_duration(MetricParameters {
+            wf_task_execution_latency: create_histogram_duration(MetricParameters {
                 name: WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of workflow task execution (not replay) latencies".into(),
@@ -361,12 +398,12 @@ impl Instruments {
                 description: "Count of activity task queue poll timeouts (no new task)".into(),
                 unit: "".into(),
             }),
-            act_task_received_counter: meter.counter(MetricParameters {
+            act_task_received_counter: create_counter(MetricParameters {
                 name: "activity_task_received".into(),
                 description: "Count of activity task queue poll successes".into(),
                 unit: "".into(),
             }),
-            act_execution_failed: meter.counter(MetricParameters {
+            act_execution_failed: create_counter(MetricParameters {
                 name: "activity_execution_failed".into(),
                 description: "Count of activity task execution failures".into(),
                 unit: "".into(),
@@ -376,7 +413,7 @@ impl Instruments {
                 unit: "duration".into(),
                 description: "Histogram of activity schedule-to-start latencies".into(),
             }),
-            act_exec_latency: meter.histogram_duration(MetricParameters {
+            act_exec_latency: create_histogram_duration(MetricParameters {
                 name: ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of activity execution latencies".into(),
@@ -397,7 +434,7 @@ impl Instruments {
                 description: "Count of local activity executions that failed".into(),
                 unit: "".into(),
             }),
-            la_exec_latency: meter.histogram_duration(MetricParameters {
+            la_exec_latency: create_histogram_duration(MetricParameters {
                 name: "local_activity_execution_latency".into(),
                 unit: "duration".into(),
                 description: "Histogram of local activity execution latencies".into(),
@@ -409,7 +446,7 @@ impl Instruments {
                     "Histogram of local activity execution latencies for successful local activities"
                         .into(),
             }),
-            la_total: meter.counter(MetricParameters {
+            la_total: create_counter(MetricParameters {
                 name: "local_activity_total".into(),
                 description: "Count of local activities executed".into(),
                 unit: "".into(),
@@ -429,12 +466,12 @@ impl Instruments {
                 unit: "duration".into(),
                 description: "Histogram of nexus task end-to-end latencies".into(),
             }),
-            nexus_task_execution_latency: meter.histogram_duration(MetricParameters {
+            nexus_task_execution_latency: create_histogram_duration(MetricParameters {
                 name: "nexus_task_execution_latency".into(),
                 unit: "duration".into(),
                 description: "Histogram of nexus task execution latencies".into(),
             }),
-            nexus_task_execution_failed: meter.counter(MetricParameters {
+            nexus_task_execution_failed: create_counter(MetricParameters {
                 name: "nexus_task_execution_failed".into(),
                 description: "Count of nexus task execution failures".into(),
                 unit: "".into(),
@@ -445,7 +482,7 @@ impl Instruments {
                 description: "Count of the number of initialized workers".into(),
                 unit: "".into(),
             }),
-            num_pollers: meter.gauge(MetricParameters {
+            num_pollers: create_gauge(MetricParameters {
                 name: NUM_POLLERS_NAME.into(),
                 description: "Current number of active pollers per queue type".into(),
                 unit: "".into(),
@@ -460,20 +497,19 @@ impl Instruments {
                 description: "Current number of used slots per task type".into(),
                 unit: "".into(),
             }),
-            sticky_cache_hit: meter.counter(MetricParameters {
+            sticky_cache_hit: create_counter(MetricParameters {
                 name: "sticky_cache_hit".into(),
                 description: "Count of times the workflow cache was used for a new workflow task"
                     .into(),
                 unit: "".into(),
             }),
-            sticky_cache_miss: meter.counter(MetricParameters {
+            sticky_cache_miss: create_counter(MetricParameters {
                 name: "sticky_cache_miss".into(),
                 description:
-                    "Count of times the workflow cache was missing a workflow for a sticky task"
-                        .into(),
+                "Count of times the workflow cache was missing a workflow for a sticky task".into(),
                 unit: "".into(),
             }),
-            sticky_cache_size: meter.gauge(MetricParameters {
+            sticky_cache_size: create_gauge(MetricParameters {
                 name: STICKY_CACHE_SIZE_NAME.into(),
                 description: "Current number of cached workflows".into(),
                 unit: "".into(),
@@ -482,6 +518,11 @@ impl Instruments {
                 name: "sticky_cache_total_forced_eviction".into(),
                 description: "Count of evictions of cached workflows".into(),
                 unit: "".into(),
+            }),
+            last_successful_poll_time: meter.histogram_duration(MetricParameters {
+                name: "last_successful_poll_time".into(),
+                unit: "duration".into(),
+                description: "Timestamp of the last successful poll time".into(),
             }),
         }
     }
@@ -554,6 +595,8 @@ impl Instruments {
         self.sticky_cache_size
             .update_attributes(new_attributes.clone());
         self.sticky_cache_forced_evictions
+            .update_attributes(new_attributes.clone());
+        self.last_successful_poll_time
             .update_attributes(new_attributes.clone());
     }
 }
@@ -651,7 +694,7 @@ pub const ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME: &str = "activity_execution_laten
 pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
 pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
 pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
-pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
+pub(crate) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Track a failure metric if the failure is not a benign application failure.
 pub(crate) fn should_record_failure_metric(failure: &Option<Failure>) -> bool {
@@ -840,6 +883,10 @@ where
 
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::Gauge)))
+    }
+
+    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
+        todo!()
     }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
@@ -1069,6 +1116,10 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
     fn gauge_f64(&self, mut params: MetricParameters) -> GaugeF64 {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge_f64(params)
+    }
+
+    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
+        self.meter.in_memory_metrics()
     }
 }
 
