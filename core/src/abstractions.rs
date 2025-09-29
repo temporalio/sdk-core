@@ -119,7 +119,8 @@ where
 
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
-        self.extant_permits.0.send_modify(|ep| *ep += 1);
+        dbg!("Building owned permit.");
+        self.extant_permits.0.send_modify(|ep| {*ep += 1; dbg!("Extant permits {}", ep);});
         // Eww
         let uc_c = self.unused_claimants.clone();
         let ep_rx_c = self.extant_permits.1.clone();
