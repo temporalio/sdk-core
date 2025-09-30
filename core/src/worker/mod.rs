@@ -141,7 +141,7 @@ pub struct Worker {
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
     /// Used to track worker client
     client_worker_registrator: Arc<ClientWorkerRegistrator>,
-    /// Status
+    /// Status of the worker
     status: Arc<Mutex<WorkerStatus>>,
 }
 
@@ -313,18 +313,24 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
-        shared_namespace_worker: bool,
     ) -> Result<Worker, anyhow::Error> {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
+
+        let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
+            metric_meter: telem.get_metric_meter(),
+            temporal_metric_meter: telem.get_temporal_metric_meter(),
+            trace_subscriber: telem.trace_subscriber(),
+            in_memory_meter: telem.in_memory_metrics(),
+        });
 
         Self::new_with_pollers(
             config,
             sticky_queue_name,
             client,
             TaskPollers::Real,
-            telem_instance,
+            worker_telemetry,
             worker_heartbeat_interval,
-            shared_namespace_worker,
+            false,
         )
     }
 
@@ -359,7 +365,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None, false).unwrap()
+        Self::new(config, None, Arc::new(client), None, None).unwrap()
     }
 
     pub(crate) fn new_with_pollers(
@@ -367,38 +373,10 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
-        telem_instance: Option<&TelemetryInstance>,
+        worker_telemetry: Option<WorkerTelemetry>,
         worker_heartbeat_interval: Option<Duration>,
         shared_namespace_worker: bool,
     ) -> Result<Worker, anyhow::Error> {
-        let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
-            metric_meter: telem.get_metric_meter(),
-            temporal_metric_meter: telem.get_temporal_metric_meter(),
-            trace_subscriber: telem.trace_subscriber(),
-            in_memory_meter: telem.in_memory_metrics(),
-        });
-
-        Worker::new_with_pollers_inner(
-            config,
-            sticky_queue_name,
-            client,
-            task_pollers,
-            worker_telemetry,
-            worker_heartbeat_interval,
-            shared_namespace_worker,
-        )
-    }
-
-    pub(crate) fn new_with_pollers_inner(
-        config: WorkerConfig,
-        sticky_queue_name: Option<String>,
-        client: Arc<dyn WorkerClient>,
-        task_pollers: TaskPollers,
-        worker_telemetry: Option<WorkerTelemetry>,
-        worker_heartbeat_interval: Option<Duration>,
-        shared_namespace_worker: bool, // TODO: is this unnecessary?
-    ) -> Result<Worker, anyhow::Error> {
-        // let shared_namespace_worker = in_memory_meter.is_none();
         let (metrics, meter) = if let Some(wt) = worker_telemetry.as_ref() {
             (
                 MetricsContext::top_level_with_meter(
@@ -487,7 +465,6 @@ impl Worker {
                     None
                 } else {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
-                    // activity poller
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
                         config.task_queue.clone(),
@@ -1073,26 +1050,16 @@ impl WorkerHeartbeatManager {
         nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
         status: Arc<Mutex<WorkerStatus>>,
     ) -> Self {
-        let task_queue = config.task_queue.clone();
-        let deployment_version = config.computed_deployment_version();
-        let deployment_version =
-            deployment_version.map(|dv| deployment::v1::WorkerDeploymentVersion {
-                deployment_name: dv.deployment_name,
-                build_id: dv.build_id,
+        let telemetry_instance_clone = telemetry_instance.clone();
+        let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
+            let deployment_version = config.computed_deployment_version().map(|dv| {
+                deployment::v1::WorkerDeploymentVersion {
+                    deployment_name: dv.deployment_name,
+                    build_id: dv.build_id,
+                }
             });
 
-        let telemetry_instance_clone = telemetry_instance.clone();
-
-        let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
-            let mut sys = System::new_all();
-            sys.refresh_all();
-            std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-            sys.refresh_cpu_usage();
-            let current_host_cpu_usage: f32 =
-                sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32;
-            let total_mem = sys.total_memory() as f64;
-            let used_mem = sys.used_memory() as f64;
-            let current_host_mem_usage = (used_mem / total_mem) as f32;
+            let (current_host_cpu_usage, current_host_mem_usage) = get_host_data();
 
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
@@ -1105,8 +1072,8 @@ impl WorkerHeartbeatManager {
                     // Set by SharedNamespaceWorker because it relies on the client
                     process_key: String::new(),
                 }),
-                task_queue: task_queue.clone(),
-                deployment_version: deployment_version.clone(),
+                task_queue: config.task_queue.clone(),
+                deployment_version,
 
                 status: (*status.lock()) as i32,
                 start_time: Some(SystemTime::now().into()),
@@ -1144,6 +1111,7 @@ impl WorkerHeartbeatManager {
                     in_mem.total_sticky_cache_miss.load(Ordering::Relaxed) as i32;
                 worker_heartbeat.current_sticky_cache_size =
                     in_mem.sticky_cache_size.load(Ordering::Relaxed) as i32;
+
                 // TODO: Is this ever not Some()?
                 worker_heartbeat.workflow_poller_info = Some(WorkerPollerInfo {
                     current_pollers: in_mem
@@ -1153,7 +1121,6 @@ impl WorkerHeartbeatManager {
                     last_successful_poll_time: wf_last_suc_poll_time.lock().map(|time| time.into()),
                     is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
                 });
-
                 worker_heartbeat.workflow_sticky_poller_info = Some(WorkerPollerInfo {
                     current_pollers: in_mem
                         .num_pollers
@@ -1281,7 +1248,7 @@ where
     Some(WorkerSlotsInfo {
         current_available_slots: avail,
         current_used_slots: used,
-        slot_supplier_kind: SK::kind().to_string(),
+        slot_supplier_kind: dealer.slot_supplier_kind().to_string(),
         total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MAX),
         total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MAX),
 
@@ -1289,6 +1256,19 @@ where
         last_interval_processed_tasks: 0,
         last_interval_failure_tasks: 0,
     })
+}
+
+fn get_host_data() -> (f32, f32) {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_usage();
+    let current_host_cpu_usage: f32 =
+        sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32;
+    let total_mem = sys.total_memory() as f64;
+    let used_mem = sys.used_memory() as f64;
+    let current_host_mem_usage = (used_mem / total_mem) as f32;
+    (current_host_cpu_usage, current_host_mem_usage)
 }
 
 #[cfg(test)]

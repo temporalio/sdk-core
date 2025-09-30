@@ -64,11 +64,11 @@ pub struct TelemetryInstance {
     metric_prefix: String,
     logs_out: Option<Mutex<CoreLogBuffer>>,
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
+    in_memory_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
     /// The tracing subscriber which is associated with this telemetry instance. May be `None` if
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
-    in_memory_metrics: Option<Arc<WorkerHeartbeatMetrics>>, // TODO: Should this even be option?
 }
 
 impl TelemetryInstance {

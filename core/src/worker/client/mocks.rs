@@ -164,5 +164,6 @@ mockall::mock! {
         fn sdk_name_and_version(&self) -> (String, String);
         fn identity(&self) -> String;
         fn worker_grouping_key(&self) -> Uuid;
+        fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
     }
 }

@@ -34,7 +34,7 @@ pub trait CoreMeter: Send + Sync + Debug {
         params: MetricParameters,
         in_memory_counter: HeartbeatMetricType,
     ) -> Counter {
-        let primary_counter = self.counter(params.clone());
+        let primary_counter = self.counter(params);
 
         Counter::new_with_in_memory(primary_counter.primary.metric.clone(), in_memory_counter)
     }
@@ -47,6 +47,7 @@ pub trait CoreMeter: Send + Sync + Debug {
     /// accordingly.
     fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration;
 
+    /// Create a histogram duration with in-memory tracking for dual metrics reporting
     fn histogram_duration_with_in_memory(
         &self,
         params: MetricParameters,
@@ -73,10 +74,45 @@ pub trait CoreMeter: Send + Sync + Debug {
     fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics>;
 }
 
+/// Provides a generic way to record metrics in memory.
+/// This can be done either with individual metrics or more fine-grained metrics
+/// that vary by a set of labels for the same metric.
 #[derive(Clone, Debug)]
 pub enum HeartbeatMetricType {
-    Regular(Arc<AtomicU64>),
+    Individual(Arc<AtomicU64>),
     WithLabel(HashMap<String, Arc<AtomicU64>>),
+}
+
+impl HeartbeatMetricType {
+    fn record_counter(&self, delta: u64) {
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.fetch_add(delta, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel(_) => {
+                dbg_panic!("Only gauge should support in-memory metric with labels");
+            }
+        }
+    }
+
+    fn record_histogram_observation(&self) {
+        self.record_counter(1);
+    }
+
+    fn record_gauge(&self, value: u64, attributes: &MetricAttributes) {
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.store(value, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel(metrics) => {
+                if let Some(label_value) = label_value_from_attributes(attributes, "poller_type") {
+                    if let Some(metric) = metrics.get(label_value.as_str()) {
+                        metric.store(value, Ordering::Relaxed);
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Option<String> {
@@ -101,21 +137,21 @@ pub struct NumPollersMetric {
 
 impl NumPollersMetric {
     pub fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
-        let mut map = HashMap::new();
-        map.insert(
-            "workflow_task".to_string(),
-            self.wft_current_pollers.clone(),
-        );
-        map.insert(
-            "sticky_workflow_task".to_string(),
-            self.sticky_wft_current_pollers.clone(),
-        );
-        map.insert(
-            "activity_task".to_string(),
-            self.activity_current_pollers.clone(),
-        );
-        map.insert("nexus_task".to_string(), self.nexus_current_pollers.clone());
-        map
+        HashMap::from([
+            (
+                "workflow_task".to_string(),
+                self.wft_current_pollers.clone(),
+            ),
+            (
+                "sticky_workflow_task".to_string(),
+                self.sticky_wft_current_pollers.clone(),
+            ),
+            (
+                "activity_task".to_string(),
+                self.activity_current_pollers.clone(),
+            ),
+            ("nexus_task".to_string(), self.nexus_current_pollers.clone()),
+        ])
     }
 }
 
@@ -138,38 +174,38 @@ pub struct WorkerHeartbeatMetrics {
 impl WorkerHeartbeatMetrics {
     pub fn get_metric(&self, name: &str) -> Option<HeartbeatMetricType> {
         match name {
-            "sticky_cache_size" => {
-                Some(HeartbeatMetricType::Regular(self.sticky_cache_size.clone()))
-            }
-            "sticky_cache_hit" => Some(HeartbeatMetricType::Regular(
+            "sticky_cache_size" => Some(HeartbeatMetricType::Individual(
+                self.sticky_cache_size.clone(),
+            )),
+            "sticky_cache_hit" => Some(HeartbeatMetricType::Individual(
                 self.total_sticky_cache_hit.clone(),
             )),
-            "sticky_cache_miss" => Some(HeartbeatMetricType::Regular(
+            "sticky_cache_miss" => Some(HeartbeatMetricType::Individual(
                 self.total_sticky_cache_miss.clone(),
             )),
             "num_pollers" => Some(HeartbeatMetricType::WithLabel(self.num_pollers.as_map())),
-            "workflow_task_execution_failed" => Some(HeartbeatMetricType::Regular(
+            "workflow_task_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.workflow_task_execution_failed.clone(),
             )),
-            "activity_execution_failed" => Some(HeartbeatMetricType::Regular(
+            "activity_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.activity_execution_failed.clone(),
             )),
-            "nexus_task_execution_failed" => Some(HeartbeatMetricType::Regular(
+            "nexus_task_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.nexus_task_execution_failed.clone(),
             )),
-            "local_activity_execution_failed" => Some(HeartbeatMetricType::Regular(
+            "local_activity_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.local_activity_execution_failed.clone(),
             )),
-            "activity_execution_latency" => Some(HeartbeatMetricType::Regular(
+            "activity_execution_latency" => Some(HeartbeatMetricType::Individual(
                 self.activity_execution_latency.clone(),
             )),
-            "local_activity_execution_latency" => Some(HeartbeatMetricType::Regular(
+            "local_activity_execution_latency" => Some(HeartbeatMetricType::Individual(
                 self.local_activity_execution_latency.clone(),
             )),
-            "workflow_task_execution_latency" => Some(HeartbeatMetricType::Regular(
+            "workflow_task_execution_latency" => Some(HeartbeatMetricType::Individual(
                 self.workflow_task_execution_latency.clone(),
             )),
-            "nexus_task_execution_latency" => Some(HeartbeatMetricType::Regular(
+            "nexus_task_execution_latency" => Some(HeartbeatMetricType::Individual(
                 self.nexus_task_execution_latency.clone(),
             )),
             _ => None,
@@ -417,14 +453,7 @@ impl Counter {
         }
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.fetch_add(value, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(_) => {
-                    dbg_panic!("No in memory metric should use labels today");
-                }
-            }
+            in_mem.record_counter(value);
         }
     }
 
@@ -449,14 +478,7 @@ impl CounterBase for Counter {
         bound.adds(value);
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.fetch_add(value, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(_) => {
-                    dbg_panic!("No in memory metric should use labels today");
-                }
-            }
+            in_mem.record_counter(value);
         }
     }
 }
@@ -637,14 +659,7 @@ impl HistogramDuration {
         }
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.fetch_add(1, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(_) => {
-                    dbg_panic!("No in memory HistogramDuration should use labels today");
-                }
-            }
+            in_mem.record_histogram_observation();
         }
     }
 
@@ -667,14 +682,7 @@ impl HistogramDurationBase for HistogramDuration {
         bound.records(value);
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.fetch_add(1, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(_) => {
-                    dbg_panic!("No in memory HistogramDuration should use labels today");
-                }
-            }
+            in_mem.record_histogram_observation();
         }
     }
 }
@@ -745,20 +753,7 @@ impl Gauge {
         }
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.store(value, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(metrics) => {
-                    if let Some(label_value) =
-                        label_value_from_attributes(attributes, "poller_type")
-                    {
-                        if let Some(metric) = metrics.get(&label_value) {
-                            metric.store(value, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
+            in_mem.record_gauge(value, attributes);
         }
     }
 
@@ -781,20 +776,7 @@ impl GaugeBase for Gauge {
         bound.records(value);
 
         if let Some(ref in_mem) = self.in_memory {
-            match in_mem {
-                HeartbeatMetricType::Regular(metric) => {
-                    metric.store(value, Ordering::Relaxed);
-                }
-                HeartbeatMetricType::WithLabel(metrics) => {
-                    if let Some(label_value) =
-                        label_value_from_attributes(&self.primary.attributes, "poller_type")
-                    {
-                        if let Some(metric) = metrics.get(&label_value) {
-                            metric.store(value, Ordering::Relaxed);
-                        }
-                    }
-                }
-            }
+            in_mem.record_gauge(value, &self.primary.attributes);
         }
     }
 }

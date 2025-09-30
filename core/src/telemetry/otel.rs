@@ -153,7 +153,7 @@ pub fn build_otlp_metric_exporter(
         MeterProviderBuilder::default().with_reader(reader),
         &opts.global_tags,
         opts.use_seconds_for_durations,
-        opts.histogram_bucket_overrides.clone(),
+        opts.histogram_bucket_overrides,
     )?
     .build();
 
@@ -270,7 +270,7 @@ impl CoreOtelMeter {
     }
 }
 
-pub(crate) enum DurationHistogram {
+enum DurationHistogram {
     Milliseconds(opentelemetry::metrics::Histogram<u64>),
     Seconds(opentelemetry::metrics::Histogram<f64>),
 }
