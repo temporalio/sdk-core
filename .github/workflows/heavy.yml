@@ -19,6 +19,8 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
