@@ -1095,9 +1095,22 @@ pub extern "C" fn temporal_core_complete_async_reserve(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_complete_async_cancel_reserve(
     completion_ctx: *const SlotReserveCompletionCtx,
-) {
+) -> bool {
     if completion_ctx.is_null() {
         panic!("completion_ctx is null");
+    }
+    let state = unsafe { (*completion_ctx).state.load() };
+    match state {
+        SlotReserveOperationState::Cancelled => {
+            drop(unsafe { Arc::from_raw(completion_ctx) });
+            true
+        }
+        SlotReserveOperationState::Pending => false,
+        SlotReserveOperationState::Completed(permit_id) => {
+            panic!(
+                "temporal_core_complete_async_cancel_reserve called on completed reservation - permit ID {permit_id}"
+            )
+        }
     }
 }
 

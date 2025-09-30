@@ -1073,7 +1073,7 @@ bool temporal_core_complete_async_reserve(const struct TemporalCoreSlotReserveCo
  * either [`temporal_core_complete_async_reserve`] or [`temporal_core_complete_async_cancel_reserve`]
  * with the same `completion_ctx` will cause **memory corruption!**
  */
-void temporal_core_complete_async_cancel_reserve(const struct TemporalCoreSlotReserveCompletionCtx *completion_ctx);
+bool temporal_core_complete_async_cancel_reserve(const struct TemporalCoreSlotReserveCompletionCtx *completion_ctx);
 
 #ifdef __cplusplus
 }  // extern "C"
