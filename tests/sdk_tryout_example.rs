@@ -232,9 +232,9 @@ pub struct ClientOptions {
 // a client,
 #[derive(Clone)]
 pub struct Client {
-    conn: Box<dyn ConnectionTrait>,
+    conn: Arc<dyn ConnectionTrait>,
     // Just showing it's object safe/storable - is
-    interceptor: Box<dyn OutboundInterceptor>,
+    interceptor: Arc<dyn OutboundInterceptor>,
 }
 // This substitutes for what is today `WorkflowClientTrait`.
 //
@@ -388,6 +388,33 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
     }
 }
 
+pub type WorkerRunError = Box<dyn std::error::Error + Send + Sync>;
+pub struct Worker {}
+impl Worker {
+    pub fn new(_client: Client, _options: WorkerOptions) -> Self {
+        todo!()
+    }
+
+    pub fn shutdown_handle(&self) -> WorkerShutdownHandle {
+        todo!()
+    }
+
+    pub async fn run(self) -> Result<(), WorkerRunError> {
+        todo!()
+    }
+}
+#[derive(Clone)]
+pub struct WorkerShutdownHandle {}
+impl WorkerShutdownHandle {
+    pub fn shutdown(&self) {
+        todo!()
+    }
+}
+
+// TODO: Replayer
+// TODO: Tracing config
+// TODO: Testing
+
 // =================================================================================================
 // User's code =====================================================================================
 
@@ -513,6 +540,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // But this works
         .register_activities::<MyActivitiesStatic>();
 
+    let worker = Worker::new(client.clone(), worker_opts.build());
+    let worker_shutdown = worker.shutdown_handle();
+    // Spawning off worker to live in another task - note that running consumes the worker, which
+    // is consistent with other SDKs runtime erroring on double-start.
+    let worker_task = tokio::spawn(worker.run());
+
     let handle = client
         .start_workflow::<MyWorkflow>("hi".to_string())
         .await?;
@@ -522,6 +555,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Activity invocation will also look very similar like
     // ctx.execute_activity::<my_activities::Activity>(input).await?;
     let _result = handle.result().await?;
+
+    worker_shutdown.shutdown();
+    worker_task.await.unwrap().unwrap();
     Ok(())
 }
 // =================================================================================================
