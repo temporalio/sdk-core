@@ -58,7 +58,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -106,7 +106,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -139,7 +139,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -164,7 +164,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
@@ -185,7 +185,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.88.0
+          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
