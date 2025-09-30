@@ -1,6 +1,6 @@
 mod activities;
 pub(crate) mod client;
-mod heartbeat;
+pub(crate) mod heartbeat;
 mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
@@ -20,6 +20,7 @@ pub(crate) use activities::{
 pub(crate) use wft_poller::WFTPollerShared;
 pub use workflow::LEGACY_QUERY_ID;
 
+use crate::telemetry::WorkerHeartbeatMetrics;
 use crate::worker::heartbeat::{HeartbeatFn, SharedNamespaceWorker};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
@@ -53,6 +54,7 @@ use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
+use std::time::SystemTime;
 use std::{
     convert::TryInto,
     future,
@@ -62,16 +64,24 @@ use std::{
     },
     time::Duration,
 };
+use sysinfo::System;
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
     ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
 };
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
+use temporal_sdk_core_api::worker::{
+    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind,
+};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporal_sdk_core_protos::temporal::api::deployment;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::worker::v1::{
+    WorkerHeartbeat, WorkerHostInfo, WorkerPollerInfo, WorkerSlotsInfo,
+};
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{
@@ -131,6 +141,8 @@ pub struct Worker {
     all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
     /// Used to track worker client
     client_worker_registrator: Arc<ClientWorkerRegistrator>,
+    /// Status of the worker
+    status: Arc<Mutex<WorkerStatus>>,
 }
 
 struct AllPermitsTracker {
@@ -152,6 +164,7 @@ pub(crate) struct WorkerTelemetry {
     metric_meter: Option<TemporalMeter>,
     temporal_metric_meter: Option<TemporalMeter>,
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
+    in_memory_meter: Option<Arc<WorkerHeartbeatMetrics>>,
 }
 
 #[async_trait::async_trait]
@@ -249,18 +262,13 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
+        *self.status.lock() = WorkerStatus::ShuttingDown;
         // First, unregister worker from the client
-        if let Err(e) = self
-            .client
-            .workers()
-            .unregister_worker(self.worker_instance_key)
-        {
-            error!(
-                task_queue=%self.config.task_queue,
-                namespace=%self.config.namespace,
-                error=%e,
-                "Failed to unregister worker on shutdown",
-            );
+        if !self.client_worker_registrator.shared_namespace_worker {
+            let _res = self
+                .client
+                .workers()
+                .unregister_worker(self.worker_instance_key);
         }
 
         // Second, we want to stop polling of both activity and workflow tasks
@@ -288,6 +296,10 @@ impl WorkerTrait for Worker {
     async fn finalize_shutdown(self) {
         self.finalize_shutdown().await
     }
+
+    fn worker_instance_key(&self) -> Uuid {
+        self.worker_instance_key
+    }
 }
 
 impl Worker {
@@ -301,18 +313,24 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
         worker_heartbeat_interval: Option<Duration>,
-        shared_namespace_worker: bool,
     ) -> Result<Worker, anyhow::Error> {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
+
+        let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
+            metric_meter: telem.get_metric_meter(),
+            temporal_metric_meter: telem.get_temporal_metric_meter(),
+            trace_subscriber: telem.trace_subscriber(),
+            in_memory_meter: telem.in_memory_metrics(),
+        });
 
         Self::new_with_pollers(
             config,
             sticky_queue_name,
             client,
             TaskPollers::Real,
-            telem_instance,
+            worker_telemetry,
             worker_heartbeat_interval,
-            shared_namespace_worker,
+            false,
         )
     }
 
@@ -347,36 +365,10 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None, false).unwrap()
+        Self::new(config, None, Arc::new(client), None, None).unwrap()
     }
 
     pub(crate) fn new_with_pollers(
-        config: WorkerConfig,
-        sticky_queue_name: Option<String>,
-        client: Arc<dyn WorkerClient>,
-        task_pollers: TaskPollers,
-        telem_instance: Option<&TelemetryInstance>,
-        worker_heartbeat_interval: Option<Duration>,
-        shared_namespace_worker: bool,
-    ) -> Result<Worker, anyhow::Error> {
-        let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
-            metric_meter: telem.get_metric_meter(),
-            temporal_metric_meter: telem.get_temporal_metric_meter(),
-            trace_subscriber: telem.trace_subscriber(),
-        });
-
-        Worker::new_with_pollers_inner(
-            config,
-            sticky_queue_name,
-            client,
-            task_pollers,
-            worker_telemetry,
-            worker_heartbeat_interval,
-            shared_namespace_worker,
-        )
-    }
-
-    pub(crate) fn new_with_pollers_inner(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
@@ -391,6 +383,7 @@ impl Worker {
                     config.namespace.clone(),
                     config.task_queue.clone(),
                     wt.temporal_metric_meter.clone(),
+                    wt.in_memory_meter.clone(),
                 ),
                 wt.metric_meter.clone(),
             )
@@ -434,6 +427,12 @@ impl Worker {
         );
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
+
+        let wf_last_suc_poll_time = Arc::new(Mutex::new(None));
+        let wf_sticky_last_suc_poll_time = Arc::new(Mutex::new(None));
+        let act_last_suc_poll_time = Arc::new(Mutex::new(None));
+        let nexus_last_suc_poll_time = Arc::new(Mutex::new(None));
+
         let nexus_slots = MeteredPermitDealer::new(
             tuner.nexus_task_slot_supplier(),
             metrics.with_new_attrs([nexus_worker_type()]),
@@ -450,6 +449,8 @@ impl Worker {
                     &metrics,
                     &shutdown_token,
                     &wft_slots,
+                    wf_last_suc_poll_time.clone(),
+                    wf_sticky_last_suc_poll_time.clone(),
                 );
                 let wft_stream = if !client.is_mock() {
                     // Some replay tests combine a mock client with real pollers,
@@ -475,11 +476,13 @@ impl Worker {
                             max_worker_acts_per_second: config.max_worker_activities_per_second,
                             max_tps: config.max_task_queue_activities_per_second,
                         },
+                        act_last_suc_poll_time.clone(),
                     );
                     Some(Box::from(ap) as BoxedActPoller)
                 };
 
                 let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+
                 let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
                     client.clone(),
                     config.task_queue.clone(),
@@ -487,6 +490,7 @@ impl Worker {
                     nexus_slots.clone(),
                     shutdown_token.child_token(),
                     Some(move |np| np_metrics.record_num_pollers(np)),
+                    nexus_last_suc_poll_time.clone(),
                     shared_namespace_worker,
                 )) as BoxedNexusPoller;
 
@@ -531,13 +535,13 @@ impl Worker {
         let la_permits = la_permit_dealer.get_extant_count_rcv();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.namespace.clone(),
-            la_permit_dealer,
+            la_permit_dealer.clone(),
             hb_tx,
             metrics.clone(),
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
-                act_slots,
+                act_slots.clone(),
                 ap,
                 client.clone(),
                 metrics.clone(),
@@ -548,7 +552,7 @@ impl Worker {
             )
         });
         let poll_on_non_local_activities = at_task_mgr.is_some();
-        if !poll_on_non_local_activities {
+        if !poll_on_non_local_activities && !shared_namespace_worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
@@ -567,6 +571,7 @@ impl Worker {
             external_wft_tx,
         );
         let worker_instance_key = Uuid::new_v4();
+        let worker_status = Arc::new(Mutex::new(WorkerStatus::Running));
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = worker_heartbeat_interval.map(|hb_interval| {
@@ -575,6 +580,15 @@ impl Worker {
                 worker_instance_key,
                 hb_interval,
                 worker_telemetry.clone(),
+                wft_slots.clone(),
+                act_slots,
+                nexus_slots,
+                la_permit_dealer,
+                wf_last_suc_poll_time,
+                wf_sticky_last_suc_poll_time,
+                act_last_suc_poll_time,
+                nexus_last_suc_poll_time,
+                worker_status.clone(),
             )
         });
 
@@ -583,6 +597,7 @@ impl Worker {
             slot_provider: provider,
             heartbeat_manager: worker_heartbeat,
             client: RwLock::new(client.clone()),
+            shared_namespace_worker,
         });
 
         if !shared_namespace_worker {
@@ -650,6 +665,7 @@ impl Worker {
             }),
             nexus_mgr,
             client_worker_registrator,
+            status: worker_status,
         })
     }
 
@@ -658,8 +674,14 @@ impl Worker {
     async fn shutdown(&self) {
         self.initiate_shutdown();
         if let Some(name) = self.workflows.get_sticky_queue_name() {
+            let heartbeat = self
+                .client_worker_registrator
+                .heartbeat_manager
+                .as_ref()
+                .map(|hm| hm.heartbeat_callback.clone()());
+
             // This is a best effort call and we can still shutdown the worker if it fails
-            match self.client.shutdown_worker(name).await {
+            match self.client.shutdown_worker(name, heartbeat).await {
                 Err(err)
                     if !matches!(
                         err.code(),
@@ -955,6 +977,7 @@ struct ClientWorkerRegistrator {
     slot_provider: SlotProvider,
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     client: RwLock<Arc<dyn WorkerClient>>,
+    shared_namespace_worker: bool,
 }
 
 impl ClientWorker for ClientWorkerRegistrator {
@@ -979,12 +1002,12 @@ impl ClientWorker for ClientWorkerRegistrator {
 
     fn heartbeat_callback(&self) -> Option<HeartbeatCallback> {
         if let Some(hb_mgr) = self.heartbeat_manager.as_ref() {
-            let mut heartbeat_manager = hb_mgr.heartbeat_callback.lock();
-            heartbeat_manager.take()
+            Some(hb_mgr.heartbeat_callback.clone())
         } else {
             None
         }
     }
+
     fn new_shared_namespace_worker(
         &self,
     ) -> Result<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>, anyhow::Error> {
@@ -999,12 +1022,6 @@ impl ClientWorker for ClientWorkerRegistrator {
             bail!("Shared namespace worker creation never be called without a heartbeat manager");
         }
     }
-
-    fn register_callback(&self, callback: HeartbeatCallback) {
-        if let Some(hb_mgr) = self.heartbeat_manager.as_ref() {
-            hb_mgr.heartbeat_callback.lock().replace(callback);
-        }
-    }
 }
 
 struct WorkerHeartbeatManager {
@@ -1013,33 +1030,56 @@ struct WorkerHeartbeatManager {
     /// Telemetry instance, needed to initialize [SharedNamespaceWorker] when replacing client
     telemetry: Option<WorkerTelemetry>,
     /// Heartbeat callback
-    heartbeat_callback: Mutex<Option<Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>>>,
+    heartbeat_callback: Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>,
 }
 
 impl WorkerHeartbeatManager {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         config: WorkerConfig,
         worker_instance_key: Uuid,
         heartbeat_interval: Duration,
         telemetry_instance: Option<WorkerTelemetry>,
+        wft_slots: MeteredPermitDealer<WorkflowSlotKind>,
+        act_slots: MeteredPermitDealer<ActivitySlotKind>,
+        nexus_slots: MeteredPermitDealer<NexusSlotKind>,
+        la_slots: MeteredPermitDealer<LocalActivitySlotKind>,
+        wf_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+        wf_sticky_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+        act_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+        nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+        status: Arc<Mutex<WorkerStatus>>,
     ) -> Self {
-        let worker_instance_key_clone = worker_instance_key.to_string();
-        let task_queue = config.task_queue.clone();
+        let telemetry_instance_clone = telemetry_instance.clone();
+        let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
+            let deployment_version = config.computed_deployment_version().map(|dv| {
+                deployment::v1::WorkerDeploymentVersion {
+                    deployment_name: dv.deployment_name,
+                    build_id: dv.build_id,
+                }
+            });
 
-        // TODO: requires the metrics changes to get the rest of these fields
-        let worker_heartbeat_callback: HeartbeatFn = Box::new(move || {
-            WorkerHeartbeat {
-                worker_instance_key: worker_instance_key_clone.clone(),
+            let (current_host_cpu_usage, current_host_mem_usage) = get_host_data();
+
+            let mut worker_heartbeat = WorkerHeartbeat {
+                worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
                     host_name: gethostname().to_string_lossy().to_string(),
                     process_id: std::process::id().to_string(),
-                    ..Default::default()
-                }),
-                task_queue: task_queue.clone(),
-                deployment_version: None,
+                    current_host_cpu_usage,
+                    current_host_mem_usage,
 
-                status: 0,
-                start_time: Some(std::time::SystemTime::now().into()),
+                    // Set by SharedNamespaceWorker because it relies on the client
+                    process_key: String::new(),
+                }),
+                task_queue: config.task_queue.clone(),
+                deployment_version,
+
+                status: (*status.lock()) as i32,
+                start_time: Some(SystemTime::now().into()),
+                plugins: config.plugins.clone(),
+
+                // Metrics dependent, set below
                 workflow_task_slots_info: None,
                 activity_task_slots_info: None,
                 nexus_task_slots_info: None,
@@ -1051,19 +1091,103 @@ impl WorkerHeartbeatManager {
                 total_sticky_cache_hit: 0,
                 total_sticky_cache_miss: 0,
                 current_sticky_cache_size: 0,
-                plugins: vec![],
 
                 // sdk_name, sdk_version, and worker_identity must be set by
                 // SharedNamespaceWorker because they rely on the client, and
                 // need to be pulled from the current client used by SharedNamespaceWorker
-                ..Default::default()
+                worker_identity: String::new(),
+                heartbeat_time: None,
+                elapsed_since_last_heartbeat: None,
+                sdk_name: String::new(),
+                sdk_version: String::new(),
+            };
+
+            if let Some(telem_instance) = telemetry_instance_clone.as_ref()
+                && let Some(in_mem) = telem_instance.in_memory_meter.as_ref()
+            {
+                worker_heartbeat.total_sticky_cache_hit =
+                    in_mem.total_sticky_cache_hit.load(Ordering::Relaxed) as i32;
+                worker_heartbeat.total_sticky_cache_miss =
+                    in_mem.total_sticky_cache_miss.load(Ordering::Relaxed) as i32;
+                worker_heartbeat.current_sticky_cache_size =
+                    in_mem.sticky_cache_size.load(Ordering::Relaxed) as i32;
+
+                // TODO: Is this ever not Some()?
+                worker_heartbeat.workflow_poller_info = Some(WorkerPollerInfo {
+                    current_pollers: in_mem
+                        .num_pollers
+                        .wft_current_pollers
+                        .load(Ordering::Relaxed) as i32,
+                    last_successful_poll_time: wf_last_suc_poll_time.lock().map(|time| time.into()),
+                    is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
+                });
+                worker_heartbeat.workflow_sticky_poller_info = Some(WorkerPollerInfo {
+                    current_pollers: in_mem
+                        .num_pollers
+                        .sticky_wft_current_pollers
+                        .load(Ordering::Relaxed) as i32,
+                    last_successful_poll_time: wf_sticky_last_suc_poll_time
+                        .lock()
+                        .map(|time| time.into()),
+                    is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
+                });
+                worker_heartbeat.activity_poller_info = Some(WorkerPollerInfo {
+                    current_pollers: in_mem
+                        .num_pollers
+                        .activity_current_pollers
+                        .load(Ordering::Relaxed) as i32,
+                    last_successful_poll_time: act_last_suc_poll_time
+                        .lock()
+                        .map(|time| time.into()),
+                    is_autoscaling: config.activity_task_poller_behavior.is_autoscaling(),
+                });
+                worker_heartbeat.nexus_poller_info = Some(WorkerPollerInfo {
+                    current_pollers: in_mem
+                        .num_pollers
+                        .nexus_current_pollers
+                        .load(Ordering::Relaxed) as i32,
+                    last_successful_poll_time: nexus_last_suc_poll_time
+                        .lock()
+                        .map(|time| time.into()),
+                    is_autoscaling: config.nexus_task_poller_behavior.is_autoscaling(),
+                });
+
+                worker_heartbeat.workflow_task_slots_info = make_slots_info(
+                    &wft_slots,
+                    in_mem
+                        .workflow_task_execution_latency
+                        .load(Ordering::Relaxed),
+                    in_mem
+                        .workflow_task_execution_failed
+                        .load(Ordering::Relaxed),
+                );
+                worker_heartbeat.activity_task_slots_info = make_slots_info(
+                    &act_slots,
+                    in_mem.activity_execution_latency.load(Ordering::Relaxed),
+                    in_mem.activity_execution_failed.load(Ordering::Relaxed),
+                );
+                worker_heartbeat.nexus_task_slots_info = make_slots_info(
+                    &nexus_slots,
+                    in_mem.nexus_task_execution_latency.load(Ordering::Relaxed),
+                    in_mem.nexus_task_execution_failed.load(Ordering::Relaxed),
+                );
+                worker_heartbeat.local_activity_slots_info = make_slots_info(
+                    &la_slots,
+                    in_mem
+                        .local_activity_execution_latency
+                        .load(Ordering::Relaxed),
+                    in_mem
+                        .local_activity_execution_failed
+                        .load(Ordering::Relaxed),
+                );
             }
+            worker_heartbeat
         });
 
         WorkerHeartbeatManager {
             heartbeat_interval,
             telemetry: telemetry_instance,
-            heartbeat_callback: Mutex::new(Some(worker_heartbeat_callback)),
+            heartbeat_callback: worker_heartbeat_callback,
         }
     }
 }
@@ -1103,6 +1227,48 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
     } else {
         config.workflow_task_poller_behavior
     }
+}
+
+fn make_slots_info<SK>(
+    dealer: &MeteredPermitDealer<SK>,
+    total_processed: u64,
+    total_failed: u64,
+) -> Option<WorkerSlotsInfo>
+where
+    SK: SlotKind + 'static,
+{
+    let avail_usize = dealer.available_permits()?;
+    let max_usize = dealer.max_permits()?;
+
+    let avail = i32::try_from(avail_usize).unwrap_or(i32::MAX);
+    let max = i32::try_from(max_usize).unwrap_or(i32::MAX);
+
+    let used = (max - avail).max(0);
+
+    Some(WorkerSlotsInfo {
+        current_available_slots: avail,
+        current_used_slots: used,
+        slot_supplier_kind: dealer.slot_supplier_kind().to_string(),
+        total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MAX),
+        total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MAX),
+
+        // Filled in by heartbeat later
+        last_interval_processed_tasks: 0,
+        last_interval_failure_tasks: 0,
+    })
+}
+
+fn get_host_data() -> (f32, f32) {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    sys.refresh_cpu_usage();
+    let current_host_cpu_usage: f32 =
+        sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32;
+    let total_mem = sys.total_memory() as f64;
+    let used_mem = sys.used_memory() as f64;
+    let current_host_mem_usage = (used_mem / total_mem) as f32;
+    (current_host_cpu_usage, current_host_mem_usage)
 }
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ mod integ_tests {
     mod queries_tests;
     mod update_tests;
     mod visibility_tests;
+    mod worker_heartbeat_tests;
     mod worker_tests;
     mod worker_versioning_tests;
     mod workflow_tests;

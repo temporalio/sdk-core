@@ -1,6 +1,6 @@
 use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
 use std::{
-    any::Any,
+    any::{Any, type_name},
     collections::{HashMap, HashSet},
     str::FromStr,
     sync::Arc,
@@ -11,6 +11,7 @@ use temporal_sdk_core_protos::{
     coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
     temporal,
     temporal::api::enums::v1::VersioningBehavior,
+    temporal::api::worker::v1::PluginInfo,
 };
 
 /// Defines per-worker configuration options
@@ -161,6 +162,10 @@ pub struct WorkerConfig {
 
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
+
+    /// List of plugins used by lang
+    #[builder(default)]
+    pub plugins: Vec<PluginInfo>,
 }
 
 impl WorkerConfig {
@@ -356,6 +361,12 @@ pub trait SlotSupplier {
     /// that here.
     fn available_slots(&self) -> Option<usize> {
         None
+    }
+
+    /// Returns a human-friendly identifier describing this supplier implementation for
+    /// diagnostics and telemetry.
+    fn slot_supplier_kind(&self) -> String {
+        format!("{}", type_name::<Self>())
     }
 }
 

@@ -19,6 +19,7 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion,
 };
+use uuid::Uuid;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
 /// It represents one worker, which has a (potentially shared) client for connecting to the service
@@ -138,6 +139,10 @@ pub trait Worker: Send + Sync {
     /// This should be called only after [Worker::shutdown] has resolved and/or both polling
     /// functions have returned `ShutDown` errors.
     async fn finalize_shutdown(self);
+
+    /// Unique identifier for this worker instance.
+    /// This must be stable across the worker's lifetime but unique per instance.
+    fn worker_instance_key(&self) -> Uuid;
 }
 
 #[async_trait::async_trait]
@@ -204,6 +209,10 @@ where
 
     async fn finalize_shutdown(self) {
         panic!("Can't finalize shutdown on Arc'd worker")
+    }
+
+    fn worker_instance_key(&self) -> Uuid {
+        (**self).worker_instance_key()
     }
 }
 

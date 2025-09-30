@@ -773,6 +773,7 @@ mod tests {
                 max_worker_acts_per_second: Some(2.0),
                 max_tps: None,
             },
+            Arc::new(parking_lot::Mutex::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -864,6 +865,7 @@ mod tests {
                 max_worker_acts_per_second: None,
                 max_tps: None,
             },
+            Arc::new(parking_lot::Mutex::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -937,6 +939,7 @@ mod tests {
                 max_worker_acts_per_second: None,
                 max_tps: None,
             },
+            Arc::new(parking_lot::Mutex::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),

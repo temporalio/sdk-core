@@ -133,14 +133,8 @@ impl ClientWorkerSetImpl {
 
         if let Some(w) = self.shared_worker.get_mut(worker.namespace()) {
             let (callback, is_empty) = w.unregister_callback(worker.worker_instance_key());
-            if let Some(cb) = callback {
-                if is_empty {
-                    self.shared_worker.remove(worker.namespace());
-                }
-
-                // To maintain single ownership of the callback, we must re-register the callback
-                // back to the ClientWorker
-                worker.register_callback(cb);
+            if callback.is_some() && is_empty {
+                self.shared_worker.remove(worker.namespace());
             }
         }
 
@@ -212,20 +206,20 @@ impl ClientWorkerSet {
             .try_reserve_wft_slot(namespace, task_queue)
     }
 
-    /// Unregisters a local worker, typically when that worker starts shutdown.
-    pub fn unregister_worker(
-        &self,
-        worker_instance_key: Uuid,
-    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
-        self.worker_manager.write().unregister(worker_instance_key)
-    }
-
     /// Register a local worker that can provide WFT processing slots and potentially worker heartbeating.
     pub fn register_worker(
         &self,
         worker: Arc<dyn ClientWorker + Send + Sync>,
     ) -> Result<(), anyhow::Error> {
         self.worker_manager.write().register(worker)
+    }
+
+    /// Unregisters a local worker, typically when that worker starts shutdown.
+    pub fn unregister_worker(
+        &self,
+        worker_instance_key: Uuid,
+    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
+        self.worker_manager.write().unregister(worker_instance_key)
     }
 
     /// Returns the worker grouping key, which is unique for each worker.
@@ -256,7 +250,7 @@ impl std::fmt::Debug for ClientWorkerSet {
 }
 
 /// Contains a worker heartbeat callback, wrapped for mocking
-pub type HeartbeatCallback = Box<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
+pub type HeartbeatCallback = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 
 /// Represents a complete worker that can handle both slot management
 /// and worker heartbeat functionality.
@@ -289,9 +283,6 @@ pub trait ClientWorker: Send + Sync {
     fn new_shared_namespace_worker(
         &self,
     ) -> Result<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>, anyhow::Error>;
-
-    /// Registers a worker heartbeat callback, typically when a worker is unregistered from a client
-    fn register_callback(&self, callback: HeartbeatCallback);
 }
 
 #[cfg(test)]
@@ -453,7 +444,7 @@ mod tests {
         if heartbeat_enabled {
             mock_provider
                 .expect_heartbeat_callback()
-                .returning(|| Some(Box::new(WorkerHeartbeat::default)));
+                .returning(|| Some(Arc::new(WorkerHeartbeat::default)));
 
             let namespace_clone = namespace.clone();
             mock_provider
@@ -463,8 +454,6 @@ mod tests {
                         namespace_clone.clone(),
                     )))
                 });
-
-            mock_provider.expect_register_callback().returning(|_| {});
         }
 
         mock_provider

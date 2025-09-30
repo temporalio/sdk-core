@@ -314,6 +314,10 @@ where
             }
         }
     }
+
+    fn slot_supplier_kind(&self) -> String {
+        "ResourceBased".to_string()
+    }
 }
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>

@@ -8,6 +8,7 @@ use crate::{
 };
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use governor::{Quota, RateLimiter};
+use std::time::SystemTime;
 use std::{
     cmp,
     fmt::Debug,
@@ -74,9 +75,15 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: WorkflowTaskOptions,
+        last_successful_poll_time: Arc<parking_lot::Mutex<Option<SystemTime>>>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
-        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler, shutdown.clone());
+        let poll_scaler = PollScaler::new(
+            poller_behavior,
+            num_pollers_handler,
+            shutdown.clone(),
+            last_successful_poll_time,
+        );
         if let Some(wftps) = options.wft_poller_shared.as_ref() {
             if is_sticky {
                 wftps.set_sticky_active(poll_scaler.active_rx.clone());
@@ -136,6 +143,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
 }
 
 impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_activity_task(
         client: Arc<dyn WorkerClient>,
         task_queue: String,
@@ -144,6 +152,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: ActivityTaskOptions,
+        last_successful_poll_time: Arc<parking_lot::Mutex<Option<SystemTime>>>,
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
@@ -183,7 +192,12 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             }
         };
 
-        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler, shutdown.clone());
+        let poll_scaler = PollScaler::new(
+            poller_behavior,
+            num_pollers_handler,
+            shutdown.clone(),
+            last_successful_poll_time,
+        );
         Self::new(
             poll_fn,
             permit_dealer,
@@ -196,6 +210,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
 }
 
 impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_nexus_task(
         client: Arc<dyn WorkerClient>,
         task_queue: String,
@@ -203,6 +218,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         permit_dealer: MeteredPermitDealer<NexusSlotKind>,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        last_successful_poll_time: Arc<parking_lot::Mutex<Option<SystemTime>>>,
         send_heartbeat: bool,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
@@ -232,7 +248,12 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
             poll_fn,
             permit_dealer,
             shutdown.clone(),
-            PollScaler::new(poller_behavior, num_pollers_handler, shutdown),
+            PollScaler::new(
+                poller_behavior,
+                num_pollers_handler,
+                shutdown,
+                last_successful_poll_time,
+            ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
         )
@@ -417,6 +438,7 @@ where
         behavior: PollerBehavior,
         num_pollers_handler: Option<F>,
         shutdown: CancellationToken,
+        last_successful_poll_time: Arc<parking_lot::Mutex<Option<SystemTime>>>,
     ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
         let num_pollers_handler = num_pollers_handler.map(Arc::new);
@@ -437,6 +459,7 @@ where
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
             scale_up_allowed: AtomicBool::new(true),
+            last_successful_poll_time,
         });
         let rhc = report_handle.clone();
         let ingestor_task = if behavior.is_autoscaling() {
@@ -499,6 +522,7 @@ struct PollScalerReportHandle {
     ingested_this_period: AtomicUsize,
     ingested_last_period: AtomicUsize,
     scale_up_allowed: AtomicBool,
+    last_successful_poll_time: Arc<parking_lot::Mutex<Option<SystemTime>>>,
 }
 
 impl PollScalerReportHandle {
@@ -506,6 +530,9 @@ impl PollScalerReportHandle {
     fn poll_result(&self, res: &Result<impl TaskPollerResult, tonic::Status>) -> bool {
         match res {
             Ok(res) => {
+                self.last_successful_poll_time
+                    .lock()
+                    .replace(SystemTime::now());
                 if let PollerBehavior::SimpleMaximum(_) = self.behavior {
                     // We don't do auto-scaling with the simple max
                     return true;
@@ -739,6 +766,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
+            Arc::new(parking_lot::Mutex::new(None)),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
@@ -794,6 +822,7 @@ mod tests {
             WorkflowTaskOptions {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
+            Arc::new(parking_lot::Mutex::new(None)),
         );
 
         // Should not see error, unwraps should get empty response

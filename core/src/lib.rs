@@ -123,7 +123,6 @@ where
         client_bag.clone(),
         Some(&runtime.telemetry),
         runtime.heartbeat_interval,
-        false,
     )
 }
 
