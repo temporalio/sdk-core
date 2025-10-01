@@ -221,7 +221,7 @@ pub trait WorkerClient: Sync + Send {
     async fn shutdown_worker(
         &self,
         sticky_task_queue: String,
-        worker_heartbeat: Option<WorkerHeartbeat>,
+        final_heartbeat: Option<WorkerHeartbeat>,
     ) -> Result<ShutdownWorkerResponse>;
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
@@ -657,10 +657,10 @@ impl WorkerClient for WorkerClientBag {
     async fn shutdown_worker(
         &self,
         sticky_task_queue: String,
-        worker_heartbeat: Option<WorkerHeartbeat>,
+        final_heartbeat: Option<WorkerHeartbeat>,
     ) -> Result<ShutdownWorkerResponse> {
-        let mut worker_heartbeat = worker_heartbeat;
-        if let Some(w) = worker_heartbeat.as_mut() {
+        let mut final_heartbeat = final_heartbeat;
+        if let Some(w) = final_heartbeat.as_mut() {
             w.status = WorkerStatus::Shutdown.into();
             self.set_heartbeat_client_fields(w);
         }
@@ -669,7 +669,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat,
+            worker_heartbeat: final_heartbeat,
         };
 
         Ok(

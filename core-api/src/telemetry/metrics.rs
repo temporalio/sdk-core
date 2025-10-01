@@ -90,13 +90,20 @@ impl HeartbeatMetricType {
                 metric.fetch_add(delta, Ordering::Relaxed);
             }
             HeartbeatMetricType::WithLabel(_) => {
-                dbg_panic!("Only gauge should support in-memory metric with labels");
+                dbg_panic!("Counter does not support in-memory metric with labels");
             }
         }
     }
 
     fn record_histogram_observation(&self) {
-        self.record_counter(1);
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.fetch_add(1, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel(_) => {
+                dbg_panic!("Histogram does not support in-memory metric with labels");
+            }
+        }
     }
 
     fn record_gauge(&self, value: u64, attributes: &MetricAttributes) {
@@ -408,14 +415,14 @@ pub trait CounterBase: Send + Sync {
     fn adds(&self, value: u64);
 }
 
-pub type CounterType = LazyBoundMetric<
+pub type CounterImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
     Arc<dyn CounterBase>,
 >;
 
 #[derive(Clone)]
 pub struct Counter {
-    primary: CounterType,
+    primary: CounterImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl Counter {
@@ -612,14 +619,14 @@ pub trait HistogramDurationBase: Send + Sync {
     fn records(&self, value: Duration);
 }
 
-pub type HistogramDurationType = LazyBoundMetric<
+pub type HistogramDurationImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
     Arc<dyn HistogramDurationBase>,
 >;
 
 #[derive(Clone)]
 pub struct HistogramDuration {
-    primary: HistogramDurationType,
+    primary: HistogramDurationImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl HistogramDuration {
@@ -708,14 +715,14 @@ pub trait GaugeBase: Send + Sync {
     fn records(&self, value: u64);
 }
 
-pub type GaugeType = LazyBoundMetric<
+pub type GaugeImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
     Arc<dyn GaugeBase>,
 >;
 
 #[derive(Clone)]
 pub struct Gauge {
-    primary: GaugeType,
+    primary: GaugeImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl Gauge {

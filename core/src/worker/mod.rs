@@ -262,7 +262,9 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        *self.status.lock() = WorkerStatus::ShuttingDown;
+        {
+            *self.status.lock() = WorkerStatus::ShuttingDown;
+        }
         // First, unregister worker from the client
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
