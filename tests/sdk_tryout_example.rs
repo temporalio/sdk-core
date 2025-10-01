@@ -104,7 +104,7 @@ pub enum WorkflowError {
 }
 
 #[derive(Debug)]
-pub enum WfExitValue<T> {
+pub enum WorkflowExitValue<T> {
     /// Continue the workflow as a new execution
     ContinueAsNew,
     /// Confirm the workflow was cancelled
@@ -138,7 +138,7 @@ pub trait WorkflowImplementation {
     fn run(
         &mut self,
         ctx: WorkflowContext,
-    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
+    ) -> BoxFuture<'_, Result<WorkflowExitValue<Payload>, WorkflowError>>;
     fn name() -> &'static str
     where
         Self: Sized;
@@ -411,7 +411,29 @@ impl WorkerShutdownHandle {
     }
 }
 
-// TODO: Replayer
+pub struct WorkflowReplayerOptions {}
+pub struct WorkflowReplayer {}
+pub struct WorkflowHistory {}
+impl WorkflowReplayer {
+    pub fn new(_options: WorkflowReplayerOptions) -> Self {
+        todo!()
+    }
+    // We know people have asked to be able to see the workflow result after replay in existing SDKs
+    // so it's included here. I don't provide a multiple-at-once version because Rust users are very
+    // used to map/collect stuff where they can choose how they want to view results, and it's easy
+    // for them to early-return with try_map etc.
+    //
+    // There's some oddness with the generic here - if this is called in a `map` obviously T
+    // can't be heterogenous. The user could provide `Payload` as T and we could use that to
+    // mean "don't deserialize", and then they can do it later if they want. Open to suggestions.
+    pub fn replay_workflow<T: TemporalDeserializable>(
+        _history: &WorkflowHistory,
+    ) -> Result<WorkflowExitValue<T>, WorkflowError> {
+        todo!()
+    }
+    // No explicit shutdown, can auto-shutdown on drop
+}
+
 // TODO: Tracing config
 // TODO: Testing
 
@@ -433,7 +455,7 @@ impl MyWorkflow {
     pub async fn run(
         &mut self,
         _ctx: WorkflowContext,
-    ) -> Result<WfExitValue<String>, anyhow::Error> {
+    ) -> Result<WorkflowExitValue<String>, WorkflowError> {
         todo!()
     }
 
@@ -606,7 +628,7 @@ pub mod my_workflow {
         fn run(
             &mut self,
             ctx: WorkflowContext,
-        ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>> {
+        ) -> BoxFuture<'_, Result<WorkflowExitValue<Payload>, WorkflowError>> {
             self.run(ctx).map(|_| todo!("Serialize output")).boxed()
         }
 
