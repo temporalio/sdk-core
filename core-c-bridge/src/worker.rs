@@ -378,7 +378,7 @@ impl<SK: SlotKind + Send + Sync> temporal_sdk_core_api::worker::SlotSupplier
         guard.completed = true;
         match guard.completion_ctx.state.load() {
             SlotReserveOperationState::Completed(permit_id) => {
-                SlotSupplierPermit::with_user_data(permit_id)
+                SlotSupplierPermit::with_user_data::<usize>(permit_id.get())
             }
             other => panic!("Unexpected slot reservation state: expected Completed, got {other:?}"),
         }
@@ -390,14 +390,18 @@ impl<SK: SlotKind + Send + Sync> temporal_sdk_core_api::worker::SlotSupplier
         if permit_id == 0 {
             None
         } else {
-            Some(SlotSupplierPermit::with_user_data(permit_id))
+            Some(SlotSupplierPermit::with_user_data::<usize>(permit_id))
         }
     }
 
     fn mark_slot_used(&self, ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {
         let ctx = SlotMarkUsedCtx {
             slot_info: Self::convert_slot_info(ctx.info().downcast()),
-            slot_permit: ctx.permit().user_data::<usize>().copied().unwrap_or(0),
+            slot_permit: ctx
+                .permit()
+                .user_data::<usize>()
+                .copied()
+                .expect("Failed to read custom slot supplier permit ID"),
         };
         unsafe {
             let inner = &*self.inner.0;
@@ -413,7 +417,11 @@ impl<SK: SlotKind + Send + Sync> temporal_sdk_core_api::worker::SlotSupplier
         }
         let ctx = SlotReleaseCtx {
             slot_info: info_ptr,
-            slot_permit: ctx.permit().user_data::<usize>().copied().unwrap_or(0),
+            slot_permit: ctx
+                .permit()
+                .user_data::<usize>()
+                .copied()
+                .expect("Failed to read custom slot supplier permit ID"),
         };
         unsafe {
             let inner = &*self.inner.0;
