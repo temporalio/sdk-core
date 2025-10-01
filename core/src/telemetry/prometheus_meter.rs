@@ -461,7 +461,6 @@ pub struct CorePrometheusMeter {
     use_seconds_for_durations: bool,
     unit_suffix: bool,
     bucket_overrides: temporal_sdk_core_api::telemetry::HistogramBucketOverrides,
-    pub in_memory_metrics: Arc<WorkerHeartbeatMetrics>,
 }
 
 impl CorePrometheusMeter {
@@ -476,7 +475,6 @@ impl CorePrometheusMeter {
             use_seconds_for_durations,
             unit_suffix,
             bucket_overrides,
-            in_memory_metrics: Arc::new(WorkerHeartbeatMetrics::default()),
         }
     }
 
@@ -543,20 +541,6 @@ impl CoreMeter for CorePrometheusMeter {
         )))
     }
 
-    fn counter_with_in_memory(
-        &self,
-        params: MetricParameters,
-        in_memory_counter: HeartbeatMetricType,
-    ) -> Counter {
-        let metric_name = params.name.to_string();
-        let counter = Arc::new(PromMetric::<IntCounterVec>::new(
-            metric_name,
-            params.description.to_string(),
-            self.registry.clone(),
-        ));
-        Counter::new_with_in_memory(counter, in_memory_counter)
-    }
-
     fn histogram(&self, params: MetricParameters) -> Histogram {
         let hist = self.create_u64_hist(&params);
         Histogram::new(Arc::new(hist))
@@ -577,28 +561,6 @@ impl CoreMeter for CorePrometheusMeter {
         }))
     }
 
-    fn histogram_duration_with_in_memory(
-        &self,
-        mut params: MetricParameters,
-        in_memory_hist: HeartbeatMetricType,
-    ) -> HistogramDuration {
-        if self.use_seconds_for_durations {
-            params.unit = "seconds".into();
-            HistogramDuration::new_with_in_memory(
-                Arc::new(DurationHistogram::Seconds(self.create_f64_hist(&params))),
-                in_memory_hist,
-            )
-        } else {
-            params.unit = "milliseconds".into();
-            HistogramDuration::new_with_in_memory(
-                Arc::new(DurationHistogram::Milliseconds(
-                    self.create_u64_hist(&params),
-                )),
-                in_memory_hist,
-            )
-        }
-    }
-
     fn gauge(&self, params: MetricParameters) -> Gauge {
         let metric_name = params.name.to_string();
         Gauge::new(Arc::new(PromMetric::<IntGaugeVec>::new(
@@ -608,20 +570,6 @@ impl CoreMeter for CorePrometheusMeter {
         )))
     }
 
-    fn gauge_with_in_memory(
-        &self,
-        params: MetricParameters,
-        in_memory_metrics: HeartbeatMetricType,
-    ) -> Gauge {
-        let metric_name = params.name.to_string();
-        let gauge = Arc::new(PromMetric::<IntGaugeVec>::new(
-            metric_name,
-            params.description.to_string(),
-            self.registry.clone(),
-        ));
-        Gauge::new_with_in_memory(gauge, in_memory_metrics)
-    }
-
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         let metric_name = params.name.to_string();
         GaugeF64::new(Arc::new(PromMetric::<GaugeVec>::new(
@@ -629,10 +577,6 @@ impl CoreMeter for CorePrometheusMeter {
             params.description.to_string(),
             self.registry.clone(),
         )))
-    }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        self.in_memory_metrics.clone()
     }
 }
 

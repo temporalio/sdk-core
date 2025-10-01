@@ -22,7 +22,6 @@ tokio = { version = "1.47", features = ["rt", "rt-multi-thread", "parking_lot", 
 tokio-util = { version = "0.7" }
 tokio-stream = "0.1"
 tracing = "0.1"
-uuid = { version = "1.18.1", features = ["v4"] }
 
 [dependencies.temporal-sdk-core]
 path = "../core"

@@ -1,5 +1,5 @@
 use crate::{ByteArrayRef, runtime::Runtime};
-use std::{any::Any, error::Error, sync::Arc, time::Duration};
+use std::{any::Any, collections::HashMap, error::Error, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics;
 use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
 use tracing::error;
@@ -367,11 +367,6 @@ impl metrics::CoreMeter for CustomMetricMeterRef {
     fn gauge_f64(&self, params: metrics::MetricParameters) -> metrics::GaugeF64 {
         metrics::GaugeF64::new(Arc::new(self.new_metric(params, MetricKind::GaugeFloat)))
     }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        error!("in_memory_metrics() is not supported for CustomMetricMeterRef");
-        Arc::new(WorkerHeartbeatMetrics::default())
-    }
 }
 
 impl CustomMetricMeterRef {
@@ -388,16 +383,21 @@ impl CustomMetricMeterRef {
     ) -> metrics::MetricAttributes {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            let append_from = match append_from {
+            let (append_from, mut label_cache) = match append_from {
                 Some(metrics::MetricAttributes::Dynamic(v)) => {
-                    v.clone()
+                    let existing = v
+                        .clone()
                         .as_any()
                         .downcast::<CustomMetricAttributes>()
-                        .expect("Attributes not CustomMetricAttributes as expected")
-                        .attributes
+                        .expect("Attributes not CustomMetricAttributes as expected");
+                    (existing.attributes, existing.labels.as_ref().clone())
                 }
-                _ => std::ptr::null(),
+                _ => (std::ptr::null(), HashMap::new()),
             };
+            for kv in &attribs.attributes {
+                label_cache.insert(kv.key.clone(), kv.value.to_string());
+            }
+            let label_cache = Arc::new(label_cache);
             // Build a set of CustomMetricAttributes with _references_ to the
             // pieces in attribs. We count on both this vec and the attribs vec
             // living beyond the callback invocation.
@@ -442,6 +442,7 @@ impl CustomMetricMeterRef {
             metrics::MetricAttributes::Dynamic(Arc::new(CustomMetricAttributes {
                 meter_impl: self.meter_impl.clone(),
                 attributes: raw_attrs,
+                labels: label_cache,
             }))
         }
     }
@@ -486,6 +487,7 @@ impl Drop for CustomMetricMeterImpl {
 struct CustomMetricAttributes {
     meter_impl: Arc<CustomMetricMeterImpl>,
     attributes: *const libc::c_void,
+    labels: Arc<HashMap<String, String>>,
 }
 
 unsafe impl Send for CustomMetricAttributes {}
@@ -494,6 +496,10 @@ unsafe impl Sync for CustomMetricAttributes {}
 impl metrics::CustomMetricAttributes for CustomMetricAttributes {
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self as Arc<dyn Any + Send + Sync>
+    }
+
+    fn label_value(&self, key: &str) -> Option<String> {
+        self.labels.get(key).cloned()
     }
 }
 

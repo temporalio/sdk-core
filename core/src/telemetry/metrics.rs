@@ -25,6 +25,7 @@ pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,
     instruments: Arc<Instruments>,
+    in_memory_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
 }
 
 #[derive(Clone)]
@@ -71,29 +72,25 @@ impl MetricsContext {
     pub(crate) fn no_op() -> Self {
         let meter = Arc::new(NoOpCoreMeter);
         let kvs = meter.new_attributes(Default::default());
-        let instruments = Arc::new(Instruments::new(meter.as_ref(), None));
+        let in_memory_metrics = Some(Arc::new(WorkerHeartbeatMetrics::default()));
+        let instruments = Arc::new(Instruments::new(meter.as_ref(), in_memory_metrics.clone()));
         Self {
             kvs,
             instruments,
             meter,
+            in_memory_metrics,
         }
     }
 
     #[cfg(test)]
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
-        MetricsContext::top_level_with_meter(
-            namespace,
-            tq,
-            telemetry.get_temporal_metric_meter(),
-            telemetry.in_memory_metrics(),
-        )
+        MetricsContext::top_level_with_meter(namespace, tq, telemetry.get_temporal_metric_meter())
     }
 
     pub(crate) fn top_level_with_meter(
         namespace: String,
         tq: String,
         temporal_meter: Option<TemporalMeter>,
-        in_memory_meter: Option<Arc<WorkerHeartbeatMetrics>>,
     ) -> Self {
         if let Some(mut meter) = temporal_meter {
             meter
@@ -102,12 +99,14 @@ impl MetricsContext {
                 .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
             meter.default_attribs.attributes.push(task_queue(tq));
             let kvs = meter.inner.new_attributes(meter.default_attribs);
-            let mut instruments = Instruments::new(meter.inner.as_ref(), in_memory_meter);
+            let in_memory_metrics = Some(Arc::new(WorkerHeartbeatMetrics::default()));
+            let mut instruments = Instruments::new(meter.inner.as_ref(), in_memory_metrics.clone());
             instruments.update_attributes(&kvs);
             Self {
                 kvs,
                 instruments: Arc::new(instruments),
                 meter: meter.inner,
+                in_memory_metrics,
             }
         } else {
             Self::no_op()
@@ -128,7 +127,12 @@ impl MetricsContext {
             instruments: Arc::new(instruments),
             kvs,
             meter: self.meter.clone(),
+            in_memory_metrics: self.in_memory_metrics.clone(),
         }
+    }
+
+    pub(crate) fn in_memory_meter(&self) -> Option<Arc<WorkerHeartbeatMetrics>> {
+        self.in_memory_metrics.clone()
     }
 
     /// A workflow task queue poll succeeded
@@ -878,11 +882,6 @@ where
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::Gauge)))
     }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        error!("in_memory_metrics() is not supported for MetricsCallBuffer");
-        Arc::new(WorkerHeartbeatMetrics::default())
-    }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
 where
@@ -1112,10 +1111,6 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge_f64(params)
     }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        self.meter.in_memory_metrics()
-    }
 }
 
 #[cfg(test)]
@@ -1133,6 +1128,10 @@ mod tests {
     impl CustomMetricAttributes for DummyCustomAttrs {
         fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
             self as Arc<dyn Any + Send + Sync>
+        }
+
+        fn label_value(&self, _key: &str) -> Option<String> {
+            None
         }
     }
     impl DummyCustomAttrs {

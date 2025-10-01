@@ -664,6 +664,7 @@ impl WorkerClient for WorkerClientBag {
             w.status = WorkerStatus::Shutdown.into();
             self.set_heartbeat_client_fields(w);
         }
+        println!("AAA shutdown worker heartbeat: {final_heartbeat:#?}");
         let request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
@@ -689,6 +690,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_heartbeat,
         };
+        println!("AAA record_worker_heartbeat: {request:#?}");
         Ok(self
             .cloned_client()
             .record_worker_heartbeat(request)

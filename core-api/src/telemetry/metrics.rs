@@ -70,8 +70,6 @@ pub trait CoreMeter: Send + Sync + Debug {
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64;
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics>;
 }
 
 /// Provides a generic way to record metrics in memory.
@@ -130,6 +128,10 @@ fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Opti
             .iter()
             .find(|kv| kv.key.as_str() == key)
             .map(|kv| kv.value.to_string()),
+        MetricAttributes::Buffer(buffer_attrs) => buffer_attrs.get().label_value(key),
+        MetricAttributes::Dynamic(custom_metrics_attribute) => {
+            custom_metrics_attribute.label_value(key)
+        }
         _ => None,
     }
 }
@@ -291,10 +293,6 @@ impl CoreMeter for Arc<dyn CoreMeter> {
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         self.as_ref().gauge_f64(params)
     }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        self.as_ref().in_memory_metrics()
-    }
 }
 
 /// Attributes which are provided every time a call to record a specific metric is made.
@@ -319,6 +317,11 @@ pub trait CustomMetricAttributes: Debug + Send + Sync {
     /// Must be implemented to work around existing type system restrictions, see
     /// [here](https://internals.rust-lang.org/t/downcast-not-from-any-but-from-any-trait/16736/12)
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+
+    /// Return the stringified value for a label key, if available.
+    fn label_value(&self, _key: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Options that are attached to metrics on a per-call basis
@@ -943,12 +946,32 @@ impl<T> LazyRef<T> {
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
-    fn new_attributes(&self, _: NewAttributes) -> MetricAttributes {
-        MetricAttributes::Dynamic(Arc::new(NoOpAttributes))
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
+        MetricAttributes::Dynamic(Arc::new(InMemoryMetricAttributes::from_new_attributes(
+            attribs.attributes,
+        )))
     }
 
-    fn extend_attributes(&self, existing: MetricAttributes, _: NewAttributes) -> MetricAttributes {
-        existing
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        let new_attrs = InMemoryMetricAttributes::from_new_attributes(attribs.attributes);
+        let merged = if let MetricAttributes::Dynamic(existing_attrs) = existing {
+            if let Ok(in_mem) = existing_attrs
+                .clone()
+                .as_any()
+                .downcast::<InMemoryMetricAttributes>()
+            {
+                in_mem.merge(&new_attrs)
+            } else {
+                new_attrs
+            }
+        } else {
+            new_attrs
+        };
+        MetricAttributes::Dynamic(Arc::new(merged))
     }
 
     fn counter(&self, _: MetricParameters) -> Counter {
@@ -973,10 +996,6 @@ impl CoreMeter for NoOpCoreMeter {
 
     fn gauge_f64(&self, _: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(NoOpInstrument))
-    }
-
-    fn in_memory_metrics(&self) -> Arc<WorkerHeartbeatMetrics> {
-        Arc::new(WorkerHeartbeatMetrics::default())
     }
 }
 
@@ -1015,11 +1034,71 @@ impl_no_op!(HistogramDurationBase, Duration);
 impl_no_op!(GaugeBase, u64);
 impl_no_op!(GaugeF64Base, f64);
 
-#[derive(Debug, Clone)]
-pub struct NoOpAttributes;
-impl CustomMetricAttributes for NoOpAttributes {
+#[derive(Debug, Clone, Default)]
+struct InMemoryMetricAttributes {
+    labels: HashMap<String, String>,
+}
+
+impl InMemoryMetricAttributes {
+    fn from_new_attributes(attributes: Vec<MetricKeyValue>) -> Self {
+        let mut labels = HashMap::new();
+        for kv in attributes {
+            labels.insert(kv.key, kv.value.to_string());
+        }
+        Self { labels }
+    }
+
+    fn merge(&self, other: &InMemoryMetricAttributes) -> Self {
+        let mut labels = self.labels.clone();
+        for (key, value) in &other.labels {
+            labels.insert(key.clone(), value.clone());
+        }
+        Self { labels }
+    }
+}
+
+impl CustomMetricAttributes for InMemoryMetricAttributes {
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self as Arc<dyn Any + Send + Sync>
+    }
+
+    fn label_value(&self, key: &str) -> Option<String> {
+        self.labels.get(key).cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
+
+    #[test]
+    fn in_memory_attributes_provide_label_values() {
+        let meter = NoOpCoreMeter;
+        let base_attrs = meter.new_attributes(NewAttributes::default());
+        let attrs = meter.extend_attributes(
+            base_attrs,
+            NewAttributes::from(vec![MetricKeyValue::new("poller_type", "workflow_task")]),
+        );
+
+        let value = Arc::new(AtomicU64::new(0));
+        let mut metrics = HashMap::new();
+        metrics.insert("workflow_task".to_string(), value.clone());
+        let heartbeat_metric = HeartbeatMetricType::WithLabel(metrics);
+
+        heartbeat_metric.record_gauge(3, &attrs);
+
+        assert_eq!(value.load(Ordering::Relaxed), 3);
+        assert_eq!(
+            label_value_from_attributes(&attrs, "poller_type").as_deref(),
+            Some("workflow_task")
+        );
     }
 }
 

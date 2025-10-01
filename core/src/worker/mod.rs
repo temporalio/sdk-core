@@ -164,7 +164,6 @@ pub(crate) struct WorkerTelemetry {
     metric_meter: Option<TemporalMeter>,
     temporal_metric_meter: Option<TemporalMeter>,
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
-    in_memory_meter: Option<Arc<WorkerHeartbeatMetrics>>,
 }
 
 #[async_trait::async_trait]
@@ -322,7 +321,6 @@ impl Worker {
             metric_meter: telem.get_metric_meter(),
             temporal_metric_meter: telem.get_temporal_metric_meter(),
             trace_subscriber: telem.trace_subscriber(),
-            in_memory_meter: telem.in_memory_metrics(),
         });
 
         Self::new_with_pollers(
@@ -385,7 +383,6 @@ impl Worker {
                     config.namespace.clone(),
                     config.task_queue.clone(),
                     wt.temporal_metric_meter.clone(),
-                    wt.in_memory_meter.clone(),
                 ),
                 wt.metric_meter.clone(),
             )
@@ -582,6 +579,7 @@ impl Worker {
                 worker_instance_key,
                 hb_interval,
                 worker_telemetry.clone(),
+                metrics.in_memory_meter(),
                 wft_slots.clone(),
                 act_slots,
                 nexus_slots,
@@ -1042,6 +1040,7 @@ impl WorkerHeartbeatManager {
         worker_instance_key: Uuid,
         heartbeat_interval: Duration,
         telemetry_instance: Option<WorkerTelemetry>,
+        in_mem_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
         wft_slots: MeteredPermitDealer<WorkflowSlotKind>,
         act_slots: MeteredPermitDealer<ActivitySlotKind>,
         nexus_slots: MeteredPermitDealer<NexusSlotKind>,
@@ -1052,7 +1051,6 @@ impl WorkerHeartbeatManager {
         nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
         status: Arc<Mutex<WorkerStatus>>,
     ) -> Self {
-        let telemetry_instance_clone = telemetry_instance.clone();
         let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
             let deployment_version = config.computed_deployment_version().map(|dv| {
                 deployment::v1::WorkerDeploymentVersion {
@@ -1104,9 +1102,7 @@ impl WorkerHeartbeatManager {
                 sdk_version: String::new(),
             };
 
-            if let Some(telem_instance) = telemetry_instance_clone.as_ref()
-                && let Some(in_mem) = telem_instance.in_memory_meter.as_ref()
-            {
+            if let Some(in_mem) = in_mem_metrics.as_ref() {
                 worker_heartbeat.total_sticky_cache_hit =
                     in_mem.total_sticky_cache_hit.load(Ordering::Relaxed) as i32;
                 worker_heartbeat.total_sticky_cache_miss =
@@ -1114,7 +1110,6 @@ impl WorkerHeartbeatManager {
                 worker_heartbeat.current_sticky_cache_size =
                     in_mem.sticky_cache_size.load(Ordering::Relaxed) as i32;
 
-                // TODO: Is this ever not Some()?
                 worker_heartbeat.workflow_poller_info = Some(WorkerPollerInfo {
                     current_pollers: in_mem
                         .num_pollers
