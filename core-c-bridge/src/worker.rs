@@ -1059,6 +1059,7 @@ pub extern "C" fn temporal_core_complete_async_reserve(
     let permit_id =
         NonZero::new(permit_id).expect("permit_id cannot be 0 on successful reservation");
     let prev_state = unsafe {
+        // Not turning completion_ctx into Arc yet as we only want to deallocate it on success
         (*completion_ctx).state.compare_exchange(
             SlotReserveOperationState::Pending,
             SlotReserveOperationState::Completed(permit_id),
@@ -1066,7 +1067,8 @@ pub extern "C" fn temporal_core_complete_async_reserve(
     };
     match prev_state {
         Ok(_) => {
-            drop(unsafe { Arc::from_raw(completion_ctx) });
+            let completion_ctx = unsafe { Arc::from_raw(completion_ctx) };
+            completion_ctx.notify.notify_one();
             true
         }
         Err(SlotReserveOperationState::Cancelled) => false,
