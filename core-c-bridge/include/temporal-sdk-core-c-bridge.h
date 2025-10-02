@@ -664,8 +664,8 @@ typedef struct TemporalCoreCustomSlotSupplierCallbacks {
   TemporalCoreCustomSlotSupplierReserveCallback reserve;
   /**
    * Called to cancel slot reservation. `completion_ctx` specifies which reservation is being
-   * cancelled; the matching [`reserve`] call was made with the same `completion_ctx`. After
-   * cancellation, the implementation should call [`temporal_core_complete_async_cancel_reserve`]
+   * cancelled; the matching [`reserve`](Self::reserve) call was made with the same `completion_ctx`.
+   * After cancellation, the implementation should call [`temporal_core_complete_async_cancel_reserve`]
    * with the same `completion_ctx`. Calling [`temporal_core_complete_async_reserve`] is not
    * needed after cancellation.
    */
@@ -673,8 +673,8 @@ typedef struct TemporalCoreCustomSlotSupplierCallbacks {
   /**
    * Called to try an immediate slot reservation. The callback should return 0 if immediate
    * reservation is not currently possible, or permit ID if reservation was successful. Permit ID
-   * is arbitrary, but must be unique among live reservations as it's later used for `mark_used`
-   * and `release` callbacks.
+   * is arbitrary, but must be unique among live reservations as it's later used for [`mark_used`](Self::mark_used)
+   * and [`release`](Self::release) callbacks.
    */
   TemporalCoreCustomSlotSupplierTryReserveCallback try_reserve;
   /**
@@ -1043,9 +1043,10 @@ struct TemporalCoreWorkerReplayPushResult temporal_core_worker_replay_push(struc
 /**
  * Completes asynchronous slot reservation started by a call to [`CustomSlotSupplierCallbacks::reserve`].
  *
- * `completion_ctx` must be the same as the one passed to the matching `reserve` call.
- * `permit_id` is arbitrary, but must be unique among live reservations as it's later used for
- * `mark_used` and `release` callbacks.
+ * `completion_ctx` must be the same as the one passed to the matching [`reserve`](CustomSlotSupplierCallbacks::reserve)
+ * call. `permit_id` is arbitrary, but must be unique among live reservations as it's later used
+ * for [`mark_used`](CustomSlotSupplierCallbacks::mark_used) and [`release`](CustomSlotSupplierCallbacks::release)
+ * callbacks.
  *
  * This function returns true if the reservation was completed successfully, or false if the
  * reservation was cancelled before completion. If this function returns false, the implementation
@@ -1059,15 +1060,18 @@ bool temporal_core_complete_async_reserve(const struct TemporalCoreSlotReserveCo
                                           uintptr_t permit_id);
 
 /**
- * Completes cancellation of asynchronous slot reservation. Cancellation can only be initiated by
- * Core. It's done by calling [`CustomSlotSupplierCallbacks::cancel_reserve`] after an earlier call
- * to [`CustomSlotSupplierCallbacks::reserve`].
+ * Completes cancellation of asynchronous slot reservation.
  *
- * `completion_ctx` must be the same as the one passed to the matching `cancel_reserve` call.
+ * Cancellation can only be initiated by Core. It's done by calling [`CustomSlotSupplierCallbacks::cancel_reserve`]
+ * after an earlier call to [`CustomSlotSupplierCallbacks::reserve`].
+ *
+ * `completion_ctx` must be the same as the one passed to the matching [`cancel_reserve`](CustomSlotSupplierCallbacks::cancel_reserve)
+ * call.
  *
  * This function returns true on successful cancellation, or false if cancellation was not
- * requested for the given `completion_ctx`. It is a bug to call this function when cancellation
- * was not requested.
+ * requested for the given `completion_ctx`. A false value indicates there's likely a logic bug in
+ * the implementation where it doesn't correctly wait for [`cancel_reserve`](CustomSlotSupplierCallbacks::cancel_reserve)
+ * callback to be called.
  *
  * **Caution:** if this function returns true, `completion_ctx` gets freed. Afterwards, calling
  * either [`temporal_core_complete_async_reserve`] or [`temporal_core_complete_async_cancel_reserve`]
