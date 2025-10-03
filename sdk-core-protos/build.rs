@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=./protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
-    tonic_build::configure()
+    tonic_prost_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
         .build_server(false)
@@ -117,7 +117,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "::prost_wkt_types::FieldMask"
         )
         .file_descriptor_set_path(descriptor_file)
-        .skip_debug("temporal.api.common.v1.Payload")
+        .skip_debug(["temporal.api.common.v1.Payload"])
         .compile_protos(
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
