@@ -366,7 +366,7 @@ pub trait SlotSupplier {
     /// Returns a human-friendly identifier describing this supplier implementation for
     /// diagnostics and telemetry.
     fn slot_supplier_kind(&self) -> String {
-        format!("{}", type_name::<Self>())
+        type_name::<Self>().to_string()
     }
 }
 

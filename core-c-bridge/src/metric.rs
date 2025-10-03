@@ -1,8 +1,6 @@
 use crate::{ByteArrayRef, runtime::Runtime};
 use std::{any::Any, collections::HashMap, error::Error, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics;
-use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
-use tracing::error;
 
 pub struct MetricMeter {
     core: metrics::TemporalMeter,

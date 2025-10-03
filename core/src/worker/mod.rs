@@ -8,10 +8,11 @@ mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
-    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
-    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
-    TunerBuilder, TunerHolder, TunerHolderOptions, TunerHolderOptionsBuilder,
+    FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
+    ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
+    TunerHolderOptions, TunerHolderOptionsBuilder,
 };
+pub(crate) use tuner::{RealSysInfo, SystemResourceInfo};
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -64,7 +65,6 @@ use std::{
     },
     time::Duration,
 };
-use sysinfo::System;
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_client::{
     ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
@@ -390,11 +390,13 @@ impl Worker {
             (MetricsContext::no_op(), None)
         };
 
-        let tuner = config
-            .tuner
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| Arc::new(TunerBuilder::from_config(&config).build()));
+        let mut sys_info = None;
+        let tuner = config.tuner.as_ref().cloned().unwrap_or_else(|| {
+            let mut tuner_builder = TunerBuilder::from_config(&config);
+            sys_info = tuner_builder.get_sys_info();
+            Arc::new(tuner_builder.build())
+        });
+        let sys_info = sys_info.unwrap_or_else(|| Arc::new(RealSysInfo::new()));
 
         metrics.worker_registered();
         let shutdown_token = CancellationToken::new();
@@ -574,21 +576,25 @@ impl Worker {
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = worker_heartbeat_interval.map(|hb_interval| {
+            let hb_metrics = WorkerHeartbeatManagerMetrics {
+                in_mem_metrics: metrics.in_memory_meter(),
+                wft_slots: wft_slots.clone(),
+                act_slots,
+                nexus_slots,
+                la_slots: la_permit_dealer,
+                wf_last_suc_poll_time,
+                wf_sticky_last_suc_poll_time,
+                act_last_suc_poll_time,
+                nexus_last_suc_poll_time,
+                status: worker_status.clone(),
+                sys_info,
+            };
             WorkerHeartbeatManager::new(
                 config.clone(),
                 worker_instance_key,
                 hb_interval,
                 worker_telemetry.clone(),
-                metrics.in_memory_meter(),
-                wft_slots.clone(),
-                act_slots,
-                nexus_slots,
-                la_permit_dealer,
-                wf_last_suc_poll_time,
-                wf_sticky_last_suc_poll_time,
-                act_last_suc_poll_time,
-                nexus_last_suc_poll_time,
-                worker_status.clone(),
+                hb_metrics,
             )
         });
 
@@ -1024,6 +1030,21 @@ impl ClientWorker for ClientWorkerRegistrator {
     }
 }
 
+// TODO: better name?
+struct WorkerHeartbeatManagerMetrics {
+    in_mem_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
+    wft_slots: MeteredPermitDealer<WorkflowSlotKind>,
+    act_slots: MeteredPermitDealer<ActivitySlotKind>,
+    nexus_slots: MeteredPermitDealer<NexusSlotKind>,
+    la_slots: MeteredPermitDealer<LocalActivitySlotKind>,
+    wf_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    wf_sticky_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    act_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    status: Arc<Mutex<WorkerStatus>>,
+    sys_info: Arc<dyn SystemResourceInfo + Send + Sync>,
+}
+
 struct WorkerHeartbeatManager {
     /// Heartbeat interval, defaults to 60s
     heartbeat_interval: Duration,
@@ -1034,22 +1055,12 @@ struct WorkerHeartbeatManager {
 }
 
 impl WorkerHeartbeatManager {
-    #[allow(clippy::too_many_arguments)]
     fn new(
         config: WorkerConfig,
         worker_instance_key: Uuid,
         heartbeat_interval: Duration,
         telemetry_instance: Option<WorkerTelemetry>,
-        in_mem_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
-        wft_slots: MeteredPermitDealer<WorkflowSlotKind>,
-        act_slots: MeteredPermitDealer<ActivitySlotKind>,
-        nexus_slots: MeteredPermitDealer<NexusSlotKind>,
-        la_slots: MeteredPermitDealer<LocalActivitySlotKind>,
-        wf_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-        wf_sticky_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-        act_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-        nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-        status: Arc<Mutex<WorkerStatus>>,
+        heartbeat_manager_metrics: WorkerHeartbeatManagerMetrics,
     ) -> Self {
         let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
             let deployment_version = config.computed_deployment_version().map(|dv| {
@@ -1059,15 +1070,15 @@ impl WorkerHeartbeatManager {
                 }
             });
 
-            let (current_host_cpu_usage, current_host_mem_usage) = get_host_data();
-
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
                     host_name: gethostname().to_string_lossy().to_string(),
                     process_id: std::process::id().to_string(),
-                    current_host_cpu_usage,
-                    current_host_mem_usage,
+                    current_host_cpu_usage: heartbeat_manager_metrics.sys_info.used_cpu_percent()
+                        as f32,
+                    current_host_mem_usage: heartbeat_manager_metrics.sys_info.used_mem_percent()
+                        as f32,
 
                     // Set by SharedNamespaceWorker because it relies on the client
                     process_key: String::new(),
@@ -1075,7 +1086,7 @@ impl WorkerHeartbeatManager {
                 task_queue: config.task_queue.clone(),
                 deployment_version,
 
-                status: (*status.lock()) as i32,
+                status: (*heartbeat_manager_metrics.status.lock()) as i32,
                 start_time: Some(SystemTime::now().into()),
                 plugins: config.plugins.clone(),
 
@@ -1102,7 +1113,7 @@ impl WorkerHeartbeatManager {
                 sdk_version: String::new(),
             };
 
-            if let Some(in_mem) = in_mem_metrics.as_ref() {
+            if let Some(in_mem) = heartbeat_manager_metrics.in_mem_metrics.as_ref() {
                 worker_heartbeat.total_sticky_cache_hit =
                     in_mem.total_sticky_cache_hit.load(Ordering::Relaxed) as i32;
                 worker_heartbeat.total_sticky_cache_miss =
@@ -1115,7 +1126,10 @@ impl WorkerHeartbeatManager {
                         .num_pollers
                         .wft_current_pollers
                         .load(Ordering::Relaxed) as i32,
-                    last_successful_poll_time: wf_last_suc_poll_time.lock().map(|time| time.into()),
+                    last_successful_poll_time: heartbeat_manager_metrics
+                        .wf_last_suc_poll_time
+                        .lock()
+                        .map(|time| time.into()),
                     is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
                 });
                 worker_heartbeat.workflow_sticky_poller_info = Some(WorkerPollerInfo {
@@ -1123,7 +1137,8 @@ impl WorkerHeartbeatManager {
                         .num_pollers
                         .sticky_wft_current_pollers
                         .load(Ordering::Relaxed) as i32,
-                    last_successful_poll_time: wf_sticky_last_suc_poll_time
+                    last_successful_poll_time: heartbeat_manager_metrics
+                        .wf_sticky_last_suc_poll_time
                         .lock()
                         .map(|time| time.into()),
                     is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
@@ -1133,7 +1148,8 @@ impl WorkerHeartbeatManager {
                         .num_pollers
                         .activity_current_pollers
                         .load(Ordering::Relaxed) as i32,
-                    last_successful_poll_time: act_last_suc_poll_time
+                    last_successful_poll_time: heartbeat_manager_metrics
+                        .act_last_suc_poll_time
                         .lock()
                         .map(|time| time.into()),
                     is_autoscaling: config.activity_task_poller_behavior.is_autoscaling(),
@@ -1143,14 +1159,15 @@ impl WorkerHeartbeatManager {
                         .num_pollers
                         .nexus_current_pollers
                         .load(Ordering::Relaxed) as i32,
-                    last_successful_poll_time: nexus_last_suc_poll_time
+                    last_successful_poll_time: heartbeat_manager_metrics
+                        .nexus_last_suc_poll_time
                         .lock()
                         .map(|time| time.into()),
                     is_autoscaling: config.nexus_task_poller_behavior.is_autoscaling(),
                 });
 
                 worker_heartbeat.workflow_task_slots_info = make_slots_info(
-                    &wft_slots,
+                    &heartbeat_manager_metrics.wft_slots,
                     in_mem
                         .workflow_task_execution_latency
                         .load(Ordering::Relaxed),
@@ -1159,17 +1176,17 @@ impl WorkerHeartbeatManager {
                         .load(Ordering::Relaxed),
                 );
                 worker_heartbeat.activity_task_slots_info = make_slots_info(
-                    &act_slots,
+                    &heartbeat_manager_metrics.act_slots,
                     in_mem.activity_execution_latency.load(Ordering::Relaxed),
                     in_mem.activity_execution_failed.load(Ordering::Relaxed),
                 );
                 worker_heartbeat.nexus_task_slots_info = make_slots_info(
-                    &nexus_slots,
+                    &heartbeat_manager_metrics.nexus_slots,
                     in_mem.nexus_task_execution_latency.load(Ordering::Relaxed),
                     in_mem.nexus_task_execution_failed.load(Ordering::Relaxed),
                 );
                 worker_heartbeat.local_activity_slots_info = make_slots_info(
-                    &la_slots,
+                    &heartbeat_manager_metrics.la_slots,
                     in_mem
                         .local_activity_execution_latency
                         .load(Ordering::Relaxed),
@@ -1234,17 +1251,14 @@ fn make_slots_info<SK>(
 where
     SK: SlotKind + 'static,
 {
-    let avail_usize = dealer.available_permits()?;
-    let max_usize = dealer.max_permits()?;
-
-    let avail = i32::try_from(avail_usize).unwrap_or(i32::MAX);
-    let max = i32::try_from(max_usize).unwrap_or(i32::MAX);
-
-    let used = (max - avail).max(0);
+    let permits = dealer.get_extant_count_rcv();
+    let avail = dealer
+        .available_permits()
+        .map_or(-1, |e| i32::try_from(e).unwrap_or(-1));
 
     Some(WorkerSlotsInfo {
         current_available_slots: avail,
-        current_used_slots: used,
+        current_used_slots: *permits.borrow() as i32,
         slot_supplier_kind: dealer.slot_supplier_kind().to_string(),
         total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MAX),
         total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MAX),
@@ -1253,19 +1267,6 @@ where
         last_interval_processed_tasks: 0,
         last_interval_failure_tasks: 0,
     })
-}
-
-fn get_host_data() -> (f32, f32) {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
-    sys.refresh_cpu_usage();
-    let current_host_cpu_usage: f32 =
-        sys.cpus().iter().map(|cpu| cpu.cpu_usage()).sum::<f32>() / sys.cpus().len() as f32;
-    let total_mem = sys.total_memory() as f64;
-    let used_mem = sys.used_memory() as f64;
-    let current_host_mem_usage = (used_mem / total_mem) as f32;
-    (current_host_cpu_usage, current_host_mem_usage)
 }
 
 #[cfg(test)]

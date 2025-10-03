@@ -1,5 +1,5 @@
 use super::{
-    TELEM_SERVICE_NAME, WorkerHeartbeatMetrics, default_buckets_for,
+    TELEM_SERVICE_NAME, default_buckets_for,
     metrics::{
         ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
         DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,

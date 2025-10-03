@@ -13,10 +13,9 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, HeartbeatMetricType,
-    Histogram, HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64,
-    HistogramF64Base, MetricAttributable, MetricAttributes, MetricParameters, NewAttributes,
-    OrderedPromLabelSet, WorkerHeartbeatMetrics,
+    CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
+    HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
+    MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedPromLabelSet,
 };
 
 #[derive(derive_more::From, derive_more::TryInto, Debug, Clone)]
