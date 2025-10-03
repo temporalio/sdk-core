@@ -578,7 +578,7 @@ impl WFStream {
 #[derive(derive_more::From, Debug)]
 enum WFStreamInput {
     NewWft(Box<PermittedWFT>),
-    Local(LocalInput),
+    Local(Box<LocalInput>),
     /// The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
@@ -589,6 +589,11 @@ enum WFStreamInput {
         err: tonic::Status,
         auto_reply_fail_tt: Option<TaskToken>,
     },
+}
+impl From<LocalInput> for WFStreamInput {
+    fn from(input: LocalInput) -> Self {
+        WFStreamInput::Local(Box::new(input))
+    }
 }
 
 /// A non-poller-received input to the [WFStream]
@@ -672,10 +677,10 @@ impl From<ExternalPollerInputs> for WFStreamInput {
                 paginator,
                 update,
                 span,
-            } => WFStreamInput::Local(LocalInput {
+            } => WFStreamInput::Local(Box::new(LocalInput {
                 input: LocalInputs::FetchedPageCompletion { paginator, update },
                 span,
-            }),
+            })),
         }
     }
 }

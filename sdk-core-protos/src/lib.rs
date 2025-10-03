@@ -396,7 +396,7 @@ pub mod coresdk {
     }
 
     pub mod external_data {
-        use prost_wkt_types::{Duration, Timestamp};
+        use prost_types::{Duration, Timestamp};
         use serde::{Deserialize, Deserializer, Serialize, Serializer};
         tonic::include_proto!("coresdk.external_data");
 
@@ -494,7 +494,7 @@ pub mod coresdk {
                 query::v1::WorkflowQuery,
             },
         };
-        use prost_wkt_types::Timestamp;
+        use prost_types::Timestamp;
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
@@ -2151,8 +2151,7 @@ pub mod temporal {
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
                 use anyhow::bail;
-                use prost::alloc::fmt::Formatter;
-                use std::fmt::Display;
+                use std::fmt::{Display, Formatter};
 
                 tonic::include_proto!("temporal.api.history.v1");
 
@@ -2693,8 +2692,8 @@ pub mod temporal {
                 }
 
                 fn elapsed_between_prost_times(
-                    from: prost_wkt_types::Timestamp,
-                    to: prost_wkt_types::Timestamp,
+                    from: prost_types::Timestamp,
+                    to: prost_types::Timestamp,
                 ) -> Option<Option<Duration>> {
                     let from: Result<SystemTime, _> = from.try_into();
                     let to: Result<SystemTime, _> = to.try_into();
