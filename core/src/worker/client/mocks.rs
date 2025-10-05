@@ -36,6 +36,12 @@ pub fn mock_worker_client() -> MockWorkerClient {
     r.expect_identity()
         .returning(|| "test-identity".to_string());
     r.expect_worker_grouping_key().returning(Uuid::new_v4);
+    r.expect_set_heartbeat_client_fields().returning(|hb| {
+        hb.sdk_name = "test-core".to_string();
+        hb.sdk_version = "0.0.0".to_string();
+        hb.worker_identity = "test-identity".to_string();
+        hb.heartbeat_time = Some(SystemTime::now().into());
+    });
     r
 }
 
