@@ -958,18 +958,13 @@ impl CoreMeter for NoOpCoreMeter {
         attribs: NewAttributes,
     ) -> MetricAttributes {
         let new_attrs = InMemoryMetricAttributes::from_new_attributes(attribs.attributes);
-        let merged = if let MetricAttributes::Dynamic(existing_attrs) = existing {
-            if let Ok(in_mem) = existing_attrs
-                .clone()
+        let merged = match existing {
+            MetricAttributes::Dynamic(attrs) => attrs
                 .as_any()
-                .downcast::<InMemoryMetricAttributes>()
-            {
-                in_mem.merge(&new_attrs)
-            } else {
-                new_attrs
-            }
-        } else {
-            new_attrs
+                .downcast_ref::<InMemoryMetricAttributes>()
+                .map(|in_mem| in_mem.merge(&new_attrs))
+                .unwrap_or(new_attrs),
+            _ => new_attrs,
         };
         MetricAttributes::Dynamic(Arc::new(merged))
     }

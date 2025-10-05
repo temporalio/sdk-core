@@ -728,6 +728,7 @@ mod tests {
         prost_dur,
         worker::client::mocks::mock_worker_client,
     };
+    use crossbeam_utils::atomic::AtomicCell;
     use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
@@ -773,7 +774,7 @@ mod tests {
                 max_worker_acts_per_second: Some(2.0),
                 max_tps: None,
             },
-            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(AtomicCell::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -865,7 +866,7 @@ mod tests {
                 max_worker_acts_per_second: None,
                 max_tps: None,
             },
-            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(AtomicCell::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -939,7 +940,7 @@ mod tests {
                 max_worker_acts_per_second: None,
                 max_tps: None,
             },
-            Arc::new(parking_lot::Mutex::new(None)),
+            Arc::new(AtomicCell::new(None)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),

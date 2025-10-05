@@ -527,7 +527,7 @@ impl RealSysInfoInner {
 pub struct RealSysInfo {
     inner: Arc<RealSysInfoInner>,
     shutdown: Arc<AtomicBool>,
-    refresh_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    shutdown_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl RealSysInfo {
@@ -563,7 +563,7 @@ impl RealSysInfo {
         Self {
             inner,
             shutdown,
-            refresh_thread: Mutex::new(Some(handle)),
+            shutdown_handle: Mutex::new(Some(handle)),
         }
     }
 }
@@ -585,7 +585,7 @@ impl SystemResourceInfo for RealSysInfo {
 impl Drop for RealSysInfo {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
-        if let Some(handle) = self.refresh_thread.lock().take() {
+        if let Some(handle) = self.shutdown_handle.lock().take() {
             let _ = handle.join();
         }
     }

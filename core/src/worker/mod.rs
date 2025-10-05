@@ -51,6 +51,7 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use anyhow::bail;
+use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
@@ -429,10 +430,10 @@ impl Worker {
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
 
-        let wf_last_suc_poll_time = Arc::new(Mutex::new(None));
-        let wf_sticky_last_suc_poll_time = Arc::new(Mutex::new(None));
-        let act_last_suc_poll_time = Arc::new(Mutex::new(None));
-        let nexus_last_suc_poll_time = Arc::new(Mutex::new(None));
+        let wf_last_suc_poll_time = Arc::new(AtomicCell::new(None));
+        let wf_sticky_last_suc_poll_time = Arc::new(AtomicCell::new(None));
+        let act_last_suc_poll_time = Arc::new(AtomicCell::new(None));
+        let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
 
         let nexus_slots = MeteredPermitDealer::new(
             tuner.nexus_task_slot_supplier(),
@@ -576,7 +577,7 @@ impl Worker {
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = worker_heartbeat_interval.map(|hb_interval| {
-            let hb_metrics = WorkerHeartbeatManagerMetrics {
+            let hb_metrics = HeartbeatMetrics {
                 in_mem_metrics: metrics.in_memory_meter(),
                 wft_slots: wft_slots.clone(),
                 act_slots,
@@ -1030,17 +1031,16 @@ impl ClientWorker for ClientWorkerRegistrator {
     }
 }
 
-// TODO: better name?
-struct WorkerHeartbeatManagerMetrics {
+struct HeartbeatMetrics {
     in_mem_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
     wft_slots: MeteredPermitDealer<WorkflowSlotKind>,
     act_slots: MeteredPermitDealer<ActivitySlotKind>,
     nexus_slots: MeteredPermitDealer<NexusSlotKind>,
     la_slots: MeteredPermitDealer<LocalActivitySlotKind>,
-    wf_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-    wf_sticky_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-    act_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
-    nexus_last_suc_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    wf_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    wf_sticky_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    act_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    nexus_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     status: Arc<Mutex<WorkerStatus>>,
     sys_info: Arc<dyn SystemResourceInfo + Send + Sync>,
 }
@@ -1060,7 +1060,7 @@ impl WorkerHeartbeatManager {
         worker_instance_key: Uuid,
         heartbeat_interval: Duration,
         telemetry_instance: Option<WorkerTelemetry>,
-        heartbeat_manager_metrics: WorkerHeartbeatManagerMetrics,
+        heartbeat_manager_metrics: HeartbeatMetrics,
     ) -> Self {
         let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
             let deployment_version = config.computed_deployment_version().map(|dv| {
@@ -1128,7 +1128,7 @@ impl WorkerHeartbeatManager {
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
                         .wf_last_suc_poll_time
-                        .lock()
+                        .load()
                         .map(|time| time.into()),
                     is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
                 });
@@ -1139,7 +1139,7 @@ impl WorkerHeartbeatManager {
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
                         .wf_sticky_last_suc_poll_time
-                        .lock()
+                        .load()
                         .map(|time| time.into()),
                     is_autoscaling: config.workflow_task_poller_behavior.is_autoscaling(),
                 });
@@ -1150,7 +1150,7 @@ impl WorkerHeartbeatManager {
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
                         .act_last_suc_poll_time
-                        .lock()
+                        .load()
                         .map(|time| time.into()),
                     is_autoscaling: config.activity_task_poller_behavior.is_autoscaling(),
                 });
@@ -1161,7 +1161,7 @@ impl WorkerHeartbeatManager {
                         .load(Ordering::Relaxed) as i32,
                     last_successful_poll_time: heartbeat_manager_metrics
                         .nexus_last_suc_poll_time
-                        .lock()
+                        .load()
                         .map(|time| time.into()),
                     is_autoscaling: config.nexus_task_poller_behavior.is_autoscaling(),
                 });

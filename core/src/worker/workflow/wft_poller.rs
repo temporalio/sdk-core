@@ -6,8 +6,8 @@ use crate::{
     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
     worker::{client::WorkerClient, wft_poller_behavior},
 };
+use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
-use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
@@ -23,8 +23,8 @@ pub(crate) fn make_wft_poller(
     metrics: &MetricsContext,
     shutdown_token: &CancellationToken,
     wft_slots: &MeteredPermitDealer<WorkflowSlotKind>,
-    last_successful_poll_time: Arc<Mutex<Option<SystemTime>>>,
-    sticky_last_successful_poll_time: Arc<Mutex<Option<SystemTime>>>,
+    last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
 ) -> impl Stream<
     Item = Result<
         (
