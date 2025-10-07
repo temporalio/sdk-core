@@ -65,7 +65,6 @@ struct Instruments {
     sticky_cache_miss: Counter,
     sticky_cache_size: Gauge,
     sticky_cache_forced_evictions: Counter,
-    last_successful_poll_time: HistogramDuration,
 }
 
 impl MetricsContext {
@@ -517,11 +516,6 @@ impl Instruments {
                 description: "Count of evictions of cached workflows".into(),
                 unit: "".into(),
             }),
-            last_successful_poll_time: meter.histogram_duration(MetricParameters {
-                name: "last_successful_poll_time".into(),
-                unit: "duration".into(),
-                description: "Timestamp of the last successful poll time".into(),
-            }),
         }
     }
 
@@ -593,8 +587,6 @@ impl Instruments {
         self.sticky_cache_size
             .update_attributes(new_attributes.clone());
         self.sticky_cache_forced_evictions
-            .update_attributes(new_attributes.clone());
-        self.last_successful_poll_time
             .update_attributes(new_attributes.clone());
     }
 }
