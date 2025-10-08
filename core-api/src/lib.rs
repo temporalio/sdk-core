@@ -141,7 +141,7 @@ pub trait Worker: Send + Sync {
     async fn finalize_shutdown(self);
 
     /// Unique identifier for this worker instance.
-    /// This must be stable across the worker's lifetime but unique per instance.
+    /// This must be stable across the worker's lifetime and unique per instance.
     fn worker_instance_key(&self) -> Uuid;
 }
 

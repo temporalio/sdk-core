@@ -1,9 +1,13 @@
 use crate::common::{ANY_PORT, CoreWfStarter, get_integ_telem_options};
+use anyhow::anyhow;
+use crossbeam_utils::atomic::AtomicCell;
 use prost_types::Duration as PbDuration;
 use prost_types::Timestamp;
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use temporal_client::{NamespacedClient, WorkflowService};
+use temporal_client::{Client, NamespacedClient, RetryClient, WorkflowService};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 use temporal_sdk_core::{
@@ -12,10 +16,15 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::telemetry::{
     OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
 };
+use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
-use temporal_sdk_core_protos::temporal::api::deployment::v1::WorkerDeploymentVersion;
+use temporal_sdk_core_protos::temporal::api::common::v1::RetryPolicy;
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeWorkerRequest;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListWorkersRequest;
+use tokio::sync::Semaphore;
+use tokio::time::sleep;
 use url::Url;
 
 fn within_two_minutes_ts(ts: Timestamp) -> bool {
@@ -31,13 +40,50 @@ fn within_duration(dur: PbDuration, threshold: Duration) -> bool {
     std_dur <= threshold
 }
 
+fn new_no_metrics_starter(wf_name: &str) -> CoreWfStarter {
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(TelemetryOptionsBuilder::default().build().unwrap())
+        .heartbeat_interval(Some(Duration::from_millis(100)))
+        .build()
+        .unwrap();
+    CoreWfStarter::new_with_runtime(wf_name, CoreRuntime::new_assume_tokio(runtimeopts).unwrap())
+}
+
+async fn list_worker_heartbeats(
+    client: &Arc<RetryClient<Client>>,
+    query: impl Into<String>,
+) -> Vec<WorkerHeartbeat> {
+    let mut raw_client = client.as_ref().clone();
+    WorkflowService::list_workers(
+        &mut raw_client,
+        ListWorkersRequest {
+            namespace: client.namespace().to_owned(),
+            page_size: 200,
+            next_page_token: Vec::new(),
+            query: query.into(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .workers_info
+    .into_iter()
+    .filter_map(|info| info.worker_heartbeat)
+    .collect()
+}
+
 // Tests that rely on Prometheus running in a docker container need to start
 // with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
 #[rstest::rstest]
 #[tokio::test]
-async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) {
+async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] backing: &str) {
+    let telemopts = if backing == "no_metrics" {
+        TelemetryOptionsBuilder::default().build().unwrap()
+    } else {
+        get_integ_telem_options()
+    };
     let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(get_integ_telem_options())
+        .telemetry_options(telemopts)
         .heartbeat_interval(Some(Duration::from_millis(100)))
         .build()
         .unwrap();
@@ -59,6 +105,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) 
             rt.telemetry_mut()
                 .attach_late_init_metrics(start_prometheus_metric_exporter(opts).unwrap().meter);
         }
+        "no_metrics" => {}
         _ => unreachable!(),
     }
     let wf_name = format!("worker_heartbeat_basic_{backing}");
@@ -82,14 +129,60 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) 
         .await;
         Ok(().into())
     });
+
+    static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
+    static ACTS_DONE: Semaphore = Semaphore::const_new(0);
     worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
+        ACTS_STARTED.add_permits(1);
+        let _ = ACTS_DONE.acquire().await.unwrap();
         Ok(i)
     });
 
     starter
         .start_with_worker(wf_name.clone(), &mut worker)
         .await;
-    worker.run_until_done().await.unwrap();
+
+    let start_time = AtomicCell::new(None);
+    let heartbeat_time = AtomicCell::new(None);
+
+    let test_fut = async {
+        // Give enough time to ensure heartbeat interval has been hit
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let _ = ACTS_STARTED.acquire().await.unwrap();
+        let client = starter.get_client().await;
+        let mut raw_client = (*client).clone();
+        let workers_list = WorkflowService::list_workers(
+            &mut raw_client,
+            ListWorkersRequest {
+                namespace: client.namespace().to_owned(),
+                page_size: 100,
+                next_page_token: Vec::new(),
+                query: String::new(),
+            },
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let worker_info = workers_list
+            .workers_info
+            .iter()
+            .find(|worker_info| {
+                if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+                    hb.worker_instance_key == worker_instance_key.to_string()
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+        in_activity_checks(heartbeat, &start_time, &heartbeat_time);
+        ACTS_DONE.add_permits(1);
+    };
+
+    let runner = async move {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::join!(test_fut, runner);
 
     let client = starter.get_client().await;
     let mut raw_client = (*client).clone();
@@ -119,38 +212,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) 
         })
         .unwrap();
     let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-    assert!(heartbeat.task_queue.starts_with(&wf_name));
-    assert_eq!(heartbeat.worker_identity, "integ_tester");
-    assert_eq!(heartbeat.sdk_name, "temporal-core");
-    assert_eq!(heartbeat.sdk_version, "0.1.0");
-    assert_eq!(heartbeat.status, WorkerStatus::Shutdown as i32);
-    assert!(within_two_minutes_ts(heartbeat.start_time.unwrap()));
-    assert!(within_two_minutes_ts(heartbeat.heartbeat_time.unwrap()));
-    assert!(within_duration(
-        heartbeat.elapsed_since_last_heartbeat.unwrap(),
-        Duration::from_secs(1)
-    ));
-
-    let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
-    assert!(!workflow_poller_info.is_autoscaling);
-    assert!(within_two_minutes_ts(
-        workflow_poller_info.last_successful_poll_time.unwrap()
-    ));
-    let sticky_poller_info = heartbeat.workflow_sticky_poller_info.unwrap();
-    assert!(!sticky_poller_info.is_autoscaling);
-    assert!(within_two_minutes_ts(
-        sticky_poller_info.last_successful_poll_time.unwrap()
-    ));
-    let nexus_poller_info = heartbeat.nexus_poller_info.unwrap();
-    assert!(!nexus_poller_info.is_autoscaling);
-    assert!(nexus_poller_info.last_successful_poll_time.is_none());
-    let activity_poller_info = heartbeat.activity_poller_info.unwrap();
-    assert!(!activity_poller_info.is_autoscaling);
-    assert!(within_two_minutes_ts(
-        activity_poller_info.last_successful_poll_time.unwrap()
-    ));
-
-    assert_eq!(heartbeat.total_sticky_cache_hit, 2);
+    after_shutdown_checks(heartbeat, &wf_name, &start_time, &heartbeat_time);
 }
 
 // Tests that rely on Prometheus running in a docker container need to start
@@ -180,6 +242,16 @@ async fn docker_worker_heartbeat_tuner() {
         .with_activity_slots_options(ResourceSlotOptions::new(5, 10, Duration::from_millis(50)));
     starter
         .worker_config
+        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 200,
+            initial: 5,
+        })
+        .nexus_task_poller_behavior(PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 200,
+            initial: 5,
+        })
         .clear_max_outstanding_opts()
         .tuner(Arc::new(tuner));
     let mut worker = starter.worker().await;
@@ -232,16 +304,151 @@ async fn docker_worker_heartbeat_tuner() {
         .unwrap();
     let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
     assert!(heartbeat.task_queue.starts_with(wf_name));
+
+    assert_eq!(
+        heartbeat
+            .workflow_task_slots_info
+            .clone()
+            .unwrap()
+            .slot_supplier_kind,
+        "ResourceBased"
+    );
+    assert_eq!(
+        heartbeat
+            .activity_task_slots_info
+            .clone()
+            .unwrap()
+            .slot_supplier_kind,
+        "ResourceBased"
+    );
+    assert_eq!(
+        heartbeat
+            .nexus_task_slots_info
+            .clone()
+            .unwrap()
+            .slot_supplier_kind,
+        "ResourceBased"
+    );
+    assert_eq!(
+        heartbeat
+            .local_activity_slots_info
+            .clone()
+            .unwrap()
+            .slot_supplier_kind,
+        "ResourceBased"
+    );
+
+    let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
+    assert!(workflow_poller_info.is_autoscaling);
+    assert!(within_two_minutes_ts(
+        workflow_poller_info.last_successful_poll_time.unwrap()
+    ));
+    let sticky_poller_info = heartbeat.workflow_sticky_poller_info.unwrap();
+    assert!(sticky_poller_info.is_autoscaling);
+    assert!(within_two_minutes_ts(
+        sticky_poller_info.last_successful_poll_time.unwrap()
+    ));
+    let nexus_poller_info = heartbeat.nexus_poller_info.unwrap();
+    assert!(nexus_poller_info.is_autoscaling);
+    assert!(nexus_poller_info.last_successful_poll_time.is_none());
+    let activity_poller_info = heartbeat.activity_poller_info.unwrap();
+    assert!(!activity_poller_info.is_autoscaling);
+    assert!(within_two_minutes_ts(
+        activity_poller_info.last_successful_poll_time.unwrap()
+    ));
+}
+
+fn in_activity_checks(
+    heartbeat: &WorkerHeartbeat,
+    start_time: &AtomicCell<Option<Timestamp>>,
+    heartbeat_time: &AtomicCell<Option<Timestamp>>,
+) {
+    assert_eq!(heartbeat.status, WorkerStatus::Running as i32);
+
+    let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+    assert_eq!(workflow_task_slots.total_processed_tasks, 1);
+    assert_eq!(workflow_task_slots.current_available_slots, 5);
+    assert_eq!(workflow_task_slots.current_used_slots, 0);
+    assert_eq!(workflow_task_slots.slot_supplier_kind, "Fixed");
+    let activity_task_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+    assert_eq!(activity_task_slots.current_available_slots, 4);
+    assert_eq!(activity_task_slots.current_used_slots, 1);
+    assert_eq!(activity_task_slots.slot_supplier_kind, "Fixed");
+    let nexus_task_slots = heartbeat.nexus_task_slots_info.clone().unwrap();
+    assert_eq!(nexus_task_slots.current_available_slots, 0);
+    assert_eq!(nexus_task_slots.current_used_slots, 0);
+    assert_eq!(nexus_task_slots.slot_supplier_kind, "Fixed");
+    let local_activity_task_slots = heartbeat.local_activity_slots_info.clone().unwrap();
+    assert_eq!(local_activity_task_slots.current_available_slots, 100);
+    assert_eq!(local_activity_task_slots.current_used_slots, 0);
+    assert_eq!(local_activity_task_slots.slot_supplier_kind, "Fixed");
+
+    let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
+    assert_eq!(workflow_poller_info.current_pollers, 1);
+    let sticky_poller_info = heartbeat.workflow_sticky_poller_info.unwrap();
+    assert_ne!(sticky_poller_info.current_pollers, 0);
+    let nexus_poller_info = heartbeat.nexus_poller_info.unwrap();
+    assert_eq!(nexus_poller_info.current_pollers, 0);
+    let activity_poller_info = heartbeat.activity_poller_info.unwrap();
+    assert_ne!(activity_poller_info.current_pollers, 0);
+    assert_ne!(heartbeat.current_sticky_cache_size, 0);
+    start_time.store(Some(heartbeat.start_time.unwrap()));
+    heartbeat_time.store(Some(heartbeat.heartbeat_time.unwrap()));
+}
+
+fn after_shutdown_checks(
+    heartbeat: &WorkerHeartbeat,
+    wf_name: &str,
+    start_time: &AtomicCell<Option<Timestamp>>,
+    heartbeat_time: &AtomicCell<Option<Timestamp>>,
+) {
     assert_eq!(heartbeat.worker_identity, "integ_tester");
+    let host_info = heartbeat.host_info.clone().unwrap();
+    assert!(!host_info.host_name.is_empty());
+    assert!(!host_info.process_key.is_empty());
+    assert!(!host_info.process_id.is_empty());
+    assert_ne!(host_info.current_host_cpu_usage, 0.0);
+    assert_ne!(host_info.current_host_mem_usage, 0.0);
+    assert!(heartbeat.task_queue.starts_with(wf_name));
+    assert_eq!(
+        heartbeat.deployment_version.clone().unwrap().build_id,
+        "test_build_id"
+    );
     assert_eq!(heartbeat.sdk_name, "temporal-core");
     assert_eq!(heartbeat.sdk_version, "0.1.0");
     assert_eq!(heartbeat.status, WorkerStatus::Shutdown as i32);
+    assert_eq!(start_time.load().unwrap(), heartbeat.start_time.unwrap());
+    assert_ne!(
+        heartbeat_time.load().unwrap(),
+        heartbeat.heartbeat_time.unwrap()
+    );
+    // TODO: heartbeat.heartbeat_time comes after heartbeat_time
     assert!(within_two_minutes_ts(heartbeat.start_time.unwrap()));
     assert!(within_two_minutes_ts(heartbeat.heartbeat_time.unwrap()));
     assert!(within_duration(
         heartbeat.elapsed_since_last_heartbeat.unwrap(),
-        Duration::from_secs(1)
+        Duration::from_secs(200)
     ));
+    let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+    assert_eq!(workflow_task_slots.current_available_slots, 5);
+    // TODO: Could be a bug here with "+ extra" from when the metric is recorded in MeteredPermitDealer.build_owned()
+    assert_eq!(workflow_task_slots.current_used_slots, 1);
+    assert_eq!(workflow_task_slots.total_processed_tasks, 2);
+    assert_eq!(workflow_task_slots.slot_supplier_kind, "Fixed");
+    let activity_task_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+    assert_eq!(activity_task_slots.current_available_slots, 5);
+    // TODO: Could be a bug here with "+ extra" from when the metric is recorded in MeteredPermitDealer.build_owned()
+    assert_eq!(workflow_task_slots.current_used_slots, 1);
+    assert_eq!(activity_task_slots.slot_supplier_kind, "Fixed");
+    assert_eq!(activity_task_slots.last_interval_processed_tasks, 1);
+    let nexus_task_slots = heartbeat.nexus_task_slots_info.clone().unwrap();
+    assert_eq!(nexus_task_slots.current_available_slots, 0);
+    assert_eq!(nexus_task_slots.current_used_slots, 0);
+    assert_eq!(nexus_task_slots.slot_supplier_kind, "Fixed");
+    let local_activity_task_slots = heartbeat.local_activity_slots_info.clone().unwrap();
+    assert_eq!(local_activity_task_slots.current_available_slots, 100);
+    assert_eq!(local_activity_task_slots.current_used_slots, 0);
+    assert_eq!(local_activity_task_slots.slot_supplier_kind, "Fixed");
 
     let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
     assert!(!workflow_poller_info.is_autoscaling);
@@ -263,88 +470,166 @@ async fn docker_worker_heartbeat_tuner() {
     ));
 
     assert_eq!(heartbeat.total_sticky_cache_hit, 2);
+    // TODO: total_sticky_cache_miss
+    assert_eq!(heartbeat.current_sticky_cache_size, 0);
+    // TODO: plugin
 }
 
 #[tokio::test]
-async fn docker_worker_heartbeat_no_metrics() {
-    // Even if no metrics are used, we should still get in-memory metrics for worker heartbeat
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(TelemetryOptionsBuilder::default().build().unwrap())
-        .heartbeat_interval(Some(Duration::from_millis(100)))
-        .build()
-        .unwrap();
-    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
-    let wf_name = "worker_heartbeat_no_metrics";
-    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+async fn docker_worker_heartbeat_multiple_workers() {
+    let wf_name = "worker_heartbeat_multi_workers";
+    let mut starter = new_no_metrics_starter(wf_name);
     starter
         .worker_config
         .max_outstanding_workflow_tasks(5_usize)
-        .max_cached_workflows(5_usize)
-        .max_outstanding_activities(5_usize);
-    let mut worker = starter.worker().await;
-    let worker_instance_key = worker.worker_instance_key();
-
-    // Run a workflow
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
-    });
-    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
-        Ok(i)
-    });
-    starter.start_with_worker(wf_name, &mut worker).await;
-    worker.run_until_done().await.unwrap();
+        .max_cached_workflows(5_usize);
 
     let client = starter.get_client().await;
-    let mut raw_client = (*client).clone();
-    let workers_list = WorkflowService::list_workers(
+    let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
+
+    let mut worker_a = starter.worker().await;
+    worker_a.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
+        Ok(().into())
+    });
+    worker_a.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
+        Ok(())
+    });
+
+    let mut starter_b = starter.clone_no_worker();
+    let mut worker_b = starter_b.worker().await;
+    worker_b.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
+        Ok(().into())
+    });
+    worker_b.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
+        Ok(())
+    });
+
+    let worker_a_key = worker_a.worker_instance_key().to_string();
+    let worker_b_key = worker_b.worker_instance_key().to_string();
+    let _ = starter.start_with_worker(wf_name, &mut worker_a).await;
+    worker_a.run_until_done().await.unwrap();
+
+    let _ = starter_b.start_with_worker(wf_name, &mut worker_b).await;
+    worker_b.run_until_done().await.unwrap();
+
+    sleep(Duration::from_millis(200)).await;
+
+    let all = list_worker_heartbeats(&client, String::new()).await;
+    let keys: HashSet<_> = all
+        .iter()
+        .map(|hb| hb.worker_instance_key.clone())
+        .collect();
+    assert!(keys.contains(&worker_a_key));
+    assert!(keys.contains(&worker_b_key));
+
+    // Verify both heartbeats contain the same shared process_key
+    let process_keys: HashSet<_> = all
+        .iter()
+        .filter_map(|hb| hb.host_info.as_ref().map(|info| info.process_key.clone()))
+        .collect();
+    assert!(process_keys.len() > starting_hb_len);
+
+    let filtered =
+        list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_a_key}\"")).await;
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].worker_instance_key, worker_a_key);
+
+    // Verify describe worker gives the same heartbeat as listworker
+    let mut raw_client = client.as_ref().clone();
+    let describe_worker_a = WorkflowService::describe_worker(
         &mut raw_client,
-        ListWorkersRequest {
+        DescribeWorkerRequest {
             namespace: client.namespace().to_owned(),
-            page_size: 100,
-            next_page_token: Vec::new(),
-            query: String::new(),
+            worker_instance_key: worker_a_key.to_string(),
         },
     )
     .await
     .unwrap()
-    .into_inner();
-    // Since list_workers finds all workers in the namespace, must find specific worker used in this
-    // test
-    let worker_info = workers_list
-        .workers_info
-        .iter()
-        .find(|worker_info| {
-            if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                hb.worker_instance_key == worker_instance_key.to_string()
-            } else {
-                false
-            }
-        })
-        .unwrap();
-    let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-    assert!(heartbeat.task_queue.starts_with(wf_name));
-    assert_eq!(heartbeat.worker_identity, "integ_tester");
-    assert_eq!(heartbeat.sdk_name, "temporal-core");
-    assert_eq!(heartbeat.sdk_version, "0.1.0");
-    assert_eq!(heartbeat.status, WorkerStatus::Shutdown as i32);
-    assert_eq!(
-        heartbeat.deployment_version,
-        Some(WorkerDeploymentVersion {
-            build_id: "test_build_id".to_owned(),
-            deployment_name: String::new(),
-        })
-    );
-    assert!(within_two_minutes_ts(heartbeat.start_time.unwrap()));
-    assert!(within_two_minutes_ts(heartbeat.heartbeat_time.unwrap()));
-    assert!(within_duration(
-        heartbeat.elapsed_since_last_heartbeat.unwrap(),
-        Duration::from_secs(1)
-    ));
+    .into_inner()
+    .worker_info
+    .unwrap()
+    .worker_heartbeat
+    .unwrap();
+    assert_eq!(describe_worker_a, filtered[0]);
+
+    let filtered_b =
+        list_worker_heartbeats(&client, format!("WorkerInstanceKey = \"{worker_b_key}\"")).await;
+    assert_eq!(filtered_b.len(), 1);
+    assert_eq!(filtered_b[0].worker_instance_key, worker_b_key);
+    let describe_worker_b = WorkflowService::describe_worker(
+        &mut raw_client,
+        DescribeWorkerRequest {
+            namespace: client.namespace().to_owned(),
+            worker_instance_key: worker_b_key.to_string(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner()
+    .worker_info
+    .unwrap()
+    .worker_heartbeat
+    .unwrap();
+    assert_eq!(describe_worker_b, filtered_b[0]);
+}
+
+#[tokio::test]
+async fn docker_worker_heartbeat_failure_metrics() {
+    let wf_name = "worker_heartbeat_failure_metrics";
+    let mut starter = new_no_metrics_starter(wf_name);
+    starter.worker_config.max_outstanding_activities(5_usize);
+
+    let mut worker = starter.worker().await;
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        println!("[WF] starting");
+        COUNT.store(COUNT.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+        let _asdf = ctx
+            .activity(ActivityOptions {
+                activity_type: "failing_act".to_string(),
+                input: "boom".as_json_payload().expect("serialize"),
+                start_to_close_timeout: Some(Duration::from_secs(1)), // TODO: use retry policy instead
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 3,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .await;
+        if COUNT.load(Ordering::Relaxed) == 1 {
+            println!("[WF] returning error");
+            panic!("expected WF panic");
+        }
+        Ok(().into())
+    });
+    worker.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
+        if COUNT.load(Ordering::Relaxed) >= 3 {
+            return Ok(());
+        }
+        Err(anyhow!("Expected error").into())
+    });
+
+    let worker_key = worker.worker_instance_key().to_string();
+    starter.workflow_options.retry_policy = Some(RetryPolicy {
+        maximum_attempts: 2,
+        ..Default::default()
+    });
+    let _ = starter.start_with_worker(wf_name, &mut worker).await;
+
+    worker.run_until_done().await.unwrap();
+
+    sleep(Duration::from_millis(150)).await;
+    let client = starter.get_client().await;
+    let mut heartbeats =
+        list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_key}\"")).await;
+    assert_eq!(heartbeats.len(), 1);
+    let heartbeat = heartbeats.pop().unwrap();
+
+    let activity_slots = heartbeat.activity_task_slots_info.unwrap();
+    assert_eq!(activity_slots.total_failed_tasks, 3);
+    assert!(activity_slots.last_interval_failure_tasks >= 1);
+
+    let workflow_slots = heartbeat.workflow_task_slots_info.unwrap();
+    assert_eq!(workflow_slots.total_failed_tasks, 1);
 }

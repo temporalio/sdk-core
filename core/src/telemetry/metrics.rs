@@ -484,12 +484,12 @@ impl Instruments {
                 description: "Current number of active pollers per queue type".into(),
                 unit: "".into(),
             }),
-            task_slots_available: meter.gauge(MetricParameters {
+            task_slots_available: gauge_with_in_mem(MetricParameters {
                 name: TASK_SLOTS_AVAILABLE_NAME.into(),
                 description: "Current number of available slots per task type".into(),
                 unit: "".into(),
             }),
-            task_slots_used: meter.gauge(MetricParameters {
+            task_slots_used: gauge_with_in_mem(MetricParameters {
                 name: TASK_SLOTS_USED_NAME.into(),
                 description: "Current number of used slots per task type".into(),
                 unit: "".into(),
@@ -1120,10 +1120,6 @@ mod tests {
     impl CustomMetricAttributes for DummyCustomAttrs {
         fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
             self as Arc<dyn Any + Send + Sync>
-        }
-
-        fn label_value(&self, _key: &str) -> Option<String> {
-            None
         }
     }
     impl DummyCustomAttrs {

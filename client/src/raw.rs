@@ -1346,6 +1346,15 @@ proxier! {
         }
     );
     (
+        describe_worker,
+        DescribeWorkerRequest,
+        DescribeWorkerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         record_worker_heartbeat,
         RecordWorkerHeartbeatRequest,
         RecordWorkerHeartbeatResponse,

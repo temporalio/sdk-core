@@ -131,10 +131,7 @@ fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Opti
             .iter()
             .find(|kv| kv.key.as_str() == key)
             .map(|kv| kv.value.to_string()),
-        MetricAttributes::Buffer(buffer_attrs) => buffer_attrs.get().label_value(key),
-        MetricAttributes::Dynamic(custom_metrics_attribute) => {
-            custom_metrics_attribute.label_value(key)
-        }
+        MetricAttributes::NoOp(labels) => labels.get(key).cloned(),
         _ => None,
     }
 }
@@ -168,11 +165,35 @@ impl NumPollersMetric {
 }
 
 #[derive(Default, Debug)]
+pub struct SlotMetrics {
+    pub workflow_worker: Arc<AtomicU64>,
+    pub activity_worker: Arc<AtomicU64>,
+    pub nexus_worker: Arc<AtomicU64>,
+    pub local_activity_worker: Arc<AtomicU64>,
+}
+
+impl SlotMetrics {
+    pub fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
+        HashMap::from([
+            ("WorkflowWorker".to_string(), self.workflow_worker.clone()),
+            ("ActivityWorker".to_string(), self.activity_worker.clone()),
+            ("NexusWorker".to_string(), self.nexus_worker.clone()),
+            (
+                "LocalActivityWorker".to_string(),
+                self.local_activity_worker.clone(),
+            ),
+        ])
+    }
+}
+
+#[derive(Default, Debug)]
 pub struct WorkerHeartbeatMetrics {
     pub sticky_cache_size: Arc<AtomicU64>,
     pub total_sticky_cache_hit: Arc<AtomicU64>,
     pub total_sticky_cache_miss: Arc<AtomicU64>,
     pub num_pollers: NumPollersMetric,
+    pub worker_task_slots_used: SlotMetrics,
+    pub worker_task_slots_available: SlotMetrics,
     pub workflow_task_execution_failed: Arc<AtomicU64>,
     pub activity_execution_failed: Arc<AtomicU64>,
     pub nexus_task_execution_failed: Arc<AtomicU64>,
@@ -198,6 +219,14 @@ impl WorkerHeartbeatMetrics {
             "num_pollers" => Some(HeartbeatMetricType::WithLabel {
                 label_key: "poller_type".to_string(),
                 metrics: self.num_pollers.as_map(),
+            }),
+            "worker_task_slots_used" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_used.as_map(),
+            }),
+            "worker_task_slots_available" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_available.as_map(),
             }),
             "workflow_task_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.workflow_task_execution_failed.clone(),
@@ -315,6 +344,7 @@ pub enum MetricAttributes {
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
+    NoOp(Arc<HashMap<String, String>>),
     Empty,
 }
 
@@ -323,11 +353,6 @@ pub trait CustomMetricAttributes: Debug + Send + Sync {
     /// Must be implemented to work around existing type system restrictions, see
     /// [here](https://internals.rust-lang.org/t/downcast-not-from-any-but-from-any-trait/16736/12)
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-
-    /// Return the stringified value for a label key, if available.
-    fn label_value(&self, _key: &str) -> Option<String> {
-        None
-    }
 }
 
 /// Options that are attached to metrics on a per-call basis
@@ -348,6 +373,16 @@ where
         Self {
             attributes: value.into_iter().collect(),
         }
+    }
+}
+
+impl From<NewAttributes> for HashMap<String, String> {
+    fn from(value: NewAttributes) -> Self {
+        value
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key, kv.value.to_string()))
+            .collect()
     }
 }
 
@@ -953,9 +988,7 @@ impl<T> LazyRef<T> {
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
-        MetricAttributes::Dynamic(Arc::new(InMemoryMetricAttributes::from_new_attributes(
-            attribs.attributes,
-        )))
+        MetricAttributes::NoOp(Arc::new(attribs.into()))
     }
 
     fn extend_attributes(
@@ -963,16 +996,14 @@ impl CoreMeter for NoOpCoreMeter {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes {
-        let new_attrs = InMemoryMetricAttributes::from_new_attributes(attribs.attributes);
-        let merged = match existing {
-            MetricAttributes::Dynamic(attrs) => attrs
-                .as_any()
-                .downcast_ref::<InMemoryMetricAttributes>()
-                .map(|in_mem| in_mem.merge(&new_attrs))
-                .unwrap_or(new_attrs),
-            _ => new_attrs,
-        };
-        MetricAttributes::Dynamic(Arc::new(merged))
+        if let MetricAttributes::NoOp(labels) = existing {
+            let mut labels = (*labels).clone();
+            labels.extend::<HashMap<String, String>>(attribs.into());
+            MetricAttributes::NoOp(Arc::new(labels))
+        } else {
+            dbg_panic!("Must use NoOp attributes with a NoOp metric implementation");
+            existing
+        }
     }
 
     fn counter(&self, _: MetricParameters) -> Counter {
@@ -1034,39 +1065,6 @@ impl_no_op!(HistogramF64Base, f64);
 impl_no_op!(HistogramDurationBase, Duration);
 impl_no_op!(GaugeBase, u64);
 impl_no_op!(GaugeF64Base, f64);
-
-#[derive(Debug, Clone, Default)]
-struct InMemoryMetricAttributes {
-    labels: HashMap<String, String>,
-}
-
-impl InMemoryMetricAttributes {
-    fn from_new_attributes(attributes: Vec<MetricKeyValue>) -> Self {
-        let mut labels = HashMap::new();
-        for kv in attributes {
-            labels.insert(kv.key, kv.value.to_string());
-        }
-        Self { labels }
-    }
-
-    fn merge(&self, other: &InMemoryMetricAttributes) -> Self {
-        let mut labels = self.labels.clone();
-        for (key, value) in &other.labels {
-            labels.insert(key.clone(), value.clone());
-        }
-        Self { labels }
-    }
-}
-
-impl CustomMetricAttributes for InMemoryMetricAttributes {
-    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self as Arc<dyn Any + Send + Sync>
-    }
-
-    fn label_value(&self, key: &str) -> Option<String> {
-        self.labels.get(key).cloned()
-    }
-}
 
 #[cfg(test)]
 mod tests {

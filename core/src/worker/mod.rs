@@ -56,6 +56,7 @@ use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
+use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 use std::{
     convert::TryInto,
@@ -1062,6 +1063,7 @@ impl WorkerHeartbeatManager {
         telemetry_instance: Option<WorkerTelemetry>,
         heartbeat_manager_metrics: HeartbeatMetrics,
     ) -> Self {
+        let start_time = Some(SystemTime::now().into());
         let worker_heartbeat_callback: HeartbeatFn = Arc::new(move || {
             let deployment_version = config.computed_deployment_version().map(|dv| {
                 deployment::v1::WorkerDeploymentVersion {
@@ -1087,23 +1089,11 @@ impl WorkerHeartbeatManager {
                 deployment_version,
 
                 status: (*heartbeat_manager_metrics.status.lock()) as i32,
-                start_time: Some(SystemTime::now().into()),
+                start_time,
                 plugins: config.plugins.clone(),
 
-                // Metrics dependent, set below
-                workflow_task_slots_info: None,
-                activity_task_slots_info: None,
-                nexus_task_slots_info: None,
-                local_activity_slots_info: None,
-                workflow_poller_info: None,
-                workflow_sticky_poller_info: None,
-                activity_poller_info: None,
-                nexus_poller_info: None,
-                total_sticky_cache_hit: 0,
-                total_sticky_cache_miss: 0,
-                current_sticky_cache_size: 0,
-
-                // Some fields like sdk_name, sdk_version, and worker_identity, must be set by
+                // Some Metrics dependent fields are set below, and
+                // some fields like sdk_name, sdk_version, and worker_identity, must be set by
                 // SharedNamespaceWorker because they rely on the client, and
                 // need to be pulled from the current client used by SharedNamespaceWorker
                 ..Default::default()
@@ -1164,31 +1154,34 @@ impl WorkerHeartbeatManager {
 
                 worker_heartbeat.workflow_task_slots_info = make_slots_info(
                     &heartbeat_manager_metrics.wft_slots,
-                    in_mem
-                        .workflow_task_execution_latency
-                        .load(Ordering::Relaxed),
-                    in_mem
-                        .workflow_task_execution_failed
-                        .load(Ordering::Relaxed),
+                    in_mem.worker_task_slots_available.workflow_worker.clone(),
+                    in_mem.worker_task_slots_used.workflow_worker.clone(),
+                    in_mem.workflow_task_execution_latency.clone(),
+                    in_mem.workflow_task_execution_failed.clone(),
                 );
                 worker_heartbeat.activity_task_slots_info = make_slots_info(
                     &heartbeat_manager_metrics.act_slots,
-                    in_mem.activity_execution_latency.load(Ordering::Relaxed),
-                    in_mem.activity_execution_failed.load(Ordering::Relaxed),
+                    in_mem.worker_task_slots_available.activity_worker.clone(),
+                    in_mem.worker_task_slots_used.activity_worker.clone(),
+                    in_mem.activity_execution_latency.clone(),
+                    in_mem.activity_execution_failed.clone(),
                 );
                 worker_heartbeat.nexus_task_slots_info = make_slots_info(
                     &heartbeat_manager_metrics.nexus_slots,
-                    in_mem.nexus_task_execution_latency.load(Ordering::Relaxed),
-                    in_mem.nexus_task_execution_failed.load(Ordering::Relaxed),
+                    in_mem.worker_task_slots_available.nexus_worker.clone(),
+                    in_mem.worker_task_slots_used.nexus_worker.clone(),
+                    in_mem.nexus_task_execution_latency.clone(),
+                    in_mem.nexus_task_execution_failed.clone(),
                 );
                 worker_heartbeat.local_activity_slots_info = make_slots_info(
                     &heartbeat_manager_metrics.la_slots,
                     in_mem
-                        .local_activity_execution_latency
-                        .load(Ordering::Relaxed),
-                    in_mem
-                        .local_activity_execution_failed
-                        .load(Ordering::Relaxed),
+                        .worker_task_slots_available
+                        .local_activity_worker
+                        .clone(),
+                    in_mem.worker_task_slots_used.local_activity_worker.clone(),
+                    in_mem.local_activity_execution_latency.clone(),
+                    in_mem.local_activity_execution_failed.clone(),
                 );
             }
             worker_heartbeat
@@ -1241,23 +1234,22 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
 
 fn make_slots_info<SK>(
     dealer: &MeteredPermitDealer<SK>,
-    total_processed: u64,
-    total_failed: u64,
+    slots_available: Arc<AtomicU64>,
+    slots_used: Arc<AtomicU64>,
+    total_processed: Arc<AtomicU64>,
+    total_failed: Arc<AtomicU64>,
 ) -> Option<WorkerSlotsInfo>
 where
     SK: SlotKind + 'static,
 {
-    let permits = dealer.get_extant_count_rcv();
-    let avail = dealer
-        .available_permits()
-        .map_or(-1, |e| i32::try_from(e).unwrap_or(-1));
-
     Some(WorkerSlotsInfo {
-        current_available_slots: avail,
-        current_used_slots: *permits.borrow() as i32,
+        current_available_slots: i32::try_from(slots_available.load(Ordering::Relaxed))
+            .unwrap_or(-1),
+        current_used_slots: i32::try_from(slots_used.load(Ordering::Relaxed)).unwrap_or(-1),
         slot_supplier_kind: dealer.slot_supplier_kind().to_string(),
-        total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MIN),
-        total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MIN),
+        total_processed_tasks: i32::try_from(total_processed.load(Ordering::Relaxed))
+            .unwrap_or(i32::MIN),
+        total_failed_tasks: i32::try_from(total_failed.load(Ordering::Relaxed)).unwrap_or(i32::MIN),
 
         // Filled in by heartbeat later
         last_interval_processed_tasks: 0,

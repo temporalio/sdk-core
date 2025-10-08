@@ -1,5 +1,5 @@
 use crate::{ByteArrayRef, runtime::Runtime};
-use std::{any::Any, collections::HashMap, error::Error, sync::Arc, time::Duration};
+use std::{any::Any, error::Error, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics;
 
 pub struct MetricMeter {
@@ -381,21 +381,16 @@ impl CustomMetricMeterRef {
     ) -> metrics::MetricAttributes {
         unsafe {
             let meter = &*(self.meter_impl.0);
-            let (append_from, mut label_cache) = match append_from {
+            let append_from = match append_from {
                 Some(metrics::MetricAttributes::Dynamic(v)) => {
-                    let existing = v
-                        .clone()
+                    v.clone()
                         .as_any()
                         .downcast::<CustomMetricAttributes>()
-                        .expect("Attributes not CustomMetricAttributes as expected");
-                    (existing.attributes, existing.labels.as_ref().clone())
+                        .expect("Attributes not CustomMetricAttributes as expected")
+                        .attributes
                 }
-                _ => (std::ptr::null(), HashMap::new()),
+                _ => std::ptr::null(),
             };
-            for kv in &attribs.attributes {
-                label_cache.insert(kv.key.clone(), kv.value.to_string());
-            }
-            let label_cache = Arc::new(label_cache);
             // Build a set of CustomMetricAttributes with _references_ to the
             // pieces in attribs. We count on both this vec and the attribs vec
             // living beyond the callback invocation.
@@ -440,7 +435,6 @@ impl CustomMetricMeterRef {
             metrics::MetricAttributes::Dynamic(Arc::new(CustomMetricAttributes {
                 meter_impl: self.meter_impl.clone(),
                 attributes: raw_attrs,
-                labels: label_cache,
             }))
         }
     }
@@ -485,7 +479,6 @@ impl Drop for CustomMetricMeterImpl {
 struct CustomMetricAttributes {
     meter_impl: Arc<CustomMetricMeterImpl>,
     attributes: *const libc::c_void,
-    labels: Arc<HashMap<String, String>>,
 }
 
 unsafe impl Send for CustomMetricAttributes {}
@@ -494,10 +487,6 @@ unsafe impl Sync for CustomMetricAttributes {}
 impl metrics::CustomMetricAttributes for CustomMetricAttributes {
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self as Arc<dyn Any + Send + Sync>
-    }
-
-    fn label_value(&self, key: &str) -> Option<String> {
-        self.labels.get(key).cloned()
     }
 }
 
