@@ -232,9 +232,17 @@ message Link {
         string job_id = 1;
     }
 
+    // A link to an activity.
+    message Activity {
+        string namespace = 1;
+        string activity_id = 2;
+        string run_id = 3;
+    }
+
     oneof variant {
         WorkflowEvent workflow_event = 1;
         BatchJob batch_job = 2;
+        Activity activity = 3;
     }
 }
 
@@ -280,7 +288,7 @@ message Priority {
     // configuration, and defaults to 5.
     //
     // If priority is not present (or zero), then the effective priority will be
-    // the default priority, which is is calculated by (min+max)/2. With the
+    // the default priority, which is calculated by (min+max)/2. With the
     // default max of 5, and min of 1, that comes out to 3.
     int32 priority_key = 1;
 
@@ -338,4 +346,3 @@ message WorkerSelector {
         string worker_instance_key = 1;
     }
 }
-
