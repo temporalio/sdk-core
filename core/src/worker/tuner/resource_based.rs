@@ -597,6 +597,8 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
         s
     }
 
+    /// Reads the current CPU usage and limits for the cgroup and calculates the usage percentage based on the
+    /// limits and the elapsed time from the last calculation.
     fn calc_cpu_percent(&self) -> Option<f64> {
         let usage = self.read_cpu_usage()?;
         let limits = self.read_cpus_limit()?;
@@ -620,6 +622,10 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
         }
     }
 
+    /// Reads the usage_usec value from the cpu.stat file as a u64.
+    /// Returns None if the file cannot be read or if the value cannot be parsed into u64.
+    ///
+    /// The cpu.stat file is expected to be a multiline file where each line is `key value`
     fn read_cpu_usage(&self) -> Option<u64> {
         let stat = self.fs.read_cpu_stat_file()?;
         stat.lines().find_map(|line| {
@@ -631,6 +637,10 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
         })
     }
 
+    /// Reads the cpu quota and period from the cpu.max file.
+    /// Returns None if the file cannot be read, or the quota/limit cannot be parsed
+    ///
+    /// The cpu.max file is expected to be in the format 'quota period'
     fn read_cpus_limit(&self) -> Option<CGroupCPULimits> {
         let limit_text = self.fs.read_cpu_limit_file()?;
         let mut parts = limit_text.split_whitespace();
