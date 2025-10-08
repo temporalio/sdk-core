@@ -524,6 +524,7 @@ impl RealSysInfo {
                 //there won't be a cgroup cpu usage if there is no limit applied to the cgroup
                 //or if an error is encountered when reading cpu.stat or cpu.max
                 //in these cases, fallback to global cpu usage
+                lock.refresh_cpu_usage();
                 lock.global_cpu_usage() as f64 / 100.
             });
             self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
