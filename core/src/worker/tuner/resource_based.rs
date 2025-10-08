@@ -1,10 +1,11 @@
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use std::sync::mpsc;
 use std::{
     marker::PhantomData,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
@@ -91,12 +92,6 @@ impl<MI> ResourceBasedTuner<MI> {
     /// Set nexus slot options
     pub fn with_nexus_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
         self.nexus_opts = Some(opts);
-        self
-    }
-
-    /// Set sys info
-    pub fn with_sys_info(&mut self, sys_info: Arc<MI>) -> &mut Self {
-        self.sys_info = sys_info;
         self
     }
 
@@ -526,7 +521,7 @@ impl RealSysInfoInner {
 /// Tracks host resource usage by refreshing metrics on a background thread.
 pub struct RealSysInfo {
     inner: Arc<RealSysInfoInner>,
-    shutdown: Arc<AtomicBool>,
+    shutdown_tx: mpsc::Sender<()>,
     shutdown_handle: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
@@ -543,26 +538,25 @@ impl RealSysInfo {
         });
         inner.refresh();
 
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let thread_inner = inner.clone();
-        let thread_shutdown = shutdown.clone();
+        let thread_clone = inner.clone();
+        let (tx, rx) = mpsc::channel::<()>();
         let handle = thread::Builder::new()
             .name("temporal-real-sysinfo".to_string())
             .spawn(move || {
                 const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
                 loop {
-                    if thread_shutdown.load(Ordering::Acquire) {
+                    thread_clone.refresh();
+                    let r = rx.recv_timeout(REFRESH_INTERVAL);
+                    if matches!(r, Err(mpsc::RecvTimeoutError::Disconnected)) || r.is_ok() {
                         return;
                     }
-                    thread_inner.refresh();
-                    thread::sleep(REFRESH_INTERVAL);
                 }
             })
             .expect("failed to spawn RealSysInfo refresh thread");
 
         Self {
             inner,
-            shutdown,
+            shutdown_tx: tx,
             shutdown_handle: Mutex::new(Some(handle)),
         }
     }
@@ -584,7 +578,7 @@ impl SystemResourceInfo for RealSysInfo {
 
 impl Drop for RealSysInfo {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
+        let _res = self.shutdown_tx.send(());
         if let Some(handle) = self.shutdown_handle.lock().take() {
             let _ = handle.join();
         }

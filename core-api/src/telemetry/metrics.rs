@@ -28,7 +28,7 @@ pub trait CoreMeter: Send + Sync + Debug {
     ) -> MetricAttributes;
     fn counter(&self, params: MetricParameters) -> Counter;
 
-    /// Create a counter with in-memory tracking for dual metrics reporting
+    /// Create a counter with in-memory tracking for worker heartbeating reporting
     fn counter_with_in_memory(
         &self,
         params: MetricParameters,
@@ -47,19 +47,19 @@ pub trait CoreMeter: Send + Sync + Debug {
     /// accordingly.
     fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration;
 
-    /// Create a histogram duration with in-memory tracking for dual metrics reporting
+    /// Create a histogram duration with in-memory tracking for worker heartbeating reporting
     fn histogram_duration_with_in_memory(
         &self,
         params: MetricParameters,
         in_memory_hist: HeartbeatMetricType,
     ) -> HistogramDuration {
-        let primary_hist = self.histogram_duration(params.clone());
+        let primary_hist = self.histogram_duration(params);
 
         HistogramDuration::new_with_in_memory(primary_hist.primary.metric.clone(), in_memory_hist)
     }
     fn gauge(&self, params: MetricParameters) -> Gauge;
 
-    /// Create a gauge with in-memory tracking for dual metrics reporting
+    /// Create a gauge with in-memory tracking for worker heartbeating reporting
     fn gauge_with_in_memory(
         &self,
         params: MetricParameters,
@@ -78,7 +78,10 @@ pub trait CoreMeter: Send + Sync + Debug {
 #[derive(Clone, Debug)]
 pub enum HeartbeatMetricType {
     Individual(Arc<AtomicU64>),
-    WithLabel(HashMap<String, Arc<AtomicU64>>),
+    WithLabel {
+        label_key: String,
+        metrics: HashMap<String, Arc<AtomicU64>>,
+    },
 }
 
 impl HeartbeatMetricType {
@@ -87,7 +90,7 @@ impl HeartbeatMetricType {
             HeartbeatMetricType::Individual(metric) => {
                 metric.fetch_add(delta, Ordering::Relaxed);
             }
-            HeartbeatMetricType::WithLabel(_) => {
+            HeartbeatMetricType::WithLabel { .. } => {
                 dbg_panic!("Counter does not support in-memory metric with labels");
             }
         }
@@ -98,7 +101,7 @@ impl HeartbeatMetricType {
             HeartbeatMetricType::Individual(metric) => {
                 metric.fetch_add(1, Ordering::Relaxed);
             }
-            HeartbeatMetricType::WithLabel(_) => {
+            HeartbeatMetricType::WithLabel { .. } => {
                 dbg_panic!("Histogram does not support in-memory metric with labels");
             }
         }
@@ -109,11 +112,11 @@ impl HeartbeatMetricType {
             HeartbeatMetricType::Individual(metric) => {
                 metric.store(value, Ordering::Relaxed);
             }
-            HeartbeatMetricType::WithLabel(metrics) => {
-                if let Some(label_value) = label_value_from_attributes(attributes, "poller_type") {
-                    if let Some(metric) = metrics.get(label_value.as_str()) {
-                        metric.store(value, Ordering::Relaxed);
-                    }
+            HeartbeatMetricType::WithLabel { label_key, metrics } => {
+                if let Some(metric) = label_value_from_attributes(attributes, label_key.as_str())
+                    .and_then(|label_value| metrics.get(label_value.as_str()))
+                {
+                    metric.store(value, Ordering::Relaxed)
                 }
             }
         }
@@ -192,7 +195,10 @@ impl WorkerHeartbeatMetrics {
             "sticky_cache_miss" => Some(HeartbeatMetricType::Individual(
                 self.total_sticky_cache_miss.clone(),
             )),
-            "num_pollers" => Some(HeartbeatMetricType::WithLabel(self.num_pollers.as_map())),
+            "num_pollers" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "poller_type".to_string(),
+                metrics: self.num_pollers.as_map(),
+            }),
             "workflow_task_execution_failed" => Some(HeartbeatMetricType::Individual(
                 self.workflow_task_execution_failed.clone(),
             )),
@@ -1085,7 +1091,10 @@ mod tests {
         let value = Arc::new(AtomicU64::new(0));
         let mut metrics = HashMap::new();
         metrics.insert("workflow_task".to_string(), value.clone());
-        let heartbeat_metric = HeartbeatMetricType::WithLabel(metrics);
+        let heartbeat_metric = HeartbeatMetricType::WithLabel {
+            label_key: "poller_type".to_string(),
+            metrics,
+        };
 
         heartbeat_metric.record_gauge(3, &attrs);
 

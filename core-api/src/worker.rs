@@ -1,6 +1,6 @@
 use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
 use std::{
-    any::{Any, type_name},
+    any::Any,
     collections::{HashMap, HashSet},
     str::FromStr,
     sync::Arc,
@@ -366,7 +366,7 @@ pub trait SlotSupplier {
     /// Returns a human-friendly identifier describing this supplier implementation for
     /// diagnostics and telemetry.
     fn slot_supplier_kind(&self) -> String {
-        type_name::<Self>().to_string()
+        "Custom".to_string()
     }
 }
 

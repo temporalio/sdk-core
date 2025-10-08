@@ -1227,14 +1227,6 @@ pub trait WorkflowClientTrait: NamespacedClient {
         query: String,
     ) -> Result<ListArchivedWorkflowExecutionsResponse>;
 
-    /// List workers registered with server through worker heartbeats
-    async fn list_workers(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListWorkersResponse>;
-
     /// Get Cluster Search Attributes
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
 
@@ -1799,21 +1791,6 @@ where
         )
         .await?
         .into_inner())
-    }
-
-    async fn list_workers(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListWorkersResponse> {
-        Ok(WorkflowService::list_workers(&mut self.clone(),
-         ListWorkersRequest {
-             namespace: self.namespace().to_owned(),
-             page_size,
-             next_page_token,
-             query,
-         }).await?.into_inner())
     }
 
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {

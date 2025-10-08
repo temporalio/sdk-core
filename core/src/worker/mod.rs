@@ -1103,14 +1103,10 @@ impl WorkerHeartbeatManager {
                 total_sticky_cache_miss: 0,
                 current_sticky_cache_size: 0,
 
-                // sdk_name, sdk_version, and worker_identity must be set by
+                // Some fields like sdk_name, sdk_version, and worker_identity, must be set by
                 // SharedNamespaceWorker because they rely on the client, and
                 // need to be pulled from the current client used by SharedNamespaceWorker
-                worker_identity: String::new(),
-                heartbeat_time: None,
-                elapsed_since_last_heartbeat: None,
-                sdk_name: String::new(),
-                sdk_version: String::new(),
+                ..Default::default()
             };
 
             if let Some(in_mem) = heartbeat_manager_metrics.in_mem_metrics.as_ref() {
@@ -1260,8 +1256,8 @@ where
         current_available_slots: avail,
         current_used_slots: *permits.borrow() as i32,
         slot_supplier_kind: dealer.slot_supplier_kind().to_string(),
-        total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MAX),
-        total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MAX),
+        total_processed_tasks: i32::try_from(total_processed).unwrap_or(i32::MIN),
+        total_failed_tasks: i32::try_from(total_failed).unwrap_or(i32::MIN),
 
         // Filled in by heartbeat later
         last_interval_processed_tasks: 0,

@@ -3,7 +3,7 @@ use prost_types::Duration as PbDuration;
 use prost_types::Timestamp;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use temporal_client::WorkflowClientTrait;
+use temporal_client::{NamespacedClient, WorkflowService};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 use temporal_sdk_core::{
@@ -15,6 +15,7 @@ use temporal_sdk_core_api::telemetry::{
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use temporal_sdk_core_protos::temporal::api::deployment::v1::WorkerDeploymentVersion;
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListWorkersRequest;
 use url::Url;
 
 fn within_two_minutes_ts(ts: Timestamp) -> bool {
@@ -91,10 +92,19 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom")] backing: &str) 
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let workers_list = client
-        .list_workers(100, Vec::new(), String::new())
-        .await
-        .unwrap();
+    let mut raw_client = (*client).clone();
+    let workers_list = WorkflowService::list_workers(
+        &mut raw_client,
+        ListWorkersRequest {
+            namespace: client.namespace().to_owned(),
+            page_size: 100,
+            next_page_token: Vec::new(),
+            query: String::new(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
     let worker_info = workers_list
@@ -194,10 +204,19 @@ async fn docker_worker_heartbeat_tuner() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let workers_list = client
-        .list_workers(100, Vec::new(), String::new())
-        .await
-        .unwrap();
+    let mut raw_client = (*client).clone();
+    let workers_list = WorkflowService::list_workers(
+        &mut raw_client,
+        ListWorkersRequest {
+            namespace: client.namespace().to_owned(),
+            page_size: 100,
+            next_page_token: Vec::new(),
+            query: String::new(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
     let worker_info = workers_list
@@ -283,10 +302,19 @@ async fn docker_worker_heartbeat_no_metrics() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let workers_list = client
-        .list_workers(100, Vec::new(), String::new())
-        .await
-        .unwrap();
+    let mut raw_client = (*client).clone();
+    let workers_list = WorkflowService::list_workers(
+        &mut raw_client,
+        ListWorkersRequest {
+            namespace: client.namespace().to_owned(),
+            page_size: 100,
+            next_page_token: Vec::new(),
+            query: String::new(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
     let worker_info = workers_list
