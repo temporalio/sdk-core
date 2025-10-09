@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package temporal.api.enums.v1;
+
+option go_package = "go.temporal.io/api/enums/v1;enums";
+option java_package = "io.temporal.api.enums.v1";
+option java_multiple_files = true;
+option java_outer_classname = "ActivityProto";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
+
+// Status of a standalone activity.
+// The status is updated once, when the activity is originally scheduled, and again when the activity reaches a terminal
+// status.
+// TODO: Should this be a common execution status? Seems like the other archetypes will share this status.
+// (-- api-linter: core::0216::synonyms=disabled
+//     aip.dev/not-precedent: Named consistently with WorkflowExecutionStatus. --)
+enum ActivityExecutionStatus {
+    ACTIVITY_EXECUTION_STATUS_UNSPECIFIED = 0;
+    // The activity is not in a terminal status. This does not necessarily mean that there is a currently running
+    // attempt. The activity may be backing off between attempts or waiting for a worker to pick it up.
+    ACTIVITY_EXECUTION_STATUS_RUNNING = 1;
+    // The activity completed successfully.
+    ACTIVITY_EXECUTION_STATUS_COMPLETED = 2;
+    // The activity completed with failure.
+    ACTIVITY_EXECUTION_STATUS_FAILED = 3;
+    // The activity completed as canceled.
+    // Requesting to cancel an activity does not automatically transition the activity to canceled status. If the
+    // activity has a currently running attempt, the activity will only transition to canceled status if the current
+    // attempt is unsuccessful.
+    // TODO: Clarify what happens if there are no more allowed retries after the current attempt.
+    ACTIVITY_EXECUTION_STATUS_CANCELED = 4;
+    // The activity was terminated. Termination does not reach the worker and the activity code cannot react to it.
+    // A terminated activity may have a running attempt and will be requested to be canceled by the server when it
+    // heartbeats.
+    ACTIVITY_EXECUTION_STATUS_TERMINATED = 5;
+    // The activity has timed out by reaching the specified shedule-to-start or schedule-to-close timeouts.
+    // TODO: Clarify if there are other conditions where the activity can end up in timed out status.
+    ACTIVITY_EXECUTION_STATUS_TIMED_OUT = 6;
+}
