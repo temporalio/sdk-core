@@ -46,7 +46,7 @@ use temporal_sdk_core_protos::{
             RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
         },
         common::v1::SearchAttributes,
-        enums::v1::CommandType,
+        enums::v1::{CommandType, IndexedValueType},
     },
 };
 
@@ -127,7 +127,7 @@ pub(super) fn has_change<'a>(
         // Produce an upsert SA command for this patch.
         let mut all_ids = BTreeSet::from_iter(existing_patch_ids);
         all_ids.insert(machine.shared_state.patch_id.as_str());
-        let serialized = all_ids
+        let mut serialized = all_ids
             .as_json_payload()
             .context("Could not serialize search attribute value for patch machine")
             .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
@@ -141,6 +141,13 @@ pub(super) fn has_change<'a>(
             );
             vec![]
         } else {
+            serialized.metadata.insert(
+                "type".to_string(),
+                IndexedValueType::KeywordList
+                    .as_str_name()
+                    .as_bytes()
+                    .to_vec(),
+            );
             let indexed_fields = {
                 let mut m = HashMap::new();
                 m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);

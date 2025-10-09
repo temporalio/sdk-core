@@ -24,7 +24,7 @@ use temporal_sdk_core_protos::{
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
         common::v1::ActivityType,
-        enums::v1::{CommandType, EventType},
+        enums::v1::{CommandType, EventType, IndexedValueType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
             ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
@@ -507,6 +507,14 @@ async fn v2_and_v3_changes(
                       && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
                 );
                 if expected_num_cmds == 3 {
+                    let mut as_payload = [MY_PATCH_ID].as_json_payload().unwrap();
+                    as_payload.metadata.insert(
+                        "type".to_string(),
+                        IndexedValueType::KeywordList
+                            .as_str_name()
+                            .as_bytes()
+                            .to_vec(),
+                    );
                     assert_matches!(
                         commands.pop_front().unwrap().attributes.as_ref().unwrap(),
                         Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
@@ -514,7 +522,7 @@ async fn v2_and_v3_changes(
                             { search_attributes: Some(attrs) }
                         )
                         if attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap()
-                          == &[MY_PATCH_ID].as_json_payload().unwrap()
+                          == &as_payload
                     );
                 }
                 // The only time the "old" timer should fire is in v2, replaying, without a marker.
