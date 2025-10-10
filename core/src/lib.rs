@@ -41,10 +41,9 @@ pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{
-    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
-    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
-    TunerBuilder, TunerHolder, TunerHolderOptions, TunerHolderOptionsBuilder, Worker, WorkerConfig,
-    WorkerConfigBuilder,
+    FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
+    ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
+    TunerHolderOptions, TunerHolderOptionsBuilder, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 
 /// Expose [WorkerClient] symbols
@@ -123,7 +122,6 @@ where
         client_bag.clone(),
         Some(&runtime.telemetry),
         runtime.heartbeat_interval,
-        false,
     )
 }
 

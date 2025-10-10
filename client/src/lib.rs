@@ -591,7 +591,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
-            workers: Arc::new(ClientWorkerSet::new()),
+            workers: Arc::new(ClientWorkerSet::new(false)),
         };
         if !self.skip_get_system_info {
             match client

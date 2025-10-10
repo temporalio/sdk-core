@@ -1,11 +1,13 @@
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use std::sync::mpsc;
 use std::{
     marker::PhantomData,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
     },
+    thread,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::{
@@ -31,6 +33,8 @@ pub struct ResourceBasedTuner<MI> {
     act_opts: Option<ResourceSlotOptions>,
     la_opts: Option<ResourceSlotOptions>,
     nexus_opts: Option<ResourceSlotOptions>,
+
+    sys_info: Arc<MI>,
 }
 
 impl ResourceBasedTuner<RealSysInfo> {
@@ -42,25 +46,28 @@ impl ResourceBasedTuner<RealSysInfo> {
             .target_cpu_usage(target_cpu_usage)
             .build()
             .expect("default resource based slot options can't fail to build");
-        let controller = ResourceController::new_with_sysinfo(opts, RealSysInfo::new());
+        let controller = ResourceController::new_with_sysinfo(opts, Arc::new(RealSysInfo::new()));
         Self::new_from_controller(controller)
     }
 
     /// Create an instance using the fully configurable set of PID controller options
     pub fn new_from_options(options: ResourceBasedSlotsOptions) -> Self {
-        let controller = ResourceController::new_with_sysinfo(options, RealSysInfo::new());
+        let controller =
+            ResourceController::new_with_sysinfo(options, Arc::new(RealSysInfo::new()));
         Self::new_from_controller(controller)
     }
 }
 
 impl<MI> ResourceBasedTuner<MI> {
     fn new_from_controller(controller: ResourceController<MI>) -> Self {
+        let sys_info = controller.sys_info_supplier.clone();
         Self {
             slots: Arc::new(controller),
             wf_opts: None,
             act_opts: None,
             la_opts: None,
             nexus_opts: None,
+            sys_info,
         }
     }
 
@@ -86,6 +93,11 @@ impl<MI> ResourceBasedTuner<MI> {
     pub fn with_nexus_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
         self.nexus_opts = Some(opts);
         self
+    }
+
+    /// Get sys info
+    pub fn sys_info(&self) -> Arc<MI> {
+        self.sys_info.clone()
     }
 }
 
@@ -121,7 +133,7 @@ pub struct ResourceSlotOptions {
 
 struct ResourceController<MI> {
     options: ResourceBasedSlotsOptions,
-    sys_info_supplier: MI,
+    sys_info_supplier: Arc<MI>,
     metrics: OnceLock<JoinHandle<()>>,
     pids: Mutex<PidControllers>,
     last_metric_vals: Arc<AtomicCell<LastMetricVals>>,
@@ -314,6 +326,10 @@ where
             }
         }
     }
+
+    fn slot_supplier_kind(&self) -> String {
+        "ResourceBased".to_string()
+    }
 }
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
@@ -421,7 +437,7 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceController<MI> {
         Arc::new(ResourceBasedSlotsForType::new(self.clone(), opts))
     }
 
-    fn new_with_sysinfo(options: ResourceBasedSlotsOptions, sys_info: MI) -> Self {
+    fn new_with_sysinfo(options: ResourceBasedSlotsOptions, sys_info: Arc<MI>) -> Self {
         Self {
             pids: Mutex::new(PidControllers::new(&options)),
             options,
@@ -474,37 +490,14 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceController<MI> {
 
 /// Implements [SystemResourceInfo] using the [sysinfo] crate
 #[derive(Debug)]
-pub struct RealSysInfo {
+struct RealSysInfoInner {
     sys: Mutex<sysinfo::System>,
     total_mem: AtomicU64,
     cur_mem_usage: AtomicU64,
     cur_cpu_usage: AtomicU64,
-    last_refresh: AtomicCell<Instant>,
 }
-impl RealSysInfo {
-    fn new() -> Self {
-        let mut sys = sysinfo::System::new();
-        sys.refresh_memory();
-        let total_mem = sys.total_memory();
-        let s = Self {
-            sys: Mutex::new(sys),
-            last_refresh: AtomicCell::new(Instant::now()),
-            cur_mem_usage: AtomicU64::new(0),
-            cur_cpu_usage: AtomicU64::new(0),
-            total_mem: AtomicU64::new(total_mem),
-        };
-        s.refresh();
-        s
-    }
 
-    fn refresh_if_needed(&self) {
-        // This is all quite expensive and meaningfully slows everything down if it's allowed to
-        // happen more often. A better approach than a lock would be needed to go faster.
-        if (Instant::now() - self.last_refresh.load()) > Duration::from_millis(100) {
-            self.refresh();
-        }
-    }
-
+impl RealSysInfoInner {
     fn refresh(&self) {
         let mut lock = self.sys.lock();
         lock.refresh_memory();
@@ -522,25 +515,73 @@ impl RealSysInfo {
             self.cur_mem_usage.store(mem, Ordering::Release);
         }
         self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
-        self.last_refresh.store(Instant::now());
+    }
+}
+
+/// Tracks host resource usage by refreshing metrics on a background thread.
+pub struct RealSysInfo {
+    inner: Arc<RealSysInfoInner>,
+    shutdown_tx: mpsc::Sender<()>,
+    shutdown_handle: Mutex<Option<thread::JoinHandle<()>>>,
+}
+
+impl RealSysInfo {
+    pub(crate) fn new() -> Self {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total_mem = sys.total_memory();
+        let inner = Arc::new(RealSysInfoInner {
+            sys: Mutex::new(sys),
+            cur_mem_usage: AtomicU64::new(0),
+            cur_cpu_usage: AtomicU64::new(0),
+            total_mem: AtomicU64::new(total_mem),
+        });
+        inner.refresh();
+
+        let thread_clone = inner.clone();
+        let (tx, rx) = mpsc::channel::<()>();
+        let handle = thread::Builder::new()
+            .name("temporal-real-sysinfo".to_string())
+            .spawn(move || {
+                const REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+                loop {
+                    thread_clone.refresh();
+                    let r = rx.recv_timeout(REFRESH_INTERVAL);
+                    if matches!(r, Err(mpsc::RecvTimeoutError::Disconnected)) || r.is_ok() {
+                        return;
+                    }
+                }
+            })
+            .expect("failed to spawn RealSysInfo refresh thread");
+
+        Self {
+            inner,
+            shutdown_tx: tx,
+            shutdown_handle: Mutex::new(Some(handle)),
+        }
     }
 }
 
 impl SystemResourceInfo for RealSysInfo {
     fn total_mem(&self) -> u64 {
-        self.total_mem.load(Ordering::Acquire)
+        self.inner.total_mem.load(Ordering::Acquire)
     }
 
     fn used_mem(&self) -> u64 {
-        // TODO: This should really happen on a background thread since it's getting called from
-        //   the async reserve
-        self.refresh_if_needed();
-        self.cur_mem_usage.load(Ordering::Acquire)
+        self.inner.cur_mem_usage.load(Ordering::Acquire)
     }
 
     fn used_cpu_percent(&self) -> f64 {
-        self.refresh_if_needed();
-        f64::from_bits(self.cur_cpu_usage.load(Ordering::Acquire))
+        f64::from_bits(self.inner.cur_cpu_usage.load(Ordering::Acquire))
+    }
+}
+
+impl Drop for RealSysInfo {
+    fn drop(&mut self) {
+        let _res = self.shutdown_tx.send(());
+        if let Some(handle) = self.shutdown_handle.lock().take() {
+            let _ = handle.join();
+        }
     }
 }
 
@@ -558,9 +599,9 @@ mod tests {
         used: Arc<AtomicU64>,
     }
     impl FakeMIS {
-        fn new() -> (Self, Arc<AtomicU64>) {
+        fn new() -> (Arc<Self>, Arc<AtomicU64>) {
             let used = Arc::new(AtomicU64::new(0));
-            (Self { used: used.clone() }, used)
+            (Arc::new(Self { used: used.clone() }), used)
         }
     }
     impl SystemResourceInfo for FakeMIS {
