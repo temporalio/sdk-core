@@ -203,6 +203,7 @@ mod tests {
             });
         mock_provider.expect_namespace().return_const(namespace);
         mock_provider.expect_task_queue().return_const(task_queue);
+        mock_provider.expect_deployment_options().return_const(None);
         mock_provider
     }
 
