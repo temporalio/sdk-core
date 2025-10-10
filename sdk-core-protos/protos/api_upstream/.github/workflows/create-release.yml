@@ -16,8 +16,16 @@ on:
       skip_sdk_check:
         description: "Skip sdk-go compatibility check"
         type: boolean
-
+      dispatch_id:
+        description: An ID used by external tools to identify workflow runs(can be left empty when running manually)
+        default: "none"
+        type: string
 jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch ${{ inputs.dispatch_id }}
+        run: echo "Dispatch ${{ inputs.dispatch_id }}"
   prepare-inputs:
     name: "Prepare inputs"
     runs-on: ubuntu-latest

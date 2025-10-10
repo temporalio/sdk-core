@@ -133,9 +133,9 @@ service WorkflowService {
             }
         };
     }
-    
-    // GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse 
-    // order (starting from last event). Fails with`NotFound` if the specified workflow execution is 
+
+    // GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse
+    // order (starting from last event). Fails with`NotFound` if the specified workflow execution is
     // unknown to the service.
     rpc GetWorkflowExecutionHistoryReverse (GetWorkflowExecutionHistoryReverseRequest) returns (GetWorkflowExecutionHistoryReverseResponse) {
         option (google.api.http) = {
@@ -458,7 +458,8 @@ service WorkflowService {
         };
     }
 
-    // ScanWorkflowExecutions is a visibility API to list large amount of workflow executions in a specific namespace without order.
+    // ScanWorkflowExecutions _was_ a visibility API to list large amount of workflow executions in a specific namespace without order.
+    // It has since been deprecated in favor of `ListWorkflowExecutions` and rewritten to use `ListWorkflowExecutions` internally.
     //
     // Deprecated: Replaced with `ListWorkflowExecutions`.
     // (-- api-linter: core::0127::http-annotation=disabled
@@ -669,8 +670,8 @@ service WorkflowService {
     // members are compatible with one another.
     //
     // A single build id may be mapped to multiple task queues using this API for cases where a single process hosts
-    // multiple workers. 
-    // 
+    // multiple workers.
+    //
     // To query which workers can be retired, use the `GetWorkerTaskReachability` API.
     //
     // NOTE: The number of task queues mapped to a single build id is limited by the `limit.taskQueuesPerBuildId`
@@ -918,6 +919,19 @@ service WorkflowService {
             body: "*"
             additional_bindings {
                 post: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-metadata"
+                body: "*"
+            }
+        };
+    }
+
+    // Set/unset the ManagerIdentity of a Worker Deployment.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc SetWorkerDeploymentManager (SetWorkerDeploymentManagerRequest) returns (SetWorkerDeploymentManagerResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployments/{deployment_name}/set-manager"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}/set-manager"
                 body: "*"
             }
         };
@@ -1232,6 +1246,16 @@ service WorkflowService {
             additional_bindings {
                 post: "/api/v1/namespaces/{namespace}/workers/update-config"
                 body: "*"
+            }
+        };
+    }
+
+    // DescribeWorker returns information about the specified worker.
+    rpc DescribeWorker (DescribeWorkerRequest) returns (DescribeWorkerResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/workers/describe/{worker_instance_key}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workers/describe/{worker_instance_key}"
             }
         };
     }

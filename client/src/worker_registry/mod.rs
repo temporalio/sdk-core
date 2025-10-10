@@ -22,6 +22,8 @@ pub trait SlotProvider: std::fmt::Debug {
     fn task_queue(&self) -> &str;
     /// Try to reserve a slot on this worker.
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn Slot + Send>>;
+    /// Get the worker deployment options for this worker, if using deployment-based versioning.
+    fn deployment_options(&self) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>;
 }
 
 /// This trait represents a slot reserved for processing a WFT by a worker.
@@ -32,6 +34,14 @@ pub trait Slot {
         self: Box<Self>,
         task: PollWorkflowTaskQueueResponse,
     ) -> Result<(), anyhow::Error>;
+}
+
+/// Result of reserving a workflow task slot, including deployment options if applicable.
+pub(crate) struct SlotReservation {
+    /// The reserved slot for processing the workflow task
+    pub slot: Box<dyn Slot + Send>,
+    /// Worker deployment options, if the worker is using deployment-based versioning
+    pub deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -71,12 +81,16 @@ impl SlotManagerImpl {
         &self,
         namespace: String,
         task_queue: String,
-    ) -> Option<Box<dyn Slot + Send>> {
+    ) -> Option<SlotReservation> {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(p) = self.providers.get(&key)
             && let Some(slot) = p.try_reserve_wft_slot()
         {
-            return Some(slot);
+            let deployment_options = p.deployment_options();
+            return Some(SlotReservation {
+                slot,
+                deployment_options,
+            });
         }
         None
     }
@@ -126,11 +140,12 @@ impl SlotManager {
     }
 
     /// Try to reserve a compatible processing slot in any of the registered workers.
+    /// Returns the slot and the worker's deployment options (if using deployment-based versioning).
     pub(crate) fn try_reserve_wft_slot(
         &self,
         namespace: String,
         task_queue: String,
-    ) -> Option<Box<dyn Slot + Send>> {
+    ) -> Option<SlotReservation> {
         self.manager
             .read()
             .try_reserve_wft_slot(namespace, task_queue)
@@ -188,6 +203,7 @@ mod tests {
             });
         mock_provider.expect_namespace().return_const(namespace);
         mock_provider.expect_task_queue().return_const(task_queue);
+        mock_provider.expect_deployment_options().return_const(None);
         mock_provider
     }
 

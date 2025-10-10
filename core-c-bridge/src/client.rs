@@ -586,6 +586,9 @@ async fn call_workflow_service(
         "DescribeTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_task_queue)
         }
+        "DescribeWorker" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_worker)
+        }
         "DescribeWorkerDeployment" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_worker_deployment)
         }
@@ -810,6 +813,9 @@ async fn call_workflow_service(
                 WorkflowService,
                 set_worker_deployment_current_version
             )
+        }
+        "SetWorkerDeploymentManager" => {
+            rpc_call_on_trait!(client, call, WorkflowService, set_worker_deployment_manager)
         }
         "SetWorkerDeploymentRampingVersion" => {
             rpc_call_on_trait!(
