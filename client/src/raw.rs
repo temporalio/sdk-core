@@ -635,7 +635,21 @@ proxier! {
                     let task_queue = req_mut.task_queue.as_ref()
                                         .map(|tq| tq.name.clone()).unwrap_or_default();
                     match workers.try_reserve_wft_slot(namespace, task_queue) {
-                        Some(s) => slot = Some(s),
+                        Some(reservation) => {
+                            // Populate eager_worker_deployment_options from the slot reservation
+                            if let Some(opts) = reservation.deployment_options {
+                                req_mut.eager_worker_deployment_options = Some(temporal_sdk_core_protos::temporal::api::deployment::v1::WorkerDeploymentOptions {
+                                    deployment_name: opts.version.deployment_name,
+                                    build_id: opts.version.build_id,
+                                    worker_versioning_mode: if opts.use_worker_versioning {
+                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
+                                    } else {
+                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
+                                    },
+                                });
+                            }
+                            slot = Some(reservation.slot);
+                        }
                         None => req_mut.request_eager_execution = false
                     }
                 }
