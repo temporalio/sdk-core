@@ -1435,6 +1435,24 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        describe_worker,
+        DescribeWorkerRequest,
+        DescribeWorkerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_manager,
+        SetWorkerDeploymentManagerRequest,
+        SetWorkerDeploymentManagerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
