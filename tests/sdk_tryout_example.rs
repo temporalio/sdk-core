@@ -15,38 +15,46 @@ use tonic::IntoRequest;
 
 // Example of user code ============================================================================
 
+// These macros are only commented out so everything continues to compile.
+// #[workflow(name="my-cool-workflow")] -- Can override name. Not required, will default to struct.
 pub struct MyWorkflow {
     // Some internal state
 }
 
-// #[workflow] -- Can override name
+// #[workflow_methods] -- May be specified on multiple impls
 impl MyWorkflow {
     // Optional (but if not specified, the workflow struct must impl Default). Input must
     // be accepted either here, or in run, but not both (allowing input to be consumed and dropped).
+    // May omit the context parameter.
     // #[init]
-    pub fn new(_input: String, _ctx: SafeWorkflowContext) -> Self {
+    pub fn new(_input: String, _ctx: WorkflowContextView) -> Self {
         todo!()
     }
 
     // #[run]
-    pub async fn run(&mut self, _ctx: WorkflowContext) -> Result<String, WorkflowError> {
+    pub async fn run(&mut self, _ctx: WorkflowContext) -> WorkflowResult<String> {
         Ok("I ran!".to_string())
     }
 
-    // #[signal] -- May be sync or async
+    // #[signal] -- May be sync or async (handlers may omit the context parameter)
     pub fn signal(&mut self, _ctx: WorkflowContext, _input: bool) {
         todo!()
     }
 
     // #[query] -- Glory, finally, immutable-guaranteed queries. Can't be async.
-    pub fn query(&self, _ctx: SafeWorkflowContext, _input: String) -> String {
+    pub fn query(&self, _ctx: WorkflowContextView, _input: String) -> String {
         todo!()
     }
 
-    // #[update] -- May also be sync or async
+    // #[update] -- May also be sync or async (may return a Result too)
     pub fn update(&mut self, _ctx: WorkflowContext, _input: String) -> String {
         todo!()
     }
+
+    // Note that, ideally, all workflow methods take `&mut self` since all workflow execution is
+    // in fact seralized (even if updates/signals/etc have the appearance of running concurrently).
+    // This should be doable by protecting the actual workflow struct behind an `Rc`, but if it's
+    // not for some reason, the self receiver itself may need to be an `Rc`.
 }
 
 pub struct MyActivities {
@@ -133,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         DefaultFailureConverter,
         DefaultPayloadCodec,
     );
+    // Can also have Client::connect shortcut which takes `ConnectionOptions`
     let client = Client::new(
         connection,
         ClientOptions::new("my-ns")
@@ -148,13 +157,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .register_workflow::<MyWorkflow>()
         .register_workflow::<MyWorkflow>()
         // This also registers the static activity
-        .register_activities_with_instance(activity_instance)
+        .register_activities(activity_instance)
         // ----
         // This is a compile error, since MyActivities is known to have non static-methods
-        // .register_activities::<MyActivities>();
+        // .register_activities_static::<MyActivities>();
         // ----
         // But this works
-        .register_activities::<MyActivitiesStatic>();
+        .register_activities_static::<MyActivitiesStatic>();
 
     let worker = Worker::new(client.clone(), worker_opts.build());
     let worker_shutdown = worker.shutdown_handle();
@@ -162,8 +171,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // is consistent with other SDKs runtime erroring on double-start.
     let worker_task = tokio::spawn(worker.run());
 
+    // ❓ Regarding the code generation for the invocation of run/signal/query/update, there are a
+    // few options. This sample demonstrates generating a module whose name is based on the struct.
+    // This looks nice when invoking, and generally looks like normal rust. It has the downside that
+    // you need to see a doc/sample to discover this module naming convention. I would like comments
+    // on preferred approaches. We have:
+    //   1. This option - snake case generated module name with inner structs 1:1 with methods
+    //   2. Require the `#[workflow]` annotation to be on a _module_ rather than a struct, and have
+    //      `#[state]` on the struct and `#[methods]` on the impl. This way, the user explicitly
+    //      names the module and it's discoverable. The downside here is you always have to use
+    //      "inline mod" syntax.
+    //   3. Generate a struct named `MyWorkflowTypes` (or `MyWorkflowMethods`), which implements an
+    //      extension trait with associated types that map to the functions. Invocation looks like
+    //      `MyWorkflowTypes::run`.
+    //   4. Mangle the names of the real functions, and have `MyWorkflow` implement an extension
+    //      trait like in 3. This has the cleanest invocation: `MyWorkflow::run`, but means the
+    //      actual functions can't be invoked directly with their real names. A bit too much magic.
     let handle = client
-        .start_workflow::<MyWorkflow>("hi".to_string())
+        .start_workflow::<my_workflow::run>("hi".to_string())
         .await?;
     let _update_res = handle
         .execute_update::<my_workflow::update>("hello".to_string())
@@ -205,6 +230,8 @@ pub enum SerializationContext {
     // Details inside variants elided
     Workflow,
     Activity,
+    Nexus,
+    None,
 }
 // Payload conversion can't really be defined at the whole-converter level in a type-safe way
 // in Rust. Instead we provide an easy way to provide serde-backed converters, or you can use
@@ -297,27 +324,23 @@ pub struct RawValue {
     pub payload: Payload,
 }
 
-// Being a trait allows users to test their activity code without needing a whole activity
-// environment. Must be dyn-safe.
-pub trait ActivityContextTrait: Send + Sync {
-    fn heartbeat(&self, details: &dyn TemporalSerializable);
-    // ...Cancellation tokens, get_info, etc
-}
-// This allows us to avoid having `Arc` in the public api, and retain flexibility to change layout
 #[derive(Clone)]
 #[repr(transparent)]
-pub struct ActivityContext {
-    // This can actually be an enum of Custom(arc) | InternalActivityContext to avoid dynamic
-    // dispatch in the 99% case.
-    inner: Arc<dyn ActivityContextTrait>,
+pub struct ActivityContext {}
+#[derive(bon::Builder)]
+pub struct TestActivityContextOptions {
+    heartbeat_callback: Option<Box<dyn FnMut(&ActivityContext, &dyn TemporalSerializable)>>,
+    // Set info, etc etc
 }
 impl ActivityContext {
-    // User can build their own this way
-    pub fn from_trait(inner: impl ActivityContextTrait + 'static) -> Self {
-        Self {
-            inner: Arc::new(inner),
-        }
+    // User can build their own this way for testing purposes
+    pub fn new_test(_options: TestActivityContextOptions) -> Self {
+        todo!()
     }
+    pub fn heartbeat(&self, _details: &dyn TemporalSerializable) {
+        todo!()
+    }
+    // ...Cancellation tokens, get_info, etc
 }
 
 // In many places in this example, I'm aliasing errors to std errors for convenience. In reality,
@@ -360,12 +383,14 @@ pub trait ActivityImplementer {
 #[doc(hidden)]
 pub trait HasOnlyStaticMethods: ActivityImplementer {}
 
-pub struct SafeWorkflowContext {
+/// A "read-only" (in terms of workflow commands) workflow context
+pub struct WorkflowContextView {
     // Various read-only context functions
 }
 pub struct WorkflowContext {
     // Everything in safe context + command-issuing functions
 }
+type WorkflowResult<T> = Result<T, WorkflowError>;
 // I decided that CAN and Cancel should indeed probably be errors, mostly for one reason - which is
 // that waiting on `ctx.execute_activity().await?` should automatically bubble out cancel in a way
 // that ends the workflow as cancelled unless a user specifically decides not to do that. But - that
@@ -374,8 +399,11 @@ pub struct WorkflowContext {
 // it.
 pub enum WorkflowError {
     ContinueAsNew,
-    Canceled,
-    // Variants for panic, bubbled up failure, etc
+    Panic(Box<dyn std::error::Error + Send + Sync>),
+    Application(Failure),
+    Canceled(Failure),
+    TimedOut(Failure),
+    // ..and so on for remaining Failure-based bubbled-up errors, etc.
 }
 
 // User doesn't really need to understand this trait, as its impl is generated for them. All such
@@ -401,7 +429,7 @@ pub trait WorkflowImplementation {
     fn init(
         input: Payload,
         converter: PayloadConverter,
-        ctx: SafeWorkflowContext,
+        ctx: WorkflowContextView,
     ) -> Result<Self, PayloadConversionError>
     where
         Self: Sized;
@@ -532,7 +560,7 @@ impl<T> WorkflowHandle<T> {
 type WorkflowInitializer = fn(
     Payload,
     PayloadConverter,
-    SafeWorkflowContext,
+    WorkflowContextView,
 ) -> Result<Box<dyn WorkflowImplementation>, PayloadConversionError>;
 type ActivityInvocation = Box<
     dyn Fn(
@@ -562,17 +590,14 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         });
         self
     }
-    pub fn register_activities<AI>(&mut self) -> &mut Self
+    pub fn register_activities_static<AI>(&mut self) -> &mut Self
     where
         AI: ActivityImplementer + HasOnlyStaticMethods,
     {
         AI::register_all_static(self);
         self
     }
-    pub fn register_activities_with_instance<AI: ActivityImplementer>(
-        &mut self,
-        instance: AI,
-    ) -> &mut Self {
+    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
         AI::register_all_static(self);
         let arcd = Arc::new(instance);
         AI::register_all_instance(arcd, self);
@@ -692,6 +717,8 @@ pub mod my_workflow {
     use super::*;
 
     #[allow(non_camel_case_types)]
+    pub struct run;
+    #[allow(non_camel_case_types)]
     pub struct signal;
     #[allow(non_camel_case_types)]
     pub struct query;
@@ -713,7 +740,16 @@ pub mod my_workflow {
         // ...some way to invoke -- left for pt2 with more detail on workflows.
     }
 
+    // We generate the definition implementation for both the struct, and the run, so that `run`
+    // can be passed when starting workflows, and looks more like signal/update/query.
     impl WorkflowDefinition for MyWorkflow {
+        type Input = String;
+        type Output = String;
+        fn name() -> &'static str {
+            "MyWorkflow"
+        }
+    }
+    impl WorkflowDefinition for run {
         type Input = String;
         type Output = String;
         fn name() -> &'static str {
@@ -724,9 +760,9 @@ pub mod my_workflow {
         fn init(
             input: Payload,
             converter: PayloadConverter,
-            ctx: SafeWorkflowContext,
+            ctx: WorkflowContextView,
         ) -> Result<Self, PayloadConversionError> {
-            let deserialzied: <MyWorkflow as WorkflowDefinition>::Input =
+            let deserialzied: <run as WorkflowDefinition>::Input =
                 converter.from_payload(input, &SerializationContext::Workflow)?;
             Ok(MyWorkflow::new(deserialzied, ctx))
         }
