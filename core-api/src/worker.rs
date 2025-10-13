@@ -142,19 +142,19 @@ pub struct WorkerConfig {
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_workflow_tasks: Option<usize>,
-    /// The maximum number of activity tasks that will ever be given to this worker concurrently
+    /// The maximum number of activity tasks that will ever be given to this worker concurrently.
     ///
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_activities: Option<usize>,
     /// The maximum number of local activity tasks that will ever be given to this worker
-    /// concurrently
+    /// concurrently.
     ///
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_local_activities: Option<usize>,
     /// The maximum number of nexus tasks that will ever be given to this worker
-    /// concurrently
+    /// concurrently.
     ///
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
@@ -163,9 +163,13 @@ pub struct WorkerConfig {
     /// A versioning strategy for this worker.
     pub versioning_strategy: WorkerVersioningStrategy,
 
-    /// List of plugins used by lang
+    /// List of plugins used by lang.
     #[builder(default)]
     pub plugins: Vec<PluginInfo>,
+
+    /// Skips the single worker+client+namespace+task_queue check
+    #[builder(default = "false")]
+    pub skip_client_worker_set_check: bool,
 }
 
 impl WorkerConfig {
