@@ -4,7 +4,7 @@ use std::sync::{Arc, LazyLock};
 use temporal_client::ClientWorkerSet;
 
 pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<ClientWorkerSet>> =
-    LazyLock::new(|| Arc::new(ClientWorkerSet::new(true)));
+    LazyLock::new(|| Arc::new(ClientWorkerSet::new()));
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     signal_and_query_header: true,

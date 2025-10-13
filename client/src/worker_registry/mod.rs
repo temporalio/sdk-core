@@ -46,19 +46,15 @@ struct ClientWorkerSetImpl {
     all_workers: HashMap<Uuid, Arc<dyn ClientWorker + Send + Sync>>,
     /// Maps namespace to shared worker for worker heartbeating
     shared_worker: HashMap<String, Box<dyn SharedNamespaceWorkerTrait + Send + Sync>>,
-    /// Disables erroring when multiple workers on the same namespace+task queue are registered.
-    /// This is used with testing, where multiple tests run in parallel on the same client
-    disable_dupe_check: bool,
 }
 
 impl ClientWorkerSetImpl {
     /// Factory method.
-    fn new(disable_dupe_check: bool) -> Self {
+    fn new() -> Self {
         Self {
             slot_providers: Default::default(),
             all_workers: Default::default(),
             shared_worker: Default::default(),
-            disable_dupe_check,
         }
     }
 
@@ -85,7 +81,7 @@ impl ClientWorkerSetImpl {
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
         );
-        if self.slot_providers.contains_key(&slot_key) && !self.disable_dupe_check {
+        if self.slot_providers.contains_key(&slot_key) {
             bail!(
                 "Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.",
                 worker.worker_instance_key()
@@ -186,16 +182,16 @@ pub struct ClientWorkerSet {
 
 impl Default for ClientWorkerSet {
     fn default() -> Self {
-        Self::new(false)
+        Self::new()
     }
 }
 
 impl ClientWorkerSet {
     /// Factory method.
-    pub fn new(disable_dupe_check: bool) -> Self {
+    pub fn new() -> Self {
         Self {
             worker_grouping_key: Uuid::new_v4(),
-            worker_manager: RwLock::new(ClientWorkerSetImpl::new(disable_dupe_check)),
+            worker_manager: RwLock::new(ClientWorkerSetImpl::new()),
         }
     }
 
@@ -335,7 +331,7 @@ mod tests {
 
     #[test]
     fn registry_keeps_one_provider_per_namespace() {
-        let manager = ClientWorkerSet::new(false);
+        let manager = ClientWorkerSet::new();
         let mut worker_keys = vec![];
         let mut successful_registrations = 0;
 
@@ -465,7 +461,7 @@ mod tests {
 
     #[test]
     fn duplicate_namespace_task_queue_registration_fails() {
-        let manager = ClientWorkerSet::new(false);
+        let manager = ClientWorkerSet::new();
 
         let worker1 = new_mock_provider_with_heartbeat(
             "test_namespace".to_string(),
@@ -504,7 +500,7 @@ mod tests {
 
     #[test]
     fn multiple_workers_same_namespace_share_heartbeat_manager() {
-        let manager = ClientWorkerSet::new(false);
+        let manager = ClientWorkerSet::new();
 
         let worker1 = new_mock_provider_with_heartbeat(
             "shared_namespace".to_string(),
@@ -537,7 +533,7 @@ mod tests {
 
     #[test]
     fn different_namespaces_get_separate_heartbeat_managers() {
-        let manager = ClientWorkerSet::new(false);
+        let manager = ClientWorkerSet::new();
         let worker1 = new_mock_provider_with_heartbeat(
             "namespace1".to_string(),
             "queue1".to_string(),
@@ -565,7 +561,7 @@ mod tests {
 
     #[test]
     fn unregister_heartbeat_workers_cleans_up_shared_worker_when_last_removed() {
-        let manager = ClientWorkerSet::new(false);
+        let manager = ClientWorkerSet::new();
 
         // Create two workers with same namespace but different task queues
         let worker1 = new_mock_provider_with_heartbeat(
@@ -582,6 +578,8 @@ mod tests {
         );
         let worker_instance_key1 = worker1.worker_instance_key();
         let worker_instance_key2 = worker2.worker_instance_key();
+
+        assert_ne!(worker_instance_key1, worker_instance_key2);
 
         manager.register_worker(Arc::new(worker1)).unwrap();
         manager.register_worker(Arc::new(worker2)).unwrap();
