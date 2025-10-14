@@ -267,8 +267,7 @@ impl WorkerTrait for Worker {
             *self.status.lock() = WorkerStatus::ShuttingDown;
         }
         // First, unregister worker from the client
-        if !self.client_worker_registrator.shared_namespace_worker
-        {
+        if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
                 .workers()

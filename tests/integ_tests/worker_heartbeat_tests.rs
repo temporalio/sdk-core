@@ -137,8 +137,10 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         ]);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
+    println!("worker_instance_key: {worker_instance_key:?}");
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        println!("wf start");
         ctx.activity(ActivityOptions {
             activity_type: "pass_fail_act".to_string(),
             input: "pass".as_json_payload().expect("serializes fine"),
@@ -146,14 +148,17 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             ..Default::default()
         })
         .await;
+        println!("wf done");
         Ok(().into())
     });
 
     static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
     static ACTS_DONE: Semaphore = Semaphore::const_new(0);
     worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
+        println!("act start");
         ACTS_STARTED.add_permits(1);
         let _ = ACTS_DONE.acquire().await.unwrap();
+        println!("act done");
         Ok(i)
     });
 
@@ -166,7 +171,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
 
     let test_fut = async {
         // Give enough time to ensure heartbeat interval has been hit
-        tokio::time::sleep(Duration::from_millis(150)).await;
+        tokio::time::sleep(Duration::from_millis(110)).await;
         let _ = ACTS_STARTED.acquire().await.unwrap();
         let client = starter.get_client().await;
         let mut raw_client = (*client).clone();
@@ -194,7 +199,13 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             })
             .unwrap();
         let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+        assert_eq!(
+            heartbeat.worker_instance_key,
+            worker_instance_key.to_string()
+        );
+        println!("in_activity_checks STARTED");
         in_activity_checks(heartbeat, &start_time, &heartbeat_time);
+        println!("in_activity_checks DONE");
         ACTS_DONE.add_permits(1);
     };
 
@@ -385,6 +396,7 @@ fn in_activity_checks(
     start_time: &AtomicCell<Option<Timestamp>>,
     heartbeat_time: &AtomicCell<Option<Timestamp>>,
 ) {
+    println!("in_activity_checks heartbeat: {heartbeat:#?}");
     assert_eq!(heartbeat.status, WorkerStatus::Running as i32);
 
     let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
@@ -780,7 +792,7 @@ async fn worker_heartbeat_failure_metrics() {
 
     worker.run_until_done().await.unwrap();
 
-    sleep(Duration::from_millis(150)).await;
+    sleep(Duration::from_millis(110)).await;
     let client = starter.get_client().await;
     let mut heartbeats =
         list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_key}\"")).await;
