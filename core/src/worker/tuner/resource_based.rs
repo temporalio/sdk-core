@@ -495,7 +495,7 @@ impl RealSysInfo {
             cur_mem_usage: AtomicU64::new(0),
             cur_cpu_usage: AtomicU64::new(0),
             total_mem: AtomicU64::new(total_mem),
-            cgroup_cpu_info: CGroupCPUInfo::new(RealCGroupCPUFileSystem {}),
+            cgroup_cpu_info: CGroupCPUInfo::new(RealCGroupCPUFileSystem),
         };
         s.refresh();
         s
@@ -659,7 +659,7 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
 }
 
 #[derive(Debug)]
-struct RealCGroupCPUFileSystem {}
+struct RealCGroupCPUFileSystem;
 
 impl RealCGroupCPUFileSystem {
     const BASE_PATH: &'static str = "/sys/fs/cgroup";
