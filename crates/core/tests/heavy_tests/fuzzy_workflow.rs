@@ -1,7 +1,4 @@
-#[allow(dead_code)]
-mod common;
-
-use common::CoreWfStarter;
+use crate::common::CoreWfStarter;
 use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, time::Duration};

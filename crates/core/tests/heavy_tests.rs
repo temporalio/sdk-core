@@ -1,6 +1,9 @@
 // All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
 #[allow(dead_code)]
-mod common;
+pub(crate) mod common;
+// This prevents cargo from auto-picking up this file as its own test binary. Odd but functional.
+#[path = "heavy_tests/fuzzy_workflow.rs"]
+mod fuzzy_workflow;
 
 use crate::common::get_integ_runtime_options;
 use common::{
@@ -28,8 +31,6 @@ use temporalio_common::{
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
-
-mod fuzzy_workflow;
 
 #[tokio::test]
 async fn activity_load() {
