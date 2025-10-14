@@ -5,7 +5,7 @@ Scheduled --> TimedOut: WorkflowTaskTimedOut
 Started -[#blue]-> Completed: WorkflowTaskCompleted
 Started -[#blue]-> Failed: WorkflowTaskFailed
 Started -[#blue]-> TimedOut: WorkflowTaskTimedOut
+TimedOut --> [*]
 Completed --> [*]
 Failed --> [*]
-TimedOut --> [*]
 @enduml

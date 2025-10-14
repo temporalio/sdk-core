@@ -26,14 +26,12 @@ installed to build Core.
 
 This repo is composed of multiple crates:
 
+- temporalio-client `./crates/client` - Defines client(s) for interacting with the Temporal gRPC service.
 - temporalio-common `./crates/common` - Common code & protobuf definitions
-- temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service.
-- temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core.
-- temporal-sdk-core `./core` - The Core implementation.
-- temporal-sdk-core-c-bridge `./core-c-bridge` - Provides C bindings for Core.
-- temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
-- rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
-  (contains subcrates). It is Temporal-agnostic.
+- temporalio-sdk-core `./crates/core` - The Core implementation.
+- temporalio-sdk-core-c-bridge `./crates/core-c-bridge` - Provides C bindings for Core.
+- temporalio-macros `./crates/macros` - Implements procedural macros used by core and the SDK.
+- temporalio-sdk `./crates/sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
 
 Visualized (dev dependencies are in blue):
 
@@ -64,8 +62,8 @@ To format all code run:
 ## Linting
 
 We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
-You can run it using:
-`cargo clippy --all -- -D warnings`
+We have a couple aliases for linting that make sure various targets are hit:
+`cargo lint` and `cargo test-lint`.
 
 ## Debugging
 

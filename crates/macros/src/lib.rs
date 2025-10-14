@@ -13,10 +13,9 @@ use syn::{
 ///
 /// An example state machine definition of a card reader for unlocking a door:
 /// ```
-/// # extern crate rustfsm_trait as rustfsm;
-/// use rustfsm_procmacro::fsm;
+/// use temporalio_macros::fsm;
 /// use std::convert::Infallible;
-/// use rustfsm_trait::{StateMachine, TransitionResult};
+/// use temporalio_common::fsm_trait::{StateMachine, TransitionResult};
 ///
 /// fsm! {
 ///     name CardReader; command Commands; error Infallible; shared_state SharedState;
