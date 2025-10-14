@@ -156,7 +156,6 @@ pub fn build_otlp_metric_exporter(
         opts.histogram_bucket_overrides,
     )?
     .build();
-
     Ok::<_, anyhow::Error>(CoreOtelMeter {
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,

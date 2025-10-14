@@ -4,6 +4,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use prost_types::Duration as PbDuration;
 use prost_types::Timestamp;
 use std::collections::HashSet;
+use std::env;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -83,6 +84,9 @@ async fn list_worker_heartbeats(
 #[rstest::rstest]
 #[tokio::test]
 async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] backing: &str) {
+    if env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+        return;
+    }
     let telemopts = if backing == "no_metrics" {
         TelemetryOptionsBuilder::default().build().unwrap()
     } else {
@@ -234,6 +238,9 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
 // with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
 #[tokio::test]
 async fn docker_worker_heartbeat_tuner() {
+    if env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+        return;
+    }
     let runtimeopts = RuntimeOptionsBuilder::default()
         .telemetry_options(get_integ_telem_options())
         .heartbeat_interval(Some(Duration::from_millis(100)))
@@ -797,7 +804,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
         .build()
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
-    let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
@@ -845,4 +852,64 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
         }
     });
     assert!(heartbeat.is_none());
+}
+
+#[tokio::test]
+async fn worker_heartbeat_skip_client_worker_set_check() {
+    let wf_name = "worker_heartbeat_skip_client_worker_set_check";
+    let runtimeopts = RuntimeOptionsBuilder::default()
+        .telemetry_options(get_integ_telem_options())
+        .heartbeat_interval(Some(Duration::from_millis(100)))
+        .build()
+        .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.skip_client_worker_set_check(true);
+    let mut worker = starter.worker().await;
+    let worker_instance_key = worker.worker_instance_key();
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "pass".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+
+    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
+        Ok(i)
+    });
+
+    starter
+        .start_with_worker(wf_name.to_owned(), &mut worker)
+        .await;
+
+    worker.run_until_done().await.unwrap();
+    let client = starter.get_client().await;
+    let mut raw_client = (*client).clone();
+    let workers_list = WorkflowService::list_workers(
+        &mut raw_client,
+        ListWorkersRequest {
+            namespace: client.namespace().to_owned(),
+            page_size: 100,
+            next_page_token: Vec::new(),
+            query: String::new(),
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
+
+    // Ensure worker still heartbeats
+    let heartbeat = workers_list.workers_info.iter().find(|worker_info| {
+        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+            hb.worker_instance_key == worker_instance_key.to_string()
+        } else {
+            false
+        }
+    });
+    assert!(heartbeat.is_some());
 }

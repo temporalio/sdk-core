@@ -352,15 +352,10 @@ impl Worker {
         new_client: ConfiguredClient<TemporalServiceClientWithMetrics>,
     ) -> Result<(), anyhow::Error> {
         // Unregister worker from current client, register in new client at the end
-        let client_worker = if !self.config.skip_client_worker_set_check {
-            Some(
-                self.client
-                    .workers()
-                    .unregister_worker(self.worker_instance_key)?,
-            )
-        } else {
-            None
-        };
+        let client_worker = self
+            .client
+            .workers()
+            .unregister_worker(self.worker_instance_key)?;
 
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
@@ -370,9 +365,9 @@ impl Worker {
 
         self.client.replace_client(new_worker_client);
         *self.client_worker_registrator.client.write() = self.client.clone();
-        client_worker.map_or(Ok(()), |worker| {
-            self.client.workers().register_worker(worker)
-        })
+        self.client
+            .workers()
+            .register_worker(client_worker, self.config.skip_client_worker_set_check)
     }
 
     #[cfg(test)]
@@ -618,10 +613,11 @@ impl Worker {
             shared_namespace_worker,
         });
 
-        if !shared_namespace_worker && !config.skip_client_worker_set_check {
-            client
-                .workers()
-                .register_worker(client_worker_registrator.clone())?;
+        if !shared_namespace_worker {
+            client.workers().register_worker(
+                client_worker_registrator.clone(),
+                config.skip_client_worker_set_check,
+            )?;
         }
 
         Ok(Self {

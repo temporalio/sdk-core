@@ -758,23 +758,6 @@ impl WorkerClient for WorkerClientBag {
         heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
         client_heartbeat_data.last_heartbeat_time = Some(now);
 
-        if let Some(wft_slot_info) = heartbeat.workflow_task_slots_info.as_mut() {
-            wft_slot_info.last_interval_processed_tasks = wft_slot_info.total_processed_tasks
-                - client_heartbeat_data
-                    .workflow_task_slots_info
-                    .total_processed_tasks;
-            wft_slot_info.last_interval_failure_tasks = wft_slot_info.total_failed_tasks
-                - client_heartbeat_data
-                    .workflow_task_slots_info
-                    .total_failed_tasks;
-
-            client_heartbeat_data
-                .workflow_task_slots_info
-                .total_processed_tasks = wft_slot_info.total_processed_tasks;
-            client_heartbeat_data
-                .workflow_task_slots_info
-                .total_failed_tasks = wft_slot_info.total_failed_tasks;
-        }
         update_slots(
             &mut heartbeat.workflow_task_slots_info,
             &mut client_heartbeat_data.workflow_task_slots_info,
