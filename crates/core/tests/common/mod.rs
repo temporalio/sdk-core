@@ -70,6 +70,8 @@ use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
+
+pub(crate) use crate::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";

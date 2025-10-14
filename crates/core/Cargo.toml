@@ -156,7 +156,7 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 [[test]]
 name = "integ_tests"
-path = "../tests/main.rs"
+path = "tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
 test = false
@@ -168,31 +168,31 @@ required-features = [
 
 [[test]]
 name = "heavy_tests"
-path = "../tests/heavy_tests.rs"
+path = "tests/heavy_tests.rs"
 test = false
 required-features = ["test-utilities"]
 
 [[test]]
 name = "manual_tests"
-path = "../tests/manual_tests.rs"
+path = "tests/manual_tests.rs"
 test = false
 required-features = ["test-utilities"]
 
 [[test]]
 name = "global_metric_tests"
-path = "../tests/global_metric_tests.rs"
+path = "tests/global_metric_tests.rs"
 test = false
 required-features = ["test-utilities"]
 
 [[test]]
 name = "cloud_tests"
-path = "../tests/cloud_tests.rs"
+path = "tests/cloud_tests.rs"
 test = false
 required-features = ["test-utilities"]
 
 [[bench]]
 name = "workflow_replay"
-path = "../tests/workflow_replay_bench.rs"
+path = "tests/workflow_replay_bench.rs"
 harness = false
 
 # The integration test runner should compile with the same configuration as the
@@ -201,7 +201,7 @@ harness = false
 # tests directly.
 [[test]]
 name = "integ_runner"
-path = "../tests/runner.rs"
+path = "tests/runner.rs"
 harness = false
 test = false
 required-features = [

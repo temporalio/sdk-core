@@ -79,10 +79,10 @@ crate::telemetry::telemetry_init_fallback();
 
 The passed in options to initialization can be customized to export to an OTel collector, etc.
 
-To run integ tests with OTel collection on, you can use `integ-with-otel.sh`. You will want to make
-sure you are running the collector via docker, which can be done like so:
+To run integ tests with OTel collection on, you can use `etc/integ-with-otel.sh`. You will want to
+make sure you are running the collector via docker, which can be done like so:
 
-`docker-compose -f docker/docker-compose.yaml -f docker/docker-compose-telem.yaml up`
+`docker-compose -f etc/docker/docker-compose.yaml -f etc/docker/docker-compose-telem.yaml up`
 
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
 equivalent.
@@ -137,4 +137,3 @@ pre-alpha in terms of its API surface. Since it's still using Core underneath, i
 functional. We do not currently have any firm plans to productionize this SDK. If you want to write
 workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
 time without warning and we do not provide any support guarantees.
-

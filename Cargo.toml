@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "core",
-    "client",
-    "core-api",
-    "fsm",
-    "sdk-core-protos",
-    "sdk",
-    "core-c-bridge",
+    "crates/core",
+    "crates/client",
+    "crates/core-api",
+    "crates/fsm",
+    "crates/sdk-core-protos",
+    "crates/sdk",
+    "crates/core-c-bridge",
 ]
 resolver = "2"
 

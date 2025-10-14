@@ -206,7 +206,7 @@ jobs:
       - name: Start container for otel-collector and prometheus
         uses: hoverkraft-tech/compose-action@v2.0.1
         with:
-          compose-file: ./docker/docker-compose-ci.yaml
+          compose-file: ./etc/docker/docker-compose-ci.yaml
       - uses: Swatinem/rust-cache@v2
       - run: cargo integ-test docker_
 
