@@ -62,13 +62,13 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::sync::{Arc, OnceLock};
-use temporal_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
     telemetry::TelemetryOptions,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
+use temporalio_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 
 /// Initialize a worker bound to a task queue.
 ///
@@ -172,7 +172,7 @@ pub(crate) fn sticky_q_name_for_worker(
 
 mod sealed {
     use super::*;
-    use temporal_client::{SharedReplaceableClient, TemporalServiceClient};
+    use temporalio_client::{SharedReplaceableClient, TemporalServiceClient};
 
     /// Allows passing different kinds of clients into things that want to be flexible. Motivating
     /// use-case was worker initialization.

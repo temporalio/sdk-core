@@ -1,8 +1,6 @@
 use std::time::Duration;
 
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
-use temporal_sdk::{CancellableFuture, WfContext, WorkflowResult};
-use temporal_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
     coresdk::{
@@ -16,6 +14,8 @@ use temporal_sdk_core_protos::{
     },
     test_utils::start_timer_cmd,
 };
+use temporalio_sdk::{CancellableFuture, WfContext, WorkflowResult};
+use temporalio_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};
 
 pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
     command_sink.timer(Duration::from_secs(1)).await;

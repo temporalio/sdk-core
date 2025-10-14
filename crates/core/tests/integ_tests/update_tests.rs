@@ -11,14 +11,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{
-    Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
-};
-use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
-use temporal_sdk_core::{
-    replay::HistoryForReplay,
-    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
-};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -40,6 +32,14 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::ResetWorkflowExecutionRequest,
     },
     test_utils::start_timer_cmd,
+};
+use temporalio_client::{
+    Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
+};
+use temporalio_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
+use temporalio_sdk_core::{
+    replay::HistoryForReplay,
+    test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;

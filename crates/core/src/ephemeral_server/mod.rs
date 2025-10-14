@@ -10,7 +10,7 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use temporal_client::ClientOptionsBuilder;
+use temporalio_client::ClientOptionsBuilder;
 use tokio::{
     task::spawn_blocking,
     time::{Duration, sleep},

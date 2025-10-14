@@ -1,7 +1,7 @@
 use super::*;
 use futures_util::Future;
 use std::sync::{Arc, LazyLock};
-use temporal_client::SlotManager;
+use temporalio_client::SlotManager;
 
 pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
     LazyLock::new(|| Arc::new(SlotManager::new()));

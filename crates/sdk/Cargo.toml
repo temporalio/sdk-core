@@ -1,5 +1,5 @@
 [package]
-name = "temporal-sdk"
+name = "temporalio-sdk"
 version = "0.1.0-alpha.1"
 edition = "2024"
 authors = ["Spencer Judge <spencer@temporal.io>"]
@@ -29,7 +29,7 @@ tokio-util = { version = "0.7" }
 tokio-stream = "0.1"
 tracing = "0.1"
 
-[dependencies.temporal-sdk-core]
+[dependencies.temporalio-sdk-core]
 path = "../core"
 version = "0.1"
 default-features = false
@@ -42,7 +42,7 @@ version = "0.1"
 path = "../core-api"
 version = "0.1"
 
-[dependencies.temporal-client]
+[dependencies.temporalio-client]
 path = "../client"
 version = "0.1"
 

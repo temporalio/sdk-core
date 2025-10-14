@@ -11,8 +11,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -33,6 +31,8 @@ use temporal_sdk_core_protos::{
         },
     },
 };
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use tokio::{
     join,
     sync::{mpsc, watch},

@@ -3,15 +3,6 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{
-    ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
-    WorkflowResult,
-};
-use temporal_sdk_core::{
-    replay::DEFAULT_WORKFLOW_TYPE,
-    test_help::{CoreInternalFlags, MockPollCfg, ResponseType, mock_worker_client},
-};
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder, canned_histories,
     coresdk::AsJsonPayloadExt,
@@ -19,6 +10,15 @@ use temporal_sdk_core_protos::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
     },
+};
+use temporalio_client::WorkflowOptions;
+use temporalio_sdk::{
+    ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
+    WorkflowResult,
+};
+use temporalio_sdk_core::{
+    replay::DEFAULT_WORKFLOW_TYPE,
+    test_help::{CoreInternalFlags, MockPollCfg, ResponseType, mock_worker_client},
 };
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);

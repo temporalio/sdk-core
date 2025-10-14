@@ -5,11 +5,11 @@ use common::CoreWfStarter;
 use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, time::Duration};
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
+use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{
     ActContext, ActivityError, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use tokio_util::sync::CancellationToken;
 
 const FUZZY_SIG: &str = "fuzzy_sig";

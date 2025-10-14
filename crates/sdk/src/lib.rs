@@ -9,8 +9,8 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
-//! use temporal_sdk::{sdk_client_options, ActContext, Worker};
-//! use temporal_sdk_core::{init_worker, Url, CoreRuntime};
+//! use temporalio_sdk::{sdk_client_options, ActContext, Worker};
+//! use temporalio_sdk_core::{init_worker, Url, CoreRuntime};
 //! use temporal_sdk_core_api::{
 //!     worker::{WorkerConfigBuilder, WorkerVersioningStrategy},
 //!     telemetry::TelemetryOptionsBuilder
@@ -55,7 +55,7 @@ mod workflow_context;
 mod workflow_future;
 
 pub use activity_context::ActContext;
-pub use temporal_client::Namespace;
+pub use temporalio_client::Namespace;
 use tracing::{Instrument, Span, field};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
@@ -81,8 +81,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporal_client::ClientOptionsBuilder;
-use temporal_sdk_core::Url;
 use temporal_sdk_core_api::{Worker as CoreWorker, errors::PollError};
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -107,6 +105,8 @@ use temporal_sdk_core_protos::{
         failure::v1::{Failure, failure},
     },
 };
+use temporalio_client::ClientOptionsBuilder;
+use temporalio_sdk_core::Url;
 use tokio::{
     sync::{
         Notify,

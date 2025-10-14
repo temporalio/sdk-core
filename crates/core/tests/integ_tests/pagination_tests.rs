@@ -4,9 +4,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::WfContext;
-use temporal_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     temporal::api::{
@@ -16,6 +13,9 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::GetWorkflowExecutionHistoryResponse,
     },
 };
+use temporalio_client::WorkflowOptions;
+use temporalio_sdk::WfContext;
+use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
 
 #[tokio::test]
 async fn weird_pagination_doesnt_drop_wft_events() {

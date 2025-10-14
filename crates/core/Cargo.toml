@@ -1,10 +1,7 @@
 [package]
-name = "temporal-sdk-core"
+name = "temporalio-sdk-core"
 version = "0.1.0"
-authors = [
-    "Spencer Judge <spencer@temporal.io>",
-    "Vitaly Arbuzov <vitaly@temporal.io>",
-]
+authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 edition = "2024"
 license-file = { workspace = true }
 description = "Library for building new Temporal SDKs"
@@ -128,7 +125,7 @@ features = ["otel_impls"]
 path = "../sdk-core-protos"
 features = ["history_builders", "test-utilities"]
 
-[dependencies.temporal-client]
+[dependencies.temporalio-client]
 path = "../client"
 
 [dependencies.rustfsm]
@@ -142,7 +139,7 @@ clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.7", features = ["async", "async_tokio"] }
 rstest = "0.26"
 semver = "1.0"
-temporal-sdk = { path = "../sdk" }
+temporalio-sdk = { path = "../sdk" }
 tokio = { version = "1.47", features = [
     "rt",
     "rt-multi-thread",
@@ -203,7 +200,7 @@ required-features = ["test-utilities"]
 
 [[bench]]
 name = "workflow_replay"
-path = "tests/workflow_replay_bench.rs"
+path = "benches/workflow_replay_bench.rs"
 test = false
 harness = false
 

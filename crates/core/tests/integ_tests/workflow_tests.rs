@@ -30,15 +30,6 @@ use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{
-    ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
-};
-use temporal_sdk_core::{
-    CoreRuntime,
-    replay::HistoryForReplay,
-    test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
-};
 use temporal_sdk_core_api::{
     errors::{PollError, WorkflowErrorType},
     worker::{
@@ -65,6 +56,17 @@ use temporal_sdk_core_protos::{
         sdk::v1::UserMetadata,
     },
     test_utils::schedule_activity_cmd,
+};
+use temporalio_client::{
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+};
+use temporalio_sdk::{
+    ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
+};
+use temporalio_sdk_core::{
+    CoreRuntime,
+    replay::HistoryForReplay,
+    test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{join, sync::Notify, time::sleep};
 
@@ -512,7 +514,7 @@ async fn slow_completes_with_small_cache() {
             // They don't need to be much slower
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        fn on_shutdown(&self, _: &temporal_sdk::Worker) {}
+        fn on_shutdown(&self, _: &temporalio_sdk::Worker) {}
     }
     worker
         .run_until_done_intercepted(Some(SlowCompleter {}))

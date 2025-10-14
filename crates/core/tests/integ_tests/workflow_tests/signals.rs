@@ -1,12 +1,6 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use futures_util::StreamExt;
 use std::collections::HashMap;
-use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
-    WorkflowResult,
-};
-use temporal_sdk_core::test_help::MockPollCfg;
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
@@ -21,6 +15,12 @@ use temporal_sdk_core_protos::{
         enums::v1::{CommandType, EventType},
     },
 };
+use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{
+    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
+    WorkflowResult,
+};
+use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
 
 const SIGNAME: &str = "signame";

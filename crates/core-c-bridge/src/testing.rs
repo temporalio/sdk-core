@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{ByteArray, ByteArrayRef, UserDataHandle, runtime::Runtime};
 
-use temporal_sdk_core::ephemeral_server;
+use temporalio_sdk_core::ephemeral_server;
 
 pub struct EphemeralServer {
     runtime: Runtime,

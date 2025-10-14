@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporal_sdk_core::ephemeral_server::{TestServerConfigBuilder, default_cached_download};
+use temporalio_sdk_core::ephemeral_server::{TestServerConfigBuilder, default_cached_download};
 use tokio::{self, process::Command};
 
 /// This env var is set (to any value) if temporal CLI dev server is in use

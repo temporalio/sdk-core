@@ -5,7 +5,7 @@
 //! We can use `clap` if this needs more arguments / other stuff later on.
 
 use prost::Message;
-use temporal_client::{ClientOptionsBuilder, WorkflowClientTrait};
+use temporalio_client::{ClientOptionsBuilder, WorkflowClientTrait};
 use url::Url;
 
 #[tokio::main]

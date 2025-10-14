@@ -13,7 +13,7 @@ integ-test = [
     "--features",
     "ephemeral-server",
     "--package",
-    "temporal-sdk-core",
+    "temporalio-sdk-core",
     "--test",
     "integ_runner",
     "--",

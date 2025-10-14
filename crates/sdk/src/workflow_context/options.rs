@@ -1,6 +1,5 @@
 use std::{collections::HashMap, time::Duration};
 
-use temporal_client::{Priority, WorkflowOptions};
 use temporal_sdk_core_protos::{
     coresdk::{
         AsJsonPayloadExt,
@@ -17,6 +16,7 @@ use temporal_sdk_core_protos::{
         sdk::v1::UserMetadata,
     },
 };
+use temporalio_client::{Priority, WorkflowOptions};
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
 
 pub(crate) trait IntoWorkflowCommand {

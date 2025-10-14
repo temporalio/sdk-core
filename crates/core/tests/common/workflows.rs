@@ -1,8 +1,8 @@
 use std::time::Duration;
-use temporal_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::AsJsonPayloadExt, prost_dur, temporal::api::common::v1::RetryPolicy,
 };
+use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 
 pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
     ctx.local_activity(LocalActivityOptions {

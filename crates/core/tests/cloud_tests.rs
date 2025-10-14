@@ -4,7 +4,7 @@ mod common;
 mod shared_tests;
 
 use common::get_cloud_client;
-use temporal_client::WorkflowClientTrait;
+use temporalio_client::WorkflowClientTrait;
 
 #[tokio::test]
 async fn tls_test() {

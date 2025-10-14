@@ -8,11 +8,6 @@ use crate::{
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
-use temporal_sdk_core::{
-    replay::{HistoryFeeder, HistoryForReplay},
-    test_help::{MockPollCfg, ResponseType, WorkerTestHelpers},
-};
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
@@ -23,6 +18,11 @@ use temporal_sdk_core_protos::{
     },
     prost_dur,
     temporal::api::enums::v1::EventType,
+};
+use temporalio_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
+use temporalio_sdk_core::{
+    replay::{HistoryFeeder, HistoryForReplay},
+    test_help::{MockPollCfg, ResponseType, WorkerTestHelpers},
 };
 use tokio::join;
 

@@ -8,10 +8,6 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
-use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
-    SharedReplaceableClient, SlotManager, WorkflowService,
-};
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -35,6 +31,10 @@ use temporal_sdk_core_protos::{
         worker::v1::WorkerHeartbeat,
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
+};
+use temporalio_client::{
+    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
+    SharedReplaceableClient, SlotManager, WorkflowService,
 };
 use tonic::IntoRequest;
 
