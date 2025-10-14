@@ -1,9 +1,10 @@
-use super::{NewMachineWithCommand, workflow_machines::MachineResponse};
+use super::{
+    NewMachineWithCommand, StateMachine, TransitionResult, fsm, workflow_machines::MachineResponse,
+};
 use crate::worker::workflow::{
     WFMachinesError,
     machines::{EventInfo, HistEventData, WFMachinesAdapter},
 };
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use temporalio_common::protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
     temporal::api::enums::v1::{CommandType, EventType},

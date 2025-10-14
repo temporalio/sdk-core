@@ -1,15 +1,14 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    workflow_machines::MachineResponse,
+    EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
+    WFMachinesAdapter, WFMachinesError, workflow_machines::MachineResponse,
 };
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
     worker::workflow::{InternalFlagsRef, machines::HistEventData},
 };
-use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::{TryFrom, TryInto};
 use temporalio_common::protos::{
     coresdk::{
@@ -31,6 +30,7 @@ use temporalio_common::protos::{
         },
     },
 };
+use temporalio_macros::fsm;
 
 fsm! {
     pub(super) name ActivityMachine;

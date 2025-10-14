@@ -23,6 +23,7 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
+pub(crate) use temporalio_common::fsm_trait::MachineError;
 pub(crate) use workflow_machines::{MachinesWFTResponseContent, WorkflowMachines};
 
 use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
@@ -37,16 +38,19 @@ use local_activity_state_machine::LocalActivityMachine;
 use modify_workflow_properties_state_machine::ModifyWorkflowPropertiesMachine;
 use nexus_operation_state_machine::NexusOperationMachine;
 use patch_state_machine::PatchMachine;
-use rustfsm::{MachineError, StateMachine};
 use signal_external_state_machine::SignalExternalMachine;
 use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use temporalio_common::protos::temporal::api::{
-    enums::v1::{CommandType, EventType},
-    history::v1::HistoryEvent,
+use temporalio_common::{
+    fsm_trait::{StateMachine, TransitionResult},
+    protos::temporal::api::{
+        enums::v1::{CommandType, EventType},
+        history::v1::HistoryEvent,
+    },
 };
+use temporalio_macros::fsm;
 use timer_state_machine::TimerMachine;
 use update_state_machine::UpdateMachine;
 use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;

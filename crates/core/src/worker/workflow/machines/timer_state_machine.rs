@@ -1,11 +1,10 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
-    workflow_machines::MachineResponse,
+    EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
+    WFMachinesAdapter, fsm, workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::{WFMachinesError, machines::HistEventData};
-use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{

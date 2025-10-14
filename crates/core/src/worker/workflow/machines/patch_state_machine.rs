@@ -18,8 +18,8 @@
 //! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
 use super::{
-    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    workflow_machines::MachineResponse,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
+    WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
@@ -32,7 +32,6 @@ use crate::{
     },
 };
 use anyhow::Context;
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::{
     collections::{BTreeSet, HashMap},
     convert::TryFrom,

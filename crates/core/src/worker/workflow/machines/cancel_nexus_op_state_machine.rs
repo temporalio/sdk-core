@@ -2,8 +2,8 @@ use super::{
     Cancellable, EventInfo, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError,
     workflow_machines::MachineResponse,
 };
+use super::{StateMachine, TransitionResult, fsm};
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_activation::ResolveCancelNexusOperation,

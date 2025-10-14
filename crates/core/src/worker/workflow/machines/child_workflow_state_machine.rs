@@ -1,13 +1,12 @@
 use super::{
-    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
-    workflow_machines::MachineResponse,
+    EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
+    WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{InternalFlagsRef, machines::HistEventData},
 };
 use itertools::Itertools;
-use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::{
     convert::{TryFrom, TryInto},
     string::ToString,

@@ -1,4 +1,6 @@
-use super::{NewMachineWithCommand, workflow_machines::MachineResponse};
+use super::{
+    NewMachineWithCommand, StateMachine, TransitionResult, fsm, workflow_machines::MachineResponse,
+};
 use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{
@@ -6,7 +8,6 @@ use crate::{
         machines::{EventInfo, HistEventData, WFMachinesAdapter},
     },
 };
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use temporalio_common::protos::{
     VERSION_SEARCH_ATTR_KEY,
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
@@ -176,7 +177,7 @@ impl From<Created> for CommandIssued {
 
 #[cfg(test)]
 mod tests {
-    use super::{super::OnEventWrapper, *};
+    use super::{super::OnEventWrapper, StateMachine, *};
     use crate::{
         replay::TestHistoryBuilder,
         test_help::{
@@ -184,7 +185,6 @@ mod tests {
         },
         worker::client::mocks::mock_worker_client,
     };
-    use rustfsm::StateMachine;
     use std::collections::HashMap;
     use temporalio_common::{
         Worker,

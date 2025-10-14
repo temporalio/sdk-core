@@ -1,9 +1,8 @@
 use super::{
-    EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
-    WFMachinesError,
+    EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper, StateMachine,
+    TransitionResult, WFMachinesAdapter, WFMachinesError, fsm,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
