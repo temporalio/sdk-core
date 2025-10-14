@@ -126,9 +126,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
         // We need to send the history twice, since we fail it the first time.
-        let mut hist_proto = history_from_proto_binary("histories/fail_wf_task.bin")
-            .await
-            .unwrap();
+        let mut hist_proto = history_from_proto_binary("fail_wf_task.bin").await.unwrap();
         let hist = HistoryForReplay::new(hist_proto.clone(), "fake".to_string());
         if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
             ref mut attrs,

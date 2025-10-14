@@ -1,8 +1,6 @@
-//! This bench lives outside of the traditional /benches directory so it can share common code with
-//! integration tests.
-
 // All non-main.rs tests ignore dead common code so that the linter doesn't complain about about it.
 #[allow(dead_code)]
+#[path = "../tests/common/mod.rs"]
 mod common;
 
 use crate::common::{

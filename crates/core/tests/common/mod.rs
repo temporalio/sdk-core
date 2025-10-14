@@ -41,9 +41,10 @@ use temporal_sdk::{
 pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
-    WorkerConfigBuilder, init_replay_worker, init_worker,
+    WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    test_help::{MockPollCfg, build_mock_pollers, mock_worker},
 };
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
@@ -71,7 +72,8 @@ use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
 
-pub(crate) use crate::test_help::NAMESPACE;
+#[cfg(any(feature = "test-utilities", test))]
+pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -151,12 +153,14 @@ where
     worker
 }
 
-/// Load history from a file containing the protobuf serialization of it
+/// Load history from a file containing the protobuf serialization of it.
+/// File is expected to be a path within `crates/core/tests/histories`
 pub(crate) async fn history_from_proto_binary(
     path_from_root: &str,
 ) -> Result<History, anyhow::Error> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.push("..");
+    path.push("tests");
+    path.push("histories");
     path.push(path_from_root);
     let bytes = tokio::fs::read(path).await?;
     Ok(History::decode(&*bytes)?)
@@ -926,11 +930,6 @@ where
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
-
-use temporal_sdk_core::{
-    WorkerConfig,
-    test_help::{MockPollCfg, build_mock_pollers, mock_worker},
-};
 
 pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
     let mut mock = build_mock_pollers(mock_cfg);
