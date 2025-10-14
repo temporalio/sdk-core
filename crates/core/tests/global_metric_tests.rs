@@ -6,12 +6,12 @@ use crate::common::get_integ_runtime_options;
 use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
-use temporal_sdk_core::{
-    CoreRuntime,
-    telemetry::{build_otlp_metric_exporter, construct_filter_string, telemetry_init_global},
-};
 use temporal_sdk_core_api::telemetry::{
     Logger, OtelCollectorOptionsBuilder, TelemetryOptionsBuilder, metrics::CoreMeter,
+};
+use temporalio_sdk_core::{
+    CoreRuntime,
+    telemetry::{build_otlp_metric_exporter, construct_filter_string, telemetry_init_global},
 };
 use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;

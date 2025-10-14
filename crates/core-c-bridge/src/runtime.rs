@@ -15,15 +15,14 @@ use std::{
     },
     time::{Duration, UNIX_EPOCH},
 };
-use temporal_sdk_core::{
-    CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
-    RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder, TokioRuntimeBuilder,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-};
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
     OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
     TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,
+};
+use temporalio_sdk_core::{
+    CoreRuntime, TokioRuntimeBuilder,
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;
 use url::Url;

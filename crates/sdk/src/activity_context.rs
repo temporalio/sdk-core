@@ -6,13 +6,13 @@ use std::{
     sync::Arc,
     time::{Duration as StdDuration, SystemTime},
 };
-use temporal_client::Priority;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{ActivityHeartbeat, activity_task},
     temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
     utilities::TryIntoOrNone,
 };
+use temporalio_client::Priority;
 use tokio_util::sync::CancellationToken;
 
 /// Used within activities to get info, heartbeat management etc.

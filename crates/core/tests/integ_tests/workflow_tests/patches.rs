@@ -7,9 +7,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowClientTrait;
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
     constants::PATCH_MARKER_NAME,
@@ -31,6 +28,9 @@ use temporal_sdk_core_protos::{
         },
     },
 };
+use temporalio_client::WorkflowClientTrait;
+use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
 use tokio::{join, sync::Notify};
 use tokio_stream::StreamExt;
 

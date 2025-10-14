@@ -26,26 +26,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use temporal_client::{
-    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
-    WorkflowHandle, WorkflowOptions,
-};
-use temporal_sdk::{
-    IntoActivityFunc, Worker, WorkflowFunction,
-    interceptors::{
-        FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
-        WorkerInterceptor,
-    },
-};
-pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
-use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
-    replay::{HistoryForReplay, ReplayWorkerInput},
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-    test_help::{MockPollCfg, build_mock_pollers, mock_worker},
-};
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
     telemetry::{
@@ -66,6 +46,25 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::{GetClusterInfoRequest, StartWorkflowExecutionResponse},
     },
 };
+use temporalio_client::{
+    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
+    WorkflowHandle, WorkflowOptions,
+};
+use temporalio_sdk::{
+    IntoActivityFunc, Worker, WorkflowFunction,
+    interceptors::{
+        FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
+        WorkerInterceptor,
+    },
+};
+use temporalio_sdk_core::{
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
+    replay::{HistoryForReplay, ReplayWorkerInput},
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    test_help::{MockPollCfg, build_mock_pollers, mock_worker},
+};
 use tokio::{sync::OnceCell, task::AbortHandle};
 use tonic::IntoRequest;
 use tracing::{debug, warn};
@@ -73,7 +72,7 @@ use url::Url;
 use uuid::Uuid;
 
 #[cfg(any(feature = "test-utilities", test))]
-pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
+pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -931,14 +930,14 @@ where
     }
 }
 
-pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
+pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporalio_sdk::Worker {
     let mut mock = build_mock_pollers(mock_cfg);
     mock.worker_cfg(|c| {
         c.max_cached_workflows = 1;
         c.ignore_evicts_on_shutdown = false;
     });
     let core = mock_worker(mock);
-    let mut worker = temporal_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    let mut worker = temporalio_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -998,7 +997,7 @@ impl Drop for ActivationAssertionsInterceptor {
 }
 
 #[cfg(feature = "ephemeral-server")]
-use temporal_sdk_core::ephemeral_server::{
+use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, default_cached_download,
 };
 

@@ -29,8 +29,8 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
-use temporal_client::ClientOptions;
-use temporal_sdk_core::ephemeral_server::{
+use temporalio_client::ClientOptions;
+use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfig,
 };
 

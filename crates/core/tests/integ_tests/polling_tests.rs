@@ -15,15 +15,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core::{
-    ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder,
-    ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
-    init_worker,
-    telemetry::CoreLogStreamConsumer,
-    test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
-};
 use temporal_sdk_core_api::{
     Worker,
     telemetry::{Logger, TelemetryOptionsBuilder},
@@ -40,6 +31,15 @@ use temporal_sdk_core_protos::{
     prost_dur,
     temporal::api::enums::v1::EventType,
     test_utils::schedule_activity_cmd,
+};
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_sdk_core::{
+    ClientOptionsBuilder, CoreRuntime,
+    ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
+    init_worker,
+    telemetry::CoreLogStreamConsumer,
+    test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{sync::Notify, time::timeout};
 use tracing::info;
@@ -336,7 +336,7 @@ async fn replace_client_works_after_polling_failure() {
     let (log_consumer, mut log_rx) = CoreLogStreamConsumer::new(100);
     let telem_opts = TelemetryOptionsBuilder::default()
         .logging(Logger::Push {
-            filter: "OFF,temporal_client=DEBUG".into(),
+            filter: "OFF,temporalio_client=DEBUG".into(),
             consumer: Arc::new(log_consumer),
         })
         .build()

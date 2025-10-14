@@ -16,21 +16,6 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    UpdateContext, WfContext, WorkflowFunction, WorkflowResult,
-    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
-};
-use temporal_sdk_core::{
-    prost_dur,
-    replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
-    test_help::{
-        LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
-        build_mock_pollers, hist_to_poll_resp, mock_worker, mock_worker_client,
-        single_hist_mock_sg,
-    },
-};
 use temporal_sdk_core_api::{Worker, errors::PollError};
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, canned_histories,
@@ -57,6 +42,21 @@ use temporal_sdk_core_protos::{
         update::v1::WaitPolicy,
     },
     test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
+};
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    UpdateContext, WfContext, WorkflowFunction, WorkflowResult,
+    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
+};
+use temporalio_sdk_core::{
+    prost_dur,
+    replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
+    test_help::{
+        LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
+        build_mock_pollers, hist_to_poll_resp, mock_worker, mock_worker_client,
+        single_hist_mock_sg,
+    },
 };
 use tokio::{join, select, sync::Barrier};
 use tokio_util::sync::CancellationToken;
@@ -301,7 +301,7 @@ impl WorkerInterceptor for LACancellerInterceptor {
             self.token.cancel();
         }
     }
-    fn on_shutdown(&self, _: &temporal_sdk::Worker) {
+    fn on_shutdown(&self, _: &temporalio_sdk::Worker) {
         if !self.cancel_on_workflow_completed {
             self.token.cancel()
         }

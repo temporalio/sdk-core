@@ -70,8 +70,8 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::SharedNamespaceWorkerTrait;
-use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
+use temporalio_client::SharedNamespaceWorkerTrait;
+use temporalio_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_api::worker::{
     ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind,
@@ -100,6 +100,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
 };
+use temporalio_client::WorkerKey;
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;

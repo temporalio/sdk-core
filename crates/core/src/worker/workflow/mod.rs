@@ -55,7 +55,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporal_client::MESSAGE_TOO_LARGE_KEY;
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollError},
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
@@ -85,6 +84,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
     },
 };
+use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use tokio::{
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},

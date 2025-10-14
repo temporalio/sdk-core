@@ -15,17 +15,6 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
-use temporal_client::{
-    REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
-};
-use temporal_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    NexusOperationOptions, WfContext,
-};
-use temporal_sdk_core::{
-    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
-    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
-};
 use temporal_sdk_core_api::{
     Worker,
     errors::PollError,
@@ -69,6 +58,17 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
         workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
+};
+use temporalio_client::{
+    REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
+};
+use temporalio_sdk::{
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    NexusOperationOptions, WfContext,
+};
+use temporalio_sdk_core::{
+    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
+    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;

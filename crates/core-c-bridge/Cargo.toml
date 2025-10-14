@@ -1,10 +1,15 @@
 [package]
-name = "temporal-sdk-core-c-bridge"
+name = "temporalio-sdk-core-c-bridge"
 version = "0.1.0"
 edition = "2024"
+authors = ["Spencer Judge <spencer@temporal.io>"]
+license-file = { workspace = true }
+description = "C bridge for Temporal Core SDK"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
 
 [lib]
-name = "temporal_sdk_core_c_bridge"
+name = "temporalio_sdk_core_c_bridge"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -31,10 +36,10 @@ url = "2.5"
 # This is only needed as an explicit dependency so we can enable static as a feature
 xz2 = { version = "0.1" }
 
-[dependencies.temporal-client]
+[dependencies.temporalio-client]
 path = "../client"
 
-[dependencies.temporal-sdk-core]
+[dependencies.temporalio-sdk-core]
 path = "../core"
 features = ["ephemeral-server"]
 

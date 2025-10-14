@@ -3,9 +3,9 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_api::worker::PollerBehavior;
+use temporalio_client::WorkflowOptions;
+use temporalio_sdk::{WfContext, WorkflowResult};
 use tokio::sync::Barrier;
 
 #[tokio::test]

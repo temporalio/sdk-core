@@ -56,7 +56,7 @@ const FORWARD_LOG_BUFFER_SIZE: usize = 2048;
 /// traces at `core_level` and all others (from 3rd party modules, etc) at `other_level`.
 pub fn construct_filter_string(core_level: Level, other_level: Level) -> String {
     format!(
-        "{other_level},temporal_sdk_core={core_level},temporal_client={core_level},temporal_sdk={core_level}"
+        "{other_level},temporalio_sdk_core={core_level},temporalio_client={core_level},temporalio_sdk={core_level}"
     )
 }
 

@@ -1,13 +1,13 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core::test_help::MockPollCfg;
 use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE, canned_histories,
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     temporal::api::enums::v1::CommandType,
 };
+use temporalio_client::WorkflowOptions;
+use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk_core::test_help::MockPollCfg;
 
 async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];

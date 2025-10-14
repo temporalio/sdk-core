@@ -7,9 +7,9 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-use temporal_client::Slot as SlotTrait;
 use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use temporalio_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
 

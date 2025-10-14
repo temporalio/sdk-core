@@ -2,8 +2,6 @@ use crate::common::{CoreWfStarter, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use std::time::{Duration, Instant};
-use temporal_client::WorkflowClientTrait;
-use temporal_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
@@ -14,6 +12,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
     test_utils::start_timer_cmd,
 };
+use temporalio_client::WorkflowClientTrait;
+use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::join;
 
 #[tokio::test]

@@ -3,9 +3,6 @@ use crate::{
     integ_tests::activity_functions::echo,
 };
 use std::time::Duration;
-use temporal_client::{NamespacedClient, WorkflowOptions, WorkflowService};
-use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core::test_help::WorkerTestHelpers;
 use temporal_sdk_core_api::worker::{
     WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
 };
@@ -22,6 +19,9 @@ use temporal_sdk_core_protos::{
         },
     },
 };
+use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_sdk_core::test_help::WorkerTestHelpers;
 use tokio::join;
 use tonic::IntoRequest;
 

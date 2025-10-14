@@ -13,7 +13,7 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{
+use temporalio_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
     ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
     OperatorService, RetryClient, RetryConfig, TemporalServiceClient, TestService, TlsConfig,

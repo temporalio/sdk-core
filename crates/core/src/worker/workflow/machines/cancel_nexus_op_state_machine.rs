@@ -1,14 +1,14 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    WFMachinesAdapter, WFMachinesError,
+    Cancellable, EventInfo, NewMachineWithCommand, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::ResolveCancelNexusOperation,
     temporal::api::{
-        command::v1::{command, RequestCancelNexusOperationCommandAttributes},
+        command::v1::{RequestCancelNexusOperationCommandAttributes, command},
         enums::v1::{CommandType, EventType},
     },
 };
@@ -78,7 +78,7 @@ impl TryFrom<HistEventData> for CancelNexusOpMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Cancel external WF machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -105,10 +105,12 @@ impl WFMachinesAdapter for CancelNexusOpMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             CancelNexusOpCommand::Requested => {
-                vec![ResolveCancelNexusOperation {
-                    seq: self.shared_state.seq,
-                }
-                .into()]
+                vec![
+                    ResolveCancelNexusOperation {
+                        seq: self.shared_state.seq,
+                    }
+                    .into(),
+                ]
             }
         })
     }

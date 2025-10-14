@@ -37,6 +37,10 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
 };
+use temporalio_client::{
+    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
+    SharedReplaceableClient, SlotManager, WorkflowService,
+};
 use tonic::IntoRequest;
 use uuid::Uuid;
 

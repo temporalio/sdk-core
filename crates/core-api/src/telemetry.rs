@@ -173,7 +173,7 @@ pub enum Logger {
         filter: String,
     },
     /// Push logs to Lang. Can be used with
-    /// temporal_sdk_core::telemetry::log_export::CoreLogBufferedConsumer to buffer.
+    /// temporalio_sdk_core::telemetry::log_export::CoreLogBufferedConsumer to buffer.
     Push {
         /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,

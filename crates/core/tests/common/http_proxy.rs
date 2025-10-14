@@ -11,7 +11,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
     },
 };
-use temporal_client::proxy::ProxyStream;
+use temporalio_client::proxy::ProxyStream;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio::{

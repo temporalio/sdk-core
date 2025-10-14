@@ -32,14 +32,14 @@ mod integ_tests {
         get_integ_telem_options, rand_6_chars,
     };
     use std::time::Duration;
-    use temporal_client::{NamespacedClient, WorkflowService};
-    use temporal_sdk_core::{CoreRuntime, init_worker};
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::{
         nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
         operatorservice::v1::CreateNexusEndpointRequest,
         workflowservice::v1::ListNamespacesRequest,
     };
+    use temporalio_client::{NamespacedClient, WorkflowService};
+    use temporalio_sdk_core::{CoreRuntime, init_worker};
     use tonic::IntoRequest;
 
     // Create a worker like a bridge would (unwraps aside)

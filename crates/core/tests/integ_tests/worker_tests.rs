@@ -13,17 +13,6 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
-};
-use temporal_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder, init_worker,
-    test_help::{
-        FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
-        hist_to_poll_resp, mock_worker, mock_worker_client,
-    },
-};
 use temporal_sdk_core_api::{
     Worker,
     errors::WorkerValidationError,
@@ -59,6 +48,17 @@ use temporal_sdk_core_protos::{
             GetWorkflowExecutionHistoryResponse, PollActivityTaskQueueResponse,
             RespondActivityTaskCompletedResponse,
         },
+    },
+};
+use temporalio_client::WorkflowOptions;
+use temporalio_sdk::{
+    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
+};
+use temporalio_sdk_core::{
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder, init_worker,
+    test_help::{
+        FakeWfResponses, MockPollCfg, ResponseType, TEST_Q, build_mock_pollers,
+        drain_pollers_and_shutdown, hist_to_poll_resp, mock_worker, mock_worker_client,
     },
 };
 use tokio::sync::{Barrier, Notify, Semaphore};
@@ -148,7 +148,7 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
                 self.notify.notify_one();
             }
         }
-        fn on_shutdown(&self, _: &temporal_sdk::Worker) {}
+        fn on_shutdown(&self, _: &temporalio_sdk::Worker) {}
     }
 
     let inner = worker.inner_mut();
@@ -693,7 +693,7 @@ async fn test_custom_slot_supplier_simple() {
 
     worker.register_activity(
         "SlotSupplierActivity",
-        |_: temporal_sdk::ActContext, _: ()| async move { Ok(()) },
+        |_: temporalio_sdk::ActContext, _: ()| async move { Ok(()) },
     );
     worker.register_wf(
         "SlotSupplierWorkflow".to_owned(),

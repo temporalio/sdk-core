@@ -2,14 +2,6 @@ use crate::common::{CoreWfStarter, build_fake_sdk, mock_sdk, mock_sdk_cfg};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, WfContext, WfExitValue, WorkflowResult,
-};
-use temporal_sdk_core::{
-    replay::DEFAULT_WORKFLOW_TYPE,
-    test_help::{MockPollCfg, ResponseType, mock_worker, mock_worker_client, single_hist_mock_sg},
-};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     TestHistoryBuilder, canned_histories,
@@ -37,6 +29,14 @@ use temporal_sdk_core_protos::{
         },
         sdk::v1::UserMetadata,
     },
+};
+use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{
+    CancellableFuture, ChildWorkflowOptions, Signal, WfContext, WfExitValue, WorkflowResult,
+};
+use temporalio_sdk_core::{
+    replay::DEFAULT_WORKFLOW_TYPE,
+    test_help::{MockPollCfg, ResponseType, mock_worker, mock_worker_client, single_hist_mock_sg},
 };
 use tokio::{join, sync::Barrier};
 

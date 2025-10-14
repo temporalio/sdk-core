@@ -10,10 +10,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporal_sdk_core::{
-    WorkerConfigBuilder,
-    replay::{HistoryForReplay, ReplayWorkerInput},
-};
 use temporal_sdk_core_api::{
     Worker as CoreWorker,
     errors::{PollError, WorkflowErrorType},
@@ -28,6 +24,10 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::history::v1::History,
+};
+use temporalio_sdk_core::{
+    WorkerConfigBuilder,
+    replay::{HistoryForReplay, ReplayWorkerInput},
 };
 use tokio::sync::{
     Notify,
@@ -502,7 +502,7 @@ pub struct ResourceBasedTunerOptions {
 
 #[derive(Clone)]
 pub struct Worker {
-    worker: Option<Arc<temporal_sdk_core::Worker>>,
+    worker: Option<Arc<temporalio_sdk_core::Worker>>,
     runtime: Runtime,
 }
 
@@ -561,7 +561,7 @@ pub extern "C" fn temporal_core_worker_new(
                 .into_raw()
                 .cast_const(),
         ),
-        Ok(config) => match temporal_sdk_core::init_worker(
+        Ok(config) => match temporalio_sdk_core::init_worker(
             &client.runtime.core,
             config,
             client.core.clone().into_inner(),
@@ -983,7 +983,7 @@ pub extern "C" fn temporal_core_worker_replayer_new(
         ),
         Ok(config) => {
             let (tx, rx) = channel(1);
-            match temporal_sdk_core::init_replay_worker(ReplayWorkerInput::new(
+            match temporalio_sdk_core::init_replay_worker(ReplayWorkerInput::new(
                 config,
                 ReceiverStream::new(rx),
             )) {
@@ -1140,11 +1140,11 @@ pub extern "C" fn temporal_core_complete_async_cancel_reserve(
     }
 }
 
-impl TryFrom<&WorkerOptions> for temporal_sdk_core::WorkerConfig {
+impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
     type Error = anyhow::Error;
 
     fn try_from(opt: &WorkerOptions) -> anyhow::Result<Self> {
-        let converted_tuner: temporal_sdk_core::TunerHolder = (&opt.tuner).try_into()?;
+        let converted_tuner: temporalio_sdk_core::TunerHolder = (&opt.tuner).try_into()?;
         WorkerConfigBuilder::default()
             .namespace(opt.namespace.to_str())
             .task_queue(opt.task_queue.to_str())
@@ -1234,7 +1234,7 @@ impl TryFrom<&WorkerOptions> for temporal_sdk_core::WorkerConfig {
     }
 }
 
-impl TryFrom<&TunerHolder> for temporal_sdk_core::TunerHolder {
+impl TryFrom<&TunerHolder> for temporalio_sdk_core::TunerHolder {
     type Error = anyhow::Error;
 
     fn try_from(holder: &TunerHolder) -> anyhow::Result<Self> {
@@ -1280,10 +1280,10 @@ impl TryFrom<&TunerHolder> for temporal_sdk_core::TunerHolder {
             bail!("All resource-based slot suppliers must have the same ResourceBasedTunerOptions",);
         }
 
-        let mut options = temporal_sdk_core::TunerHolderOptionsBuilder::default();
+        let mut options = temporalio_sdk_core::TunerHolderOptionsBuilder::default();
         if let Some(first) = first {
             options.resource_based_options(
-                temporal_sdk_core::ResourceBasedSlotsOptionsBuilder::default()
+                temporalio_sdk_core::ResourceBasedSlotsOptionsBuilder::default()
                     .target_mem_usage(first.target_memory_usage)
                     .target_cpu_usage(first.target_cpu_usage)
                     .build()
@@ -1303,20 +1303,20 @@ impl TryFrom<&TunerHolder> for temporal_sdk_core::TunerHolder {
 }
 
 impl<SK: SlotKind + Send + Sync + 'static> TryFrom<SlotSupplier>
-    for temporal_sdk_core::SlotSupplierOptions<SK>
+    for temporalio_sdk_core::SlotSupplierOptions<SK>
 {
     type Error = anyhow::Error;
 
     fn try_from(
         supplier: SlotSupplier,
-    ) -> anyhow::Result<temporal_sdk_core::SlotSupplierOptions<SK>> {
+    ) -> anyhow::Result<temporalio_sdk_core::SlotSupplierOptions<SK>> {
         Ok(match supplier {
-            SlotSupplier::FixedSize(fs) => temporal_sdk_core::SlotSupplierOptions::FixedSize {
+            SlotSupplier::FixedSize(fs) => temporalio_sdk_core::SlotSupplierOptions::FixedSize {
                 slots: fs.num_slots,
             },
             SlotSupplier::ResourceBased(ss) => {
-                temporal_sdk_core::SlotSupplierOptions::ResourceBased(
-                    temporal_sdk_core::ResourceSlotOptions::new(
+                temporalio_sdk_core::SlotSupplierOptions::ResourceBased(
+                    temporalio_sdk_core::ResourceSlotOptions::new(
                         ss.minimum_slots,
                         ss.maximum_slots,
                         Duration::from_millis(ss.ramp_throttle_ms),
@@ -1324,7 +1324,7 @@ impl<SK: SlotKind + Send + Sync + 'static> TryFrom<SlotSupplier>
                 )
             }
             SlotSupplier::Custom(cs) => {
-                temporal_sdk_core::SlotSupplierOptions::Custom(cs.into_ss())
+                temporalio_sdk_core::SlotSupplierOptions::Custom(cs.into_ss())
             }
         })
     }

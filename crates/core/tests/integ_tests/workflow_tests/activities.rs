@@ -12,14 +12,6 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{
-    ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
-    WfExitValue, WorkflowFunction, WorkflowResult,
-};
-use temporal_sdk_core::test_help::{
-    MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
-};
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TaskToken, TestHistoryBuilder, canned_histories,
@@ -46,6 +38,16 @@ use temporal_sdk_core_protos::{
         sdk::v1::UserMetadata,
     },
     test_utils::schedule_activity_cmd,
+};
+use temporalio_client::{
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+};
+use temporalio_sdk::{
+    ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
+    WfExitValue, WorkflowFunction, WorkflowResult,
+};
+use temporalio_sdk_core::test_help::{
+    MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 

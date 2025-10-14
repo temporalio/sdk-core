@@ -4,8 +4,8 @@ use crate::{
     runtime::{Runtime, temporal_core_byte_array_free},
 };
 use std::{collections::HashMap, ops::Deref};
-use temporal_client::{ClientOptions, ClientOptionsBuilder};
-use temporal_sdk_core::ephemeral_server::{
+use temporalio_client::{ClientOptions, ClientOptionsBuilder};
+use temporalio_sdk_core::ephemeral_server::{
     TemporalDevServerConfig, TemporalDevServerConfigBuilder, default_cached_download,
 };
 use url::Url;

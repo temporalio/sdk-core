@@ -19,11 +19,11 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use temporal_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext};
-use temporal_sdk_core::CoreRuntime;
 use temporal_sdk_core_api::{telemetry::PrometheusExporterOptionsBuilder, worker::PollerBehavior};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
+use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
+use temporalio_sdk_core::CoreRuntime;
 use tracing::info;
 
 #[tokio::test]
