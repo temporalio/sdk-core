@@ -5,15 +5,15 @@ document as your quick reference when submitting pull requests.
 
 ## Where Things Are
 
-- `core/` – implementation of the core SDK
-- `client/` – clients for communicating with Temporal clusters
-- `core-api/` – API definitions exposed by core
-- `core-c-bridge/` – C interface for core
-- `sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
-- `sdk-core-protos/` – protobuf definitions shared across crates
-- `fsm/` – state machine implementation and macros
-- `test-utils/` – helpers and binaries for tests
-- `tests/` – integration, heavy, and manual tests
+- `crates` - All crates in the workspace.
+  - `crates/core/` – implementation of the core SDK
+  - `crates/client/` – clients for communicating with Temporal clusters
+  - `crates/core-api/` – API definitions exposed by core
+  - `crates/core-c-bridge/` – C interface for core
+  - `crates/sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
+  - `crates/sdk-core-protos/` – protobuf definitions shared across crates
+  - `crates/fsm/` – state machine implementation and macros
+  - `crates/core/tests/` – integration, heavy, and manual tests
 - `arch_docs/` – architectural design documents
 - Contributor guide: `README.md`
 - `target/` - This contains compiled files. You never need to look in here.
@@ -21,13 +21,11 @@ document as your quick reference when submitting pull requests.
 ## Repo Specific Utilities
 
 - `.cargo/config.toml` defines useful cargo aliases:
-    - `cargo lint` – run clippy on workspace crates
-    - `cargo test-lint` – run clippy on tests
-    - `cargo integ-test` – run the integration test runner
-- `etc/cargo-tokio-console.sh` – run any cargo command with the `tokio-console` feature
-- `etc/integ-with-otel.sh` – run integration tests with OpenTelemetry enabled
-- `.cargo/multi-worker-manual-test` – helper script for spawning multiple workers during manual
-  testing
+  - `cargo lint` – run clippy on workspace crates
+  - `cargo test-lint` – run clippy on tests
+  - `cargo integ-test` – run the integration test runner
+- `etc` - Various helper scripts and configuration
+  - `etc/docker` - Docker compose files to help with CI or more complex local testing
 
 ## Building and Testing
 
@@ -75,6 +73,6 @@ Reviewers will look for:
 ## Notes
 
 - Fetch workflow histories with `cargo run --bin histfetch <workflow_id> [run_id]` (binary lives in
-  `test-utils`).
-- Protobuf files under `sdk-core-protos/protos/api_upstream` are a git subtree; see `README.md` for
-  update instructions.
+  `crates/core/src/histfetch.rs`).
+- Protobuf files under `crates/sdk-core-protos/protos/api_upstream` are a git subtree; see
+  `README.md` for update instructions.

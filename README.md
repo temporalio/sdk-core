@@ -37,7 +37,7 @@ This repo is composed of multiple crates:
 
 Visualized (dev dependencies are in blue):
 
-![Crate dependency graph](./etc/deps.svg)
+![Crate dependency graph](./arch_docs/diagrams/deps.svg)
 
 All the following commands are enforced for each pull request:
 

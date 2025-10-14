@@ -154,6 +154,11 @@ tokio = { version = "1.47", features = [
 ] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
+[[bin]]
+name = "histfetch"
+path = "src/histfetch.rs"
+required-features = ["test-utilities"]
+
 [[test]]
 name = "integ_tests"
 path = "tests/main.rs"
