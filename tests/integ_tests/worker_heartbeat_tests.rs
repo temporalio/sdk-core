@@ -152,14 +152,22 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         Ok(().into())
     });
 
-    static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
-    static ACTS_DONE: Semaphore = Semaphore::const_new(0);
-    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
-        println!("act start");
-        ACTS_STARTED.add_permits(1);
-        let _ = ACTS_DONE.acquire().await.unwrap();
-        println!("act done");
-        Ok(i)
+    let acts_started = Arc::new(Semaphore::const_new(0));
+    let acts_done = Arc::new(Semaphore::const_new(0));
+
+    let acts_started_act = acts_started.clone();
+    let acts_done_act = acts_done.clone();
+    worker.register_activity("pass_fail_act", move |_ctx: ActContext, i: String| {
+        let acts_started = acts_started_act.clone();
+        let acts_done = acts_done_act.clone();
+        async move {
+            println!("act start");
+            acts_started.add_permits(1);
+            let permit = acts_done.acquire().await.unwrap();
+            permit.forget();
+            println!("act done");
+            Ok(i)
+        }
     });
 
     starter
@@ -172,7 +180,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let test_fut = async {
         // Give enough time to ensure heartbeat interval has been hit
         tokio::time::sleep(Duration::from_millis(110)).await;
-        let _ = ACTS_STARTED.acquire().await.unwrap();
+        let permit = acts_started.acquire().await.unwrap();
+        permit.forget();
         let client = starter.get_client().await;
         let mut raw_client = (*client).clone();
         let workers_list = WorkflowService::list_workers(
@@ -206,7 +215,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         println!("in_activity_checks STARTED");
         in_activity_checks(heartbeat, &start_time, &heartbeat_time);
         println!("in_activity_checks DONE");
-        ACTS_DONE.add_permits(1);
+        acts_done.add_permits(1);
     };
 
     let runner = async move {

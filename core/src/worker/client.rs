@@ -664,6 +664,7 @@ impl WorkerClient for WorkerClientBag {
             w.status = WorkerStatus::Shutdown.into();
             self.set_heartbeat_client_fields(w);
         }
+        println!("Sending final heartbeat: {:#?}", final_heartbeat.clone());
         let request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
@@ -684,6 +685,7 @@ impl WorkerClient for WorkerClientBag {
         namespace: String,
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
+        println!("Sending heartbeat: {:#?}", worker_heartbeat.clone());
         let request = RecordWorkerHeartbeatRequest {
             namespace,
             identity: self.identity.clone(),
