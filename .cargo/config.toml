@@ -50,6 +50,12 @@ lint-fix = [
     "heavy_tests",
     "--test",
     "manual_tests",
+    "--test",
+    "cloud_tests",
+    "--test",
+    "integ_runner",
+    "--test",
+    "global_metric_tests",
     "--fix",
     "--allow-dirty",
 ]
