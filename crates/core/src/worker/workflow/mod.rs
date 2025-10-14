@@ -31,6 +31,7 @@ use crate::{
         client::{LegacyQueryResult, WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
+            machines::MachineError,
             managed_run::RunUpdateAct,
             wft_extraction::{HistoryFetchReq, WFTExtractor, WFTStreamIn},
             wft_poller::validate_wft,
@@ -42,7 +43,6 @@ use anyhow::anyhow;
 use futures_util::{Stream, StreamExt, future::abortable, stream, stream::BoxStream};
 use itertools::Itertools;
 use prost_types::TimestampError;
-use rustfsm::MachineError;
 use std::{
     cell::RefCell,
     collections::VecDeque,

@@ -71,7 +71,7 @@ fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
 mod machine_coverage_report {
     use super::*;
     use crate::worker::workflow::machines::{
-        activity_state_machine::ActivityMachine,
+        StateMachine, activity_state_machine::ActivityMachine,
         cancel_external_state_machine::CancelExternalMachine,
         cancel_workflow_state_machine::CancelWorkflowMachine,
         child_workflow_state_machine::ChildWorkflowMachine,
@@ -85,7 +85,6 @@ mod machine_coverage_report {
         upsert_search_attributes_state_machine::UpsertSearchAttributesMachine,
         workflow_task_state_machine::WorkflowTaskMachine,
     };
-    use rustfsm::StateMachine;
     use std::{fs::File, io::Write};
 
     // This "test" needs to exist so that we have a way to join the spawned thread. Otherwise

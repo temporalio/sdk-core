@@ -1,6 +1,8 @@
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
 pub mod errors;
+#[doc(hidden)]
+pub mod fsm_trait;
 pub mod protos;
 pub mod telemetry;
 pub mod worker;

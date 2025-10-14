@@ -1,6 +1,4 @@
-extern crate rustfsm_trait as rustfsm;
-
-use rustfsm_procmacro::fsm;
+use temporalio_macros::fsm;
 
 fsm! {
     name Simple; command SimpleCmd; error Infallible;

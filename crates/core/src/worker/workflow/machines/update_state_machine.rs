@@ -1,11 +1,13 @@
-use super::{EventInfo, WFMachinesAdapter, WFMachinesError, workflow_machines::MachineResponse};
+use super::{
+    EventInfo, MachineError, StateMachine, TransitionResult, WFMachinesAdapter, WFMachinesError,
+    fsm, workflow_machines::MachineResponse,
+};
 use crate::{
     protosext::protocol_messages::UpdateRequest,
     worker::workflow::machines::{HistEventData, NewMachineWithResponse},
 };
 use itertools::Itertools;
 use prost::EncodeError;
-use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{

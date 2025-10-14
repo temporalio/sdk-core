@@ -543,7 +543,7 @@ impl StateMachineDefinition {
                     quote! { _ => {
                         // Restore state in event the transition doesn't match
                         self.state = #occupied_current_state;
-                        return Err(::rustfsm::MachineError::InvalidTransition)
+                        return Err(::temporalio_common::fsm_trait::MachineError::InvalidTransition)
                     } },
                 ));
             quote! {
@@ -553,14 +553,14 @@ impl StateMachineDefinition {
             }
         }).chain(std::iter::once(
             quote! {
-                None => Err(::rustfsm::MachineError::InvalidTransition)
+                None => Err(::temporalio_common::fsm_trait::MachineError::InvalidTransition)
             }
         )).collect();
 
         let viz_str = self.visualize();
 
         let trait_impl = quote! {
-            impl ::rustfsm::StateMachine for #name {
+            impl ::temporalio_common::fsm_trait::StateMachine for #name {
                 type Error = #err_type;
                 type State = #state_enum_name;
                 type SharedState = #shared_state_type;
@@ -573,7 +573,7 @@ impl StateMachineDefinition {
 
                 fn on_event(&mut self, event: #events_enum_name)
                   -> ::core::result::Result<::std::vec::Vec<Self::Command>,
-                                            ::rustfsm::MachineError<Self::Error>> {
+                                            ::temporalio_common::fsm_trait::MachineError<Self::Error>> {
                     let taken_state = self.state.take();
                     match taken_state {
                         #(#state_branches),*
@@ -582,10 +582,6 @@ impl StateMachineDefinition {
 
                 fn state(&self) -> &Self::State {
                     self.state.as_ref().unwrap()
-                }
-
-                fn set_state(&mut self, new: Self::State) {
-                    self.state = Some(new)
                 }
 
                 fn shared_state(&self) -> &Self::SharedState{

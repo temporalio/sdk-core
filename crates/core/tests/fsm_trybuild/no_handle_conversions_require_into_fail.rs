@@ -1,8 +1,6 @@
-extern crate rustfsm_trait as rustfsm;
-
-use rustfsm_procmacro::fsm;
-use rustfsm_trait::TransitionResult;
 use std::convert::Infallible;
+use temporalio_common::fsm_trait::TransitionResult;
+use temporalio_macros::fsm;
 
 fsm! {
     name SimpleMachine; command SimpleMachineCommand; error Infallible;

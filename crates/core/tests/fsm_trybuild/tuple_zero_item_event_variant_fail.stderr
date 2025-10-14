@@ -1,0 +1,5 @@
+error: Only tuple variants with exactly one item are supported for events
+ --> tests/fsm_trybuild/tuple_zero_item_event_variant_fail.rs:6:12
+  |
+6 |     One --(A(), on_a)--> Two
+  |            ^

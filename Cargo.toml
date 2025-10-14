@@ -3,7 +3,7 @@ members = [
     "crates/core",
     "crates/client",
     "crates/common",
-    "crates/fsm",
+    "crates/macros",
     "crates/sdk",
     "crates/core-c-bridge",
 ]

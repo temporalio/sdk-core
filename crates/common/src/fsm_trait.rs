@@ -30,7 +30,6 @@ pub trait StateMachine: Sized {
 
     /// Returns the current state of the machine
     fn state(&self) -> &Self::State;
-    fn set_state(&mut self, new_state: Self::State);
 
     /// Returns the current shared state of the machine
     fn shared_state(&self) -> &Self::SharedState;
@@ -41,6 +40,7 @@ pub trait StateMachine: Sized {
     /// Given the shared data and new state, create a new instance.
     fn from_parts(state: Self::State, shared: Self::SharedState) -> Self;
 
+    #[allow(dead_code)]
     /// Return a PlantUML definition of the fsm that can be used to visualize it
     fn visualizer() -> &'static str;
 }
@@ -70,36 +70,12 @@ impl<E: Error> Display for MachineError<E> {
 }
 impl<E: Error> Error for MachineError<E> {}
 
-pub enum MachineUpdate<Machine>
-where
-    Machine: StateMachine,
-{
-    InvalidTransition,
-    Ok { commands: Vec<Machine::Command> },
-}
-
-impl<M> MachineUpdate<M>
-where
-    M: StateMachine,
-{
-    /// Unwraps the machine update, panicking if the transition was invalid.
-    pub fn unwrap(self) -> Vec<M::Command> {
-        match self {
-            Self::Ok { commands } => commands,
-            Self::InvalidTransition => panic!("Transition was not successful!"),
-        }
-    }
-}
-
 /// A transition result is emitted every time the [StateMachine] handles an event.
 pub enum TransitionResult<Machine, DestinationState>
 where
     Machine: StateMachine,
     DestinationState: Into<Machine::State>,
 {
-    /// This state does not define a transition for this event from this state. All other errors
-    /// should use the [Err](enum.TransitionResult.html#variant.Err) variant.
-    InvalidTransition,
     /// The transition was successful
     Ok {
         commands: Vec<Machine::Command>,
@@ -178,7 +154,6 @@ where
     /// Turns more-specific (struct) transition result into more-general (enum) transition result
     pub fn into_general(self) -> TransitionResult<Sm, Sm::State> {
         match self {
-            TransitionResult::InvalidTransition => TransitionResult::InvalidTransition,
             TransitionResult::Ok {
                 commands,
                 new_state,
@@ -200,7 +175,6 @@ where
                 new_state,
                 commands,
             } => Ok((commands, new_state)),
-            TransitionResult::InvalidTransition => Err(MachineError::InvalidTransition),
             TransitionResult::Err(e) => Err(MachineError::Underlying(e)),
         }
     }

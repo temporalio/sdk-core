@@ -1,8 +1,10 @@
 #![allow(clippy::enum_variant_names)]
 
-use super::{EventInfo, WFMachinesAdapter, WFMachinesError, workflow_machines::MachineResponse};
+use super::{
+    EventInfo, StateMachine, TransitionResult, WFMachinesAdapter, WFMachinesError, fsm,
+    workflow_machines::MachineResponse,
+};
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,

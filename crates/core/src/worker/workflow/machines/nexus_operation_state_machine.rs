@@ -1,3 +1,4 @@
+use super::{MachineError, StateMachine, TransitionResult, fsm};
 use crate::worker::workflow::{
     WFMachinesError,
     machines::{
@@ -6,7 +7,6 @@ use crate::worker::workflow::{
     },
 };
 use itertools::Itertools;
-use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use temporalio_common::protos::{
     coresdk::{
         nexus::{NexusOperationCancellationType, NexusOperationResult, nexus_operation_result},
