@@ -170,6 +170,7 @@ pub struct WorkerConfig {
     /// Skips the single worker+client+namespace+task_queue check
     #[builder(default = "false")]
     pub skip_client_worker_set_check: bool,
+    
 }
 
 impl WorkerConfig {
