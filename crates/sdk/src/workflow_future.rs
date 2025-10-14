@@ -14,7 +14,7 @@ use std::{
     sync::mpsc::Receiver,
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         workflow_activation::{
             FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,

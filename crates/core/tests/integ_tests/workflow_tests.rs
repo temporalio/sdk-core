@@ -31,35 +31,36 @@ use std::{
     collections::{HashMap, HashSet},
     time::Duration,
 };
-use temporal_sdk_core_api::{
+use temporalio_client::{
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+};
+use temporalio_common::{
     errors::{PollError, WorkflowErrorType},
+    prost_dur,
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, canned_histories,
+        coresdk::{
+            ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            activity_result::ActivityExecutionResult,
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::{
+                ActivityCancellationType, FailWorkflowExecution, QueryResult, QuerySuccess,
+                StartTimer,
+            },
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            enums::v1::{CommandType, EventType},
+            failure::v1::Failure,
+            history::v1::history_event,
+            query::v1::WorkflowQuery,
+            sdk::v1::UserMetadata,
+        },
+        test_utils::schedule_activity_cmd,
+    },
     worker::{
         PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
     },
-};
-use temporal_sdk_core_protos::{
-    DEFAULT_WORKFLOW_TYPE, canned_histories,
-    coresdk::{
-        ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
-        activity_result::ActivityExecutionResult,
-        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{
-            ActivityCancellationType, FailWorkflowExecution, QueryResult, QuerySuccess, StartTimer,
-        },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    prost_dur,
-    temporal::api::{
-        enums::v1::{CommandType, EventType},
-        failure::v1::Failure,
-        history::v1::history_event,
-        query::v1::WorkflowQuery,
-        sdk::v1::UserMetadata,
-    },
-    test_utils::schedule_activity_cmd,
-};
-use temporalio_client::{
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
 };
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,

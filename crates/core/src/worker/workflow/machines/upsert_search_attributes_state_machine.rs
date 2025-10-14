@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use rustfsm::{StateMachine, TransitionResult, fsm};
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     VERSION_SEARCH_ATTR_KEY,
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
@@ -186,19 +186,21 @@ mod tests {
     };
     use rustfsm::StateMachine;
     use std::collections::HashMap;
-    use temporal_sdk_core_api::Worker;
-    use temporal_sdk_core_protos::{
-        coresdk::{
-            AsJsonPayloadExt,
-            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-            workflow_commands::SetPatchMarker,
-            workflow_completion::WorkflowActivationCompletion,
-        },
-        temporal::api::{
-            command::v1::command::Attributes,
-            common::v1::Payload,
-            enums::v1::EventType,
-            history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
+    use temporalio_common::{
+        Worker,
+        protos::{
+            coresdk::{
+                AsJsonPayloadExt,
+                workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+                workflow_commands::SetPatchMarker,
+                workflow_completion::WorkflowActivationCompletion,
+            },
+            temporal::api::{
+                command::v1::command::Attributes,
+                common::v1::Payload,
+                enums::v1::EventType,
+                history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
+            },
         },
     };
 

@@ -30,15 +30,13 @@ mod core_tests;
 #[macro_use]
 pub mod test_help;
 
-pub(crate) use temporal_sdk_core_api::errors;
+pub(crate) use temporalio_common::errors;
 
 pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-pub use temporal_sdk_core_api as api;
-pub use temporal_sdk_core_protos as protos;
-pub use temporal_sdk_core_protos::TaskToken;
+pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
 pub use worker::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
@@ -62,13 +60,13 @@ use anyhow::bail;
 use futures_util::Stream;
 use std::sync::Arc;
 use std::time::Duration;
-use temporal_sdk_core_api::{
+use temporalio_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
+use temporalio_common::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
+    protos::coresdk::ActivityHeartbeat,
     telemetry::TelemetryOptions,
 };
-use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
-use temporalio_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 
 /// Initialize a worker bound to a task queue.
 ///

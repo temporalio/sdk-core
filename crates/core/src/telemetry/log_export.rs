@@ -2,7 +2,7 @@ use futures_channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::Mutex;
 use ringbuf::{HeapRb, consumer::Consumer, producer::Producer, traits::Split};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
-use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
+use temporalio_common::telemetry::{CoreLog, CoreLogConsumer};
 use tracing_subscriber::Layer;
 
 #[derive(Debug)]
@@ -224,7 +224,7 @@ mod tests {
         fmt,
         sync::{Arc, Mutex},
     };
-    use temporal_sdk_core_api::telemetry::{
+    use temporalio_common::telemetry::{
         CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptionsBuilder,
     };
     use tracing::Level;

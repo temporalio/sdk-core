@@ -4,7 +4,7 @@ use crate::worker::workflow::{
     machines::{EventInfo, HistEventData, WFMachinesAdapter},
 };
 use rustfsm::{StateMachine, TransitionResult, fsm};
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
     temporal::api::enums::v1::{CommandType, EventType},
 };

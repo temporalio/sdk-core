@@ -9,8 +9,8 @@ use std::collections::{
     hash_map::Entry::{Occupied, Vacant},
 };
 use std::sync::Arc;
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use temporalio_common::protos::temporal::api::worker::v1::WorkerHeartbeat;
+use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use uuid::Uuid;
 
 /// This trait represents a slot reserved for processing a WFT by a worker.

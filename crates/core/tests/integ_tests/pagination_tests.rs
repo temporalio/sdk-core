@@ -4,7 +4,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use temporal_sdk_core_protos::{
+use temporalio_client::WorkflowOptions;
+use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     temporal::api::{
         common::v1::WorkflowExecution,
@@ -13,7 +14,6 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::GetWorkflowExecutionHistoryResponse,
     },
 };
-use temporalio_client::WorkflowOptions;
 use temporalio_sdk::WfContext;
 use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
 

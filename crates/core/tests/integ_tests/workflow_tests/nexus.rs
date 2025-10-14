@@ -11,27 +11,29 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::errors::PollError;
-use temporal_sdk_core_protos::{
-    coresdk::{
-        FromJsonPayloadExt,
-        nexus::{
-            NexusOperationCancellationType, NexusOperationResult, NexusTaskCancelReason,
-            NexusTaskCompletion, nexus_operation_result, nexus_task, nexus_task_completion,
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::{
+    errors::PollError,
+    protos::{
+        coresdk::{
+            FromJsonPayloadExt,
+            nexus::{
+                NexusOperationCancellationType, NexusOperationResult, NexusTaskCancelReason,
+                NexusTaskCompletion, nexus_operation_result, nexus_task, nexus_task_completion,
+            },
         },
-    },
-    temporal::api::{
-        common::v1::{Callback, callback},
-        enums::v1::NexusHandlerErrorRetryBehavior,
-        failure::v1::{Failure, failure::FailureInfo},
-        nexus,
-        nexus::v1::{
-            CancelOperationResponse, HandlerError, StartOperationResponse, request,
-            start_operation_response, workflow_event_link_from_nexus,
+        temporal::api::{
+            common::v1::{Callback, callback},
+            enums::v1::NexusHandlerErrorRetryBehavior,
+            failure::v1::{Failure, failure::FailureInfo},
+            nexus,
+            nexus::v1::{
+                CancelOperationResponse, HandlerError, StartOperationResponse, request,
+                start_operation_response, workflow_event_link_from_nexus,
+            },
         },
     },
 };
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use tokio::{
     join,

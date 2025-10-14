@@ -7,7 +7,7 @@ use crate::worker::workflow::{
 };
 use itertools::Itertools;
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         nexus::{NexusOperationCancellationType, NexusOperationResult, nexus_operation_result},
         workflow_activation::{

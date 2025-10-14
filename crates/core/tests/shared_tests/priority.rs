@@ -1,11 +1,11 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporal_sdk_core_protos::{
-    coresdk::AsJsonPayloadExt,
-    temporal::api::{common, history::v1::history_event::Attributes},
-};
 use temporalio_client::{
     GetWorkflowResultOpts, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
+use temporalio_common::protos::{
+    coresdk::AsJsonPayloadExt,
+    temporal::api::{common, history::v1::history_event::Attributes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, ChildWorkflowOptions, WfContext};
 

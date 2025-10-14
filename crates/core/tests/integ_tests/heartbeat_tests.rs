@@ -1,26 +1,30 @@
 use crate::common::{CoreWfStarter, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE,
-    coresdk::{
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
-        activity_result::{
-            self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
-        },
-        activity_task::activity_task,
-        workflow_activation::{ResolveActivity, WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{ActivityCancellationType, ScheduleActivity},
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    prost_dur,
-    temporal::api::{
-        common::v1::{Payload, RetryPolicy},
-        enums::v1::TimeoutType,
-    },
-    test_utils::schedule_activity_cmd,
-};
 use temporalio_client::{WfClientExt, WorkflowOptions};
+use temporalio_common::{
+    prost_dur,
+    protos::{
+        DEFAULT_ACTIVITY_TYPE,
+        coresdk::{
+            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            activity_result::{
+                self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
+            },
+            activity_task::activity_task,
+            workflow_activation::{
+                ResolveActivity, WorkflowActivationJob, workflow_activation_job,
+            },
+            workflow_commands::{ActivityCancellationType, ScheduleActivity},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            common::v1::{Payload, RetryPolicy},
+            enums::v1::TimeoutType,
+        },
+        test_utils::schedule_activity_cmd,
+    },
+};
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;

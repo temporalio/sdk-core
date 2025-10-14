@@ -1,8 +1,8 @@
 use crate::common::{INTEG_CLIENT_IDENTITY, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, NAMESPACE};
 use futures_util::{TryStreamExt, stream};
 use std::time::{SystemTime, UNIX_EPOCH};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporalio_client::{ClientOptionsBuilder, TestService, WorkflowService};
+use temporalio_common::protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
     default_cached_download,

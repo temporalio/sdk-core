@@ -20,23 +20,24 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::{
+use temporalio_common::{
     errors::{CompleteNexusError, PollError},
-    worker::NexusSlotKind,
-};
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{
-        NexusSlotInfo,
-        nexus::{
-            CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task, nexus_task_completion,
+    protos::{
+        TaskToken,
+        coresdk::{
+            NexusSlotInfo,
+            nexus::{
+                CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task,
+                nexus_task_completion,
+            },
         },
+        temporal::api::nexus::{
+            self,
+            v1::{request::Variant, response, start_operation_response},
+        },
+        utilities::normalize_http_headers,
     },
-    temporal::api::nexus::{
-        self,
-        v1::{request::Variant, response, start_operation_response},
-    },
-    utilities::normalize_http_headers,
+    worker::NexusSlotKind,
 };
 use tokio::{
     join,

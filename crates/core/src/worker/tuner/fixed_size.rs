@@ -1,5 +1,5 @@
 use std::{marker::PhantomData, sync::Arc};
-use temporal_sdk_core_api::worker::{
+use temporalio_common::worker::{
     SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
     SlotSupplierPermit,
 };

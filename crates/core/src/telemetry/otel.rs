@@ -22,7 +22,7 @@ use opentelemetry_sdk::{
     },
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporal_sdk_core_api::telemetry::{
+use temporalio_common::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
     metrics::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramBase, HistogramDuration,

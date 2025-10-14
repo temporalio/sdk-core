@@ -42,7 +42,7 @@ pub mod coresdk {
 
     tonic::include_proto!("coresdk");
 
-    use crate::{
+    use crate::protos::{
         ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
             common::v1::{Payload, Payloads, RetryPolicy, WorkflowExecution},
@@ -70,7 +70,7 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        use crate::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
+        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
         use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.activity_task");
 
@@ -137,7 +137,7 @@ pub mod coresdk {
             common::v1::Payload,
             failure::v1::{CanceledFailureInfo, Failure as APIFailure, failure},
         };
-        use crate::{
+        use crate::protos::{
             coresdk::activity_result::activity_resolution::Status,
             temporal::api::enums::v1::TimeoutType,
         };
@@ -314,7 +314,7 @@ pub mod coresdk {
     pub mod common {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
-        use crate::{
+        use crate::protos::{
             PATCHED_MARKER_DETAILS_KEY,
             coresdk::{
                 AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
@@ -476,7 +476,7 @@ pub mod coresdk {
     }
 
     pub mod workflow_activation {
-        use crate::{
+        use crate::protos::{
             coresdk::{
                 FromPayloadsExt,
                 activity_result::{ActivityResolution, activity_resolution},
@@ -761,7 +761,7 @@ pub mod coresdk {
     }
 
     pub mod workflow_completion {
-        use crate::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure};
+        use crate::protos::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure};
         tonic::include_proto!("coresdk.workflow_completion");
 
         impl workflow_activation_completion::Status {
@@ -788,7 +788,7 @@ pub mod coresdk {
     }
 
     pub mod nexus {
-        use crate::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
+        use crate::protos::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
         use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.nexus");
@@ -834,7 +834,7 @@ pub mod coresdk {
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
-        use crate::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType};
+        use crate::protos::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType};
         use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
@@ -1309,7 +1309,7 @@ pub mod coresdk {
     }
 
     impl Failure {
-        pub fn is_timeout(&self) -> Option<crate::temporal::api::enums::v1::TimeoutType> {
+        pub fn is_timeout(&self) -> Option<crate::protos::temporal::api::enums::v1::TimeoutType> {
             match &self.failure_info {
                 Some(FailureInfo::TimeoutFailureInfo(ti)) => Some(ti.timeout_type()),
                 _ => None,
@@ -1614,7 +1614,7 @@ pub mod temporal {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
 
-                use crate::{
+                use crate::protos::{
                     coresdk::{IntoPayloadsExt, workflow_commands},
                     temporal::api::{
                         common::v1::{ActivityType, WorkflowType},
@@ -1994,7 +1994,7 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
-                use crate::{ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL};
+                use crate::protos::{ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL};
                 use base64::{Engine, prelude::BASE64_STANDARD};
                 use std::{
                     collections::HashMap,
@@ -2147,7 +2147,7 @@ pub mod temporal {
         }
         pub mod history {
             pub mod v1 {
-                use crate::temporal::api::{
+                use crate::protos::temporal::api::{
                     enums::v1::EventType, history::v1::history_event::Attributes,
                 };
                 use anyhow::bail;
@@ -2484,7 +2484,7 @@ pub mod temporal {
         }
         pub mod taskqueue {
             pub mod v1 {
-                use crate::temporal::api::enums::v1::TaskQueueKind;
+                use crate::protos::temporal::api::enums::v1::TaskQueueKind;
                 tonic::include_proto!("temporal.api.taskqueue.v1");
 
                 impl From<String> for TaskQueue {
@@ -2505,7 +2505,7 @@ pub mod temporal {
         }
         pub mod update {
             pub mod v1 {
-                use crate::temporal::api::update::v1::outcome::Value;
+                use crate::protos::temporal::api::update::v1::outcome::Value;
                 tonic::include_proto!("temporal.api.update.v1");
 
                 impl Outcome {
@@ -2535,7 +2535,7 @@ pub mod temporal {
         }
         pub mod nexus {
             pub mod v1 {
-                use crate::{
+                use crate::protos::{
                     camel_case_to_screaming_snake,
                     temporal::api::{
                         common,
@@ -2768,7 +2768,7 @@ pub mod temporal {
 
                 impl QueryWorkflowResponse {
                     /// Unwrap a successful response as vec of payloads
-                    pub fn unwrap(self) -> Vec<crate::temporal::api::common::v1::Payload> {
+                    pub fn unwrap(self) -> Vec<crate::protos::temporal::api::common::v1::Payload> {
                         self.query_result.unwrap().payloads
                     }
                 }
@@ -2812,7 +2812,7 @@ pub fn camel_case_to_screaming_snake(val: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::temporal::api::failure::v1::Failure;
+    use crate::protos::temporal::api::failure::v1::Failure;
     use anyhow::anyhow;
 
     #[test]

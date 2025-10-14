@@ -11,16 +11,18 @@ use crate::{
 use dyn_clone::DynClone;
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
 use std::{any::Any, marker::PhantomData, sync::Arc};
-use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
-use temporal_sdk_core_protos::{
-    grpc::health::v1::{health_client::HealthClient, *},
-    temporal::api::{
-        cloud::cloudservice::{v1 as cloudreq, v1::cloud_service_client::CloudServiceClient},
-        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
-        taskqueue::v1::TaskQueue,
-        testservice::v1::{test_service_client::TestServiceClient, *},
-        workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+use temporalio_common::{
+    protos::{
+        grpc::health::v1::{health_client::HealthClient, *},
+        temporal::api::{
+            cloud::cloudservice::{v1 as cloudreq, v1::cloud_service_client::CloudServiceClient},
+            operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
+            taskqueue::v1::TaskQueue,
+            testservice::v1::{test_service_client::TestServiceClient, *},
+            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+        },
     },
+    telemetry::metrics::MetricKeyValue,
 };
 use tonic::{
     Request, Response, Status,
@@ -1597,7 +1599,7 @@ mod tests {
     use super::*;
     use crate::{ClientOptionsBuilder, RetryClient};
     use std::collections::HashSet;
-    use temporal_sdk_core_protos::temporal::api::{
+    use temporalio_common::protos::temporal::api::{
         operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
     };
     use tonic::IntoRequest;
@@ -1691,7 +1693,7 @@ mod tests {
     fn verify_all_workflow_service_methods_implemented() {
         // This is less work than trying to hook into the codegen process
         let proto_def = include_str!(
-            "../../sdk-core-protos/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
+            "../../common/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
         );
         verify_methods(proto_def, ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS);
     }
@@ -1699,7 +1701,7 @@ mod tests {
     #[test]
     fn verify_all_operator_service_methods_implemented() {
         let proto_def = include_str!(
-            "../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
+            "../../common/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
         );
         verify_methods(proto_def, ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS);
     }
@@ -1707,7 +1709,7 @@ mod tests {
     #[test]
     fn verify_all_cloud_service_methods_implemented() {
         let proto_def = include_str!(
-            "../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
+            "../../common/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
         );
         verify_methods(proto_def, ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS);
     }
@@ -1715,14 +1717,14 @@ mod tests {
     #[test]
     fn verify_all_test_service_methods_implemented() {
         let proto_def = include_str!(
-            "../../sdk-core-protos/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
+            "../../common/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
         );
         verify_methods(proto_def, ALL_IMPLEMENTED_TEST_SERVICE_RPCS);
     }
 
     #[test]
     fn verify_all_health_service_methods_implemented() {
-        let proto_def = include_str!("../../sdk-core-protos/protos/grpc/health/v1/health.proto");
+        let proto_def = include_str!("../../common/protos/grpc/health/v1/health.proto");
         verify_methods(proto_def, ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS);
     }
 

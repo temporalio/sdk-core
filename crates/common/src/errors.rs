@@ -1,6 +1,6 @@
 //! Error types exposed by public APIs
 
-use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
+use crate::protos::coresdk::activity_result::ActivityExecutionResult;
 
 /// Errors thrown by [crate::Worker::validate]
 #[derive(thiserror::Error, Debug)]

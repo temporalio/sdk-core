@@ -7,7 +7,7 @@ use itertools::Itertools;
 use prost::EncodeError;
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         workflow_activation::DoUpdate,
         workflow_commands::{UpdateResponse, update_response},

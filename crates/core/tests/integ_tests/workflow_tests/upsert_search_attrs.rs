@@ -1,7 +1,11 @@
 use crate::common::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, build_fake_sdk};
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
-use temporal_sdk_core_protos::{
+use temporalio_client::{
+    GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowExecutionResult,
+    WorkflowOptions,
+};
+use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
     temporal::api::{
@@ -9,10 +13,6 @@ use temporal_sdk_core_protos::{
         common::v1::Payload,
         enums::v1::EventType,
     },
-};
-use temporalio_client::{
-    GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowExecutionResult,
-    WorkflowOptions,
 };
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;

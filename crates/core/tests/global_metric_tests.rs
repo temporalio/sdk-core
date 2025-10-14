@@ -6,7 +6,7 @@ use crate::common::get_integ_runtime_options;
 use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
-use temporal_sdk_core_api::telemetry::{
+use temporalio_common::telemetry::{
     Logger, OtelCollectorOptionsBuilder, TelemetryOptionsBuilder, metrics::CoreMeter,
 };
 use temporalio_sdk_core::{

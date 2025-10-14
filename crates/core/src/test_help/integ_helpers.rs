@@ -36,29 +36,29 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_sdk_core_api::{
+use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
-    worker::{PollerBehavior, WorkerVersioningStrategy},
-};
-use temporal_sdk_core_protos::{
-    coresdk::{
-        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{CompleteWorkflowExecution, StartTimer},
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        enums::v1::WorkflowTaskFailedCause,
-        failure::v1::Failure,
-        protocol::{self, v1::message},
-        update,
-        workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
-            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+    protos::{
+        coresdk::{
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::{CompleteWorkflowExecution, StartTimer},
+            workflow_completion::WorkflowActivationCompletion,
         },
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::Failure,
+            protocol::{self, v1::message},
+            update,
+            workflowservice::v1::{
+                PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+                PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+            },
+        },
+        utilities::pack_any,
     },
-    utilities::pack_any,
+    worker::{PollerBehavior, WorkerVersioningStrategy},
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;

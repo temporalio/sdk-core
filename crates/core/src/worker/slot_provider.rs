@@ -7,9 +7,11 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-use temporal_sdk_core_api::worker::WorkflowSlotKind;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use temporalio_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
+use temporalio_common::{
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    worker::WorkflowSlotKind,
+};
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
 
@@ -101,7 +103,7 @@ mod tests {
     use super::*;
 
     use crate::abstractions::tests::fixed_size_permit_dealer;
-    use temporal_sdk_core_protos::temporal::api::{
+    use temporalio_common::protos::temporal::api::{
         common::v1::{WorkflowExecution, WorkflowType},
         history::v1::History,
         taskqueue::v1::TaskQueue,

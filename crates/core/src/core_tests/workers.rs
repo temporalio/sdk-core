@@ -14,18 +14,22 @@ use crate::{
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
-use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
-use temporal_sdk_core_protos::{
-    canned_histories,
-    coresdk::{
-        workflow_activation::workflow_activation_job,
-        workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
-        workflow_completion::WorkflowActivationCompletion,
+use temporalio_common::{
+    Worker,
+    protos::{
+        canned_histories,
+        coresdk::{
+            workflow_activation::workflow_activation_job,
+            workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::workflowservice::v1::{
+            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+            ShutdownWorkerResponse,
+        },
+        test_utils::start_timer_cmd,
     },
-    temporal::api::workflowservice::v1::{
-        PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
-    },
-    test_utils::start_timer_cmd,
+    worker::PollerBehavior,
 };
 use tokio::sync::{Barrier, watch};
 

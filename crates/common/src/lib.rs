@@ -1,6 +1,7 @@
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
 pub mod errors;
+pub mod protos;
 pub mod telemetry;
 pub mod worker;
 
@@ -9,16 +10,16 @@ use crate::{
         CompleteActivityError, CompleteNexusError, CompleteWfError, PollError,
         WorkerValidationError,
     },
+    protos::coresdk::{
+        ActivityHeartbeat, ActivityTaskCompletion,
+        activity_task::ActivityTask,
+        nexus::{NexusTask, NexusTaskCompletion},
+        workflow_activation::WorkflowActivation,
+        workflow_completion::WorkflowActivationCompletion,
+    },
     worker::WorkerConfig,
 };
 use std::sync::Arc;
-use temporal_sdk_core_protos::coresdk::{
-    ActivityHeartbeat, ActivityTaskCompletion,
-    activity_task::ActivityTask,
-    nexus::{NexusTask, NexusTaskCompletion},
-    workflow_activation::WorkflowActivation,
-    workflow_completion::WorkflowActivationCompletion,
-};
 use uuid::Uuid;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.

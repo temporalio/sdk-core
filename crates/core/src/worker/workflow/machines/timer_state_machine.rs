@@ -7,7 +7,7 @@ use super::{
 use crate::worker::workflow::{WFMachinesError, machines::HistEventData};
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         HistoryEventId,
         workflow_activation::FireTimer,

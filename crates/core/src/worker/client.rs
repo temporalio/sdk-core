@@ -11,35 +11,37 @@ use temporal_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
     RetryClient, SharedReplaceableClient, WorkflowService,
 };
-use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerSlotsInfo;
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{workflow_commands::QueryResult, workflow_completion},
-    temporal::api::{
-        command::v1::Command,
-        common::v1::{
-            MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
-            WorkflowExecution,
-        },
-        deployment,
-        enums::v1::{
-            TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
-        },
-        failure::v1::Failure,
-        nexus,
-        protocol::v1::Message as ProtocolMessage,
-        query::v1::WorkflowQueryResult,
-        sdk::v1::WorkflowTaskCompletedMetadata,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-        worker::v1::WorkerHeartbeat,
-        workflowservice::v1::{get_system_info_response::Capabilities, *},
-    },
-};
 use temporalio_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SharedReplaceableClient, SlotManager, WorkflowService,
+};
+use temporalio_common::{
+    protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerSlotsInfo;
+use temporal_sdk_core_protos::{
+        TaskToken,
+        coresdk::{workflow_commands::QueryResult, workflow_completion},
+        temporal::api::{
+            command::v1::Command,
+            common::v1::{
+                MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
+                WorkflowExecution,
+            },
+            deployment,
+            enums::v1::{
+                TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
+            },
+            failure::v1::Failure,
+            nexus,
+            protocol::v1::Message as ProtocolMessage,
+            query::v1::WorkflowQueryResult,
+            sdk::v1::WorkflowTaskCompletedMetadata,
+            taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+            worker::v1::WorkerHeartbeat,
+            workflowservice::v1::{get_system_info_response::Capabilities, *},
+        },
+    },
+    worker::WorkerVersioningStrategy,
 };
 use tonic::IntoRequest;
 use uuid::Uuid;

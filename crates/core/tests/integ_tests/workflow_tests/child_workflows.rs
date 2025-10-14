@@ -2,35 +2,39 @@ use crate::common::{CoreWfStarter, build_fake_sdk, mock_sdk, mock_sdk_cfg};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::{
-    TestHistoryBuilder, canned_histories,
-    coresdk::{
-        AsJsonPayloadExt,
-        child_workflow::{
-            ChildWorkflowCancellationType, StartChildWorkflowExecutionFailedCause, Success,
-            child_workflow_result,
+use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::{
+    Worker,
+    protos::{
+        TestHistoryBuilder, canned_histories,
+        coresdk::{
+            AsJsonPayloadExt,
+            child_workflow::{
+                ChildWorkflowCancellationType, StartChildWorkflowExecutionFailedCause, Success,
+                child_workflow_result,
+            },
+            workflow_activation::{
+                WorkflowActivationJob,
+                resolve_child_workflow_execution_start::Status as StartStatus,
+                workflow_activation_job,
+            },
+            workflow_commands::{
+                CancelChildWorkflowExecution, CompleteWorkflowExecution,
+                StartChildWorkflowExecution,
+            },
+            workflow_completion::WorkflowActivationCompletion,
         },
-        workflow_activation::{
-            WorkflowActivationJob, resolve_child_workflow_execution_start::Status as StartStatus,
-            workflow_activation_job,
+        temporal::api::{
+            common::v1::Payload,
+            enums::v1::{CommandType, EventType, ParentClosePolicy},
+            history::v1::{
+                StartChildWorkflowExecutionFailedEventAttributes,
+                StartChildWorkflowExecutionInitiatedEventAttributes,
+            },
+            sdk::v1::UserMetadata,
         },
-        workflow_commands::{
-            CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
-        },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::Payload,
-        enums::v1::{CommandType, EventType, ParentClosePolicy},
-        history::v1::{
-            StartChildWorkflowExecutionFailedEventAttributes,
-            StartChildWorkflowExecutionInitiatedEventAttributes,
-        },
-        sdk::v1::UserMetadata,
     },
 };
-use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowOptions, Signal, WfContext, WfExitValue, WorkflowResult,
 };

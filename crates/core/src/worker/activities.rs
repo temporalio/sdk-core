@@ -35,17 +35,21 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::ActivitySlotKind;
-use temporal_sdk_core_protos::{
-    coresdk::{
-        ActivityHeartbeat, ActivitySlotInfo,
-        activity_result::{self as ar, activity_execution_result as aer},
-        activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
+use temporalio_common::{
+    protos::{
+        coresdk::{
+            ActivityHeartbeat, ActivitySlotInfo,
+            activity_result::{self as ar, activity_execution_result as aer},
+            activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
+        },
+        temporal::api::{
+            failure::v1::{
+                ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo,
+            },
+            workflowservice::v1::PollActivityTaskQueueResponse,
+        },
     },
-    temporal::api::{
-        failure::v1::{ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
-        workflowservice::v1::PollActivityTaskQueueResponse,
-    },
+    worker::ActivitySlotKind,
 };
 use tokio::{
     join,
@@ -736,8 +740,9 @@ mod tests {
         worker::client::mocks::mock_worker_client,
     };
     use crossbeam_utils::atomic::AtomicCell;
-    use temporal_sdk_core_api::worker::PollerBehavior;
-    use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
+    use temporalio_common::{
+        protos::coresdk::activity_result::ActivityExecutionResult, worker::PollerBehavior,
+    };
 
     #[tokio::test]
     async fn per_worker_ratelimit() {

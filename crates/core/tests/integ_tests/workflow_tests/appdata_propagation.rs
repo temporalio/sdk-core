@@ -1,8 +1,8 @@
 use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use temporalio_client::{WfClientExt, WorkflowExecutionResult, WorkflowOptions};
+use temporalio_common::protos::coresdk::AsJsonPayloadExt;
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 
 const TEST_APPDATA_MESSAGE: &str = "custom app data, yay";

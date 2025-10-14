@@ -1,4 +1,4 @@
-use crate::{
+use crate::protos::{
     HistoryInfo,
     constants::{LOCAL_ACTIVITY_MARKER_NAME, PATCH_MARKER_NAME},
     coresdk::{

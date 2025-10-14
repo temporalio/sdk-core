@@ -11,30 +11,31 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::{
-    coresdk::{
-        ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
-        activity_result::ActivityExecutionResult,
-        workflow_activation::{
-            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
-        },
-        workflow_commands::{
-            CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse, update_response,
-        },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    prost_dur,
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        enums::v1::{EventType, ResetReapplyType, UpdateWorkflowExecutionLifecycleStage},
-        update::{self, v1::WaitPolicy},
-        workflowservice::v1::ResetWorkflowExecutionRequest,
-    },
-    test_utils::start_timer_cmd,
-};
 use temporalio_client::{
     Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
+};
+use temporalio_common::{
+    Worker, prost_dur,
+    protos::{
+        coresdk::{
+            ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
+            activity_result::ActivityExecutionResult,
+            workflow_activation::{
+                WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
+            },
+            workflow_commands::{
+                CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse, update_response,
+            },
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            enums::v1::{EventType, ResetReapplyType, UpdateWorkflowExecutionLifecycleStage},
+            update::{self, v1::WaitPolicy},
+            workflowservice::v1::ResetWorkflowExecutionRequest,
+        },
+        test_utils::start_timer_cmd,
+    },
 };
 use temporalio_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporalio_sdk_core::{

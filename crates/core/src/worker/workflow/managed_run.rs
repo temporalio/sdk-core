@@ -28,22 +28,25 @@ use std::{
     sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::{errors::WorkflowErrorType, worker::WorkerConfig};
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{
-        workflow_activation::{
-            WorkflowActivation, create_evict_activation, query_to_job,
-            remove_from_cache::EvictionReason, workflow_activation_job,
+use temporalio_common::{
+    errors::WorkflowErrorType,
+    protos::{
+        TaskToken,
+        coresdk::{
+            workflow_activation::{
+                WorkflowActivation, create_evict_activation, query_to_job,
+                remove_from_cache::EvictionReason, workflow_activation_job,
+            },
+            workflow_commands::{FailWorkflowExecution, QueryResult},
+            workflow_completion,
         },
-        workflow_commands::{FailWorkflowExecution, QueryResult},
-        workflow_completion,
+        temporal::api::{
+            command::v1::command::Attributes as CmdAttribs,
+            enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+        },
     },
-    temporal::api::{
-        command::v1::command::Attributes as CmdAttribs,
-        enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
-        failure::v1::Failure,
-    },
+    worker::WorkerConfig,
 };
 use tokio::sync::oneshot;
 use tracing::Span;
@@ -1606,7 +1609,7 @@ mod tests {
     }
 
     mod command_utils {
-        use temporal_sdk_core_protos::coresdk::workflow_commands::{
+        use temporalio_common::protos::coresdk::workflow_commands::{
             CancelWorkflowExecution, CompleteWorkflowExecution, QueryResult, UpdateResponse,
         };
 

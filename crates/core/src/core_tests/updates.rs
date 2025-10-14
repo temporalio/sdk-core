@@ -6,22 +6,24 @@ use crate::{
     },
     worker::client::mocks::mock_worker_client,
 };
-use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::{
-    DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder,
-    coresdk::{
-        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{
-            CompleteWorkflowExecution, ScheduleActivity, StartTimer, UpdateResponse,
-            update_response::Response,
+use temporalio_common::{
+    Worker,
+    protos::{
+        DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder,
+        coresdk::{
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::{
+                CompleteWorkflowExecution, ScheduleActivity, StartTimer, UpdateResponse,
+                update_response::Response,
+            },
+            workflow_completion::WorkflowActivationCompletion,
         },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::Payload,
-        enums::v1::EventType,
-        update::v1::{Acceptance, Rejection},
-        workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+        temporal::api::{
+            common::v1::Payload,
+            enums::v1::EventType,
+            update::v1::{Acceptance, Rejection},
+            workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+        },
     },
 };
 

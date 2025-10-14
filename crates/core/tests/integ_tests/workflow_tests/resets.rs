@@ -10,13 +10,13 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_protos::{
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporalio_common::protos::{
     coresdk::AsJsonPayloadExt,
     temporal::api::{
         common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
     },
 };
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
 use temporalio_sdk::{LocalActivityOptions, WfContext};
 use tokio::sync::Notify;
 use tonic::IntoRequest;

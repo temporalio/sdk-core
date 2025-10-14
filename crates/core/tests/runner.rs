@@ -67,7 +67,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let test_args_preamble = [
         "test",
         "--features",
-        "temporal-sdk-core-protos/serde_serialize",
+        "temporalio-common/serde_serialize",
         "--features",
         "test-utilities",
         "--features",

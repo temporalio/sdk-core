@@ -6,7 +6,7 @@ use hyper::http::HeaderValue;
 use prost::Message;
 use reqwest::{self, header::HeaderMap};
 use std::time::Duration;
-use temporal_sdk_core_protos::temporal::api::history::v1::History;
+use temporalio_common::protos::temporal::api::history::v1::History;
 use url::Url;
 
 /// A client for interacting with the VSCode debug plugin

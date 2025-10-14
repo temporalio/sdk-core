@@ -13,44 +13,44 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::{
+use temporalio_client::WorkflowOptions;
+use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
+        coresdk::{
+            ActivityTaskCompletion,
+            activity_result::ActivityExecutionResult,
+            workflow_completion::{
+                Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
+            },
+        },
+        temporal::api::{
+            command::v1::command::Attributes,
+            common::v1::WorkerVersionStamp,
+            enums::v1::{
+                EventType, WorkflowTaskFailedCause, WorkflowTaskFailedCause::GrpcMessageTooLarge,
+            },
+            failure::v1::Failure as InnerFailure,
+            history::v1::{
+                ActivityTaskScheduledEventAttributes, history_event,
+                history_event::Attributes::{
+                    self as EventAttributes, WorkflowTaskFailedEventAttributes,
+                },
+            },
+            workflowservice::v1::{
+                GetWorkflowExecutionHistoryResponse, PollActivityTaskQueueResponse,
+                RespondActivityTaskCompletedResponse,
+            },
+        },
+    },
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, PollerBehavior, SlotInfo, SlotInfoTrait,
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
         SlotSupplierPermit, WorkerConfigBuilder, WorkerVersioningStrategy, WorkflowSlotKind,
     },
 };
-use temporal_sdk_core_protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
-    coresdk::{
-        ActivityTaskCompletion,
-        activity_result::ActivityExecutionResult,
-        workflow_completion::{
-            Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
-        },
-    },
-    temporal::api::{
-        command::v1::command::Attributes,
-        common::v1::WorkerVersionStamp,
-        enums::v1::{
-            EventType, WorkflowTaskFailedCause, WorkflowTaskFailedCause::GrpcMessageTooLarge,
-        },
-        failure::v1::Failure as InnerFailure,
-        history::v1::{
-            ActivityTaskScheduledEventAttributes, history_event,
-            history_event::Attributes::{
-                self as EventAttributes, WorkflowTaskFailedEventAttributes,
-            },
-        },
-        workflowservice::v1::{
-            GetWorkflowExecutionHistoryResponse, PollActivityTaskQueueResponse,
-            RespondActivityTaskCompletedResponse,
-        },
-    },
-};
-use temporalio_client::WorkflowOptions;
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
 };
@@ -383,7 +383,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         core.initiate_shutdown();
         // Even though this test requests eager activity tasks, none are returned in poll responses.
         let err = core.poll_activity_task().await.unwrap_err();
-        assert_matches!(err, temporal_sdk_core_api::errors::PollError::ShutDown);
+        assert_matches!(err, temporalio_common::errors::PollError::ShutDown);
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
@@ -636,7 +636,7 @@ impl<SK> TrackingSlotSupplier<SK> {
 #[async_trait::async_trait]
 impl<SK> SlotSupplier for TrackingSlotSupplier<SK>
 where
-    SK: temporal_sdk_core_api::worker::SlotKind + Send + Sync,
+    SK: temporalio_common::worker::SlotKind + Send + Sync,
     SK::Info: SlotInfoTrait,
 {
     type SlotKind = SK;

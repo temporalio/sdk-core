@@ -39,11 +39,8 @@ tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 
-[dependencies.temporal-sdk-core-protos]
-path = "../sdk-core-protos"
-
-[dependencies.temporal-sdk-core-api]
-path = "../core-api"
+[dependencies.temporalio-common]
+path = "../common"
 
 [dev-dependencies]
 assert_matches = "1"

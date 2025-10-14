@@ -8,9 +8,11 @@ use temporal_client::SharedNamespaceWorkerTrait;
 use temporal_sdk_core_api::worker::{
     PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy,
 };
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
-use tokio::sync::Notify;
-use tokio_util::sync::CancellationToken;
+use temporalio_common::{
+    protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo},
+    worker::WorkerConfig,
+};
+use tokio::{sync::Notify, task::JoinHandle, time::MissedTickBehavior};
 use uuid::Uuid;
 
 /// Callback used to collect heartbeat data from each worker at the time of heartbeat
@@ -144,8 +146,10 @@ mod tests {
         },
         time::Duration,
     };
-    use temporal_sdk_core_api::worker::PollerBehavior;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
+    use temporalio_common::{
+        protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse,
+        worker::PollerBehavior,
+    };
 
     #[tokio::test]
     async fn worker_heartbeat_basic() {

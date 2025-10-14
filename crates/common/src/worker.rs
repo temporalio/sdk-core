@@ -1,17 +1,20 @@
-use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
+use crate::{
+    errors::WorkflowErrorType,
+    protos::{
+        coresdk,
+        coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
+        temporal,
+        temporal::api::enums::v1::VersioningBehavior,
+        temporal::api::worker::v1::PluginInfo,
+    },
+    telemetry::metrics::TemporalMeter,
+};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
     str::FromStr,
     sync::Arc,
     time::Duration,
-};
-use temporal_sdk_core_protos::{
-    coresdk,
-    coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
-    temporal,
-    temporal::api::enums::v1::VersioningBehavior,
-    temporal::api::worker::v1::PluginInfo,
 };
 
 /// Defines per-worker configuration options

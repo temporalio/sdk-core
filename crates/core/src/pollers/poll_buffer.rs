@@ -20,16 +20,17 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::worker::{
-    ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind,
-};
-use temporal_sdk_core_protos::temporal::api::{
-    taskqueue::v1::PollerScalingDecision,
-    workflowservice::v1::{
-        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
-    },
-};
 use temporalio_client::{ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, NoRetryOnMatching};
+use temporalio_common::{
+    protos::temporal::api::{
+        taskqueue::v1::PollerScalingDecision,
+        workflowservice::v1::{
+            PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+            PollWorkflowTaskQueueResponse,
+        },
+    },
+    worker::{ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind},
+};
 use tokio::{
     sync::{
         Mutex, broadcast,

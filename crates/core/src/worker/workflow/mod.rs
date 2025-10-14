@@ -55,36 +55,38 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::{
+use temporalio_client::MESSAGE_TOO_LARGE_KEY;
+use temporalio_common::{
     errors::{CompleteWfError, PollError},
+    protos::{
+        TaskToken,
+        coresdk::{
+            workflow_activation::{
+                QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
+                remove_from_cache::EvictionReason, workflow_activation_job,
+            },
+            workflow_commands::*,
+            workflow_completion,
+            workflow_completion::{
+                Failure, WorkflowActivationCompletion, workflow_activation_completion,
+            },
+        },
+        temporal::api::{
+            command::v1::{Command as ProtoCommand, Command, command::Attributes},
+            common::v1::{
+                Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution,
+            },
+            enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
+            failure::v1::{ApplicationFailureInfo, failure::FailureInfo},
+            protocol::v1::Message as ProtocolMessage,
+            query::v1::WorkflowQuery,
+            sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
+            taskqueue::v1::StickyExecutionAttributes,
+            workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
+        },
+    },
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{
-        workflow_activation::{
-            QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
-            remove_from_cache::EvictionReason, workflow_activation_job,
-        },
-        workflow_commands::*,
-        workflow_completion,
-        workflow_completion::{
-            Failure, WorkflowActivationCompletion, workflow_activation_completion,
-        },
-    },
-    temporal::api::{
-        command::v1::{Command as ProtoCommand, Command, command::Attributes},
-        common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
-        enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
-        failure::v1::{ApplicationFailureInfo, failure::FailureInfo},
-        protocol::v1::Message as ProtocolMessage,
-        query::v1::WorkflowQuery,
-        sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
-        taskqueue::v1::StickyExecutionAttributes,
-        workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
-    },
-};
-use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use tokio::{
     sync::{
         mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -394,7 +396,7 @@ impl Workflows {
                         Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
                             let failure = Failure {
                                 failure: Some(
-                                    temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
+                                    temporalio_common::protos::temporal::api::failure::v1::Failure {
                                         message: "GRPC Message too large".to_string(),
                                         failure_info: Some(FailureInfo::ApplicationFailureInfo(
                                             ApplicationFailureInfo {
@@ -1428,7 +1430,7 @@ impl WFMachinesError {
     fn as_failure(&self) -> Failure {
         Failure {
             failure: Some(
-                temporal_sdk_core_protos::temporal::api::failure::v1::Failure::application_failure(
+                temporalio_common::protos::temporal::api::failure::v1::Failure::application_failure(
                     self.to_string(),
                     false,
                 ),
@@ -1546,7 +1548,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
 mod tests {
     use super::*;
     use itertools::Itertools;
-    use temporal_sdk_core_protos::coresdk::workflow_activation::SignalWorkflow;
+    use temporalio_common::protos::coresdk::workflow_activation::SignalWorkflow;
 
     #[test]
     fn jobs_sort() {

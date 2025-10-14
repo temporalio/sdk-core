@@ -10,7 +10,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
-use temporal_sdk_core_api::{
+use temporalio_common::{
     telemetry::metrics::TemporalMeter,
     worker::{
         SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
@@ -464,7 +464,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::{advance_fut, worker::tuner::FixedSizeSlotSupplier};
     use futures_util::FutureExt;
-    use temporal_sdk_core_api::worker::WorkflowSlotKind;
+    use temporalio_common::worker::WorkflowSlotKind;
 
     pub(crate) fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
         size: usize,

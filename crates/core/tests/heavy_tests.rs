@@ -18,12 +18,14 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::worker::PollerBehavior;
-use temporal_sdk_core_protos::{
-    coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
-    temporal::api::enums::v1::WorkflowIdReusePolicy,
-};
 use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::{
+    protos::{
+        coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
+        temporal::api::enums::v1::WorkflowIdReusePolicy,
+    },
+    worker::PollerBehavior,
+};
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
 

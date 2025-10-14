@@ -26,30 +26,30 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::{
+use temporalio_client::{
+    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
+    WorkflowHandle, WorkflowOptions,
+};
+use temporalio_common::{
     Worker as CoreWorker,
+    protos::{
+        coresdk::{
+            FromPayloadsExt, workflow_activation::WorkflowActivation,
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            common::v1::Payload,
+            history::v1::History,
+            workflowservice::v1::{GetClusterInfoRequest, StartWorkflowExecutionResponse},
+        },
+    },
     telemetry::{
         Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
         metrics::CoreMeter,
     },
     worker::WorkerVersioningStrategy,
-};
-use temporal_sdk_core_protos::{
-    coresdk::{
-        FromPayloadsExt, workflow_activation::WorkflowActivation,
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::Payload,
-        history::v1::History,
-        workflowservice::v1::{GetClusterInfoRequest, StartWorkflowExecutionResponse},
-    },
-};
-use temporalio_client::{
-    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
-    WorkflowHandle, WorkflowOptions,
 };
 use temporalio_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,

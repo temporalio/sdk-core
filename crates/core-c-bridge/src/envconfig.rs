@@ -1,7 +1,7 @@
 use crate::{ByteArray, ByteArrayRef};
 use serde::Serialize;
 use std::collections::HashMap;
-use temporal_sdk_core_api::envconfig::{
+use temporalio_common::envconfig::{
     self, ClientConfig as CoreClientConfig, ClientConfigCodec as CoreClientConfigCodec,
     ClientConfigProfile as CoreClientConfigProfile, ClientConfigTLS as CoreClientConfigTLS,
     DataSource as CoreDataSource, LoadClientConfigOptions, LoadClientConfigProfileOptions,

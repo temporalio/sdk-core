@@ -25,7 +25,7 @@ pub use crate::{
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
-pub use temporal_sdk_core_protos::temporal::api::{
+pub use temporalio_common::protos::temporal::api::{
     enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
     workflowservice::v1::{
@@ -58,24 +58,26 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::IntoPayloadsExt,
-    grpc::health::v1::health_client::HealthClient,
-    temporal::api::{
-        cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
-        common,
-        common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
-        operatorservice::v1::operator_service_client::OperatorServiceClient,
-        query::v1::WorkflowQuery,
-        replication::v1::ClusterReplicationConfig,
-        taskqueue::v1::TaskQueue,
-        testservice::v1::test_service_client::TestServiceClient,
-        update,
-        workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+use temporalio_common::{
+    protos::{
+        TaskToken,
+        coresdk::IntoPayloadsExt,
+        grpc::health::v1::health_client::HealthClient,
+        temporal::api::{
+            cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
+            common,
+            common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
+            enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
+            operatorservice::v1::operator_service_client::OperatorServiceClient,
+            query::v1::WorkflowQuery,
+            replication::v1::ClusterReplicationConfig,
+            taskqueue::v1::TaskQueue,
+            testservice::v1::test_service_client::TestServiceClient,
+            update,
+            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+        },
     },
+    telemetry::metrics::TemporalMeter,
 };
 use tonic::{
     Code, IntoRequest,

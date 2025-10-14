@@ -40,7 +40,7 @@ use std::{
     },
 };
 pub(crate) use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
-use temporal_sdk_core_api::telemetry::{
+use temporalio_common::telemetry::{
     CoreLog, CoreTelemetry, Logger, TaskQueueLabelStrategy, TelemetryOptions,
     TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},

@@ -19,7 +19,7 @@ use std::{
     convert::TryFrom,
     time::{Duration, SystemTime},
 };
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     constants::LOCAL_ACTIVITY_MARKER_NAME,
     coresdk::{
         activity_result::{

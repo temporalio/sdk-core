@@ -13,10 +13,10 @@ use std::{
     thread,
     time::Duration,
 };
-use temporal_sdk_core_api::telemetry::metrics::{
-    MetricKeyValue, MetricParametersBuilder, NewAttributes,
+use temporalio_common::{
+    protos::{DEFAULT_WORKFLOW_TYPE, canned_histories},
+    telemetry::metrics::{MetricKeyValue, MetricParametersBuilder, NewAttributes},
 };
-use temporal_sdk_core_protos::{DEFAULT_WORKFLOW_TYPE, canned_histories};
 use temporalio_sdk::{WfContext, WorkflowFunction};
 use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 

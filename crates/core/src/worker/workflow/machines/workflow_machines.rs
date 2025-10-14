@@ -51,25 +51,27 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{WorkerConfig, WorkerDeploymentVersion};
-use temporal_sdk_core_protos::{
-    VERSION_SEARCH_ATTR_KEY,
-    coresdk::{
-        common::{NamespacedWorkflowExecution, VersioningIntent},
-        workflow_activation::{
-            self, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation, workflow_activation_job,
+use temporalio_common::{
+    protos::{
+        VERSION_SEARCH_ATTR_KEY,
+        coresdk::{
+            common::{NamespacedWorkflowExecution, VersioningIntent},
+            workflow_activation::{
+                self, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation, workflow_activation_job,
+            },
+            workflow_commands::ContinueAsNewWorkflowExecution,
         },
-        workflow_commands::ContinueAsNewWorkflowExecution,
-    },
-    temporal::api::{
-        command::v1::{
-            Command as ProtoCommand, CommandAttributesExt, command::Attributes as ProtoCmdAttrs,
+        temporal::api::{
+            command::v1::{
+                Command as ProtoCommand, CommandAttributesExt, command::Attributes as ProtoCmdAttrs,
+            },
+            enums::v1::EventType,
+            history::v1::{HistoryEvent, history_event},
+            protocol::v1::{Message as ProtocolMessage, message::SequencingId},
+            sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
         },
-        enums::v1::EventType,
-        history::v1::{HistoryEvent, history_event},
-        protocol::v1::{Message as ProtocolMessage, message::SequencingId},
-        sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
     },
+    worker::{WorkerConfig, WorkerDeploymentVersion},
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;

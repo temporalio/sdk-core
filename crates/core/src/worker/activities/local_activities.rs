@@ -17,18 +17,20 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::LocalActivitySlotKind;
-use temporal_sdk_core_protos::{
-    coresdk::{
-        LocalActivitySlotInfo,
-        activity_result::{Cancellation, Failure as ActFail, Success},
-        activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
+use temporalio_common::{
+    protos::{
+        coresdk::{
+            LocalActivitySlotInfo,
+            activity_result::{Cancellation, Failure as ActFail, Success},
+            activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
+        },
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            enums::v1::TimeoutType,
+            failure::v1::{Failure as APIFailure, TimeoutFailureInfo, failure},
+        },
     },
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        enums::v1::TimeoutType,
-        failure::v1::{Failure as APIFailure, TimeoutFailureInfo, failure},
-    },
+    worker::LocalActivitySlotKind,
 };
 use tokio::{
     sync::{
@@ -978,7 +980,7 @@ mod tests {
     use super::*;
     use crate::{prost_dur, protosext::LACloseTimeouts, retry_logic::ValidatedRetryPolicy};
     use futures_util::FutureExt;
-    use temporal_sdk_core_protos::temporal::api::{
+    use temporalio_common::protos::temporal::api::{
         common::v1::RetryPolicy,
         failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
     };

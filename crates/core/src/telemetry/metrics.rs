@@ -8,15 +8,15 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporal_sdk_core_api::telemetry::metrics::{
-    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, CounterBase, Gauge, GaugeBase,
-    GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
-    HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
-    MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal,
-    NewAttributes, NoOpCoreMeter, TemporalMeter, WorkerHeartbeatMetrics,
-};
-use temporal_sdk_core_protos::temporal::api::{
-    enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+use temporalio_common::{
+    protos::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
+    telemetry::metrics::{
+        BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, CounterBase, Gauge, GaugeBase,
+        GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
+        HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
+        MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters,
+        MetricUpdateVal, NewAttributes, NoOpCoreMeter, TemporalMeter, WorkerHeartbeatMetrics,
+    },
 };
 
 /// Used to track context associated with metrics, and record/update them
@@ -1109,7 +1109,7 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
 mod tests {
     use super::*;
     use std::any::Any;
-    use temporal_sdk_core_api::telemetry::{
+    use temporalio_common::telemetry::{
         METRIC_PREFIX,
         metrics::{BufferInstrumentRef, CustomMetricAttributes},
     };

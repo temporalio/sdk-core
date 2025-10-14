@@ -1,6 +1,6 @@
 use crate::{ByteArrayRef, runtime::Runtime};
 use std::{any::Any, error::Error, sync::Arc, time::Duration};
-use temporal_sdk_core_api::telemetry::metrics;
+use temporalio_common::telemetry::metrics;
 
 pub struct MetricMeter {
     core: metrics::TemporalMeter,

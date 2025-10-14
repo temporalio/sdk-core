@@ -11,7 +11,7 @@
 //! use std::{str::FromStr, sync::Arc};
 //! use temporalio_sdk::{sdk_client_options, ActContext, Worker};
 //! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptionsBuilder};
-//! use temporal_sdk_core_api::{
+//! use temporalio_common::{
 //!     worker::{WorkerConfigBuilder, WorkerVersioningStrategy},
 //!     telemetry::TelemetryOptionsBuilder
 //! };
@@ -82,31 +82,36 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporal_sdk_core_api::{Worker as CoreWorker, errors::PollError};
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{
-        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-        activity_result::{ActivityExecutionResult, ActivityResolution},
-        activity_task::{ActivityTask, activity_task},
-        child_workflow::ChildWorkflowResult,
-        common::NamespacedWorkflowExecution,
-        nexus::NexusOperationResult,
-        workflow_activation::{
-            WorkflowActivation,
-            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            resolve_nexus_operation_start, workflow_activation_job::Variant,
+use temporalio_client::ClientOptionsBuilder;
+use temporalio_common::{
+    Worker as CoreWorker,
+    errors::PollError,
+    protos::{
+        TaskToken,
+        coresdk::{
+            ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
+            activity_result::{ActivityExecutionResult, ActivityResolution},
+            activity_task::{ActivityTask, activity_task},
+            child_workflow::ChildWorkflowResult,
+            common::NamespacedWorkflowExecution,
+            nexus::NexusOperationResult,
+            workflow_activation::{
+                WorkflowActivation,
+                resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+                resolve_nexus_operation_start, workflow_activation_job::Variant,
+            },
+            workflow_commands::{
+                ContinueAsNewWorkflowExecution, WorkflowCommand, workflow_command,
+            },
+            workflow_completion::WorkflowActivationCompletion,
         },
-        workflow_commands::{ContinueAsNewWorkflowExecution, WorkflowCommand, workflow_command},
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        common::v1::Payload,
-        enums::v1::WorkflowTaskFailedCause,
-        failure::v1::{Failure, failure},
+        temporal::api::{
+            common::v1::Payload,
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::{Failure, failure},
+        },
     },
 };
-use temporalio_client::ClientOptionsBuilder;
 use temporalio_sdk_core::Url;
 use tokio::{
     sync::{

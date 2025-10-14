@@ -10,7 +10,7 @@ pub use resource_based::{
 pub(crate) use resource_based::{RealSysInfo, SystemResourceInfo};
 
 use std::sync::Arc;
-use temporal_sdk_core_api::worker::{
+use temporalio_common::worker::{
     ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier, WorkerConfig,
     WorkerTuner, WorkflowSlotKind,
 };
@@ -313,7 +313,7 @@ impl WorkerTuner for TunerHolder {
 mod tests {
     use super::*;
     use std::time::Duration;
-    use temporal_sdk_core_api::worker::{
+    use temporalio_common::worker::{
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplierPermit,
     };
 

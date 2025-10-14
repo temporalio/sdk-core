@@ -8,16 +8,18 @@ use crate::{
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk_core_api::errors::PollError;
-use temporal_sdk_core_protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
-    coresdk::{
-        workflow_activation::remove_from_cache::EvictionReason,
-        workflow_commands::{ScheduleActivity, StartTimer},
-        workflow_completion::WorkflowActivationCompletion,
-    },
+use temporalio_common::{
+    errors::PollError,
     prost_dur,
-    temporal::api::enums::v1::EventType,
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
+        coresdk::{
+            workflow_activation::remove_from_cache::EvictionReason,
+            workflow_commands::{ScheduleActivity, StartTimer},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::enums::v1::EventType,
+    },
 };
 use temporalio_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
 use temporalio_sdk_core::{

@@ -14,16 +14,16 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_client::{
+    HttpConnectProxyOptions, Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait,
+    WorkflowService,
+};
+use temporalio_common::protos::temporal::api::{
     cloud::cloudservice::v1::GetNamespaceRequest,
     workflowservice::v1::{
         DescribeNamespaceRequest, GetWorkflowExecutionHistoryRequest,
         RespondActivityTaskCanceledResponse,
     },
-};
-use temporalio_client::{
-    HttpConnectProxyOptions, Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait,
-    WorkflowService,
 };
 #[cfg(unix)]
 use tokio::net::UnixListener;

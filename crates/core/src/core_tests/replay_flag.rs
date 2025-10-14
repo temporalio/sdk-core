@@ -3,15 +3,17 @@ use crate::{
     worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
 };
 use std::{collections::VecDeque, time::Duration};
-use temporal_sdk_core_api::Worker as CoreWorker;
-use temporal_sdk_core_protos::{
-    TestHistoryBuilder, canned_histories,
-    coresdk::{
-        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-        workflow_completion::WorkflowActivationCompletion,
+use temporalio_common::{
+    Worker as CoreWorker,
+    protos::{
+        TestHistoryBuilder, canned_histories,
+        coresdk::{
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
+        test_utils::{query_ok, start_timer_cmd},
     },
-    temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
-    test_utils::{query_ok, start_timer_cmd},
 };
 
 #[tokio::test]
