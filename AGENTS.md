@@ -24,8 +24,8 @@ document as your quick reference when submitting pull requests.
     - `cargo lint` – run clippy on workspace crates
     - `cargo test-lint` – run clippy on tests
     - `cargo integ-test` – run the integration test runner
-- `cargo-tokio-console.sh` – run any cargo command with the `tokio-console` feature
-- `integ-with-otel.sh` – run integration tests with OpenTelemetry enabled
+- `etc/cargo-tokio-console.sh` – run any cargo command with the `tokio-console` feature
+- `etc/integ-with-otel.sh` – run integration tests with OpenTelemetry enabled
 - `.cargo/multi-worker-manual-test` – helper script for spawning multiple workers during manual
   testing
 

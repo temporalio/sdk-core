@@ -1,0 +1,23 @@
+@startuml
+Executing -[#blue]-> RequestSent: Schedule
+Replaying -[#blue]-> WaitingMarkerEvent: Schedule
+ReplayingPreResolved -[#blue]-> WaitingMarkerEventPreResolved: Schedule
+RequestSent -[#blue]-> MarkerCommandCreated: HandleResult
+RequestSent -[#blue]-> RequestSent: Cancel
+RequestSent -[#blue]-> MarkerCommandCreated: NoWaitCancel
+MarkerCommandCreated -[#blue]-> ResultNotified: CommandRecordMarker
+ResultNotified -[#blue]-> MarkerCommandRecorded: MarkerRecorded
+WaitingMarkerEvent -[#blue]-> MarkerCommandRecorded: MarkerRecorded
+WaitingMarkerEvent -[#blue]-> WaitingMarkerEvent: Cancel
+WaitingMarkerEvent -[#blue]-> WaitingMarkerEvent: HandleKnownResult
+WaitingMarkerEvent -[#blue]-> WaitingMarkerEvent: NoWaitCancel
+WaitingMarkerEvent -[#blue]-> RequestSent: StartedNonReplayWFT
+WaitingMarkerEventPreResolved -[#blue]-> MarkerCommandRecorded: MarkerRecorded
+WaitingMarkerEventPreResolved --> WaitingMarkerEventPreResolved: Cancel
+WaitingMarkerEventPreResolved --> WaitingMarkerEventPreResolved: NoWaitCancel
+MarkerCommandRecorded --> MarkerCommandRecorded: Cancel
+MarkerCommandRecorded --> MarkerCommandRecorded: NoWaitCancel
+MarkerCommandCreated -[#blue]-> MarkerCommandCreated: HandleResult
+ResultNotified -[#blue]-> ResultNotified: HandleResult
+MarkerCommandRecorded --> MarkerCommandRecorded: HandleResult
+@enduml
