@@ -268,7 +268,6 @@ impl WorkerTrait for Worker {
         }
         // First, unregister worker from the client
         if !self.client_worker_registrator.shared_namespace_worker
-            && !self.config.skip_client_worker_set_check
         {
             let _res = self
                 .client
