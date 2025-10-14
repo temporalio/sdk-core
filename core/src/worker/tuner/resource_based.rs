@@ -882,10 +882,7 @@ mod tests {
 
     impl FakeCGroupFS {
         fn new(stat: Rc<RefCell<Option<String>>>, limit: Rc<RefCell<Option<String>>>) -> Self {
-            Self {
-                stat: stat,
-                limit: limit,
-            }
+            Self { stat, limit }
         }
     }
 
