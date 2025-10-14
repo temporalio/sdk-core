@@ -6,8 +6,10 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, SystemTime},
 };
-use temporal_sdk_core_api::worker::WorkerConfig;
-use temporal_sdk_core_protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo};
+use temporalio_common::{
+    protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo},
+    worker::WorkerConfig,
+};
 use tokio::{sync::Notify, task::JoinHandle, time::MissedTickBehavior};
 use uuid::Uuid;
 
@@ -174,8 +176,10 @@ mod tests {
         worker::client::mocks::mock_worker_client,
     };
     use std::{sync::Arc, time::Duration};
-    use temporal_sdk_core_api::worker::PollerBehavior;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse;
+    use temporalio_common::{
+        protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse,
+        worker::PollerBehavior,
+    };
 
     #[tokio::test]
     async fn worker_heartbeat() {

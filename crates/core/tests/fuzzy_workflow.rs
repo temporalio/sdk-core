@@ -5,8 +5,8 @@ use common::CoreWfStarter;
 use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, time::Duration};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporalio_sdk::{
     ActContext, ActivityError, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
 };

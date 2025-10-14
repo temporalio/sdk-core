@@ -34,12 +34,8 @@ path = "../core"
 version = "0.1"
 default-features = false
 
-[dependencies.temporal-sdk-core-protos]
-path = "../sdk-core-protos"
-version = "0.1"
-
-[dependencies.temporal-sdk-core-api]
-path = "../core-api"
+[dependencies.temporalio-common]
+path = "../common"
 version = "0.1"
 
 [dependencies.temporalio-client]

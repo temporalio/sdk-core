@@ -1,6 +1,7 @@
 use std::time::Duration;
-use temporal_sdk_core_protos::{
-    coresdk::AsJsonPayloadExt, prost_dur, temporal::api::common::v1::RetryPolicy,
+use temporalio_common::{
+    prost_dur,
+    protos::{coresdk::AsJsonPayloadExt, temporal::api::common::v1::RetryPolicy},
 };
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 

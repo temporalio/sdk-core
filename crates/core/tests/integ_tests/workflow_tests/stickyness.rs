@@ -3,8 +3,8 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk_core_api::worker::PollerBehavior;
 use temporalio_client::WorkflowOptions;
+use temporalio_common::worker::PollerBehavior;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use tokio::sync::Barrier;
 

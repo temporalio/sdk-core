@@ -7,7 +7,7 @@ use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,
 };
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };

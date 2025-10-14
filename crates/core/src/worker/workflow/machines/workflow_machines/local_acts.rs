@@ -7,7 +7,7 @@ use std::{
     collections::{HashMap, HashSet},
     time::SystemTime,
 };
-use temporal_sdk_core_protos::temporal::api::common::v1::WorkflowExecution;
+use temporalio_common::protos::temporal::api::common::v1::WorkflowExecution;
 
 #[derive(Default)]
 pub(super) struct LocalActivityData {

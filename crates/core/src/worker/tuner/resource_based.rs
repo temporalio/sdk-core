@@ -8,7 +8,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::{
+use temporalio_common::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotInfo, SlotInfoTrait, SlotKind,
@@ -552,7 +552,7 @@ mod tests {
         Arc,
         atomic::{AtomicU64, Ordering},
     };
-    use temporal_sdk_core_api::worker::WorkflowSlotKind;
+    use temporalio_common::worker::WorkflowSlotKind;
 
     struct FakeMIS {
         used: Arc<AtomicU64>,

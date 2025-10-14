@@ -3,23 +3,23 @@ use crate::{
     integ_tests::activity_functions::echo,
 };
 use std::time::Duration;
-use temporal_sdk_core_api::worker::{
-    WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
-};
-use temporal_sdk_core_protos::{
-    coresdk::{
-        AsJsonPayloadExt, workflow_commands::CompleteWorkflowExecution, workflow_completion,
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        enums::v1::VersioningBehavior,
-        history::v1::history_event::Attributes,
-        workflowservice::v1::{
-            DescribeWorkerDeploymentRequest, SetWorkerDeploymentCurrentVersionRequest,
+use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_common::{
+    protos::{
+        coresdk::{
+            AsJsonPayloadExt, workflow_commands::CompleteWorkflowExecution, workflow_completion,
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            enums::v1::VersioningBehavior,
+            history::v1::history_event::Attributes,
+            workflowservice::v1::{
+                DescribeWorkerDeploymentRequest, SetWorkerDeploymentCurrentVersionRequest,
+            },
         },
     },
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy},
 };
-use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::test_help::WorkerTestHelpers;
 use tokio::join;

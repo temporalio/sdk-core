@@ -26,7 +26,7 @@ installed to build Core.
 
 This repo is composed of multiple crates:
 
-- temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions.
+- temporalio-common `./crates/common` - Common code & protobuf definitions
 - temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service.
 - temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core.
 - temporal-sdk-core `./core` - The Core implementation.

@@ -27,46 +27,46 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::{
+use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
+    protos::{
+        canned_histories,
+        coresdk::{
+            activity_result::{self as ar, ActivityResolution, activity_resolution},
+            common::VersioningIntent,
+            workflow_activation::{
+                FireTimer, InitializeWorkflow, ResolveActivity, UpdateRandomSeed,
+                WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
+            },
+            workflow_commands::{
+                ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
+                ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
+                ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution, UpdateResponse,
+                update_response::Response, workflow_command,
+            },
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        default_act_sched, default_wes_attribs,
+        temporal::api::{
+            command::v1::command::Attributes,
+            common::v1::{Payload, RetryPolicy},
+            enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+            history::v1::{
+                TimerFiredEventAttributes, WorkflowPropertiesModifiedExternallyEventAttributes,
+                history_event,
+            },
+            workflowservice::v1::{
+                GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
+            },
+        },
+        test_utils::start_timer_cmd,
+    },
     worker::{
         PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
         SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
     },
-};
-use temporal_sdk_core_protos::{
-    canned_histories,
-    coresdk::{
-        activity_result::{self as ar, ActivityResolution, activity_resolution},
-        common::VersioningIntent,
-        workflow_activation::{
-            FireTimer, InitializeWorkflow, ResolveActivity, UpdateRandomSeed,
-            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
-        },
-        workflow_commands::{
-            ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution, UpdateResponse,
-            update_response::Response, workflow_command,
-        },
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    default_act_sched, default_wes_attribs,
-    temporal::api::{
-        command::v1::command::Attributes,
-        common::v1::{Payload, RetryPolicy},
-        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
-        history::v1::{
-            TimerFiredEventAttributes, WorkflowPropertiesModifiedExternallyEventAttributes,
-            history_event,
-        },
-        workflowservice::v1::{
-            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
-        },
-    },
-    test_utils::start_timer_cmd,
 };
 use tokio::{
     join,

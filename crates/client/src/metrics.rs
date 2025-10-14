@@ -9,7 +9,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::telemetry::metrics::{
+use temporalio_common::telemetry::metrics::{
     CoreMeter, Counter, CounterBase, HistogramDuration, HistogramDurationBase, MetricAttributable,
     MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
 };

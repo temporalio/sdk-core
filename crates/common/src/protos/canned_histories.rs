@@ -1,4 +1,4 @@
-use crate::{
+use crate::protos::{
     TestHistoryBuilder,
     coresdk::common::NamespacedWorkflowExecution,
     temporal::api::{

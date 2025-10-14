@@ -43,7 +43,7 @@ use std::{
     convert::{TryFrom, TryInto},
     fmt::{Debug, Display},
 };
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     enums::v1::{CommandType, EventType},
     history::v1::HistoryEvent,
 };
@@ -288,7 +288,7 @@ where
 }
 
 struct NewMachineWithCommand {
-    command: temporal_sdk_core_protos::temporal::api::command::v1::command::Attributes,
+    command: temporalio_common::protos::temporal::api::command::v1::command::Attributes,
     machine: Machines,
 }
 

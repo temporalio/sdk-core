@@ -17,7 +17,7 @@ use std::{
     sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     enums::v1::EventType,
     history::v1::{
         History, HistoryEvent, WorkflowTaskCompletedEventAttributes, history_event::Attributes,
@@ -810,7 +810,7 @@ mod tests {
         worker::client::mocks::mock_worker_client,
     };
     use futures_util::TryStreamExt;
-    use temporal_sdk_core_protos::{
+    use temporalio_common::protos::{
         canned_histories,
         temporal::api::{
             common::v1::WorkflowExecution, enums::v1::WorkflowTaskFailedCause,

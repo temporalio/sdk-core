@@ -117,13 +117,9 @@ uuid = { version = "1.18", features = ["v4"] }
 zip = { version = "4.6", optional = true, default-features = false, features = ["deflate", "bzip2", "zstd"] }
 
 # 1st party local deps
-[dependencies.temporal-sdk-core-api]
-path = "../core-api"
-features = ["otel_impls"]
-
-[dependencies.temporal-sdk-core-protos]
-path = "../sdk-core-protos"
-features = ["history_builders", "test-utilities"]
+[dependencies.temporalio-common]
+path = "../common"
+features = ["otel_impls", "history_builders", "test-utilities"]
 
 [dependencies.temporalio-client]
 path = "../client"
@@ -163,7 +159,7 @@ path = "tests/main.rs"
 # `cargo test --test integ_tests`
 test = false
 required-features = [
-    "temporal-sdk-core-protos/serde_serialize",
+    "temporalio-common/serde_serialize",
     "test-utilities",
     "ephemeral-server",
 ]
@@ -214,7 +210,7 @@ path = "tests/runner.rs"
 harness = false
 test = false
 required-features = [
-    "temporal-sdk-core-protos/serde_serialize",
+    "temporalio-common/serde_serialize",
     "test-utilities",
     "ephemeral-server",
 ]

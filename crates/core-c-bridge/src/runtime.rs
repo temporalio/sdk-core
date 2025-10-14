@@ -15,7 +15,7 @@ use std::{
     },
     time::{Duration, UNIX_EPOCH},
 };
-use temporal_sdk_core_api::telemetry::{
+use temporalio_common::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
     OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
     TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,

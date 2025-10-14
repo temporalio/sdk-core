@@ -15,24 +15,23 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::{
-    Worker,
+use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::{
+    Worker, prost_dur,
+    protos::{
+        coresdk::{
+            AsJsonPayloadExt, IntoCompletion,
+            activity_task::activity_task as act_task,
+            workflow_activation::{FireTimer, WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::enums::v1::EventType,
+        test_utils::schedule_activity_cmd,
+    },
     telemetry::{Logger, TelemetryOptionsBuilder},
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::{
-    coresdk::{
-        AsJsonPayloadExt, IntoCompletion,
-        activity_task::activity_task as act_task,
-        workflow_activation::{FireTimer, WorkflowActivationJob, workflow_activation_job},
-        workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    prost_dur,
-    temporal::api::enums::v1::EventType,
-    test_utils::schedule_activity_cmd,
-};
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
     ClientOptionsBuilder, CoreRuntime,

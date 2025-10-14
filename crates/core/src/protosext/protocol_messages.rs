@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use std::collections::HashMap;
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     common::v1::Payload,
     history::v1::{HistoryEvent, history_event},
     protocol::v1::{Message, message::SequencingId},

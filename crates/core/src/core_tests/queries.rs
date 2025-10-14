@@ -13,30 +13,33 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
-use temporal_sdk_core_api::{Worker as WorkerTrait, worker::WorkerVersioningStrategy};
-use temporal_sdk_core_protos::{
-    TestHistoryBuilder, canned_histories,
-    coresdk::{
-        workflow_activation::{
-            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
+use temporalio_common::{
+    Worker as WorkerTrait,
+    protos::{
+        TestHistoryBuilder, canned_histories,
+        coresdk::{
+            workflow_activation::{
+                WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
+            },
+            workflow_commands::{
+                ActivityCancellationType, CompleteWorkflowExecution,
+                ContinueAsNewWorkflowExecution, QueryResult, RequestCancelActivity, query_result,
+            },
+            workflow_completion::WorkflowActivationCompletion,
         },
-        workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
-            QueryResult, RequestCancelActivity, query_result,
+        temporal::api::{
+            common::v1::Payload,
+            enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+            history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
+            query::v1::WorkflowQuery,
+            workflowservice::v1::{
+                GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
+            },
         },
-        workflow_completion::WorkflowActivationCompletion,
+        test_utils::{query_ok, schedule_activity_cmd, start_timer_cmd},
     },
-    temporal::api::{
-        common::v1::Payload,
-        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
-        history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
-        query::v1::WorkflowQuery,
-        workflowservice::v1::{
-            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
-        },
-    },
-    test_utils::{query_ok, schedule_activity_cmd, start_timer_cmd},
+    worker::WorkerVersioningStrategy,
 };
 
 #[rstest::rstest]

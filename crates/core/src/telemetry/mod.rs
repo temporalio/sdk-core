@@ -39,7 +39,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use temporal_sdk_core_api::telemetry::{
+use temporalio_common::telemetry::{
     CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };

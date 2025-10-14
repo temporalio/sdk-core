@@ -8,8 +8,10 @@ use crate::{
 };
 use futures_util::{Stream, stream};
 use std::sync::{Arc, OnceLock};
-use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use temporalio_common::{
+    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
+    worker::{WorkerConfig, WorkflowSlotKind},
+};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -251,7 +253,7 @@ mod tests {
     };
     use futures_util::{StreamExt, pin_mut};
     use std::sync::Arc;
-    use temporal_sdk_core_api::worker::WorkflowSlotKind;
+    use temporalio_common::worker::WorkflowSlotKind;
 
     #[tokio::test]
     async fn poll_timeouts_do_not_produce_responses() {

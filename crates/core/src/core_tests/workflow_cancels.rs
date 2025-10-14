@@ -7,7 +7,7 @@ use crate::{
 };
 use rstest::rstest;
 use std::time::Duration;
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     canned_histories,
     coresdk::{
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},

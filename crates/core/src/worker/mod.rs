@@ -6,7 +6,7 @@ mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
 
-pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
+pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
     ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
@@ -60,26 +60,26 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::{
+use temporalio_client::WorkerKey;
+use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
+    protos::{
+        TaskToken,
+        coresdk::{
+            ActivityTaskCompletion,
+            activity_result::activity_execution_result,
+            activity_task::ActivityTask,
+            nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
+            workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            enums::v1::TaskQueueKind,
+            taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        },
+    },
     worker::PollerBehavior,
 };
-use temporal_sdk_core_protos::{
-    TaskToken,
-    coresdk::{
-        ActivityTaskCompletion,
-        activity_result::activity_execution_result,
-        activity_task::ActivityTask,
-        nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
-        workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
-        workflow_completion::WorkflowActivationCompletion,
-    },
-    temporal::api::{
-        enums::v1::TaskQueueKind,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-    },
-};
-use temporalio_client::WorkerKey;
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -91,7 +91,7 @@ use {
         protosext::ValidPollWFTQResponse,
     },
     futures_util::stream::BoxStream,
-    temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+    temporalio_common::protos::temporal::api::workflowservice::v1::{
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
@@ -910,8 +910,10 @@ mod tests {
         worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
     };
     use futures_util::FutureExt;
-    use temporal_sdk_core_api::worker::PollerBehavior;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+    use temporalio_common::{
+        protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+        worker::PollerBehavior,
+    };
 
     #[tokio::test]
     async fn activity_timeouts_maintain_permit() {

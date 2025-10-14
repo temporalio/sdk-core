@@ -1,4 +1,4 @@
-use crate::temporal::api::{
+use crate::protos::temporal::api::{
     common::v1::WorkflowType,
     enums::v1::{EventType, TaskQueueKind},
     history::v1::{History, HistoryEvent, WorkflowExecutionStartedEventAttributes, history_event},
@@ -207,7 +207,7 @@ impl From<HistoryInfo> for GetWorkflowExecutionHistoryResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::{TestHistoryBuilder, temporal::api::enums::v1::EventType};
+    use crate::protos::{TestHistoryBuilder, temporal::api::enums::v1::EventType};
 
     fn single_timer(timer_id: &str) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();

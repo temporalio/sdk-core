@@ -3,7 +3,8 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk_core_protos::{
+use temporalio_client::WorkflowOptions;
+use temporalio_common::protos::{
     DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder, canned_histories,
     coresdk::AsJsonPayloadExt,
     temporal::api::{
@@ -11,7 +12,6 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
     },
 };
-use temporalio_client::WorkflowOptions;
 use temporalio_sdk::{
     ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
     WorkflowResult,

@@ -10,7 +10,7 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
 };
-use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
+use temporalio_common::telemetry::PrometheusExporterOptions;
 use tokio::{io, task::AbortHandle};
 
 pub struct StartedPromServer {

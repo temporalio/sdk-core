@@ -12,7 +12,7 @@ use std::{
     convert::{TryFrom, TryInto},
     string::ToString,
 };
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         child_workflow::{
             self as wfr, ChildWorkflowCancellationType, ChildWorkflowResult,

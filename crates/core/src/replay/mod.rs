@@ -16,19 +16,21 @@ use std::{
     sync::{Arc, OnceLock},
     task::{Context, Poll},
 };
-use temporal_sdk_core_api::worker::{PollerBehavior, WorkerConfig};
-pub use temporal_sdk_core_protos::{
+pub use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
 };
-use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::remove_from_cache::EvictionReason,
-    temporal::api::{
-        common::v1::WorkflowExecution,
-        history::v1::History,
-        workflowservice::v1::{
-            RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+use temporalio_common::{
+    protos::{
+        coresdk::workflow_activation::remove_from_cache::EvictionReason,
+        temporal::api::{
+            common::v1::WorkflowExecution,
+            history::v1::History,
+            workflowservice::v1::{
+                RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+            },
         },
     },
+    worker::{PollerBehavior, WorkerConfig},
 };
 use tokio::sync::{Mutex as TokioMutex, mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;

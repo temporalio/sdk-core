@@ -1,5 +1,5 @@
 use std::{num::NonZero, time::Duration};
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     common::v1::RetryPolicy, failure::v1::ApplicationFailureInfo,
 };
 

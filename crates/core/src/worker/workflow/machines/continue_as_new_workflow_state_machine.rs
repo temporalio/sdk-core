@@ -5,7 +5,7 @@ use super::{
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     temporal::api::{
         command::v1::continue_as_new_cmd_to_api,

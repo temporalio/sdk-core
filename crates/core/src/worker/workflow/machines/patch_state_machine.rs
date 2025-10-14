@@ -37,7 +37,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     convert::TryFrom,
 };
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     VERSION_SEARCH_ATTR_KEY,
     constants::PATCH_MARKER_NAME,
     coresdk::{AsJsonPayloadExt, common::build_has_change_marker_details},

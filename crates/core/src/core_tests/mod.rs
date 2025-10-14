@@ -16,16 +16,19 @@ use crate::{
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
-use temporal_sdk_core_api::{Worker as WorkerTrait, worker::PollerBehavior};
-use temporal_sdk_core_protos::{
-    TestHistoryBuilder, canned_histories,
-    coresdk::{
-        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-        workflow_completion::WorkflowActivationCompletion,
+use temporalio_common::{
+    Worker as WorkerTrait,
+    protos::{
+        TestHistoryBuilder, canned_histories,
+        coresdk::{
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            enums::v1::EventType, history::v1::WorkflowExecutionOptionsUpdatedEventAttributes,
+        },
     },
-    temporal::api::{
-        enums::v1::EventType, history::v1::WorkflowExecutionOptionsUpdatedEventAttributes,
-    },
+    worker::PollerBehavior,
 };
 use tokio::{sync::Barrier, time::sleep};
 

@@ -15,7 +15,7 @@ use crate::{
 use context::Context;
 use prost::Message;
 use std::sync::{Arc, LazyLock, Mutex};
-use temporal_sdk_core_protos::temporal::api::{
+use temporalio_common::protos::temporal::api::{
     failure::v1::Failure,
     workflowservice::v1::{
         GetSystemInfoRequest, GetSystemInfoResponse, QueryWorkflowRequest,
@@ -155,7 +155,7 @@ fn test_all_rpc_calls_exist() {
             context,
             RpcService::Workflow,
             include_str!(
-                "../../../sdk-core-protos/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
+                "../../../common/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
             ),
         ));
 
@@ -163,7 +163,7 @@ fn test_all_rpc_calls_exist() {
             context,
             RpcService::Operator,
             include_str!(
-                "../../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
+                "../../../common/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
             ),
         ));
 
@@ -171,7 +171,7 @@ fn test_all_rpc_calls_exist() {
             context,
             RpcService::Cloud,
             include_str!(
-                "../../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
+                "../../../common/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
             ),
         ));
 
@@ -179,14 +179,14 @@ fn test_all_rpc_calls_exist() {
             context,
             RpcService::Test,
             include_str!(
-                "../../../sdk-core-protos/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
+                "../../../common/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
             ),
         ));
 
         assert!(all_rpc_calls_exist(
             context,
             RpcService::Health,
-            include_str!("../../../sdk-core-protos/protos/grpc/health/v1/health.proto"),
+            include_str!("../../../common/protos/grpc/health/v1/health.proto"),
         ));
     });
 }
@@ -320,7 +320,7 @@ fn test_simple_callback_override() {
         assert_eq!(start_resp.run_id, "run-id for my-workflow-id");
 
         // Try a query where a query failure will actually be delivered as failure details.
-        // However, we don't currently have temporal_sdk_core_protos::google::rpc::Status in
+        // However, we don't currently have temporalio_common::protos::google::rpc::Status in
         // the crate, so we'll just use the details directly even though a proper gRPC
         // implementation will only provide a google.rpc.Status proto.
         let query_err = context

@@ -11,7 +11,7 @@ use crate::{
 };
 use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::{TryFrom, TryInto};
-use temporal_sdk_core_protos::{
+use temporalio_common::protos::{
     coresdk::{
         activity_result::{self as ar, ActivityResolution, Cancellation, activity_resolution},
         workflow_activation::ResolveActivity,
@@ -806,7 +806,7 @@ mod test {
         worker::workflow::{OutgoingJob, machines::Machines},
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
-    use temporal_sdk_core_protos::coresdk::workflow_activation::workflow_activation_job;
+    use temporalio_common::protos::coresdk::workflow_activation::workflow_activation_job;
 
     #[test]
     fn cancels_ignored_terminal() {

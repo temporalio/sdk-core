@@ -1,7 +1,8 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use futures_util::StreamExt;
 use std::collections::HashMap;
-use temporal_sdk_core_protos::{
+use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
         IntoPayloadsExt,
@@ -15,7 +16,6 @@ use temporal_sdk_core_protos::{
         enums::v1::{CommandType, EventType},
     },
 };
-use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
     WorkflowResult,

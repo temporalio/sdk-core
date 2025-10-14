@@ -1,7 +1,7 @@
 //! Test utilities for creating workflow commands and histories
 //! Only available when the test-utilities feature is enabled
 
-use crate::{
+use crate::protos::{
     DEFAULT_ACTIVITY_TYPE,
     coresdk::workflow_commands::{
         ActivityCancellationType, QueryResult, QuerySuccess, ScheduleActivity,

@@ -15,9 +15,11 @@ use crate::{
 use anyhow::{anyhow, bail};
 use futures_util::{Stream, stream};
 use std::{fmt::Debug, marker::PhantomData};
-use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+use temporalio_common::{
+    protos::temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+    },
+    worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind},
 };
 use tokio::select;
 use tokio_util::sync::CancellationToken;
