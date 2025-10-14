@@ -482,7 +482,7 @@ pub struct RealSysInfo {
     cur_mem_usage: AtomicU64,
     cur_cpu_usage: AtomicU64,
     last_refresh: AtomicCell<Instant>,
-    cgroup_cpu_info: CGroupCPUInfo<RealCGroupCPUFileSystem>,
+    cgroup_cpu_info: CGroupCpuInfo<CgroupV2CpuFileSystem>,
 }
 impl RealSysInfo {
     fn new() -> Self {
@@ -495,7 +495,7 @@ impl RealSysInfo {
             cur_mem_usage: AtomicU64::new(0),
             cur_cpu_usage: AtomicU64::new(0),
             total_mem: AtomicU64::new(total_mem),
-            cgroup_cpu_info: CGroupCPUInfo::new(RealCGroupCPUFileSystem),
+            cgroup_cpu_info: CGroupCpuInfo::new(CgroupV2CpuFileSystem),
         };
         s.refresh();
         s
@@ -562,31 +562,39 @@ impl SystemResourceInfo for RealSysInfo {
     }
 }
 
+/// Parsed representation of the CPU quota and slice period exposed by the
+/// cgroup `cpu.max` control file.
 #[derive(Debug)]
-struct CGroupCPULimits {
-    quota: CPUQuota,
+struct CGroupCpuLimits {
+    quota: CpuQuota,
     period: u64,
 }
 
+/// Enumerates whether a cgroup enforces a specific CPU quota or allows
+/// unlimited usage.
 #[derive(Debug)]
-enum CPUQuota {
+enum CpuQuota {
     Unlimited,
     Limited(u64),
 }
 
-trait CGroupCPUFileSystem {
+trait CGroupCpuFileSystem {
     fn read_cpu_stat_file(&self) -> Option<String>;
     fn read_cpu_limit_file(&self) -> Option<String>;
 }
 
+/// Tracks recent cgroup CPU usage statistics while abstracting the backing
+/// filesystem access for ease of testing.
 #[derive(Debug)]
-struct CGroupCPUInfo<T: CGroupCPUFileSystem> {
+struct CGroupCpuInfo<T: CGroupCpuFileSystem> {
     prev_cpu_usage: AtomicU64,
     last_refresh: AtomicCell<Option<Instant>>,
     fs: T,
 }
 
-impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
+impl<T: CGroupCpuFileSystem> CGroupCpuInfo<T> {
+    /// Creates a new tracker and immediately primes it by reading the current
+    /// CPU usage so future percentage calculations have baseline data.
     fn new(fs: T) -> Self {
         let s = Self {
             last_refresh: AtomicCell::new(None),
@@ -598,7 +606,8 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
     }
 
     /// Reads the current CPU usage and limits for the cgroup and calculates the usage percentage based on the
-    /// limits and the elapsed time from the last calculation.
+    /// limits and the elapsed time from the last calculation. Returns `None` until enough data has been collected
+    /// to determine a delta or when quotas are unlimited.
     fn calc_cpu_percent(&self) -> Option<f64> {
         let usage = self.read_cpu_usage()?;
         let limits = self.read_cpus_limit()?;
@@ -609,7 +618,7 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
 
         if previous_usage > 0
             && let Some(last_updated) = last_updated
-            && let CPUQuota::Limited(quota) = limits.quota
+            && let CpuQuota::Limited(quota) = limits.quota
             && quota > 0
         {
             let elapsed_us = (now - last_updated).as_micros() as f64;
@@ -641,31 +650,33 @@ impl<T: CGroupCPUFileSystem> CGroupCPUInfo<T> {
     /// Returns None if the file cannot be read, or the quota/limit cannot be parsed
     ///
     /// The cpu.max file is expected to be in the format 'quota period'
-    fn read_cpus_limit(&self) -> Option<CGroupCPULimits> {
+    fn read_cpus_limit(&self) -> Option<CGroupCpuLimits> {
         let limit_text = self.fs.read_cpu_limit_file()?;
         let mut parts = limit_text.split_whitespace();
         let quota_str = parts.next()?;
         let period_str = parts.next()?;
 
         let quota = if quota_str == "max" {
-            CPUQuota::Unlimited
+            CpuQuota::Unlimited
         } else {
-            CPUQuota::Limited(quota_str.parse().ok()?)
+            CpuQuota::Limited(quota_str.parse().ok()?)
         };
         let period = period_str.parse().ok()?;
 
-        Some(CGroupCPULimits { quota, period })
+        Some(CGroupCpuLimits { quota, period })
     }
 }
 
+/// Implementation of the `CGroupCpuFileSystem` that reads directly
+/// from the host cgroup v2 hierarchy.
 #[derive(Debug)]
-struct RealCGroupCPUFileSystem;
+struct CgroupV2CpuFileSystem;
 
-impl RealCGroupCPUFileSystem {
+impl CgroupV2CpuFileSystem {
     const BASE_PATH: &'static str = "/sys/fs/cgroup";
 }
 
-impl CGroupCPUFileSystem for RealCGroupCPUFileSystem {
+impl CGroupCpuFileSystem for CgroupV2CpuFileSystem {
     fn read_cpu_stat_file(&self) -> Option<String> {
         let path = PathBuf::from(Self::BASE_PATH).join("cpu.stat");
         fs::read_to_string(path).ok()
@@ -878,7 +889,7 @@ mod tests {
         }
     }
 
-    impl CGroupCPUFileSystem for FakeCGroupFS {
+    impl CGroupCpuFileSystem for FakeCGroupFS {
         fn read_cpu_stat_file(&self) -> Option<String> {
             self.stat.borrow().clone()
         }
@@ -894,7 +905,7 @@ mod tests {
         let limit = Rc::new(RefCell::new(Some("1000 1000".into())));
         let fake_fs = FakeCGroupFS::new(stat.clone(), limit.clone());
 
-        let cgroup_info = CGroupCPUInfo::new(fake_fs);
+        let cgroup_info = CGroupCpuInfo::new(fake_fs);
 
         std::thread::sleep(Duration::from_micros(1_000_u64));
 
@@ -930,7 +941,7 @@ mod tests {
         let stat = Rc::new(RefCell::new(Some("usage_usec 1000".into())));
         let limit = Rc::new(RefCell::new(Some("max 1000".into())));
 
-        let cgroup_info = CGroupCPUInfo::new(FakeCGroupFS::new(stat.clone(), limit.clone()));
+        let cgroup_info = CGroupCpuInfo::new(FakeCGroupFS::new(stat.clone(), limit.clone()));
 
         std::thread::sleep(Duration::from_micros(1_000_u64));
 
@@ -947,7 +958,7 @@ mod tests {
         let stat = Rc::new(RefCell::new(None));
         let limit = Rc::new(RefCell::new(Some("1000 1000".into())));
 
-        let cgroup_info = CGroupCPUInfo::new(FakeCGroupFS::new(stat.clone(), limit.clone()));
+        let cgroup_info = CGroupCpuInfo::new(FakeCGroupFS::new(stat.clone(), limit.clone()));
 
         std::thread::sleep(Duration::from_micros(1_000_u64));
 
