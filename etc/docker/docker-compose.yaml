@@ -1,4 +1,4 @@
-version: '3.5'
+version: "3.5"
 
 services:
   cassandra:
@@ -13,17 +13,17 @@ services:
     ports:
       - "7233:7233"
       - "7234:7234"
-#      - "7235:7235"
-#      - "7239:7239"
-#      - "6933:6933"
-#      - "6934:6934"
-#      - "6935:6935"
-#      - "6939:6939"
+    #      - "7235:7235"
+    #      - "7239:7239"
+    #      - "6933:6933"
+    #      - "6934:6934"
+    #      - "6935:6935"
+    #      - "6939:6939"
     environment:
       - "CASSANDRA_SEEDS=cassandra"
       - "DYNAMIC_CONFIG_FILE_PATH=/etc/dynamic-config.yaml"
     volumes:
-      - ../../etc/dynamic-config.yaml:/etc/dynamic-config.yaml
+      - ../dynamic-config.yaml:/etc/dynamic-config.yaml
     depends_on:
       - cassandra
 
