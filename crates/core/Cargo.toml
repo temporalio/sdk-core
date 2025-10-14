@@ -190,9 +190,16 @@ path = "tests/cloud_tests.rs"
 test = false
 required-features = ["test-utilities"]
 
+[[test]]
+name = "fuzzy_workflow"
+path = "tests/fuzzy_workflow.rs"
+test = false
+required-features = ["test-utilities"]
+
 [[bench]]
 name = "workflow_replay"
 path = "tests/workflow_replay_bench.rs"
+test = false
 harness = false
 
 # The integration test runner should compile with the same configuration as the

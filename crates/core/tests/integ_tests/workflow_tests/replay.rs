@@ -88,7 +88,7 @@ async fn timer_workflow_replay() {
     let core = init_core_replay_preloaded(
         "timer_workflow_replay",
         [HistoryForReplay::new(
-            history_from_proto_binary("histories/timer_workflow_history.bin")
+            history_from_proto_binary("timer_workflow_history.bin")
                 .await
                 .unwrap(),
             "fake".to_owned(),
@@ -145,7 +145,7 @@ async fn workflow_nondeterministic_replay() {
     let core = init_core_replay_preloaded(
         "timer_workflow_replay",
         [HistoryForReplay::new(
-            history_from_proto_binary("histories/timer_workflow_history.bin")
+            history_from_proto_binary("timer_workflow_history.bin")
                 .await
                 .unwrap(),
             "fake".to_owned(),
@@ -300,7 +300,7 @@ async fn multiple_histories_can_handle_dupe_run_ids() {
 #[tokio::test]
 async fn replay_old_patch_format() {
     let mut worker = replay_sdk_worker([HistoryForReplay::new(
-        history_from_proto_binary("histories/old_change_marker_format.bin")
+        history_from_proto_binary("old_change_marker_format.bin")
             .await
             .unwrap(),
         "fake".to_owned(),
@@ -314,7 +314,7 @@ async fn replay_ends_with_empty_wft() {
     let core = init_core_replay_preloaded(
         "SayHelloWorkflow",
         [HistoryForReplay::new(
-            history_from_proto_binary("histories/ends_empty_wft_complete.bin")
+            history_from_proto_binary("ends_empty_wft_complete.bin")
                 .await
                 .unwrap(),
             "fake".to_owned(),

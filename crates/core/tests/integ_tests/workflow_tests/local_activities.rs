@@ -631,11 +631,10 @@ async fn repro_nondeterminism_with_timer_bug() {
 #[rstest::rstest]
 #[tokio::test]
 async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
-    let mut hist = history_from_proto_binary(
-        "histories/evict_while_la_running_no_interference-85_history.bin",
-    )
-    .await
-    .unwrap();
+    let mut hist =
+        history_from_proto_binary("evict_while_la_running_no_interference-85_history.bin")
+            .await
+            .unwrap();
     if fix_hist {
         // Replace broken ending with accurate ending
         hist.events.truncate(20);
@@ -659,11 +658,10 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
 
 #[tokio::test]
 async fn second_weird_la_nondeterminism_repro() {
-    let mut hist = history_from_proto_binary(
-        "histories/evict_while_la_running_no_interference-23_history.bin",
-    )
-    .await
-    .unwrap();
+    let mut hist =
+        history_from_proto_binary("evict_while_la_running_no_interference-23_history.bin")
+            .await
+            .unwrap();
     // Chop off uninteresting ending
     hist.events.truncate(24);
     let mut thb = TestHistoryBuilder::from_history(hist.events);
@@ -684,11 +682,10 @@ async fn second_weird_la_nondeterminism_repro() {
 
 #[tokio::test]
 async fn third_weird_la_nondeterminism_repro() {
-    let mut hist = history_from_proto_binary(
-        "histories/evict_while_la_running_no_interference-16_history.bin",
-    )
-    .await
-    .unwrap();
+    let mut hist =
+        history_from_proto_binary("evict_while_la_running_no_interference-16_history.bin")
+            .await
+            .unwrap();
     let mut thb = TestHistoryBuilder::from_history(hist.events);
     thb.add_workflow_task_scheduled_and_started();
     hist = thb.get_full_history_info().unwrap().into();
@@ -871,7 +868,7 @@ async fn long_local_activity_with_update(
     let replay_worker = init_core_replay_preloaded(
         starter.get_task_queue(),
         [HistoryForReplay::new(
-            history_from_proto_binary(&format!("histories/{wf_name}_history.bin"))
+            history_from_proto_binary(&format!("{wf_name}_history.bin"))
                 .await
                 .unwrap(),
             "fake".to_owned(),
