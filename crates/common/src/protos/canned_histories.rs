@@ -1321,6 +1321,23 @@ pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
     t
 }
 
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_MARKER_RECORDED (LA 2 result)
+///  7: EVENT_TYPE_MARKER_RECORDED (LA 1 result)
+///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn parallel_las_job_order_hist() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(2, "2", b"hi2".into());
+    t.add_local_activity_result_marker(1, "1", b"hi1".into());
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
 /// Useful for one-of needs to write a crafted history to a file. Writes it as serialized proto
 /// binary to the provided path.
 pub fn write_hist_to_binfile(

@@ -17,9 +17,8 @@ pub(super) struct LocalActivityData {
     cancel_requests: Vec<ExecutingLAId>,
     /// Seq #s of local activities which we have sent to be executed but have not yet resolved
     executing: HashSet<u32>,
-    /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
-    /// next WFT
-    preresolutions: HashMap<u32, ResolveDat>,
+    /// Queued local activity resolutions that were found by looking ahead at the next WFT.
+    pending_resolutions: Vec<CompleteLocalActivityData>,
     /// Set true if the workflow is terminating
     am_terminating: bool,
 }
@@ -77,13 +76,32 @@ impl LocalActivityData {
         self.executing.len() + self.new_requests.len()
     }
 
+    // FIXME(JWH): reconsider the need for this
     pub(super) fn insert_peeked_marker(&mut self, dat: CompleteLocalActivityData) {
-        self.preresolutions.insert(dat.marker_dat.seq, dat.into());
+        self.pending_resolutions.push(dat.into());
     }
 
-    pub(super) fn take_preresolution(&mut self, seq: u32) -> Option<ResolveDat> {
-        self.preresolutions.remove(&seq)
+    pub(super) fn peek_next_pending_resolution_seq(&self) -> Option<u32> {
+        self.pending_resolutions.first().map(|r| r.marker_dat.seq)
     }
+
+    pub(super) fn take_next_pending_resolution(&mut self, seq: u32) -> CompleteLocalActivityData {
+        if self.pending_resolutions.is_empty() {
+            panic!("take_next_pending_resolution: No pending resolutions to take");
+        }
+        let lad = self.pending_resolutions.remove(0);
+        if lad.marker_dat.seq != seq {
+            panic!(
+                "take_next_pending_resolution: Provided seq does not match the next pending resolution"
+            );
+        }
+        lad
+    }
+
+    // FIXME(JWH): reconsider the need for this
+    // pub(super) fn take_preresolution(&mut self, seq: u32) -> Option<ResolveDat> {
+    //     self.preresolutions.remove(&seq)
+    // }
 
     pub(super) fn remove_from_queue(&mut self, seq: u32) -> Option<ValidScheduleLA> {
         self.new_requests
