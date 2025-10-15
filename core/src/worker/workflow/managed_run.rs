@@ -723,6 +723,8 @@ impl ManagedRun {
             if !completion.activation_was_eviction && !self.am_broken {
                 self.wfm.apply_next_task_if_ready()?;
             }
+
+            self.wfm.apply_pending_local_activity_resolutions()?;
             let new_local_acts = self.wfm.drain_queued_local_activities();
             self.sink_la_requests(new_local_acts)?;
 
@@ -1443,6 +1445,11 @@ impl WorkflowManager {
     /// and handling all activation completions from lang.
     fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent<'_> {
         self.machines.prepare_for_wft_response()
+    }
+
+    /// Apply local activity resolutions that have been queued up.
+    fn apply_pending_local_activity_resolutions(&mut self) -> Result<()> {
+        self.machines.apply_pending_local_activity_resolutions()
     }
 
     /// Remove and return all queued local activities. Once this is called, they need to be

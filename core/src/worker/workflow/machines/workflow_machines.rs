@@ -337,6 +337,40 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Apply local activity resolutions that have been queued up while looking ahead at the next WFT.
+    /// Pending resolutions are always applied in order (i.e. the order of markers in history, which
+    /// corresponds to the order that those LA completed execution).
+    pub(crate) fn apply_pending_local_activity_resolutions(&mut self) -> Result<()> {
+        while let Some(next_res_seq) = self.local_activity_data.peek_next_pending_resolution_seq() {
+            if let Ok(mk) = self.get_machine_key(CommandID::LocalActivity(next_res_seq)) {
+                let next_res = self
+                    .local_activity_data
+                    .take_next_pending_resolution(next_res_seq);
+
+                let mach = self.machine_mut(mk);
+                if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                    let more_responses = lam.try_resolve_with_dat(next_res.into())?;
+                    self.process_machine_responses(mk, more_responses)?;
+                } else {
+                    // FIXME(JWH): Not sure about this. Is it enough that machine_key returned something,
+                    //             to deduce that machine_mut _should_ return something that is a LocalActivityMachine?
+                    //             Or are there case where that supposition is incorrect?
+                    panic!(
+                        "Machine was not a local activity machine when it should have been during resolution: {:?}",
+                        next_res_seq
+                    );
+                }
+            } else {
+                // That's probably ok, the LA might just have not been created from the
+                // lang side yet. Stop applying resolutions for now, we'll try again later.
+                // Or fail for real if there are left over resolutions at the end of the WFT.
+                break;
+            }
+        }
+
+        Ok(()) // FIXME(JWH): Unneeded Result?
+    }
+
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
     ///
@@ -770,6 +804,13 @@ impl WorkflowMachines {
                     if let Ok(mk) =
                         self.get_machine_key(CommandID::LocalActivity(la_dat.marker_dat.seq))
                     {
+                        // FIXME(JWH): This case already handle LA completion in correct (history recorded) order
+                        //             for LA that completes during a later WFT. We could easily move this to the
+                        //             "peeked marker" collection above, avoiding an extra code path, which could
+                        //             potentially avoid another case of misordering of LA completions involving
+                        //             one LA completing during a later WFT and one LA completing during the same WFT.
+                        //             Can this actually happen? If so, is there is a risk of breaking behavior in
+                        //             unifying these cases?
                         delayed_actions.push(DelayedAction::WakeLa(mk, Box::new(la_dat)));
                     } else {
                         self.local_activity_data.insert_peeked_marker(la_dat);
@@ -1221,24 +1262,24 @@ impl WorkflowMachines {
                     self.local_activity_data.enqueue(act);
                 }
                 MachineResponse::RequestCancelLocalActivity(seq) => {
+                    // FIXME(JWH): reconsider this case
                     // We might already know about the status from a pre-resolution. Apply it if so.
                     // We need to do this because otherwise we might need to perform additional
                     // activations during replay that didn't happen during execution, just like
                     // we sometimes pre-resolve activities when first requested.
-                    if let Some(preres) = self.local_activity_data.take_preresolution(seq) {
-                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(smk) {
-                            let more_responses = lam.try_resolve_with_dat(preres)?;
-                            self.process_machine_responses(smk, more_responses)?;
-                        } else {
-                            panic!(
-                                "A non local-activity machine returned a request cancel LA response"
-                            );
-                        }
-                    }
+                    // if let Some(preres) = self.local_activity_data.take_preresolution(seq) {
+                    //     if let Machines::LocalActivityMachine(lam) = self.machine_mut(smk) {
+                    //         let more_responses = lam.try_resolve_with_dat(preres)?;
+                    //         self.process_machine_responses(smk, more_responses)?;
+                    //     } else {
+                    //         panic!(
+                    //             "A non local-activity machine returned a request cancel LA response"
+                    //         );
+                    //     }
+                    // }
                     // If it's in the request queue, just rip it out.
-                    else if let Some(removed_act) =
-                        self.local_activity_data.remove_from_queue(seq)
-                    {
+                    // else
+                    if let Some(removed_act) = self.local_activity_data.remove_from_queue(seq) {
                         // We removed it. Notify the machine that the activity cancelled.
                         if let Machines::LocalActivityMachine(lam) = self.machine_mut(smk) {
                             let more_responses = lam.try_resolve(
@@ -1360,7 +1401,6 @@ impl WorkflowMachines {
                     let (la, mach_resp) = new_local_activity(
                         attrs,
                         self.replaying,
-                        self.local_activity_data.take_preresolution(seq),
                         self.current_wf_time,
                         self.observed_internal_flags.clone(),
                     )?;
