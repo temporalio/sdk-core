@@ -21,6 +21,7 @@ use temporal_sdk_core_api::telemetry::{
 };
 use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk_core_protos::prost_dur;
 use temporal_sdk_core_protos::temporal::api::common::v1::RetryPolicy;
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{PluginInfo, WorkerHeartbeat};
@@ -764,44 +765,133 @@ async fn worker_heartbeat_failure_metrics() {
     starter.worker_config.max_outstanding_activities(5_usize);
 
     let mut worker = starter.worker().await;
+    let worker_instance_key = worker.worker_instance_key();
     static COUNT: AtomicU64 = AtomicU64::new(0);
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        COUNT.store(COUNT.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
-        let _asdf = ctx
-            .activity(ActivityOptions {
-                activity_type: "failing_act".to_string(),
-                input: "boom".as_json_payload().expect("serialize"),
-                start_to_close_timeout: Some(Duration::from_secs(1)),
-                retry_policy: Some(RetryPolicy {
-                    maximum_attempts: 3,
+    let activity_fail = Arc::new(Semaphore::const_new(0));
+    let workflow_fail = Arc::new(Semaphore::const_new(0));
+
+    let activity_fail_clone = activity_fail.clone();
+    let workflow_fail_clone = workflow_fail.clone();
+    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
+        let workflow_fail = workflow_fail_clone.clone();
+        async move {
+            COUNT.store(COUNT.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+            let _asdf = ctx
+                .activity(ActivityOptions {
+                    activity_type: "failing_act".to_string(),
+                    input: "boom".as_json_payload().expect("serialize"),
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    retry_policy: Some(RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(10))),
+                        backoff_coefficient: 1.0,
+                        maximum_attempts: 3,
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .await;
-        if COUNT.load(Ordering::Relaxed) == 1 {
-            panic!("expected WF panic");
+                })
+                .await;
+            if COUNT.load(Ordering::Relaxed) == 1 {
+                workflow_fail.add_permits(1);
+                panic!("expected WF panic");
+            }
+            Ok(().into())
         }
-        Ok(().into())
     });
-    worker.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
-        if COUNT.load(Ordering::Relaxed) >= 3 {
-            return Ok(());
+    worker.register_activity("failing_act", move |_ctx: ActContext, _: String| {
+        let activity_fail = activity_fail_clone.clone();
+        async move {
+            if COUNT.load(Ordering::Relaxed) >= 3 {
+                return Ok(());
+            }
+            activity_fail.add_permits(1);
+            Err(anyhow!("Expected error").into())
         }
-        Err(anyhow!("Expected error").into())
     });
 
-    let worker_key = worker.worker_instance_key().to_string();
+    let worker_key = worker_instance_key.to_string();
     starter.workflow_options.retry_policy = Some(RetryPolicy {
         maximum_attempts: 2,
         ..Default::default()
     });
     let _ = starter.start_with_worker(wf_name, &mut worker).await;
 
-    worker.run_until_done().await.unwrap();
+    let test_fut = async {
+        let permit = activity_fail.acquire().await.unwrap();
+        permit.forget();
+        // Gives time for heartbeat to be sent after activity failure
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let client = starter.get_client().await;
+        let mut raw_client = (*client).clone();
+        let workers_list = WorkflowService::list_workers(
+            &mut raw_client,
+            ListWorkersRequest {
+                namespace: client.namespace().to_owned(),
+                page_size: 100,
+                next_page_token: Vec::new(),
+                query: String::new(),
+            },
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let worker_info = workers_list
+            .workers_info
+            .iter()
+            .find(|worker_info| {
+                if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+                    hb.worker_instance_key == worker_instance_key.to_string()
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+        assert_eq!(
+            heartbeat.worker_instance_key,
+            worker_instance_key.to_string()
+        );
+        let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+        assert!(activity_slots.last_interval_failure_tasks >= 1);
 
-    sleep(Duration::from_millis(110)).await;
+        let permit = workflow_fail.acquire().await.unwrap();
+        permit.forget();
+
+        // Gives time for heartbeat to be sent after activity failure
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let workers_list = WorkflowService::list_workers(
+            &mut raw_client,
+            ListWorkersRequest {
+                namespace: client.namespace().to_owned(),
+                page_size: 100,
+                next_page_token: Vec::new(),
+                query: String::new(),
+            },
+        )
+        .await
+        .unwrap()
+        .into_inner();
+        let worker_info = workers_list
+            .workers_info
+            .iter()
+            .find(|worker_info| {
+                if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+                    hb.worker_instance_key == worker_instance_key.to_string()
+                } else {
+                    false
+                }
+            })
+            .unwrap();
+        let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+        let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+        assert!(workflow_slots.last_interval_failure_tasks >= 1);
+    };
+
+    let runner = async move {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::join!(test_fut, runner);
+
     let client = starter.get_client().await;
     let mut heartbeats =
         list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_key}\"")).await;
@@ -810,7 +900,6 @@ async fn worker_heartbeat_failure_metrics() {
 
     let activity_slots = heartbeat.activity_task_slots_info.unwrap();
     assert_eq!(activity_slots.total_failed_tasks, 3);
-    assert!(activity_slots.last_interval_failure_tasks >= 1);
 
     let workflow_slots = heartbeat.workflow_task_slots_info.unwrap();
     assert_eq!(workflow_slots.total_failed_tasks, 1);
