@@ -101,7 +101,8 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .max_outstanding_workflow_tasks(100_usize)
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_build_id".to_owned(),
-        });
+        })
+        .skip_client_worker_set_check(true);
     b
 }
 

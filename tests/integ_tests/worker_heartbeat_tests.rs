@@ -138,10 +138,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         ]);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
-    println!("worker_instance_key: {worker_instance_key:?}");
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        println!("wf start");
         ctx.activity(ActivityOptions {
             activity_type: "pass_fail_act".to_string(),
             input: "pass".as_json_payload().expect("serializes fine"),
@@ -149,7 +147,6 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             ..Default::default()
         })
         .await;
-        println!("wf done");
         Ok(().into())
     });
 
@@ -162,11 +159,9 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         let acts_started = acts_started_act.clone();
         let acts_done = acts_done_act.clone();
         async move {
-            println!("act start");
             acts_started.add_permits(1);
             let permit = acts_done.acquire().await.unwrap();
             permit.forget();
-            println!("act done");
             Ok(i)
         }
     });
@@ -213,9 +208,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             heartbeat.worker_instance_key,
             worker_instance_key.to_string()
         );
-        println!("in_activity_checks STARTED");
         in_activity_checks(heartbeat, &start_time, &heartbeat_time);
-        println!("in_activity_checks DONE");
         acts_done.add_permits(1);
     };
 
@@ -406,7 +399,6 @@ fn in_activity_checks(
     start_time: &AtomicCell<Option<Timestamp>>,
     heartbeat_time: &AtomicCell<Option<Timestamp>>,
 ) {
-    println!("in_activity_checks heartbeat: {heartbeat:#?}");
     assert_eq!(heartbeat.status, WorkerStatus::Running as i32);
 
     let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
