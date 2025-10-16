@@ -28,7 +28,7 @@ use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
 use temporal_sdk_core_protos::temporal::api::worker::v1::{PluginInfo, WorkerHeartbeat};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeWorkerRequest;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListWorkersRequest;
-use tokio::sync::Semaphore;
+use tokio::sync::Notify;
 use tokio::time::sleep;
 use url::Url;
 
@@ -151,8 +151,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         Ok(().into())
     });
 
-    let acts_started = Arc::new(Semaphore::const_new(0));
-    let acts_done = Arc::new(Semaphore::const_new(0));
+    let acts_started = Arc::new(Notify::new());
+    let acts_done = Arc::new(Notify::new());
 
     let acts_started_act = acts_started.clone();
     let acts_done_act = acts_done.clone();
@@ -160,9 +160,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         let acts_started = acts_started_act.clone();
         let acts_done = acts_done_act.clone();
         async move {
-            acts_started.add_permits(1);
-            let permit = acts_done.acquire().await.unwrap();
-            permit.forget();
+            acts_started.notify_one();
+            acts_done.notified().await;
             Ok(i)
         }
     });
@@ -177,8 +176,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let test_fut = async {
         // Give enough time to ensure heartbeat interval has been hit
         tokio::time::sleep(Duration::from_millis(110)).await;
-        let permit = acts_started.acquire().await.unwrap();
-        permit.forget();
+        acts_started.notified().await;
         let client = starter.get_client().await;
         let mut raw_client = (*client).clone();
         let workers_list = WorkflowService::list_workers(
@@ -210,7 +208,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             worker_instance_key.to_string()
         );
         in_activity_checks(heartbeat, &start_time, &heartbeat_time);
-        acts_done.add_permits(1);
+        acts_done.notify_one();
     };
 
     let runner = async move {
@@ -542,10 +540,10 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let client = starter.get_client().await;
     let client_for_orchestrator = client.clone();
 
-    static HISTORY_WF1_ACTIVITY_STARTED: Semaphore = Semaphore::const_new(0);
-    static HISTORY_WF1_ACTIVITY_FINISH: Semaphore = Semaphore::const_new(0);
-    static HISTORY_WF2_ACTIVITY_STARTED: Semaphore = Semaphore::const_new(0);
-    static HISTORY_WF2_ACTIVITY_FINISH: Semaphore = Semaphore::const_new(0);
+    static HISTORY_WF1_ACTIVITY_STARTED: Notify = Notify::const_new();
+    static HISTORY_WF1_ACTIVITY_FINISH: Notify = Notify::const_new();
+    static HISTORY_WF2_ACTIVITY_STARTED: Notify = Notify::const_new();
+    static HISTORY_WF2_ACTIVITY_FINISH: Notify = Notify::const_new();
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let wf_marker = ctx
@@ -569,14 +567,12 @@ async fn worker_heartbeat_sticky_cache_miss() {
         |_ctx: ActContext, marker: String| async move {
             match marker.as_str() {
                 "wf1" => {
-                    HISTORY_WF1_ACTIVITY_STARTED.add_permits(1);
-                    let permit = HISTORY_WF1_ACTIVITY_FINISH.acquire().await.unwrap();
-                    permit.forget();
+                    HISTORY_WF1_ACTIVITY_STARTED.notify_one();
+                    HISTORY_WF1_ACTIVITY_FINISH.notified().await;
                 }
                 "wf2" => {
-                    HISTORY_WF2_ACTIVITY_STARTED.add_permits(1);
-                    let permit = HISTORY_WF2_ACTIVITY_FINISH.acquire().await.unwrap();
-                    permit.forget();
+                    HISTORY_WF2_ACTIVITY_STARTED.notify_one();
+                    HISTORY_WF2_ACTIVITY_FINISH.notified().await;
                 }
                 _ => {}
             }
@@ -598,8 +594,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .await
             .unwrap();
 
-        let permit = HISTORY_WF1_ACTIVITY_STARTED.acquire().await.unwrap();
-        permit.forget();
+        HISTORY_WF1_ACTIVITY_STARTED.notified().await;
 
         client_for_orchestrator
             .get_workflow_execution_history(wf1_id.clone(), Some(wf1_run.clone()), vec![])
@@ -616,17 +611,16 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .await
             .unwrap();
 
-        let permit = HISTORY_WF2_ACTIVITY_STARTED.acquire().await.unwrap();
-        permit.forget();
+        HISTORY_WF2_ACTIVITY_STARTED.notified().await;
 
-        HISTORY_WF1_ACTIVITY_FINISH.add_permits(1);
+        HISTORY_WF1_ACTIVITY_FINISH.notify_one();
         let handle1 = client_for_orchestrator.get_untyped_workflow_handle(wf1_id, wf1_run);
         handle1
             .get_workflow_result(Default::default())
             .await
             .expect("wf1 result");
 
-        HISTORY_WF2_ACTIVITY_FINISH.add_permits(1);
+        HISTORY_WF2_ACTIVITY_FINISH.notify_one();
         let handle2 = client_for_orchestrator.get_untyped_workflow_handle(wf2_id, wf2_run);
         handle2
             .get_workflow_result(Default::default())
@@ -761,51 +755,46 @@ async fn worker_heartbeat_failure_metrics() {
 
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-
-    let activity_fail = Arc::new(Semaphore::const_new(0));
-    let workflow_fail = Arc::new(Semaphore::const_new(0));
-
-    let activity_fail_clone = activity_fail.clone();
-    let workflow_fail_clone = workflow_fail.clone();
-    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
-        let workflow_fail_clone = workflow_fail_clone.clone();
-        COUNT.fetch_add(1, Ordering::Relaxed);
-        async move {
-            let mut proceed_signal = ctx.make_signal_channel(WORKFLOW_CONTINUE_SIGNAL);
-            let _ = ctx
-                .activity(ActivityOptions {
-                    activity_type: "failing_act".to_string(),
-                    input: "boom".as_json_payload().expect("serialize"),
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    retry_policy: Some(RetryPolicy {
-                        initial_interval: Some(prost_dur!(from_millis(10))),
-                        backoff_coefficient: 1.0,
-                        maximum_attempts: 3,
-                        ..Default::default()
-                    }),
+    static ACT_COUNT: AtomicU64 = AtomicU64::new(0);
+    static WF_COUNT: AtomicU64 = AtomicU64::new(0);
+    static ACT_FAIL: Notify = Notify::const_new();
+    static WF_FAIL: Notify = Notify::const_new();
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        let _ = ctx
+            .activity(ActivityOptions {
+                activity_type: "failing_act".to_string(),
+                input: "boom".as_json_payload().expect("serialize"),
+                start_to_close_timeout: Some(Duration::from_secs(1)),
+                retry_policy: Some(RetryPolicy {
+                    initial_interval: Some(prost_dur!(from_millis(10))),
+                    backoff_coefficient: 1.0,
+                    maximum_attempts: 4,
                     ..Default::default()
-                })
-                .await;
-            if COUNT.load(Ordering::Relaxed) == 1 {
-                workflow_fail_clone.add_permits(1);
-                panic!("expected WF panic");
-            }
-            // Signal here to avoid workflow from completing and shutdown heartbeat from sending
-            // before we check workflow_slots.last_interval_failure_tasks
-            proceed_signal.next().await.unwrap();
-            Ok(().into())
+                }),
+                ..Default::default()
+            })
+            .await;
+
+        if WF_COUNT.load(Ordering::Relaxed) == 0 {
+            WF_COUNT.fetch_add(1, Ordering::Relaxed);
+            WF_FAIL.notify_one();
+            panic!("expected WF panic");
         }
+
+        // Signal here to avoid workflow from completing and shutdown heartbeat from sending
+        // before we check workflow_slots.last_interval_failure_tasks
+        let mut proceed_signal = ctx.make_signal_channel(WORKFLOW_CONTINUE_SIGNAL);
+        proceed_signal.next().await.unwrap();
+        Ok(().into())
     });
-    worker.register_activity("failing_act", move |_ctx: ActContext, _: String| {
-        let activity_fail = activity_fail_clone.clone();
-        async move {
-            if COUNT.load(Ordering::Relaxed) >= 3 {
-                return Ok(());
-            }
-            activity_fail.add_permits(1);
-            Err(anyhow!("Expected error").into())
+
+    worker.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
+        if ACT_COUNT.load(Ordering::Relaxed) == 3 {
+            return Ok(());
         }
+        ACT_COUNT.fetch_add(1, Ordering::Relaxed);
+        ACT_FAIL.notify_one();
+        Err(anyhow!("Expected error").into())
     });
 
     let worker_key = worker_instance_key.to_string();
@@ -813,15 +802,18 @@ async fn worker_heartbeat_failure_metrics() {
         maximum_attempts: 2,
         ..Default::default()
     });
+
     let _ = starter.start_with_worker(wf_name, &mut worker).await;
 
     let test_fut = async {
-        let permit = activity_fail.acquire().await.unwrap();
-        permit.forget();
-        // Gives time for heartbeat to be sent after activity failure
+        ACT_FAIL.notified().await;
+
+        // Give time for heartbeat to reflect activity failure
         tokio::time::sleep(Duration::from_millis(100)).await;
+
         let client = starter.get_client().await;
         let mut raw_client = (*client).clone();
+
         let workers_list = WorkflowService::list_workers(
             &mut raw_client,
             ListWorkersRequest {
@@ -853,9 +845,9 @@ async fn worker_heartbeat_failure_metrics() {
         let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
         assert!(activity_slots.last_interval_failure_tasks >= 1);
 
-        let wf_fail_permit = workflow_fail.acquire().await.unwrap();
-        wf_fail_permit.forget();
-        // Gives time for heartbeat to be sent after workflow failure
+        WF_FAIL.notified().await;
+
+        // Give time for heartbeat to reflect workflow failure
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let workers_list = WorkflowService::list_workers(
@@ -881,6 +873,7 @@ async fn worker_heartbeat_failure_metrics() {
                 }
             })
             .unwrap();
+
         let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
         let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
         assert!(workflow_slots.last_interval_failure_tasks >= 1);
