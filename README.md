@@ -52,6 +52,10 @@ use an already-running server by passing `-s external`.
 
 Run load tests with `cargo test --test heavy_tests`.
 
+NOTE: Integration tests should pass locally, if running on MacOS and you see integration tests consistently failing
+with an error that mentions `Too many open files`, this is likely due to `ulimit -n` being too low. You can raise
+it temporarily (current shell) with `ulimit -n 65535`, or add it to your `~/.zshrc` file to apply to all shells.
+
 ## Formatting
 
 To format all code run:
