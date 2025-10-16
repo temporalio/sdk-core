@@ -18,6 +18,8 @@ pub(crate) use activities::{
     NewLocalAct,
 };
 pub(crate) use wft_poller::WFTPollerShared;
+
+#[allow(unreachable_pub)] // re-exported in test_help::integ_helpers
 pub use workflow::LEGACY_QUERY_ID;
 
 use crate::{

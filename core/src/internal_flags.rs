@@ -18,6 +18,7 @@ use temporal_sdk_core_protos::temporal::api::{
 /// may be removed from the enum. *Importantly*, all variants must be given explicit values, such
 /// that removing older variants does not create any change in existing values. Removed flag
 /// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
+#[allow(unreachable_pub)] // re-exported in test_help::integ_helpers
 #[repr(u32)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug, enum_iterator::Sequence)]
 pub enum CoreInternalFlags {

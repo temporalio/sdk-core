@@ -16,8 +16,8 @@ use std::{
 use temporal_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
     ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
-    OperatorService, RetryClient, RetryConfig, TemporalServiceClientWithMetrics, TestService,
-    TlsConfig, WorkflowService, callback_based,
+    OperatorService, RetryClient, RetryConfig, TemporalServiceClient, TestService, TlsConfig,
+    WorkflowService, callback_based,
 };
 use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;
@@ -79,7 +79,7 @@ pub struct ClientHttpConnectProxyOptions {
     pub password: ByteArrayRef,
 }
 
-type CoreClient = RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>;
+type CoreClient = RetryClient<ConfiguredClient<TemporalServiceClient>>;
 
 pub struct Client {
     pub(crate) runtime: Runtime,
@@ -528,16 +528,6 @@ pub extern "C" fn temporal_core_client_rpc_call(
     });
 }
 
-macro_rules! rpc_call {
-    ($client:ident, $call:ident, $call_name:ident) => {
-        if $call.retry {
-            rpc_resp($client.$call_name(rpc_req($call)?).await)
-        } else {
-            rpc_resp($client.into_inner().$call_name(rpc_req($call)?).await)
-        }
-    };
-}
-
 macro_rules! rpc_call_on_trait {
     ($client:ident, $call:ident, $trait:tt, $call_name:ident) => {
         if $call.retry {
@@ -555,115 +545,307 @@ async fn call_workflow_service(
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
-        "CountWorkflowExecutions" => rpc_call!(client, call, count_workflow_executions),
-        "CreateSchedule" => rpc_call!(client, call, create_schedule),
-        "CreateWorkflowRule" => rpc_call!(client, call, create_workflow_rule),
-        "DeleteSchedule" => rpc_call!(client, call, delete_schedule),
-        "DeleteWorkerDeployment" => rpc_call!(client, call, delete_worker_deployment),
+        "CountWorkflowExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
+        }
+        "CreateSchedule" => rpc_call_on_trait!(client, call, WorkflowService, create_schedule),
+        "CreateWorkflowRule" => {
+            rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
+        }
+        "DeleteSchedule" => rpc_call_on_trait!(client, call, WorkflowService, delete_schedule),
+        "DeleteWorkerDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_worker_deployment)
+        }
         "DeleteWorkerDeploymentVersion" => {
-            rpc_call!(client, call, delete_worker_deployment_version)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                delete_worker_deployment_version
+            )
         }
-        "DeleteWorkflowExecution" => rpc_call!(client, call, delete_workflow_execution),
-        "DeleteWorkflowRule" => rpc_call!(client, call, delete_workflow_rule),
-        "DeprecateNamespace" => rpc_call!(client, call, deprecate_namespace),
-        "DescribeBatchOperation" => rpc_call!(client, call, describe_batch_operation),
-        "DescribeDeployment" => rpc_call!(client, call, describe_deployment),
-        "DescribeNamespace" => rpc_call!(client, call, describe_namespace),
-        "DescribeSchedule" => rpc_call!(client, call, describe_schedule),
-        "DescribeTaskQueue" => rpc_call!(client, call, describe_task_queue),
-        "DescribeWorkerDeployment" => rpc_call!(client, call, describe_worker_deployment),
+        "DeleteWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_workflow_execution)
+        }
+        "DeleteWorkflowRule" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_workflow_rule)
+        }
+        "DeprecateNamespace" => {
+            rpc_call_on_trait!(client, call, WorkflowService, deprecate_namespace)
+        }
+        "DescribeBatchOperation" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_batch_operation)
+        }
+        "DescribeDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_deployment)
+        }
+        "DescribeNamespace" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_namespace)
+        }
+        "DescribeSchedule" => rpc_call_on_trait!(client, call, WorkflowService, describe_schedule),
+        "DescribeTaskQueue" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_task_queue)
+        }
+        "DescribeWorkerDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_worker_deployment)
+        }
         "DescribeWorkerDeploymentVersion" => {
-            rpc_call!(client, call, describe_worker_deployment_version)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                describe_worker_deployment_version
+            )
         }
-        "DescribeWorkflowExecution" => rpc_call!(client, call, describe_workflow_execution),
-        "DescribeWorkflowRule" => rpc_call!(client, call, describe_workflow_rule),
-        "ExecuteMultiOperation" => rpc_call!(client, call, execute_multi_operation),
-        "FetchWorkerConfig" => rpc_call!(client, call, fetch_worker_config),
-        "GetClusterInfo" => rpc_call!(client, call, get_cluster_info),
-        "GetCurrentDeployment" => rpc_call!(client, call, get_current_deployment),
-        "GetDeploymentReachability" => rpc_call!(client, call, get_deployment_reachability),
-        "GetSearchAttributes" => rpc_call!(client, call, get_search_attributes),
-        "GetSystemInfo" => rpc_call!(client, call, get_system_info),
+        "DescribeWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_workflow_execution)
+        }
+        "DescribeWorkflowRule" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_workflow_rule)
+        }
+        "ExecuteMultiOperation" => {
+            rpc_call_on_trait!(client, call, WorkflowService, execute_multi_operation)
+        }
+        "FetchWorkerConfig" => {
+            rpc_call_on_trait!(client, call, WorkflowService, fetch_worker_config)
+        }
+        "GetClusterInfo" => rpc_call_on_trait!(client, call, WorkflowService, get_cluster_info),
+        "GetCurrentDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, get_current_deployment)
+        }
+        "GetDeploymentReachability" => {
+            rpc_call_on_trait!(client, call, WorkflowService, get_deployment_reachability)
+        }
+        "GetSearchAttributes" => {
+            rpc_call_on_trait!(client, call, WorkflowService, get_search_attributes)
+        }
+        "GetSystemInfo" => rpc_call_on_trait!(client, call, WorkflowService, get_system_info),
         "GetWorkerBuildIdCompatibility" => {
-            rpc_call!(client, call, get_worker_build_id_compatibility)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                get_worker_build_id_compatibility
+            )
         }
         "GetWorkerTaskReachability" => {
-            rpc_call!(client, call, get_worker_task_reachability)
+            rpc_call_on_trait!(client, call, WorkflowService, get_worker_task_reachability)
         }
-        "GetWorkerVersioningRules" => rpc_call!(client, call, get_worker_versioning_rules),
-        "GetWorkflowExecutionHistory" => rpc_call!(client, call, get_workflow_execution_history),
+        "GetWorkerVersioningRules" => {
+            rpc_call_on_trait!(client, call, WorkflowService, get_worker_versioning_rules)
+        }
+        "GetWorkflowExecutionHistory" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            get_workflow_execution_history
+        ),
         "GetWorkflowExecutionHistoryReverse" => {
-            rpc_call!(client, call, get_workflow_execution_history_reverse)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                get_workflow_execution_history_reverse
+            )
         }
         "ListArchivedWorkflowExecutions" => {
-            rpc_call!(client, call, list_archived_workflow_executions)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                list_archived_workflow_executions
+            )
         }
-        "ListBatchOperations" => rpc_call!(client, call, list_batch_operations),
-        "ListClosedWorkflowExecutions" => rpc_call!(client, call, list_closed_workflow_executions),
-        "ListDeployments" => rpc_call!(client, call, list_deployments),
-        "ListNamespaces" => rpc_call!(client, call, list_namespaces),
-        "ListOpenWorkflowExecutions" => rpc_call!(client, call, list_open_workflow_executions),
-        "ListScheduleMatchingTimes" => rpc_call!(client, call, list_schedule_matching_times),
-        "ListSchedules" => rpc_call!(client, call, list_schedules),
-        "ListTaskQueuePartitions" => rpc_call!(client, call, list_task_queue_partitions),
-        "ListWorkerDeployments" => rpc_call!(client, call, list_worker_deployments),
-        "ListWorkers" => rpc_call!(client, call, list_workers),
-        "ListWorkflowExecutions" => rpc_call!(client, call, list_workflow_executions),
-        "ListWorkflowRules" => rpc_call!(client, call, list_workflow_rules),
-        "PatchSchedule" => rpc_call!(client, call, patch_schedule),
-        "PauseActivity" => rpc_call!(client, call, pause_activity),
-        "PollActivityTaskQueue" => rpc_call!(client, call, poll_activity_task_queue),
-        "PollNexusTaskQueue" => rpc_call!(client, call, poll_nexus_task_queue),
-        "PollWorkflowExecutionUpdate" => rpc_call!(client, call, poll_workflow_execution_update),
-        "PollWorkflowTaskQueue" => rpc_call!(client, call, poll_workflow_task_queue),
-        "QueryWorkflow" => rpc_call!(client, call, query_workflow),
-        "RecordActivityTaskHeartbeat" => rpc_call!(client, call, record_activity_task_heartbeat),
+        "ListBatchOperations" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_batch_operations)
+        }
+        "ListClosedWorkflowExecutions" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            list_closed_workflow_executions
+        ),
+        "ListDeployments" => rpc_call_on_trait!(client, call, WorkflowService, list_deployments),
+        "ListNamespaces" => rpc_call_on_trait!(client, call, WorkflowService, list_namespaces),
+        "ListOpenWorkflowExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_open_workflow_executions)
+        }
+        "ListScheduleMatchingTimes" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_schedule_matching_times)
+        }
+        "ListSchedules" => rpc_call_on_trait!(client, call, WorkflowService, list_schedules),
+        "ListTaskQueuePartitions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_task_queue_partitions)
+        }
+        "ListWorkerDeployments" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_worker_deployments)
+        }
+        "ListWorkers" => rpc_call_on_trait!(client, call, WorkflowService, list_workers),
+        "ListWorkflowExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_workflow_executions)
+        }
+        "ListWorkflowRules" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_workflow_rules)
+        }
+        "PatchSchedule" => rpc_call_on_trait!(client, call, WorkflowService, patch_schedule),
+        "PauseActivity" => rpc_call_on_trait!(client, call, WorkflowService, pause_activity),
+        "PollActivityTaskQueue" => {
+            rpc_call_on_trait!(client, call, WorkflowService, poll_activity_task_queue)
+        }
+        "PollNexusTaskQueue" => {
+            rpc_call_on_trait!(client, call, WorkflowService, poll_nexus_task_queue)
+        }
+        "PollWorkflowExecutionUpdate" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            poll_workflow_execution_update
+        ),
+        "PollWorkflowTaskQueue" => {
+            rpc_call_on_trait!(client, call, WorkflowService, poll_workflow_task_queue)
+        }
+        "QueryWorkflow" => rpc_call_on_trait!(client, call, WorkflowService, query_workflow),
+        "RecordActivityTaskHeartbeat" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            record_activity_task_heartbeat
+        ),
         "RecordActivityTaskHeartbeatById" => {
-            rpc_call!(client, call, record_activity_task_heartbeat_by_id)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                record_activity_task_heartbeat_by_id
+            )
         }
-        "RecordWorkerHeartbeat" => rpc_call!(client, call, record_worker_heartbeat),
-        "RegisterNamespace" => rpc_call!(client, call, register_namespace),
+        "RecordWorkerHeartbeat" => {
+            rpc_call_on_trait!(client, call, WorkflowService, record_worker_heartbeat)
+        }
+        "RegisterNamespace" => {
+            rpc_call_on_trait!(client, call, WorkflowService, register_namespace)
+        }
         "RequestCancelWorkflowExecution" => {
-            rpc_call!(client, call, request_cancel_workflow_execution)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_workflow_execution
+            )
         }
-        "ResetActivity" => rpc_call!(client, call, reset_activity),
-        "ResetStickyTaskQueue" => rpc_call!(client, call, reset_sticky_task_queue),
-        "ResetWorkflowExecution" => rpc_call!(client, call, reset_workflow_execution),
-        "RespondActivityTaskCanceled" => rpc_call!(client, call, respond_activity_task_canceled),
+        "ResetActivity" => rpc_call_on_trait!(client, call, WorkflowService, reset_activity),
+        "ResetStickyTaskQueue" => {
+            rpc_call_on_trait!(client, call, WorkflowService, reset_sticky_task_queue)
+        }
+        "ResetWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, reset_workflow_execution)
+        }
+        "RespondActivityTaskCanceled" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            respond_activity_task_canceled
+        ),
         "RespondActivityTaskCanceledById" => {
-            rpc_call!(client, call, respond_activity_task_canceled_by_id)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                respond_activity_task_canceled_by_id
+            )
         }
-        "RespondActivityTaskCompleted" => rpc_call!(client, call, respond_activity_task_completed),
+        "RespondActivityTaskCompleted" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            respond_activity_task_completed
+        ),
         "RespondActivityTaskCompletedById" => {
-            rpc_call!(client, call, respond_activity_task_completed_by_id)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                respond_activity_task_completed_by_id
+            )
         }
-        "RespondActivityTaskFailed" => rpc_call!(client, call, respond_activity_task_failed),
+        "RespondActivityTaskFailed" => {
+            rpc_call_on_trait!(client, call, WorkflowService, respond_activity_task_failed)
+        }
         "RespondActivityTaskFailedById" => {
-            rpc_call!(client, call, respond_activity_task_failed_by_id)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                respond_activity_task_failed_by_id
+            )
         }
-        "RespondNexusTaskCompleted" => rpc_call!(client, call, respond_nexus_task_completed),
-        "RespondNexusTaskFailed" => rpc_call!(client, call, respond_nexus_task_failed),
-        "RespondQueryTaskCompleted" => rpc_call!(client, call, respond_query_task_completed),
-        "RespondWorkflowTaskCompleted" => rpc_call!(client, call, respond_workflow_task_completed),
-        "RespondWorkflowTaskFailed" => rpc_call!(client, call, respond_workflow_task_failed),
-        "ScanWorkflowExecutions" => rpc_call!(client, call, scan_workflow_executions),
-        "SetCurrentDeployment" => rpc_call!(client, call, set_current_deployment),
+        "RespondNexusTaskCompleted" => {
+            rpc_call_on_trait!(client, call, WorkflowService, respond_nexus_task_completed)
+        }
+        "RespondNexusTaskFailed" => {
+            rpc_call_on_trait!(client, call, WorkflowService, respond_nexus_task_failed)
+        }
+        "RespondQueryTaskCompleted" => {
+            rpc_call_on_trait!(client, call, WorkflowService, respond_query_task_completed)
+        }
+        "RespondWorkflowTaskCompleted" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            respond_workflow_task_completed
+        ),
+        "RespondWorkflowTaskFailed" => {
+            rpc_call_on_trait!(client, call, WorkflowService, respond_workflow_task_failed)
+        }
+        "ScanWorkflowExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, scan_workflow_executions)
+        }
+        "SetCurrentDeployment" => {
+            rpc_call_on_trait!(client, call, WorkflowService, set_current_deployment)
+        }
         "SetWorkerDeploymentCurrentVersion" => {
-            rpc_call!(client, call, set_worker_deployment_current_version)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                set_worker_deployment_current_version
+            )
         }
         "SetWorkerDeploymentRampingVersion" => {
-            rpc_call!(client, call, set_worker_deployment_ramping_version)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                set_worker_deployment_ramping_version
+            )
         }
-        "ShutdownWorker" => rpc_call!(client, call, shutdown_worker),
+        "ShutdownWorker" => rpc_call_on_trait!(client, call, WorkflowService, shutdown_worker),
         "SignalWithStartWorkflowExecution" => {
-            rpc_call!(client, call, signal_with_start_workflow_execution)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                signal_with_start_workflow_execution
+            )
         }
-        "SignalWorkflowExecution" => rpc_call!(client, call, signal_workflow_execution),
-        "StartWorkflowExecution" => rpc_call!(client, call, start_workflow_execution),
-        "StartBatchOperation" => rpc_call!(client, call, start_batch_operation),
-        "StopBatchOperation" => rpc_call!(client, call, stop_batch_operation),
-        "TerminateWorkflowExecution" => rpc_call!(client, call, terminate_workflow_execution),
-        "TriggerWorkflowRule" => rpc_call!(client, call, trigger_workflow_rule),
+        "SignalWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, signal_workflow_execution)
+        }
+        "StartWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
+        }
+        "StartBatchOperation" => {
+            rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
+        }
+        "StopBatchOperation" => {
+            rpc_call_on_trait!(client, call, WorkflowService, stop_batch_operation)
+        }
+        "TerminateWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, terminate_workflow_execution)
+        }
+        "TriggerWorkflowRule" => {
+            rpc_call_on_trait!(client, call, WorkflowService, trigger_workflow_rule)
+        }
         "UnpauseActivity" => {
             rpc_call_on_trait!(client, call, WorkflowService, unpause_activity)
         }
@@ -671,19 +853,45 @@ async fn call_workflow_service(
             rpc_call_on_trait!(client, call, WorkflowService, update_activity_options)
         }
         "UpdateNamespace" => rpc_call_on_trait!(client, call, WorkflowService, update_namespace),
-        "UpdateSchedule" => rpc_call!(client, call, update_schedule),
-        "UpdateTaskQueueConfig" => rpc_call!(client, call, update_task_queue_config),
-        "UpdateWorkerConfig" => rpc_call!(client, call, update_worker_config),
-        "UpdateWorkerDeploymentVersionMetadata" => {
-            rpc_call!(client, call, update_worker_deployment_version_metadata)
+        "UpdateSchedule" => rpc_call_on_trait!(client, call, WorkflowService, update_schedule),
+        "UpdateTaskQueueConfig" => {
+            rpc_call_on_trait!(client, call, WorkflowService, update_task_queue_config)
         }
-        "UpdateWorkerVersioningRules" => rpc_call!(client, call, update_worker_versioning_rules),
-        "UpdateWorkflowExecution" => rpc_call!(client, call, update_workflow_execution),
+        "UpdateWorkerConfig" => {
+            rpc_call_on_trait!(client, call, WorkflowService, update_worker_config)
+        }
+        "UpdateWorkerDeploymentVersionMetadata" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                update_worker_deployment_version_metadata
+            )
+        }
+        "UpdateWorkerVersioningRules" => rpc_call_on_trait!(
+            client,
+            call,
+            WorkflowService,
+            update_worker_versioning_rules
+        ),
+        "UpdateWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, update_workflow_execution)
+        }
         "UpdateWorkflowExecutionOptions" => {
-            rpc_call!(client, call, update_workflow_execution_options)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                update_workflow_execution_options
+            )
         }
         "UpdateWorkerBuildIdCompatibility" => {
-            rpc_call!(client, call, update_worker_build_id_compatibility)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                update_worker_build_id_compatibility
+            )
         }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
@@ -696,8 +904,12 @@ async fn call_operator_service(
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
-        "AddOrUpdateRemoteCluster" => rpc_call!(client, call, add_or_update_remote_cluster),
-        "AddSearchAttributes" => rpc_call!(client, call, add_search_attributes),
+        "AddOrUpdateRemoteCluster" => {
+            rpc_call_on_trait!(client, call, OperatorService, add_or_update_remote_cluster)
+        }
+        "AddSearchAttributes" => {
+            rpc_call_on_trait!(client, call, OperatorService, add_search_attributes)
+        }
         "CreateNexusEndpoint" => {
             rpc_call_on_trait!(client, call, OperatorService, create_nexus_endpoint)
         }
@@ -705,13 +917,20 @@ async fn call_operator_service(
         "DeleteNexusEndpoint" => {
             rpc_call_on_trait!(client, call, OperatorService, delete_nexus_endpoint)
         }
-        "DeleteWorkflowExecution" => rpc_call!(client, call, delete_workflow_execution),
         "GetNexusEndpoint" => rpc_call_on_trait!(client, call, OperatorService, get_nexus_endpoint),
-        "ListClusters" => rpc_call!(client, call, list_clusters),
-        "ListNexusEndpoints" => rpc_call!(client, call, list_nexus_endpoints),
-        "ListSearchAttributes" => rpc_call!(client, call, list_search_attributes),
-        "RemoveRemoteCluster" => rpc_call!(client, call, remove_remote_cluster),
-        "RemoveSearchAttributes" => rpc_call!(client, call, remove_search_attributes),
+        "ListClusters" => rpc_call_on_trait!(client, call, OperatorService, list_clusters),
+        "ListNexusEndpoints" => {
+            rpc_call_on_trait!(client, call, OperatorService, list_nexus_endpoints)
+        }
+        "ListSearchAttributes" => {
+            rpc_call_on_trait!(client, call, OperatorService, list_search_attributes)
+        }
+        "RemoveRemoteCluster" => {
+            rpc_call_on_trait!(client, call, OperatorService, remove_remote_cluster)
+        }
+        "RemoveSearchAttributes" => {
+            rpc_call_on_trait!(client, call, OperatorService, remove_search_attributes)
+        }
         "UpdateNexusEndpoint" => {
             rpc_call_on_trait!(client, call, OperatorService, update_nexus_endpoint)
         }
@@ -723,68 +942,116 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
-        "AddNamespaceRegion" => rpc_call!(client, call, add_namespace_region),
-        "AddUserGroupMember" => rpc_call!(client, call, add_user_group_member),
-        "CreateApiKey" => rpc_call!(client, call, create_api_key),
-        "CreateNamespace" => rpc_call!(client, call, create_namespace),
-        "CreateNamespaceExportSink" => rpc_call!(client, call, create_namespace_export_sink),
+        "AddNamespaceRegion" => {
+            rpc_call_on_trait!(client, call, CloudService, add_namespace_region)
+        }
+        "AddUserGroupMember" => {
+            rpc_call_on_trait!(client, call, CloudService, add_user_group_member)
+        }
+        "CreateApiKey" => rpc_call_on_trait!(client, call, CloudService, create_api_key),
+        "CreateNamespace" => rpc_call_on_trait!(client, call, CloudService, create_namespace),
+        "CreateNamespaceExportSink" => {
+            rpc_call_on_trait!(client, call, CloudService, create_namespace_export_sink)
+        }
         "CreateNexusEndpoint" => {
             rpc_call_on_trait!(client, call, CloudService, create_nexus_endpoint)
         }
-        "CreateServiceAccount" => rpc_call!(client, call, create_service_account),
-        "CreateUserGroup" => rpc_call!(client, call, create_user_group),
-        "CreateUser" => rpc_call!(client, call, create_user),
-        "DeleteApiKey" => rpc_call!(client, call, delete_api_key),
+        "CreateServiceAccount" => {
+            rpc_call_on_trait!(client, call, CloudService, create_service_account)
+        }
+        "CreateUserGroup" => rpc_call_on_trait!(client, call, CloudService, create_user_group),
+        "CreateUser" => rpc_call_on_trait!(client, call, CloudService, create_user),
+        "DeleteApiKey" => rpc_call_on_trait!(client, call, CloudService, delete_api_key),
         "DeleteNamespace" => rpc_call_on_trait!(client, call, CloudService, delete_namespace),
-        "DeleteNamespaceExportSink" => rpc_call!(client, call, delete_namespace_export_sink),
-        "DeleteNamespaceRegion" => rpc_call!(client, call, delete_namespace_region),
+        "DeleteNamespaceExportSink" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_namespace_export_sink)
+        }
+        "DeleteNamespaceRegion" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_namespace_region)
+        }
         "DeleteNexusEndpoint" => {
             rpc_call_on_trait!(client, call, CloudService, delete_nexus_endpoint)
         }
-        "DeleteServiceAccount" => rpc_call!(client, call, delete_service_account),
-        "DeleteUserGroup" => rpc_call!(client, call, delete_user_group),
-        "DeleteUser" => rpc_call!(client, call, delete_user),
-        "FailoverNamespaceRegion" => rpc_call!(client, call, failover_namespace_region),
-        "GetAccount" => rpc_call!(client, call, get_account),
-        "GetApiKey" => rpc_call!(client, call, get_api_key),
-        "GetApiKeys" => rpc_call!(client, call, get_api_keys),
-        "GetAsyncOperation" => rpc_call!(client, call, get_async_operation),
-        "GetNamespace" => rpc_call!(client, call, get_namespace),
-        "GetNamespaceExportSink" => rpc_call!(client, call, get_namespace_export_sink),
-        "GetNamespaceExportSinks" => rpc_call!(client, call, get_namespace_export_sinks),
-        "GetNamespaces" => rpc_call!(client, call, get_namespaces),
+        "DeleteServiceAccount" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_service_account)
+        }
+        "DeleteUserGroup" => rpc_call_on_trait!(client, call, CloudService, delete_user_group),
+        "DeleteUser" => rpc_call_on_trait!(client, call, CloudService, delete_user),
+        "FailoverNamespaceRegion" => {
+            rpc_call_on_trait!(client, call, CloudService, failover_namespace_region)
+        }
+        "GetAccount" => rpc_call_on_trait!(client, call, CloudService, get_account),
+        "GetApiKey" => rpc_call_on_trait!(client, call, CloudService, get_api_key),
+        "GetApiKeys" => rpc_call_on_trait!(client, call, CloudService, get_api_keys),
+        "GetAsyncOperation" => rpc_call_on_trait!(client, call, CloudService, get_async_operation),
+        "GetNamespace" => rpc_call_on_trait!(client, call, CloudService, get_namespace),
+        "GetNamespaceExportSink" => {
+            rpc_call_on_trait!(client, call, CloudService, get_namespace_export_sink)
+        }
+        "GetNamespaceExportSinks" => {
+            rpc_call_on_trait!(client, call, CloudService, get_namespace_export_sinks)
+        }
+        "GetNamespaces" => rpc_call_on_trait!(client, call, CloudService, get_namespaces),
         "GetNexusEndpoint" => rpc_call_on_trait!(client, call, CloudService, get_nexus_endpoint),
-        "GetNexusEndpoints" => rpc_call!(client, call, get_nexus_endpoints),
-        "GetRegion" => rpc_call!(client, call, get_region),
-        "GetRegions" => rpc_call!(client, call, get_regions),
-        "GetServiceAccount" => rpc_call!(client, call, get_service_account),
-        "GetServiceAccounts" => rpc_call!(client, call, get_service_accounts),
-        "GetUsage" => rpc_call!(client, call, get_usage),
-        "GetUserGroup" => rpc_call!(client, call, get_user_group),
-        "GetUserGroupMembers" => rpc_call!(client, call, get_user_group_members),
-        "GetUserGroups" => rpc_call!(client, call, get_user_groups),
-        "GetUser" => rpc_call!(client, call, get_user),
-        "GetUsers" => rpc_call!(client, call, get_users),
-        "RemoveUserGroupMember" => rpc_call!(client, call, remove_user_group_member),
-        "RenameCustomSearchAttribute" => rpc_call!(client, call, rename_custom_search_attribute),
-        "SetUserGroupNamespaceAccess" => rpc_call!(client, call, set_user_group_namespace_access),
-        "SetUserNamespaceAccess" => rpc_call!(client, call, set_user_namespace_access),
-        "UpdateAccount" => rpc_call!(client, call, update_account),
-        "UpdateApiKey" => rpc_call!(client, call, update_api_key),
+        "GetNexusEndpoints" => rpc_call_on_trait!(client, call, CloudService, get_nexus_endpoints),
+        "GetRegion" => rpc_call_on_trait!(client, call, CloudService, get_region),
+        "GetRegions" => rpc_call_on_trait!(client, call, CloudService, get_regions),
+        "GetServiceAccount" => rpc_call_on_trait!(client, call, CloudService, get_service_account),
+        "GetServiceAccounts" => {
+            rpc_call_on_trait!(client, call, CloudService, get_service_accounts)
+        }
+        "GetUsage" => rpc_call_on_trait!(client, call, CloudService, get_usage),
+        "GetUserGroup" => rpc_call_on_trait!(client, call, CloudService, get_user_group),
+        "GetUserGroupMembers" => {
+            rpc_call_on_trait!(client, call, CloudService, get_user_group_members)
+        }
+        "GetUserGroups" => rpc_call_on_trait!(client, call, CloudService, get_user_groups),
+        "GetUser" => rpc_call_on_trait!(client, call, CloudService, get_user),
+        "GetUsers" => rpc_call_on_trait!(client, call, CloudService, get_users),
+        "RemoveUserGroupMember" => {
+            rpc_call_on_trait!(client, call, CloudService, remove_user_group_member)
+        }
+        "RenameCustomSearchAttribute" => {
+            rpc_call_on_trait!(client, call, CloudService, rename_custom_search_attribute)
+        }
+        "SetUserGroupNamespaceAccess" => {
+            rpc_call_on_trait!(client, call, CloudService, set_user_group_namespace_access)
+        }
+        "SetUserNamespaceAccess" => {
+            rpc_call_on_trait!(client, call, CloudService, set_user_namespace_access)
+        }
+        "UpdateAccount" => rpc_call_on_trait!(client, call, CloudService, update_account),
+        "UpdateApiKey" => rpc_call_on_trait!(client, call, CloudService, update_api_key),
         "UpdateNamespace" => rpc_call_on_trait!(client, call, CloudService, update_namespace),
-        "UpdateNamespaceExportSink" => rpc_call!(client, call, update_namespace_export_sink),
+        "UpdateNamespaceExportSink" => {
+            rpc_call_on_trait!(client, call, CloudService, update_namespace_export_sink)
+        }
         "UpdateNexusEndpoint" => {
             rpc_call_on_trait!(client, call, CloudService, update_nexus_endpoint)
         }
-        "UpdateServiceAccount" => rpc_call!(client, call, update_service_account),
-        "UpdateUserGroup" => rpc_call!(client, call, update_user_group),
-        "UpdateUser" => rpc_call!(client, call, update_user),
-        "ValidateNamespaceExportSink" => rpc_call!(client, call, validate_namespace_export_sink),
-        "UpdateNamespaceTags" => rpc_call!(client, call, update_namespace_tags),
-        "CreateConnectivityRule" => rpc_call!(client, call, create_connectivity_rule),
-        "GetConnectivityRule" => rpc_call!(client, call, get_connectivity_rule),
-        "GetConnectivityRules" => rpc_call!(client, call, get_connectivity_rules),
-        "DeleteConnectivityRule" => rpc_call!(client, call, delete_connectivity_rule),
+        "UpdateServiceAccount" => {
+            rpc_call_on_trait!(client, call, CloudService, update_service_account)
+        }
+        "UpdateUserGroup" => rpc_call_on_trait!(client, call, CloudService, update_user_group),
+        "UpdateUser" => rpc_call_on_trait!(client, call, CloudService, update_user),
+        "ValidateNamespaceExportSink" => {
+            rpc_call_on_trait!(client, call, CloudService, validate_namespace_export_sink)
+        }
+        "UpdateNamespaceTags" => {
+            rpc_call_on_trait!(client, call, CloudService, update_namespace_tags)
+        }
+        "CreateConnectivityRule" => {
+            rpc_call_on_trait!(client, call, CloudService, create_connectivity_rule)
+        }
+        "GetConnectivityRule" => {
+            rpc_call_on_trait!(client, call, CloudService, get_connectivity_rule)
+        }
+        "GetConnectivityRules" => {
+            rpc_call_on_trait!(client, call, CloudService, get_connectivity_rules)
+        }
+        "DeleteConnectivityRule" => {
+            rpc_call_on_trait!(client, call, CloudService, delete_connectivity_rule)
+        }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
@@ -793,12 +1060,14 @@ async fn call_test_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
-        "GetCurrentTime" => rpc_call!(client, call, get_current_time),
-        "LockTimeSkipping" => rpc_call!(client, call, lock_time_skipping),
-        "SleepUntil" => rpc_call!(client, call, sleep_until),
-        "Sleep" => rpc_call!(client, call, sleep),
-        "UnlockTimeSkippingWithSleep" => rpc_call!(client, call, unlock_time_skipping_with_sleep),
-        "UnlockTimeSkipping" => rpc_call!(client, call, unlock_time_skipping),
+        "GetCurrentTime" => rpc_call_on_trait!(client, call, TestService, get_current_time),
+        "LockTimeSkipping" => rpc_call_on_trait!(client, call, TestService, lock_time_skipping),
+        "SleepUntil" => rpc_call_on_trait!(client, call, TestService, sleep_until),
+        "Sleep" => rpc_call_on_trait!(client, call, TestService, sleep),
+        "UnlockTimeSkippingWithSleep" => {
+            rpc_call_on_trait!(client, call, TestService, unlock_time_skipping_with_sleep)
+        }
+        "UnlockTimeSkipping" => rpc_call_on_trait!(client, call, TestService, unlock_time_skipping),
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
@@ -810,7 +1079,7 @@ async fn call_health_service(
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
-        "Check" => rpc_call!(client, call, check),
+        "Check" => rpc_call_on_trait!(client, call, HealthService, check),
         "Watch" => Err(anyhow::anyhow!(
             "Health service Watch method is not implemented in C bridge"
         )),

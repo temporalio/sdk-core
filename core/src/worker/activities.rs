@@ -333,7 +333,14 @@ impl WorkerActivityTasks {
             if let Some(jh) = act_info.local_timeouts_task {
                 jh.abort()
             };
-            self.heartbeat_manager.evict(task_token.clone()).await;
+            let should_flush = !known_not_found
+                && !matches!(
+                    &status,
+                    aer::Status::Completed(_) | aer::Status::WillCompleteAsync(_)
+                );
+            self.heartbeat_manager
+                .evict(task_token.clone(), should_flush)
+                .await;
 
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
@@ -400,8 +407,6 @@ impl WorkerActivityTasks {
                     }
                 };
 
-                self.complete_notify.notify_waiters();
-
                 if let Some(e) = maybe_net_err {
                     if e.code() == tonic::Code::NotFound {
                         warn!(task_token=?task_token, details=?e, "Activity not found on \
@@ -418,6 +423,8 @@ impl WorkerActivityTasks {
                 &task_token
             );
         }
+
+        self.complete_notify.notify_waiters();
     }
 
     /// Attempt to record an activity heartbeat

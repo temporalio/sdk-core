@@ -434,7 +434,7 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .respond_workflow_task_completed(request)
+            .respond_workflow_task_completed(request.into_request())
             .await?
             .into_inner())
     }
@@ -458,7 +458,8 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                },
+                }
+                .into_request(),
             )
             .await?
             .into_inner())
@@ -472,12 +473,15 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                task_token: task_token.0,
-                response: Some(response),
-            })
+            .respond_nexus_task_completed(
+                RespondNexusTaskCompletedRequest {
+                    namespace: self.namespace.clone(),
+                    identity: self.identity.clone(),
+                    task_token: task_token.0,
+                    response: Some(response),
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -490,12 +494,15 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
-                task_token: task_token.0,
-                details,
-                identity: self.identity.clone(),
-                namespace: self.namespace.clone(),
-            })
+            .record_activity_task_heartbeat(
+                RecordActivityTaskHeartbeatRequest {
+                    task_token: task_token.0,
+                    details,
+                    identity: self.identity.clone(),
+                    namespace: self.namespace.clone(),
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -519,7 +526,8 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                },
+                }
+                .into_request(),
             )
             .await?
             .into_inner())
@@ -546,7 +554,8 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                },
+                }
+                .into_request(),
             )
             .await?
             .into_inner())
@@ -575,7 +584,7 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .respond_workflow_task_failed(request)
+            .respond_workflow_task_failed(request.into_request())
             .await?
             .into_inner())
     }
@@ -588,12 +597,15 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                task_token: task_token.0,
-                error: Some(error),
-            })
+            .respond_nexus_task_failed(
+                RespondNexusTaskFailedRequest {
+                    namespace: self.namespace.clone(),
+                    identity: self.identity.clone(),
+                    task_token: task_token.0,
+                    error: Some(error),
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -607,15 +619,18 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
-                namespace: self.namespace.clone(),
-                execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id: run_id.unwrap_or_default(),
-                }),
-                next_page_token: page_token,
-                ..Default::default()
-            })
+            .get_workflow_execution_history(
+                GetWorkflowExecutionHistoryRequest {
+                    namespace: self.namespace.clone(),
+                    execution: Some(WorkflowExecution {
+                        workflow_id,
+                        run_id: run_id.unwrap_or_default(),
+                    }),
+                    next_page_token: page_token,
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -640,15 +655,18 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .respond_query_task_completed(RespondQueryTaskCompletedRequest {
-                task_token: task_token.into(),
-                completed_type: completed_type as i32,
-                query_result,
-                error_message,
-                namespace: self.namespace.clone(),
-                failure,
-                cause: cause.into(),
-            })
+            .respond_query_task_completed(
+                RespondQueryTaskCompletedRequest {
+                    task_token: task_token.into(),
+                    completed_type: completed_type as i32,
+                    query_result,
+                    error_message,
+                    namespace: self.namespace.clone(),
+                    failure,
+                    cause: cause.into(),
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -658,7 +676,9 @@ impl WorkerClient for WorkerClientBag {
             .client
             .clone()
             .describe_namespace(
-                Namespace::Name(self.namespace.clone()).into_describe_namespace_request(),
+                Namespace::Name(self.namespace.clone())
+                    .into_describe_namespace_request()
+                    .into_request(),
             )
             .await?
             .into_inner())
@@ -674,7 +694,7 @@ impl WorkerClient for WorkerClientBag {
         };
 
         Ok(
-            WorkflowService::shutdown_worker(&mut self.client.clone(), request)
+            WorkflowService::shutdown_worker(&mut self.client.clone(), request.into_request())
                 .await?
                 .into_inner(),
         )
@@ -691,11 +711,14 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .client
             .clone()
-            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: vec![heartbeat],
-            })
+            .record_worker_heartbeat(
+                RecordWorkerHeartbeatRequest {
+                    namespace: self.namespace.clone(),
+                    identity: self.identity.clone(),
+                    worker_heartbeat: vec![heartbeat],
+                }
+                .into_request(),
+            )
             .await?
             .into_inner())
     }
@@ -719,7 +742,7 @@ impl WorkerClient for WorkerClientBag {
 
     fn sdk_name_and_version(&self) -> (String, String) {
         let inner = self.client.get_client().inner_cow();
-        let opts = inner.inner().options();
+        let opts = inner.options();
         (opts.client_name.clone(), opts.client_version.clone())
     }
 

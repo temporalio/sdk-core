@@ -317,7 +317,7 @@ fn test_simple_callback_override() {
             }))
             .unwrap();
         let start_resp = StartWorkflowExecutionResponse::decode(&*start_resp_raw).unwrap();
-        assert!(start_resp.run_id == "run-id for my-workflow-id");
+        assert_eq!(start_resp.run_id, "run-id for my-workflow-id");
 
         // Try a query where a query failure will actually be delivered as failure details.
         // However, we don't currently have temporal_sdk_core_protos::google::rpc::Status in
@@ -336,23 +336,23 @@ fn test_simple_callback_override() {
             .unwrap_err()
             .downcast::<RpcCallError>()
             .unwrap();
-        assert!(query_err.status_code == tonic::Code::Internal as u32);
-        assert!(query_err.message == "query-fail");
-        assert!(
+        assert_eq!(query_err.status_code, tonic::Code::Internal as u32);
+        assert_eq!(query_err.message, "query-fail");
+        assert_eq!(
             Failure::decode(query_err.details.as_ref().unwrap().as_slice())
                 .unwrap()
-                .message
-                == "intentional failure"
+                .message,
+            "intentional failure"
         );
 
         // Confirm we got the expected calls
-        assert!(
-            *CALLBACK_OVERRIDE_CALLS.lock().unwrap()
-                == vec![
-                    "service: temporal.api.workflowservice.v1.WorkflowService, rpc: GetSystemInfo",
-                    "service: temporal.api.workflowservice.v1.WorkflowService, rpc: StartWorkflowExecution",
-                    "service: temporal.api.workflowservice.v1.WorkflowService, rpc: QueryWorkflow"
-                ]
+        assert_eq!(
+            *CALLBACK_OVERRIDE_CALLS.lock().unwrap(),
+            vec![
+                "service: temporal.api.workflowservice.v1.WorkflowService, rpc: GetSystemInfo",
+                "service: temporal.api.workflowservice.v1.WorkflowService, rpc: StartWorkflowExecution",
+                "service: temporal.api.workflowservice.v1.WorkflowService, rpc: QueryWorkflow"
+            ]
         );
     });
 }

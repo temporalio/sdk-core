@@ -1,4 +1,4 @@
-use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowService};
+use crate::WorkflowService;
 use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporal_sdk_core_protos::{
@@ -11,6 +11,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::GetWorkflowExecutionHistoryRequest,
     },
 };
+use tonic::IntoRequest;
 
 /// Enumerates terminal states for a particular workflow execution
 // TODO: Add non-proto failure types, flesh out details, etc.
@@ -81,7 +82,7 @@ impl WorkflowExecutionInfo {
     /// Bind the workflow info to a specific client, turning it into a workflow handle
     pub fn bind_untyped<CT>(self, client: CT) -> UntypedWorkflowHandle<CT>
     where
-        CT: RawClientLike<SvcType = InterceptedMetricsSvc> + Clone,
+        CT: WorkflowService + Clone,
     {
         UntypedWorkflowHandle::new(client, self)
     }
@@ -92,7 +93,7 @@ pub(crate) type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, Vec<Payload>>;
 
 impl<CT, RT> WorkflowHandle<CT, RT>
 where
-    CT: RawClientLike<SvcType = InterceptedMetricsSvc> + Clone,
+    CT: WorkflowService + Clone,
     // TODO: Make more generic, capable of (de)serialization w/ serde
     RT: FromPayloadsExt,
 {
@@ -125,18 +126,21 @@ where
             let server_res = self
                 .client
                 .clone()
-                .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
-                    namespace: self.info.namespace.to_string(),
-                    execution: Some(WorkflowExecution {
-                        workflow_id: self.info.workflow_id.clone(),
-                        run_id: run_id.clone(),
-                    }),
-                    skip_archival: true,
-                    wait_new_event: true,
-                    history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
-                    next_page_token: next_page_tok.clone(),
-                    ..Default::default()
-                })
+                .get_workflow_execution_history(
+                    GetWorkflowExecutionHistoryRequest {
+                        namespace: self.info.namespace.to_string(),
+                        execution: Some(WorkflowExecution {
+                            workflow_id: self.info.workflow_id.clone(),
+                            run_id: run_id.clone(),
+                        }),
+                        skip_archival: true,
+                        wait_new_event: true,
+                        history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
+                        next_page_token: next_page_tok.clone(),
+                        ..Default::default()
+                    }
+                    .into_request(),
+                )
                 .await?
                 .into_inner();
 

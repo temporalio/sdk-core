@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
+crossbeam-utils = "0.8"
 futures-util = { version = "0.3", default-features = false }
 http = "1.3"
 libc = "0.2"
