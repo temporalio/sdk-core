@@ -709,10 +709,6 @@ impl WorkerClient for WorkerClientBag {
         )
     }
 
-    fn replace_client(&self, new_client: Client) {
-        self.client.get_client().replace_client(new_client);
-    }
-
     async fn record_worker_heartbeat(
         &self,
         namespace: String,
