@@ -1,0 +1,12 @@
+error: Duplicate transitions are not allowed!
+ --> tests/fsm_trybuild/dupe_transitions_fail.rs:3:1
+  |
+3 | / fsm! {
+4 | |     name SimpleMachine; command SimpleMachineCommand; error Infallible;
+5 | |
+6 | |     One --(A)--> Two;
+7 | |     One --(A)--> Two;
+8 | | }
+  | |_^
+  |
+  = note: this error originates in the macro `fsm` (in Nightly builds, run with -Z macro-backtrace for more info)

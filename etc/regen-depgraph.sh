@@ -1,5 +1,5 @@
 # Run this from the repo root
 cargo depgraph \
-  --focus temporal-sdk,temporal-sdk-core-protos,temporal-client,temporal-sdk-core-api,temporal-sdk-core,rustfsm \
+  --focus temporalio-sdk,temporalio-common,temporalio-client,temporalio-sdk-core,temporalio-macros,temporalio-sdk-core-c-bridge \
   --dev-deps \
-  | dot -Tsvg > etc/deps.svg
+  | dot -Tsvg > arch_docs/diagrams/deps.svg

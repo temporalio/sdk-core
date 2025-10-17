@@ -1,0 +1,5 @@
+error: Struct variants are not supported for events
+ --> tests/fsm_trybuild/struct_event_variant_fail.rs:6:12
+  |
+6 |     One --(A{foo: String}, on_a)--> Two
+  |            ^
