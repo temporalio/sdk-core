@@ -5,7 +5,7 @@
 use crate::{
     Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
-    metrics::{namespace_kv, task_queue_kv},
+    metrics::namespace_kv,
     worker_registry::{Slot, SlotManager},
 };
 use dyn_clone::DynClone;
@@ -370,22 +370,38 @@ impl RawGrpcCaller for Client {}
 #[derive(Clone, Debug)]
 pub(super) struct AttachMetricLabels {
     pub(super) labels: Vec<MetricKeyValue>,
+    /// If set, this is the normal (non-sticky) task queue name
+    pub(super) normal_task_queue: Option<String>,
+    /// If set, this is the sticky task queue name
+    pub(super) sticky_task_queue: Option<String>,
 }
 impl AttachMetricLabels {
     pub(super) fn new(kvs: impl Into<Vec<MetricKeyValue>>) -> Self {
-        Self { labels: kvs.into() }
+        Self {
+            labels: kvs.into(),
+            normal_task_queue: None,
+            sticky_task_queue: None,
+        }
     }
     pub(super) fn namespace(ns: impl Into<String>) -> Self {
         AttachMetricLabels::new(vec![namespace_kv(ns.into())])
     }
     pub(super) fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
         if let Some(tq) = tq {
-            self.task_q_str(tq.name);
+            if !tq.normal_name.is_empty() {
+                // This is a sticky queue
+                self.sticky_task_queue = Some(tq.name);
+                self.normal_task_queue = Some(tq.normal_name);
+            } else {
+                // This is a normal queue
+                self.normal_task_queue = Some(tq.name);
+            }
         }
         self
     }
     pub(super) fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
-        self.labels.push(task_queue_kv(tq.into()));
+        // When called directly with a string, we assume it's a normal queue
+        self.normal_task_queue = Some(tq.into());
         self
     }
 }

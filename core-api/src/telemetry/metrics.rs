@@ -64,6 +64,7 @@ impl From<&'static str> for MetricParameters {
 pub struct TemporalMeter {
     pub inner: Arc<dyn CoreMeter>,
     pub default_attribs: NewAttributes,
+    pub task_queue_label_strategy: crate::telemetry::TaskQueueLabelStrategy,
 }
 
 impl Deref for TemporalMeter {
