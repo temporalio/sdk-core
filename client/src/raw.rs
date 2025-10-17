@@ -104,7 +104,6 @@ impl<F, Req, Resp> CallShim<F, Req, Resp> {
         }
     }
 }
-
 impl<F, Req, Resp> ErasedCallOp for CallShim<F, Req, Resp>
 where
     Req: Clone + Unpin + Send + Sync + 'static,

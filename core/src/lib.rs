@@ -142,11 +142,8 @@ where
     rwi.into_core_worker()
 }
 
-pub(crate) fn init_worker_client<CT>(
-    namespace: String,
-    client_identity_override: Option<String>,
-    client: CT,
-) -> Client
+pub(crate) fn init_worker_client<CT>(namespace: String,
+                                     client_identity_override: Option<String>,, client: CT) -> Client
 where
     CT: Into<sealed::AnyClient>,
 {
