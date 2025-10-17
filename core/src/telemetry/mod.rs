@@ -40,7 +40,8 @@ use std::{
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
+    CoreLog, CoreTelemetry, Logger, TaskQueueLabelStrategy, TelemetryOptions,
+    TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };
 use tracing::{Level, Subscriber};
@@ -67,6 +68,7 @@ pub struct TelemetryInstance {
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
+    task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 
 impl TelemetryInstance {
@@ -76,6 +78,7 @@ impl TelemetryInstance {
         metric_prefix: String,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
         attach_service_name: bool,
+        task_queue_label_strategy: TaskQueueLabelStrategy,
     ) -> Self {
         Self {
             metric_prefix,
@@ -83,6 +86,7 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             attach_service_name,
+            task_queue_label_strategy,
         }
     }
 
@@ -110,6 +114,7 @@ impl TelemetryInstance {
                 Arc::new(PrefixedMetricsMeter::new(self.metric_prefix.clone(), m))
                     as Arc<dyn CoreMeter>,
                 attribs,
+                self.task_queue_label_strategy,
             )
         })
     }
@@ -119,7 +124,7 @@ impl TelemetryInstance {
         self.metrics.clone().map(|m| {
             let kvs = self.default_kvs();
             let attribs = NewAttributes::new(kvs);
-            TemporalMeter::new(m, attribs)
+            TemporalMeter::new(m, attribs, self.task_queue_label_strategy)
         })
     }
 
@@ -240,6 +245,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
         opts.metric_prefix,
         opts.metrics,
         opts.attach_service_name,
+        opts.task_queue_label_strategy,
     ))
 }
 
