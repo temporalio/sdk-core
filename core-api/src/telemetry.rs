@@ -49,6 +49,9 @@ pub struct TelemetryOptions {
     /// all logging and traces.
     #[builder(setter(strip_option), default)]
     pub subscriber_override: Option<Arc<dyn Subscriber + Send + Sync>>,
+    /// See [TaskQueueLabelStrategy].
+    #[builder(default = "TaskQueueLabelStrategy::UseNormal")]
+    pub task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 impl Debug for TelemetryOptions {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -78,6 +81,16 @@ impl Debug for TelemetryOptions {
             f,
         )
     }
+}
+
+/// Determines how the `task_queue` label value is set on metrics.
+#[derive(Copy, Clone, Debug)]
+#[non_exhaustive]
+pub enum TaskQueueLabelStrategy {
+    /// Always use the normal task queue name, including for actions relating to sticky queues.
+    UseNormal,
+    /// Use the sticky queue name when recording metrics operating on sticky queues.
+    UseNormalAndSticky,
 }
 
 /// Options for exporting to an OpenTelemetry Collector

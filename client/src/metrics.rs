@@ -9,9 +9,12 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, CounterBase, HistogramDuration, HistogramDurationBase, MetricAttributable,
-    MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
+use temporal_sdk_core_api::telemetry::{
+    TaskQueueLabelStrategy,
+    metrics::{
+        CoreMeter, Counter, CounterBase, HistogramDuration, HistogramDurationBase,
+        MetricAttributable, MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
+    },
 };
 use tonic::{Code, body::Body, transport::Channel};
 use tower::Service;
@@ -31,6 +34,7 @@ pub(crate) struct MetricsContext {
     kvs: MetricAttributes,
     poll_is_long: bool,
     instruments: Instruments,
+    task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 #[derive(Clone)]
 struct Instruments {
@@ -46,6 +50,7 @@ struct Instruments {
 impl MetricsContext {
     pub(crate) fn new(tm: TemporalMeter) -> Self {
         let meter = tm.inner;
+        let task_queue_label_strategy = tm.task_queue_label_strategy;
         let kvs = meter.new_attributes(tm.default_attribs);
         let instruments = Instruments {
             svc_request: meter.counter(MetricParameters {
@@ -84,6 +89,7 @@ impl MetricsContext {
             poll_is_long: false,
             instruments,
             meter,
+            task_queue_label_strategy,
         }
     }
 
@@ -250,7 +256,23 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
             .map(|mut m| {
                 // Attach labels from client wrapper
                 if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
-                    m.with_new_attrs(other_labels.labels)
+                    m.with_new_attrs(other_labels.labels);
+
+                    if other_labels.normal_task_queue.is_some()
+                        || other_labels.sticky_task_queue.is_some()
+                    {
+                        let task_queue_name = match m.task_queue_label_strategy {
+                            TaskQueueLabelStrategy::UseNormal => other_labels.normal_task_queue,
+                            TaskQueueLabelStrategy::UseNormalAndSticky => other_labels
+                                .sticky_task_queue
+                                .or(other_labels.normal_task_queue),
+                            _ => other_labels.normal_task_queue,
+                        };
+
+                        if let Some(tq_name) = task_queue_name {
+                            m.with_new_attrs([task_queue_kv(tq_name)]);
+                        }
+                    }
                 }
                 if let Some(ct) = req.extensions().get::<CallType>()
                     && ct.is_long()
