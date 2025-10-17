@@ -2130,6 +2130,51 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/worker-deployments/{deploymentName}/set-manager": {
+      "post": {
+        "summary": "Set/unset the ManagerIdentity of a Worker Deployment.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "SetWorkerDeploymentManager2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetWorkerDeploymentManagerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSetWorkerDeploymentManagerBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/worker-deployments/{deploymentName}/set-ramping-version": {
       "post": {
         "summary": "Set/unset the Ramping Version of a Worker Deployment and its ramp percentage. Can be used for\ngradual ramp to unversioned workers too.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -2288,6 +2333,45 @@
             "description": "`query` in ListWorkers is used to filter workers based on worker status info.\nThe following worker status attributes are expected are supported as part of the query:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* LastHeartbeatTime\n* Status\nCurrently metrics are not supported as a part of ListWorkers query.",
             "in": "query",
             "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workers/describe/{workerInstanceKey}": {
+      "get": {
+        "summary": "DescribeWorker returns information about the specified worker.",
+        "operationId": "DescribeWorker2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workerInstanceKey",
+            "description": "Worker instance key to describe.",
+            "in": "path",
+            "required": true,
             "type": "string"
           }
         ],
@@ -2822,7 +2906,7 @@
     },
     "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/history-reverse": {
       "get": {
-        "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \norder (starting from last event). Fails with`NotFound` if the specified workflow execution is \nunknown to the service.",
+        "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse\norder (starting from last event). Fails with`NotFound` if the specified workflow execution is\nunknown to the service.",
         "operationId": "GetWorkflowExecutionHistoryReverse2",
         "responses": {
           "200": {
@@ -5871,6 +5955,51 @@
         ]
       }
     },
+    "/namespaces/{namespace}/worker-deployments/{deploymentName}/set-manager": {
+      "post": {
+        "summary": "Set/unset the ManagerIdentity of a Worker Deployment.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "SetWorkerDeploymentManager",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetWorkerDeploymentManagerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSetWorkerDeploymentManagerBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/worker-deployments/{deploymentName}/set-ramping-version": {
       "post": {
         "summary": "Set/unset the Ramping Version of a Worker Deployment and its ramp percentage. Can be used for\ngradual ramp to unversioned workers too.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -6029,6 +6158,45 @@
             "description": "`query` in ListWorkers is used to filter workers based on worker status info.\nThe following worker status attributes are expected are supported as part of the query:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* LastHeartbeatTime\n* Status\nCurrently metrics are not supported as a part of ListWorkers query.",
             "in": "query",
             "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workers/describe/{workerInstanceKey}": {
+      "get": {
+        "summary": "DescribeWorker returns information about the specified worker.",
+        "operationId": "DescribeWorker",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkerResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace this worker belongs to.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workerInstanceKey",
+            "description": "Worker instance key to describe.",
+            "in": "path",
+            "required": true,
             "type": "string"
           }
         ],
@@ -6563,7 +6731,7 @@
     },
     "/namespaces/{namespace}/workflows/{execution.workflowId}/history-reverse": {
       "get": {
-        "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \norder (starting from last event). Fails with`NotFound` if the specified workflow execution is \nunknown to the service.",
+        "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse\norder (starting from last event). Fails with`NotFound` if the specified workflow execution is\nunknown to the service.",
         "operationId": "GetWorkflowExecutionHistoryReverse",
         "responses": {
           "200": {
@@ -7861,7 +8029,7 @@
         },
         "type": {
           "type": "string",
-          "description": "Pause all running activities of this type."
+          "description": "Pause all running activities of this type.\nNote: Experimental - the behavior of pause by activity type might change in a future release."
         },
         "reason": {
           "type": "string",
@@ -8314,9 +8482,36 @@
         "ignoreMissingTaskQueues": {
           "type": "boolean",
           "description": "Optional. By default this request would be rejected if not all the expected Task Queues are\nbeing polled by the new Version, to protect against accidental removal of Task Queues, or\nworker health issues. Pass `true` here to bypass this protection.\nThe set of expected Task Queues is the set of all the Task Queues that were ever poller by\nthe existing Current Version of the Deployment, with the following exclusions:\n  - Task Queues that are not used anymore (inferred by having empty backlog and a task\n    add_rate of 0.)\n  - Task Queues that are moved to another Worker Deployment (inferred by the Task Queue\n    having a different Current Version than the Current Version of this deployment.)\nWARNING: Do not set this flag unless you are sure that the missing task queue pollers are not\nneeded. If the request is unexpectedly rejected due to missing pollers, then that means the\npollers have not reached to the server yet. Only set this if you expect those pollers to\nnever arrive."
+        },
+        "allowNoPollers": {
+          "type": "boolean",
+          "description": "Optional. By default this request will be rejected if no pollers have been seen for the proposed\nCurrent Version, in order to protect users from routing tasks to pollers that do not exist, leading\nto possible timeouts. Pass `true` here to bypass this protection."
         }
       },
       "description": "Set/unset the Current Version of a Worker Deployment."
+    },
+    "WorkflowServiceSetWorkerDeploymentManagerBody": {
+      "type": "object",
+      "properties": {
+        "managerIdentity": {
+          "type": "string",
+          "description": "Arbitrary value for `manager_identity`.\nEmpty will unset the field."
+        },
+        "self": {
+          "type": "boolean",
+          "description": "True will set `manager_identity` to `identity`."
+        },
+        "conflictToken": {
+          "type": "string",
+          "format": "byte",
+          "description": "Optional. This can be the value of conflict_token from a Describe, or another Worker\nDeployment API. Passing a non-nil conflict token will cause this request to fail if the\nDeployment's configuration has been modified between the API call that generated the\ntoken and this one."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Required. The identity of the client who initiated this request."
+        }
+      },
+      "description": "Update the ManagerIdentity of a Worker Deployment."
     },
     "WorkflowServiceSetWorkerDeploymentRampingVersionBody": {
       "type": "object",
@@ -8346,6 +8541,10 @@
         "ignoreMissingTaskQueues": {
           "type": "boolean",
           "description": "Optional. By default this request would be rejected if not all the expected Task Queues are\nbeing polled by the new Version, to protect against accidental removal of Task Queues, or\nworker health issues. Pass `true` here to bypass this protection.\nThe set of expected Task Queues equals to all the Task Queues ever polled from the existing\nCurrent Version of the Deployment, with the following exclusions:\n  - Task Queues that are not used anymore (inferred by having empty backlog and a task\n    add_rate of 0.)\n  - Task Queues that are moved to another Worker Deployment (inferred by the Task Queue\n    having a different Current Version than the Current Version of this deployment.)\nWARNING: Do not set this flag unless you are sure that the missing task queue poller are not\nneeded. If the request is unexpectedly rejected due to missing pollers, then that means the\npollers have not reached to the server yet. Only set this if you expect those pollers to\nnever arrive.\nNote: this check only happens when the ramping version is about to change, not every time\nthat the percentage changes. Also note that the check is against the deployment's Current\nVersion, not the previous Ramping Version."
+        },
+        "allowNoPollers": {
+          "type": "boolean",
+          "description": "Optional. By default this request will be rejected if no pollers have been seen for the proposed\nCurrent Version, in order to protect users from routing tasks to pollers that do not exist, leading\nto possible timeouts. Pass `true` here to bypass this protection."
         }
       },
       "description": "Set/unset the Ramping Version of a Worker Deployment and its ramp percentage."
@@ -8643,6 +8842,10 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "title": "Priority metadata"
+        },
+        "eagerWorkerDeploymentOptions": {
+          "$ref": "#/definitions/v1WorkerDeploymentOptions",
+          "description": "Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`."
         }
       }
     },
@@ -10875,6 +11078,14 @@
         }
       }
     },
+    "v1DescribeWorkerResponse": {
+      "type": "object",
+      "properties": {
+        "workerInfo": {
+          "$ref": "#/definitions/v1WorkerInfo"
+        }
+      }
+    },
     "v1DescribeWorkflowExecutionResponse": {
       "type": "object",
       "properties": {
@@ -11198,6 +11409,14 @@
         },
         "visibilityStore": {
           "type": "string"
+        },
+        "initialFailoverVersion": {
+          "type": "string",
+          "format": "int64"
+        },
+        "failoverVersionIncrement": {
+          "type": "string",
+          "format": "int64"
         }
       },
       "description": "GetClusterInfoResponse contains information about Temporal cluster."
@@ -12167,6 +12386,14 @@
         "asyncUpdate": {
           "type": "boolean",
           "title": "True if the namespace supports async update"
+        },
+        "workerHeartbeats": {
+          "type": "boolean",
+          "title": "True if the namespace supports worker heartbeats"
+        },
+        "reportedProblemsSearchAttribute": {
+          "type": "boolean",
+          "title": "True if the namespace supports reported problems search attribute"
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -13154,7 +13381,7 @@
         "priorityKey": {
           "type": "integer",
           "format": "int32",
-          "description": "Priority key is a positive integer from 1 to n, where smaller integers\ncorrespond to higher priorities (tasks run sooner). In general, tasks in\na queue should be processed in close to priority order, although small\ndeviations are possible.\n\nThe maximum priority value (minimum priority) is determined by server\nconfiguration, and defaults to 5.\n\nIf priority is not present (or zero), then the effective priority will be\nthe default priority, which is is calculated by (min+max)/2. With the\ndefault max of 5, and min of 1, that comes out to 3."
+          "description": "Priority key is a positive integer from 1 to n, where smaller integers\ncorrespond to higher priorities (tasks run sooner). In general, tasks in\na queue should be processed in close to priority order, although small\ndeviations are possible.\n\nThe maximum priority value (minimum priority) is determined by server\nconfiguration, and defaults to 5.\n\nIf priority is not present (or zero), then the effective priority will be\nthe default priority, which is calculated by (min+max)/2. With the\ndefault max of 5, and min of 1, that comes out to 3."
         },
         "fairnessKey": {
           "type": "string",
@@ -14343,6 +14570,20 @@
         }
       }
     },
+    "v1SetWorkerDeploymentManagerResponse": {
+      "type": "object",
+      "properties": {
+        "conflictToken": {
+          "type": "string",
+          "format": "byte",
+          "description": "This value is returned so that it can be optionally passed to APIs\nthat write to the Worker Deployment state to ensure that the state\ndid not change between this API call and a future write."
+        },
+        "previousManagerIdentity": {
+          "type": "string",
+          "description": "What the `manager_identity` field was before this change."
+        }
+      }
+    },
     "v1SetWorkerDeploymentRampingVersionResponse": {
       "type": "object",
       "properties": {
@@ -14891,6 +15132,10 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "title": "Priority metadata"
+        },
+        "eagerWorkerDeploymentOptions": {
+          "$ref": "#/definitions/v1WorkerDeploymentOptions",
+          "description": "Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`."
         }
       }
     },
@@ -15453,7 +15698,7 @@
           "additionalProperties": {
             "type": "string"
           },
-          "description": "A key-value map for any customized purpose.\nIf data already exists on the namespace, \nthis will merge with the existing key values."
+          "description": "A key-value map for any customized purpose.\nIf data already exists on the namespace,\nthis will merge with the existing key values."
         },
         "state": {
           "$ref": "#/definitions/v1NamespaceState",
@@ -15812,6 +16057,10 @@
         "lastModifierIdentity": {
           "type": "string",
           "description": "Identity of the last client who modified the configuration of this Deployment. Set to the\n`identity` value sent by APIs such as `SetWorkerDeploymentCurrentVersion` and\n`SetWorkerDeploymentRampingVersion`."
+        },
+        "managerIdentity": {
+          "type": "string",
+          "description": "Identity of the client that has the exclusive right to make changes to this Worker Deployment.\nEmpty by default.\nIf this is set, clients whose identity does not match `manager_identity` will not be able to make changes\nto this Worker Deployment. They can either set their own identity as the manager or unset the field to proceed."
         }
       },
       "description": "A Worker Deployment (Deployment, for short) represents all workers serving \na shared set of Task Queues. Typically, a Deployment represents one service or \napplication.\nA Deployment contains multiple Deployment Versions, each representing a different \nversion of workers. (see documentation of WorkerDeploymentVersionInfo)\nDeployment records are created in Temporal server automatically when their\nfirst poller arrives to the server.\nExperimental. Worker Deployments are experimental and might significantly change in the future."

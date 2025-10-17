@@ -646,7 +646,21 @@ proxier! {
                     let task_queue = req_mut.task_queue.as_ref()
                                         .map(|tq| tq.name.clone()).unwrap_or_default();
                     match workers.try_reserve_wft_slot(namespace, task_queue) {
-                        Some(s) => slot = Some(s),
+                        Some(reservation) => {
+                            // Populate eager_worker_deployment_options from the slot reservation
+                            if let Some(opts) = reservation.deployment_options {
+                                req_mut.eager_worker_deployment_options = Some(temporal_sdk_core_protos::temporal::api::deployment::v1::WorkerDeploymentOptions {
+                                    deployment_name: opts.version.deployment_name,
+                                    build_id: opts.version.build_id,
+                                    worker_versioning_mode: if opts.use_worker_versioning {
+                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
+                                    } else {
+                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
+                                    },
+                                });
+                            }
+                            slot = Some(reservation.slot);
+                        }
                         None => req_mut.request_eager_execution = false
                     }
                 }
@@ -1446,6 +1460,24 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        describe_worker,
+        DescribeWorkerRequest,
+        DescribeWorkerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_manager,
+        SetWorkerDeploymentManagerRequest,
+        SetWorkerDeploymentManagerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -1694,7 +1726,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn can_mock_workflow_service() {
+    async fn can_mock_services() {
         #[derive(Clone)]
         struct MyFakeServices {}
         impl RawGrpcCaller for MyFakeServices {}
@@ -1752,5 +1784,132 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(r.into_inner().namespaces[0].failover_version, 12345);
+    }
+
+    #[rstest::rstest]
+    #[case::with_versioning(true)]
+    #[case::without_versioning(false)]
+    #[tokio::test]
+    async fn eager_reservations_attach_deployment_options(#[case] use_worker_versioning: bool) {
+        use crate::worker_registry::{MockSlot, MockSlotProvider};
+        use temporal_sdk_core_api::worker::{WorkerDeploymentOptions, WorkerDeploymentVersion};
+        use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode;
+
+        let expected_mode = if use_worker_versioning {
+            WorkerVersioningMode::Versioned
+        } else {
+            WorkerVersioningMode::Unversioned
+        };
+
+        #[derive(Clone)]
+        struct MyFakeServices {
+            slot_manager: Arc<SlotManager>,
+            expected_mode: WorkerVersioningMode,
+        }
+        impl RawGrpcCaller for MyFakeServices {}
+        impl RawClientProducer for MyFakeServices {
+            fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+                Some(self.slot_manager.clone())
+            }
+            fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+                Box::new(MyFakeWfClient {
+                    expected_mode: self.expected_mode,
+                })
+            }
+            fn operator_client(&mut self) -> Box<dyn OperatorService> {
+                unimplemented!()
+            }
+            fn cloud_client(&mut self) -> Box<dyn CloudService> {
+                unimplemented!()
+            }
+            fn test_client(&mut self) -> Box<dyn TestService> {
+                unimplemented!()
+            }
+            fn health_client(&mut self) -> Box<dyn HealthService> {
+                unimplemented!()
+            }
+        }
+
+        let deployment_opts = WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "test-deployment".to_string(),
+                build_id: "test-build-123".to_string(),
+            },
+            use_worker_versioning,
+            default_versioning_behavior: None,
+        };
+
+        let mut mock_provider = MockSlotProvider::new();
+        mock_provider
+            .expect_namespace()
+            .return_const("test-namespace".to_string());
+        mock_provider
+            .expect_task_queue()
+            .return_const("test-task-queue".to_string());
+        let mut mock_slot = MockSlot::new();
+        mock_slot.expect_schedule_wft().returning(|_| Ok(()));
+        mock_provider
+            .expect_try_reserve_wft_slot()
+            .return_once(|| Some(Box::new(mock_slot)));
+        mock_provider
+            .expect_deployment_options()
+            .return_const(Some(deployment_opts.clone()));
+
+        let slot_manager = Arc::new(SlotManager::new());
+        slot_manager.register(Box::new(mock_provider));
+
+        #[derive(Clone)]
+        struct MyFakeWfClient {
+            expected_mode: WorkerVersioningMode,
+        }
+        impl WorkflowService for MyFakeWfClient {
+            fn start_workflow_execution(
+                &mut self,
+                request: tonic::Request<StartWorkflowExecutionRequest>,
+            ) -> BoxFuture<'_, Result<tonic::Response<StartWorkflowExecutionResponse>, tonic::Status>>
+            {
+                let req = request.into_inner();
+                let expected_mode = self.expected_mode;
+
+                assert!(
+                    req.eager_worker_deployment_options.is_some(),
+                    "eager_worker_deployment_options should be populated"
+                );
+
+                let opts = req.eager_worker_deployment_options.as_ref().unwrap();
+                assert_eq!(opts.deployment_name, "test-deployment");
+                assert_eq!(opts.build_id, "test-build-123");
+                assert_eq!(opts.worker_versioning_mode, expected_mode as i32);
+
+                async { Ok(Response::new(StartWorkflowExecutionResponse::default())) }.boxed()
+            }
+        }
+
+        let mut mfs = MyFakeServices {
+            slot_manager,
+            expected_mode,
+        };
+
+        // Create a request with eager execution enabled
+        let req = StartWorkflowExecutionRequest {
+            namespace: "test-namespace".to_string(),
+            workflow_id: "test-wf-id".to_string(),
+            workflow_type: Some(
+                temporal_sdk_core_protos::temporal::api::common::v1::WorkflowType {
+                    name: "test-workflow".to_string(),
+                },
+            ),
+            task_queue: Some(TaskQueue {
+                name: "test-task-queue".to_string(),
+                kind: 0,
+                normal_name: String::new(),
+            }),
+            request_eager_execution: true,
+            ..Default::default()
+        };
+
+        mfs.start_workflow_execution(req.into_request())
+            .await
+            .unwrap();
     }
 }

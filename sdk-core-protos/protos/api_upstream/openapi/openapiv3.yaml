@@ -1914,6 +1914,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/worker-deployments/{deploymentName}/set-manager:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Set/unset the ManagerIdentity of a Worker Deployment.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: SetWorkerDeploymentManager
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deploymentName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetWorkerDeploymentManagerRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetWorkerDeploymentManagerResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/worker-deployments/{deploymentName}/set-ramping-version:
     post:
       tags:
@@ -2081,6 +2119,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListWorkersResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workers/describe/{workerInstanceKey}:
+    get:
+      tags:
+        - WorkflowService
+      description: DescribeWorker returns information about the specified worker.
+      operationId: DescribeWorker
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+        - name: workerInstanceKey
+          in: path
+          description: Worker instance key to describe.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeWorkerResponse'
         default:
           description: Default error response
           content:
@@ -2540,7 +2610,10 @@ paths:
     get:
       tags:
         - WorkflowService
-      description: "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \n order (starting from last event). Fails with`NotFound` if the specified workflow execution is \n unknown to the service."
+      description: |-
+        GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse
+         order (starting from last event). Fails with`NotFound` if the specified workflow execution is
+         unknown to the service.
       operationId: GetWorkflowExecutionHistoryReverse
       parameters:
         - name: namespace
@@ -5265,6 +5338,44 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/worker-deployments/{deploymentName}/set-manager:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Set/unset the ManagerIdentity of a Worker Deployment.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: SetWorkerDeploymentManager
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deploymentName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetWorkerDeploymentManagerRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetWorkerDeploymentManagerResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/worker-deployments/{deploymentName}/set-ramping-version:
     post:
       tags:
@@ -5432,6 +5543,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ListWorkersResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workers/describe/{workerInstanceKey}:
+    get:
+      tags:
+        - WorkflowService
+      description: DescribeWorker returns information about the specified worker.
+      operationId: DescribeWorker
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace this worker belongs to.
+          required: true
+          schema:
+            type: string
+        - name: workerInstanceKey
+          in: path
+          description: Worker instance key to describe.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeWorkerResponse'
         default:
           description: Default error response
           content:
@@ -5891,7 +6034,10 @@ paths:
     get:
       tags:
         - WorkflowService
-      description: "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \n order (starting from last event). Fails with`NotFound` if the specified workflow execution is \n unknown to the service."
+      description: |-
+        GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse
+         order (starting from last event). Fails with`NotFound` if the specified workflow execution is
+         unknown to the service.
       operationId: GetWorkflowExecutionHistoryReverse
       parameters:
         - name: namespace
@@ -7921,6 +8067,11 @@ components:
              Only set if `report_task_queue_stats` is set to true in the request.
              (-- api-linter: core::0140::prepositions=disabled
                  aip.dev/not-precedent: "by" is used to clarify the key. --)
+    DescribeWorkerResponse:
+      type: object
+      properties:
+        workerInfo:
+          $ref: '#/components/schemas/WorkerInfo'
     DescribeWorkflowExecutionResponse:
       type: object
       properties:
@@ -8241,6 +8392,10 @@ components:
         persistenceStore:
           type: string
         visibilityStore:
+          type: string
+        initialFailoverVersion:
+          type: string
+        failoverVersionIncrement:
           type: string
       description: GetClusterInfoResponse contains information about Temporal cluster.
     GetCurrentDeploymentResponse:
@@ -9055,6 +9210,12 @@ components:
         asyncUpdate:
           type: boolean
           description: True if the namespace supports async update
+        workerHeartbeats:
+          type: boolean
+          description: True if the namespace supports worker heartbeats
+        reportedProblemsSearchAttribute:
+          type: boolean
+          description: True if the namespace supports reported problems search attribute
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceReplicationConfig:
       type: object
@@ -9461,7 +9622,9 @@ components:
           description: Only the activity with this ID will be paused.
         type:
           type: string
-          description: Pause all running activities of this type.
+          description: |-
+            Pause all running activities of this type.
+             Note: Experimental - the behavior of pause by activity type might change in a future release.
         reason:
           type: string
           description: Reason to pause the activity.
@@ -9939,7 +10102,7 @@ components:
              configuration, and defaults to 5.
 
              If priority is not present (or zero), then the effective priority will be
-             the default priority, which is is calculated by (min+max)/2. With the
+             the default priority, which is calculated by (min+max)/2. With the
              default max of 5, and min of 1, that comes out to 3.
           format: int32
         fairnessKey:
@@ -11347,6 +11510,12 @@ components:
              needed. If the request is unexpectedly rejected due to missing pollers, then that means the
              pollers have not reached to the server yet. Only set this if you expect those pollers to
              never arrive.
+        allowNoPollers:
+          type: boolean
+          description: |-
+            Optional. By default this request will be rejected if no pollers have been seen for the proposed
+             Current Version, in order to protect users from routing tasks to pollers that do not exist, leading
+             to possible timeouts. Pass `true` here to bypass this protection.
       description: Set/unset the Current Version of a Worker Deployment.
     SetWorkerDeploymentCurrentVersionResponse:
       type: object
@@ -11365,6 +11534,46 @@ components:
           allOf:
             - $ref: '#/components/schemas/WorkerDeploymentVersion'
           description: The version that was current before executing this operation.
+    SetWorkerDeploymentManagerRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deploymentName:
+          type: string
+        managerIdentity:
+          type: string
+          description: |-
+            Arbitrary value for `manager_identity`.
+             Empty will unset the field.
+        self:
+          type: boolean
+          description: True will set `manager_identity` to `identity`.
+        conflictToken:
+          type: string
+          description: |-
+            Optional. This can be the value of conflict_token from a Describe, or another Worker
+             Deployment API. Passing a non-nil conflict token will cause this request to fail if the
+             Deployment's configuration has been modified between the API call that generated the
+             token and this one.
+          format: bytes
+        identity:
+          type: string
+          description: Required. The identity of the client who initiated this request.
+      description: Update the ManagerIdentity of a Worker Deployment.
+    SetWorkerDeploymentManagerResponse:
+      type: object
+      properties:
+        conflictToken:
+          type: string
+          description: |-
+            This value is returned so that it can be optionally passed to APIs
+             that write to the Worker Deployment state to ensure that the state
+             did not change between this API call and a future write.
+          format: bytes
+        previousManagerIdentity:
+          type: string
+          description: What the `manager_identity` field was before this change.
     SetWorkerDeploymentRampingVersionRequest:
       type: object
       properties:
@@ -11415,6 +11624,12 @@ components:
              Note: this check only happens when the ramping version is about to change, not every time
              that the percentage changes. Also note that the check is against the deployment's Current
              Version, not the previous Ramping Version.
+        allowNoPollers:
+          type: boolean
+          description: |-
+            Optional. By default this request will be rejected if no pollers have been seen for the proposed
+             Current Version, in order to protect users from routing tasks to pollers that do not exist, leading
+             to possible timeouts. Pass `true` here to bypass this protection.
       description: Set/unset the Ramping Version of a Worker Deployment and its ramp percentage.
     SetWorkerDeploymentRampingVersionResponse:
       type: object
@@ -11960,6 +12175,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
+        eagerWorkerDeploymentOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentOptions'
+          description: Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`.
     StartWorkflowExecutionResponse:
       type: object
       properties:
@@ -12551,7 +12770,10 @@ components:
           type: object
           additionalProperties:
             type: string
-          description: "A key-value map for any customized purpose.\n If data already exists on the namespace, \n this will merge with the existing key values."
+          description: |-
+            A key-value map for any customized purpose.
+             If data already exists on the namespace,
+             this will merge with the existing key values.
         state:
           enum:
             - NAMESPACE_STATE_UNSPECIFIED
@@ -13093,6 +13315,13 @@ components:
             Identity of the last client who modified the configuration of this Deployment. Set to the
              `identity` value sent by APIs such as `SetWorkerDeploymentCurrentVersion` and
              `SetWorkerDeploymentRampingVersion`.
+        managerIdentity:
+          type: string
+          description: |-
+            Identity of the client that has the exclusive right to make changes to this Worker Deployment.
+             Empty by default.
+             If this is set, clients whose identity does not match `manager_identity` will not be able to make changes
+             to this Worker Deployment. They can either set their own identity as the manager or unset the field to proceed.
       description: "A Worker Deployment (Deployment, for short) represents all workers serving \n a shared set of Task Queues. Typically, a Deployment represents one service or \n application.\n A Deployment contains multiple Deployment Versions, each representing a different \n version of workers. (see documentation of WorkerDeploymentVersionInfo)\n Deployment records are created in Temporal server automatically when their\n first poller arrives to the server.\n Experimental. Worker Deployments are experimental and might significantly change in the future."
     WorkerDeploymentInfo_WorkerDeploymentVersionSummary:
       type: object
