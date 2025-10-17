@@ -321,12 +321,12 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
         if api_success {
             mock.expect_shutdown_worker()
                 .times(1)
-                .returning(|_| Ok(ShutdownWorkerResponse {}));
+                .returning(|_, _| Ok(ShutdownWorkerResponse {}));
         } else {
             // worker.shutdown() should succeed even if shutdown_worker fails
             mock.expect_shutdown_worker()
                 .times(1)
-                .returning(|_| Err(tonic::Status::unavailable("fake shutdown error")));
+                .returning(|_, _| Err(tonic::Status::unavailable("fake shutdown error")));
         }
     } else {
         mock.expect_shutdown_worker().times(0);

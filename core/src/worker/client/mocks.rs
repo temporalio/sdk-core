@@ -30,12 +30,18 @@ pub fn mock_worker_client() -> MockWorkerClient {
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
     r.expect_shutdown_worker()
-        .returning(|_| Ok(ShutdownWorkerResponse {}));
+        .returning(|_, _| Ok(ShutdownWorkerResponse {}));
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r.expect_identity()
         .returning(|| "test-identity".to_string());
     r.expect_worker_grouping_key().returning(Uuid::new_v4);
+    r.expect_set_heartbeat_client_fields().returning(|hb| {
+        hb.sdk_name = "test-core".to_string();
+        hb.sdk_version = "0.0.0".to_string();
+        hb.worker_identity = "test-identity".to_string();
+        hb.heartbeat_time = Some(SystemTime::now().into());
+    });
     r
 }
 
@@ -148,7 +154,7 @@ mockall::mock! {
           impl Future<Output = Result<DescribeNamespaceResponse>> + Send + 'b
           where 'a: 'b, Self: 'b;
 
-        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
+        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String, worker_heartbeat: Option<WorkerHeartbeat>) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn record_worker_heartbeat<'a, 'b>(
@@ -164,5 +170,6 @@ mockall::mock! {
         fn sdk_name_and_version(&self) -> (String, String);
         fn identity(&self) -> String;
         fn worker_grouping_key(&self) -> Uuid;
+        fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
     }
 }

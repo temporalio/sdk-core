@@ -1,4 +1,5 @@
 use crate::dbg_panic;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{
     any::Any,
     borrow::Cow,
@@ -26,6 +27,18 @@ pub trait CoreMeter: Send + Sync + Debug {
         attribs: NewAttributes,
     ) -> MetricAttributes;
     fn counter(&self, params: MetricParameters) -> Counter;
+
+    /// Create a counter with in-memory tracking for worker heartbeating reporting
+    fn counter_with_in_memory(
+        &self,
+        params: MetricParameters,
+        in_memory_counter: HeartbeatMetricType,
+    ) -> Counter {
+        let primary_counter = self.counter(params);
+
+        Counter::new_with_in_memory(primary_counter.primary.metric.clone(), in_memory_counter)
+    }
+
     fn histogram(&self, params: MetricParameters) -> Histogram;
     fn histogram_f64(&self, params: MetricParameters) -> HistogramF64;
     /// Create a histogram which records Durations. Implementations should choose to emit in
@@ -33,8 +46,215 @@ pub trait CoreMeter: Send + Sync + Debug {
     /// [MetricParameters::unit] should be overwritten by implementations to be `ms` or `s`
     /// accordingly.
     fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration;
+
+    /// Create a histogram duration with in-memory tracking for worker heartbeating reporting
+    fn histogram_duration_with_in_memory(
+        &self,
+        params: MetricParameters,
+        in_memory_hist: HeartbeatMetricType,
+    ) -> HistogramDuration {
+        let primary_hist = self.histogram_duration(params);
+
+        HistogramDuration::new_with_in_memory(primary_hist.primary.metric.clone(), in_memory_hist)
+    }
     fn gauge(&self, params: MetricParameters) -> Gauge;
+
+    /// Create a gauge with in-memory tracking for worker heartbeating reporting
+    fn gauge_with_in_memory(
+        &self,
+        params: MetricParameters,
+        in_memory_metrics: HeartbeatMetricType,
+    ) -> Gauge {
+        let primary_gauge = self.gauge(params.clone());
+        Gauge::new_with_in_memory(primary_gauge.primary.metric.clone(), in_memory_metrics)
+    }
+
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64;
+}
+
+/// Provides a generic way to record metrics in memory.
+/// This can be done either with individual metrics or more fine-grained metrics
+/// that vary by a set of labels for the same metric.
+#[derive(Clone, Debug)]
+pub enum HeartbeatMetricType {
+    Individual(Arc<AtomicU64>),
+    WithLabel {
+        label_key: String,
+        metrics: HashMap<String, Arc<AtomicU64>>,
+    },
+}
+
+impl HeartbeatMetricType {
+    fn record_counter(&self, delta: u64) {
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.fetch_add(delta, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel { .. } => {
+                dbg_panic!("Counter does not support in-memory metric with labels");
+            }
+        }
+    }
+
+    fn record_histogram_observation(&self) {
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.fetch_add(1, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel { .. } => {
+                dbg_panic!("Histogram does not support in-memory metric with labels");
+            }
+        }
+    }
+
+    fn record_gauge(&self, value: u64, attributes: &MetricAttributes) {
+        match self {
+            HeartbeatMetricType::Individual(metric) => {
+                metric.store(value, Ordering::Relaxed);
+            }
+            HeartbeatMetricType::WithLabel { label_key, metrics } => {
+                if let Some(metric) = label_value_from_attributes(attributes, label_key.as_str())
+                    .and_then(|label_value| metrics.get(label_value.as_str()))
+                {
+                    metric.store(value, Ordering::Relaxed)
+                }
+            }
+        }
+    }
+}
+
+fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Option<String> {
+    match attributes {
+        MetricAttributes::Prometheus { labels } => labels.as_prom_labels().get(key).cloned(),
+        #[cfg(feature = "otel_impls")]
+        MetricAttributes::OTel { kvs } => kvs
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| kv.value.to_string()),
+        MetricAttributes::NoOp(labels) => labels.get(key).cloned(),
+        _ => None,
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct NumPollersMetric {
+    pub wft_current_pollers: Arc<AtomicU64>,
+    pub sticky_wft_current_pollers: Arc<AtomicU64>,
+    pub activity_current_pollers: Arc<AtomicU64>,
+    pub nexus_current_pollers: Arc<AtomicU64>,
+}
+
+impl NumPollersMetric {
+    pub fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
+        HashMap::from([
+            (
+                "workflow_task".to_string(),
+                self.wft_current_pollers.clone(),
+            ),
+            (
+                "sticky_workflow_task".to_string(),
+                self.sticky_wft_current_pollers.clone(),
+            ),
+            (
+                "activity_task".to_string(),
+                self.activity_current_pollers.clone(),
+            ),
+            ("nexus_task".to_string(), self.nexus_current_pollers.clone()),
+        ])
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct SlotMetrics {
+    pub workflow_worker: Arc<AtomicU64>,
+    pub activity_worker: Arc<AtomicU64>,
+    pub nexus_worker: Arc<AtomicU64>,
+    pub local_activity_worker: Arc<AtomicU64>,
+}
+
+impl SlotMetrics {
+    pub fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
+        HashMap::from([
+            ("WorkflowWorker".to_string(), self.workflow_worker.clone()),
+            ("ActivityWorker".to_string(), self.activity_worker.clone()),
+            ("NexusWorker".to_string(), self.nexus_worker.clone()),
+            (
+                "LocalActivityWorker".to_string(),
+                self.local_activity_worker.clone(),
+            ),
+        ])
+    }
+}
+
+#[derive(Default, Debug)]
+pub struct WorkerHeartbeatMetrics {
+    pub sticky_cache_size: Arc<AtomicU64>,
+    pub total_sticky_cache_hit: Arc<AtomicU64>,
+    pub total_sticky_cache_miss: Arc<AtomicU64>,
+    pub num_pollers: NumPollersMetric,
+    pub worker_task_slots_used: SlotMetrics,
+    pub worker_task_slots_available: SlotMetrics,
+    pub workflow_task_execution_failed: Arc<AtomicU64>,
+    pub activity_execution_failed: Arc<AtomicU64>,
+    pub nexus_task_execution_failed: Arc<AtomicU64>,
+    pub local_activity_execution_failed: Arc<AtomicU64>,
+    pub activity_execution_latency: Arc<AtomicU64>,
+    pub local_activity_execution_latency: Arc<AtomicU64>,
+    pub workflow_task_execution_latency: Arc<AtomicU64>,
+    pub nexus_task_execution_latency: Arc<AtomicU64>,
+}
+
+impl WorkerHeartbeatMetrics {
+    pub fn get_metric(&self, name: &str) -> Option<HeartbeatMetricType> {
+        match name {
+            "sticky_cache_size" => Some(HeartbeatMetricType::Individual(
+                self.sticky_cache_size.clone(),
+            )),
+            "sticky_cache_hit" => Some(HeartbeatMetricType::Individual(
+                self.total_sticky_cache_hit.clone(),
+            )),
+            "sticky_cache_miss" => Some(HeartbeatMetricType::Individual(
+                self.total_sticky_cache_miss.clone(),
+            )),
+            "num_pollers" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "poller_type".to_string(),
+                metrics: self.num_pollers.as_map(),
+            }),
+            "worker_task_slots_used" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_used.as_map(),
+            }),
+            "worker_task_slots_available" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_available.as_map(),
+            }),
+            "workflow_task_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.workflow_task_execution_failed.clone(),
+            )),
+            "activity_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.activity_execution_failed.clone(),
+            )),
+            "nexus_task_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.nexus_task_execution_failed.clone(),
+            )),
+            "local_activity_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.local_activity_execution_failed.clone(),
+            )),
+            "activity_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.activity_execution_latency.clone(),
+            )),
+            "local_activity_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.local_activity_execution_latency.clone(),
+            )),
+            "workflow_task_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.workflow_task_execution_latency.clone(),
+            )),
+            "nexus_task_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.nexus_task_execution_latency.clone(),
+            )),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -124,6 +344,7 @@ pub enum MetricAttributes {
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
+    NoOp(Arc<HashMap<String, String>>),
     Empty,
 }
 
@@ -152,6 +373,16 @@ where
         Self {
             attributes: value.into_iter().collect(),
         }
+    }
+}
+
+impl From<NewAttributes> for HashMap<String, String> {
+    fn from(value: NewAttributes) -> Self {
+        value
+            .attributes
+            .into_iter()
+            .map(|kv| (kv.key, kv.value.to_string()))
+            .collect()
     }
 }
 
@@ -227,43 +458,79 @@ impl<T, B> LazyBoundMetric<T, B> {
 pub trait CounterBase: Send + Sync {
     fn adds(&self, value: u64);
 }
-pub type Counter = LazyBoundMetric<
+
+pub type CounterImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
     Arc<dyn CounterBase>,
 >;
+
+#[derive(Clone)]
+pub struct Counter {
+    primary: CounterImpl,
+    in_memory: Option<HeartbeatMetricType>,
+}
 impl Counter {
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>) -> Self {
         Self {
-            metric: inner,
-            attributes: MetricAttributes::Empty,
-            bound_cache: OnceLock::new(),
+            primary: LazyBoundMetric {
+                metric: inner,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: None,
         }
     }
+
+    pub fn new_with_in_memory(
+        primary: Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
+        in_memory: HeartbeatMetricType,
+    ) -> Self {
+        Self {
+            primary: LazyBoundMetric {
+                metric: primary,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: Some(in_memory),
+        }
+    }
+
     pub fn add(&self, value: u64, attributes: &MetricAttributes) {
-        match self.metric.with_attributes(attributes) {
-            Ok(base) => {
-                base.adds(value);
-            }
+        match self.primary.metric.with_attributes(attributes) {
+            Ok(base) => base.adds(value),
             Err(e) => {
-                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+                dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
             }
         }
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_counter(value);
+        }
+    }
+
+    pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
+        self.primary.update_attributes(new_attributes.clone());
     }
 }
 impl CounterBase for Counter {
     fn adds(&self, value: u64) {
         // TODO: Replace all of these with below when stable
         //   https://doc.rust-lang.org/std/sync/struct.OnceLock.html#method.get_or_try_init
-        let bound = self.bound_cache.get_or_init(|| {
-            self.metric
-                .with_attributes(&self.attributes)
+        let bound = self.primary.bound_cache.get_or_init(|| {
+            self.primary
+                .metric
+                .with_attributes(&self.primary.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
+                    dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn CounterBase>
                 })
         });
         bound.adds(value);
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_counter(value);
+        }
     }
 }
 impl MetricAttributable<Counter> for Counter {
@@ -271,10 +538,15 @@ impl MetricAttributable<Counter> for Counter {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Counter, Box<dyn std::error::Error>> {
-        Ok(Self {
-            metric: self.metric.clone(),
+        let primary = LazyBoundMetric {
+            metric: self.primary.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
+        };
+
+        Ok(Counter {
+            primary,
+            in_memory: self.in_memory.clone(),
         })
     }
 }
@@ -390,22 +662,45 @@ impl MetricAttributable<HistogramF64> for HistogramF64 {
 pub trait HistogramDurationBase: Send + Sync {
     fn records(&self, value: Duration);
 }
-pub type HistogramDuration = LazyBoundMetric<
+
+pub type HistogramDurationImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
     Arc<dyn HistogramDurationBase>,
 >;
+
+#[derive(Clone)]
+pub struct HistogramDuration {
+    primary: HistogramDurationImpl,
+    in_memory: Option<HeartbeatMetricType>,
+}
 impl HistogramDuration {
     pub fn new(
         inner: Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
     ) -> Self {
         Self {
-            metric: inner,
-            attributes: MetricAttributes::Empty,
-            bound_cache: OnceLock::new(),
+            primary: LazyBoundMetric {
+                metric: inner,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: None,
+        }
+    }
+    pub fn new_with_in_memory(
+        primary: Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
+        in_memory: HeartbeatMetricType,
+    ) -> Self {
+        Self {
+            primary: LazyBoundMetric {
+                metric: primary,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: Some(in_memory),
         }
     }
     pub fn record(&self, value: Duration, attributes: &MetricAttributes) {
-        match self.metric.with_attributes(attributes) {
+        match self.primary.metric.with_attributes(attributes) {
             Ok(base) => {
                 base.records(value);
             }
@@ -413,13 +708,22 @@ impl HistogramDuration {
                 dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
             }
         }
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_histogram_observation();
+        }
+    }
+
+    pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
+        self.primary.update_attributes(new_attributes.clone());
     }
 }
 impl HistogramDurationBase for HistogramDuration {
     fn records(&self, value: Duration) {
-        let bound = self.bound_cache.get_or_init(|| {
-            self.metric
-                .with_attributes(&self.attributes)
+        let bound = self.primary.bound_cache.get_or_init(|| {
+            self.primary
+                .metric
+                .with_attributes(&self.primary.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
                     dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
@@ -427,6 +731,10 @@ impl HistogramDurationBase for HistogramDuration {
                 })
         });
         bound.records(value);
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_histogram_observation();
+        }
     }
 }
 impl MetricAttributable<HistogramDuration> for HistogramDuration {
@@ -434,10 +742,15 @@ impl MetricAttributable<HistogramDuration> for HistogramDuration {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<HistogramDuration, Box<dyn std::error::Error>> {
-        Ok(Self {
-            metric: self.metric.clone(),
+        let primary = LazyBoundMetric {
+            metric: self.primary.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
+        };
+
+        Ok(HistogramDuration {
+            primary,
+            in_memory: self.in_memory.clone(),
         })
     }
 }
@@ -445,41 +758,77 @@ impl MetricAttributable<HistogramDuration> for HistogramDuration {
 pub trait GaugeBase: Send + Sync {
     fn records(&self, value: u64);
 }
-pub type Gauge = LazyBoundMetric<
+
+pub type GaugeImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
     Arc<dyn GaugeBase>,
 >;
+
+#[derive(Clone)]
+pub struct Gauge {
+    primary: GaugeImpl,
+    in_memory: Option<HeartbeatMetricType>,
+}
 impl Gauge {
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>) -> Self {
         Self {
-            metric: inner,
-            attributes: MetricAttributes::Empty,
-            bound_cache: OnceLock::new(),
+            primary: LazyBoundMetric {
+                metric: inner,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: None,
         }
     }
+
+    pub fn new_with_in_memory(
+        primary: Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
+        in_memory: HeartbeatMetricType,
+    ) -> Self {
+        Self {
+            primary: LazyBoundMetric {
+                metric: primary,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+            in_memory: Some(in_memory),
+        }
+    }
+
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
-        match self.metric.with_attributes(attributes) {
-            Ok(base) => {
-                base.records(value);
-            }
+        match self.primary.metric.with_attributes(attributes) {
+            Ok(base) => base.records(value),
             Err(e) => {
-                dbg_panic!("Failed to initialize metric, will drop values: {e:?}",);
+                dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
             }
         }
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_gauge(value, attributes);
+        }
+    }
+
+    pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
+        self.primary.update_attributes(new_attributes.clone());
     }
 }
 impl GaugeBase for Gauge {
     fn records(&self, value: u64) {
-        let bound = self.bound_cache.get_or_init(|| {
-            self.metric
-                .with_attributes(&self.attributes)
+        let bound = self.primary.bound_cache.get_or_init(|| {
+            self.primary
+                .metric
+                .with_attributes(&self.primary.attributes)
                 .map(Into::into)
                 .unwrap_or_else(|e| {
-                    dbg_panic!("Failed to initialize metric, will drop values: {e:?}");
+                    dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
                     Arc::new(NoOpInstrument) as Arc<dyn GaugeBase>
                 })
         });
         bound.records(value);
+
+        if let Some(ref in_mem) = self.in_memory {
+            in_mem.record_gauge(value, &self.primary.attributes);
+        }
     }
 }
 impl MetricAttributable<Gauge> for Gauge {
@@ -487,10 +836,15 @@ impl MetricAttributable<Gauge> for Gauge {
         &self,
         attributes: &MetricAttributes,
     ) -> Result<Gauge, Box<dyn std::error::Error>> {
-        Ok(Self {
-            metric: self.metric.clone(),
+        let primary = LazyBoundMetric {
+            metric: self.primary.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
+        };
+
+        Ok(Gauge {
+            primary,
+            in_memory: self.in_memory.clone(),
         })
     }
 }
@@ -633,12 +987,23 @@ impl<T> LazyRef<T> {
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
-    fn new_attributes(&self, _: NewAttributes) -> MetricAttributes {
-        MetricAttributes::Dynamic(Arc::new(NoOpAttributes))
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
+        MetricAttributes::NoOp(Arc::new(attribs.into()))
     }
 
-    fn extend_attributes(&self, existing: MetricAttributes, _: NewAttributes) -> MetricAttributes {
-        existing
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        if let MetricAttributes::NoOp(labels) = existing {
+            let mut labels = (*labels).clone();
+            labels.extend::<HashMap<String, String>>(attribs.into());
+            MetricAttributes::NoOp(Arc::new(labels))
+        } else {
+            dbg_panic!("Must use NoOp attributes with a NoOp metric implementation");
+            existing
+        }
     }
 
     fn counter(&self, _: MetricParameters) -> Counter {
@@ -701,11 +1066,41 @@ impl_no_op!(HistogramDurationBase, Duration);
 impl_no_op!(GaugeBase, u64);
 impl_no_op!(GaugeF64Base, f64);
 
-#[derive(Debug, Clone)]
-pub struct NoOpAttributes;
-impl CustomMetricAttributes for NoOpAttributes {
-    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self as Arc<dyn Any + Send + Sync>
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
+
+    #[test]
+    fn in_memory_attributes_provide_label_values() {
+        let meter = NoOpCoreMeter;
+        let base_attrs = meter.new_attributes(NewAttributes::default());
+        let attrs = meter.extend_attributes(
+            base_attrs,
+            NewAttributes::from(vec![MetricKeyValue::new("poller_type", "workflow_task")]),
+        );
+
+        let value = Arc::new(AtomicU64::new(0));
+        let mut metrics = HashMap::new();
+        metrics.insert("workflow_task".to_string(), value.clone());
+        let heartbeat_metric = HeartbeatMetricType::WithLabel {
+            label_key: "poller_type".to_string(),
+            metrics,
+        };
+
+        heartbeat_metric.record_gauge(3, &attrs);
+
+        assert_eq!(value.load(Ordering::Relaxed), 3);
+        assert_eq!(
+            label_value_from_attributes(&attrs, "poller_type").as_deref(),
+            Some("workflow_task")
+        );
     }
 }
 

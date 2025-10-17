@@ -39,6 +39,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+pub(crate) use temporal_sdk_core_api::telemetry::metrics::WorkerHeartbeatMetrics;
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},

@@ -50,4 +50,8 @@ where
     fn available_slots(&self) -> Option<usize> {
         Some(self.sem.available_permits())
     }
+
+    fn slot_supplier_kind(&self) -> String {
+        "Fixed".to_string()
+    }
 }

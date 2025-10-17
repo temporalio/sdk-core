@@ -2,13 +2,18 @@
 
 pub(crate) mod mocks;
 use crate::protosext::legacy_query_failure;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
+use prost_types::Duration as PbDuration;
+use std::collections::HashMap;
+use std::time::SystemTime;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
     RetryClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerSlotsInfo;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{workflow_commands::QueryResult, workflow_completion},
@@ -48,6 +53,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    worker_heartbeat_map: Arc<Mutex<HashMap<String, ClientHeartbeatData>>>,
 }
 
 impl WorkerClientBag {
@@ -62,6 +68,7 @@ impl WorkerClientBag {
             namespace,
             identity,
             worker_versioning_strategy,
+            worker_heartbeat_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -211,7 +218,11 @@ pub trait WorkerClient: Sync + Send {
     /// Describe the namespace
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
-    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
+    async fn shutdown_worker(
+        &self,
+        sticky_task_queue: String,
+        final_heartbeat: Option<WorkerHeartbeat>,
+    ) -> Result<ShutdownWorkerResponse>;
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
@@ -233,6 +244,9 @@ pub trait WorkerClient: Sync + Send {
     fn identity(&self) -> String;
     /// Get worker grouping key
     fn worker_grouping_key(&self) -> Uuid;
+    /// Sets the client-reliant fields for WorkerHeartbeat. This also updates client-level tracking
+    /// of heartbeat fields, like last heartbeat timestamp.
+    fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -640,13 +654,22 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
-    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse> {
+    async fn shutdown_worker(
+        &self,
+        sticky_task_queue: String,
+        final_heartbeat: Option<WorkerHeartbeat>,
+    ) -> Result<ShutdownWorkerResponse> {
+        let mut final_heartbeat = final_heartbeat;
+        if let Some(w) = final_heartbeat.as_mut() {
+            w.status = WorkerStatus::Shutdown.into();
+            self.set_heartbeat_client_fields(w);
+        }
         let request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: None,
+            worker_heartbeat: final_heartbeat,
         };
 
         Ok(
@@ -708,6 +731,50 @@ impl WorkerClient for WorkerClientBag {
             .get_client()
             .worker_grouping_key()
     }
+
+    fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat) {
+        if let Some(host_info) = heartbeat.host_info.as_mut() {
+            host_info.process_key = self.worker_grouping_key().to_string();
+        }
+        heartbeat.worker_identity = self.identity();
+        let sdk_name_and_ver = self.sdk_name_and_version();
+        heartbeat.sdk_name = sdk_name_and_ver.0;
+        heartbeat.sdk_version = sdk_name_and_ver.1;
+
+        let now = SystemTime::now();
+        heartbeat.heartbeat_time = Some(now.into());
+        let mut heartbeat_map = self.worker_heartbeat_map.lock();
+        let client_heartbeat_data = heartbeat_map
+            .entry(heartbeat.worker_instance_key.clone())
+            .or_default();
+        let elapsed_since_last_heartbeat =
+            client_heartbeat_data.last_heartbeat_time.map(|hb_time| {
+                let dur = now.duration_since(hb_time).unwrap_or(Duration::ZERO);
+                PbDuration {
+                    seconds: dur.as_secs() as i64,
+                    nanos: dur.subsec_nanos() as i32,
+                }
+            });
+        heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
+        client_heartbeat_data.last_heartbeat_time = Some(now);
+
+        update_slots(
+            &mut heartbeat.workflow_task_slots_info,
+            &mut client_heartbeat_data.workflow_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.activity_task_slots_info,
+            &mut client_heartbeat_data.activity_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.nexus_task_slots_info,
+            &mut client_heartbeat_data.nexus_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.local_activity_slots_info,
+            &mut client_heartbeat_data.local_activity_slots_info,
+        );
+    }
 }
 
 impl NamespacedClient for WorkerClientBag {
@@ -744,4 +811,32 @@ pub struct WorkflowTaskCompletion {
     pub metering_metadata: MeteringMetadata,
     /// Versioning behavior of the workflow, if any.
     pub versioning_behavior: VersioningBehavior,
+}
+
+#[derive(Clone, Default)]
+struct SlotsInfo {
+    total_processed_tasks: i32,
+    total_failed_tasks: i32,
+}
+
+#[derive(Clone, Default)]
+struct ClientHeartbeatData {
+    last_heartbeat_time: Option<SystemTime>,
+
+    workflow_task_slots_info: SlotsInfo,
+    activity_task_slots_info: SlotsInfo,
+    nexus_task_slots_info: SlotsInfo,
+    local_activity_slots_info: SlotsInfo,
+}
+
+fn update_slots(slots_info: &mut Option<WorkerSlotsInfo>, client_heartbeat_data: &mut SlotsInfo) {
+    if let Some(wft_slot_info) = slots_info.as_mut() {
+        wft_slot_info.last_interval_processed_tasks =
+            wft_slot_info.total_processed_tasks - client_heartbeat_data.total_processed_tasks;
+        wft_slot_info.last_interval_failure_tasks =
+            wft_slot_info.total_failed_tasks - client_heartbeat_data.total_failed_tasks;
+
+        client_heartbeat_data.total_processed_tasks = wft_slot_info.total_processed_tasks;
+        client_heartbeat_data.total_failed_tasks = wft_slot_info.total_failed_tasks;
+    }
 }

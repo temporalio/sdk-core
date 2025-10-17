@@ -1346,6 +1346,15 @@ proxier! {
         }
     );
     (
+        describe_worker,
+        DescribeWorkerRequest,
+        DescribeWorkerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         record_worker_heartbeat,
         RecordWorkerHeartbeatRequest,
         RecordWorkerHeartbeatResponse,
@@ -1377,6 +1386,15 @@ proxier! {
         update_worker_config,
         UpdateWorkerConfigRequest,
         UpdateWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_manager,
+        SetWorkerDeploymentManagerRequest,
+        SetWorkerDeploymentManagerResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

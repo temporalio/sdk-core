@@ -38,6 +38,7 @@ use temporal_sdk::{
         WorkerInterceptor,
     },
 };
+pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
 use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
     WorkerConfigBuilder, init_replay_worker, init_worker,
@@ -67,8 +68,7 @@ use temporal_sdk_core_protos::{
 use tokio::{sync::OnceCell, task::AbortHandle};
 use tracing::{debug, warn};
 use url::Url;
-
-pub(crate) use temporal_sdk_core::test_help::NAMESPACE;
+use uuid::Uuid;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -101,7 +101,8 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .max_outstanding_workflow_tasks(100_usize)
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_build_id".to_owned(),
-        });
+        })
+        .skip_client_worker_set_check(true);
     b
 }
 
@@ -496,6 +497,10 @@ impl TestWorker {
 
     pub(crate) fn inner_mut(&mut self) -> &mut Worker {
         &mut self.inner
+    }
+
+    pub(crate) fn worker_instance_key(&self) -> Uuid {
+        self.core_worker.worker_instance_key()
     }
 
     // TODO: Maybe trait-ify?

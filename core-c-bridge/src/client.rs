@@ -571,6 +571,7 @@ async fn call_workflow_service(
         "DescribeNamespace" => rpc_call!(client, call, describe_namespace),
         "DescribeSchedule" => rpc_call!(client, call, describe_schedule),
         "DescribeTaskQueue" => rpc_call!(client, call, describe_task_queue),
+        "DescribeWorker" => rpc_call!(client, call, describe_worker),
         "DescribeWorkerDeployment" => rpc_call!(client, call, describe_worker_deployment),
         "DescribeWorkerDeploymentVersion" => {
             rpc_call!(client, call, describe_worker_deployment_version)
@@ -650,6 +651,9 @@ async fn call_workflow_service(
         "SetCurrentDeployment" => rpc_call!(client, call, set_current_deployment),
         "SetWorkerDeploymentCurrentVersion" => {
             rpc_call!(client, call, set_worker_deployment_current_version)
+        }
+        "SetWorkerDeploymentManager" => {
+            rpc_call!(client, call, set_worker_deployment_manager)
         }
         "SetWorkerDeploymentRampingVersion" => {
             rpc_call!(client, call, set_worker_deployment_ramping_version)
