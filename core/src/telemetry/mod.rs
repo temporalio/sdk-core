@@ -40,7 +40,8 @@ use std::{
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
+    CoreLog, CoreTelemetry, Logger, TaskQueueLabelStrategy, TelemetryOptions,
+    TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };
 use tracing::{Level, Subscriber};
@@ -67,7 +68,7 @@ pub struct TelemetryInstance {
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
-    task_queue_label_strategy: temporal_sdk_core_api::telemetry::TaskQueueLabelStrategy,
+    task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 
 impl TelemetryInstance {
@@ -77,7 +78,7 @@ impl TelemetryInstance {
         metric_prefix: String,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
         attach_service_name: bool,
-        task_queue_label_strategy: temporal_sdk_core_api::telemetry::TaskQueueLabelStrategy,
+        task_queue_label_strategy: TaskQueueLabelStrategy,
     ) -> Self {
         Self {
             metric_prefix,

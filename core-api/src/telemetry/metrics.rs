@@ -1,4 +1,4 @@
-use crate::dbg_panic;
+use crate::{dbg_panic, telemetry::TaskQueueLabelStrategy};
 use std::{
     any::Any,
     borrow::Cow,
@@ -64,7 +64,7 @@ impl From<&'static str> for MetricParameters {
 pub struct TemporalMeter {
     pub inner: Arc<dyn CoreMeter>,
     pub default_attribs: NewAttributes,
-    pub task_queue_label_strategy: crate::telemetry::TaskQueueLabelStrategy,
+    pub task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 
 impl Deref for TemporalMeter {

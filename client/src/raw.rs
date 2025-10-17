@@ -370,9 +370,7 @@ impl RawGrpcCaller for Client {}
 #[derive(Clone, Debug)]
 pub(super) struct AttachMetricLabels {
     pub(super) labels: Vec<MetricKeyValue>,
-    /// If set, this is the normal (non-sticky) task queue name
     pub(super) normal_task_queue: Option<String>,
-    /// If set, this is the sticky task queue name
     pub(super) sticky_task_queue: Option<String>,
 }
 impl AttachMetricLabels {
@@ -389,18 +387,15 @@ impl AttachMetricLabels {
     pub(super) fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
         if let Some(tq) = tq {
             if !tq.normal_name.is_empty() {
-                // This is a sticky queue
                 self.sticky_task_queue = Some(tq.name);
                 self.normal_task_queue = Some(tq.normal_name);
             } else {
-                // This is a normal queue
                 self.normal_task_queue = Some(tq.name);
             }
         }
         self
     }
     pub(super) fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
-        // When called directly with a string, we assume it's a normal queue
         self.normal_task_queue = Some(tq.into());
         self
     }

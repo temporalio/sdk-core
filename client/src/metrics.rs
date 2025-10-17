@@ -34,7 +34,7 @@ pub(crate) struct MetricsContext {
     kvs: MetricAttributes,
     poll_is_long: bool,
     instruments: Instruments,
-    task_queue_label_strategy: temporal_sdk_core_api::telemetry::TaskQueueLabelStrategy,
+    task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 #[derive(Clone)]
 struct Instruments {
