@@ -74,3 +74,4 @@ test-lint-fix = [
     "--fix",
     "--allow-dirty",
 ]
+generate-fsm-diagrams = ["run", "--bin", "generate-fsm-diagrams", "--package", "temporal-sdk-core"]

@@ -1,6 +1,6 @@
 use std::{
     error::Error,
-    fmt::{Debug, Display, Formatter},
+    fmt::{Display, Formatter},
 };
 
 /// This trait defines a state machine (more formally, a [finite state
@@ -46,7 +46,6 @@ pub trait StateMachine: Sized {
 }
 
 /// The error returned by [StateMachine]s when handling events
-#[derive(Debug)]
 pub enum MachineError<E: Error> {
     /// An undefined transition was attempted
     InvalidTransition,
@@ -60,11 +59,20 @@ impl<E: Error> From<E> for MachineError<E> {
     }
 }
 
+impl<E: Error> std::fmt::Debug for MachineError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MachineError::InvalidTransition => f.write_str("Invalid transition"),
+            MachineError::Underlying(e) => std::fmt::Debug::fmt(e, f),
+        }
+    }
+}
+
 impl<E: Error> Display for MachineError<E> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             MachineError::InvalidTransition => f.write_str("Invalid transition"),
-            MachineError::Underlying(e) => Display::fmt(&e, f),
+            MachineError::Underlying(e) => Display::fmt(e, f),
         }
     }
 }
