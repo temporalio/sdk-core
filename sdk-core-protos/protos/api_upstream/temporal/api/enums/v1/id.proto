@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package temporal.api.enums.v1;
+
+option go_package = "go.temporal.io/api/enums/v1;enums";
+option java_package = "io.temporal.api.enums.v1";
+option java_multiple_files = true;
+option java_outer_classname = "IdProto";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
+
+// Defines whether to allow re-using an ID from a previously *closed* execution.
+// If the request is denied, the server returns an `ExecutionAlreadyStarted` error.
+//
+// See `IdConflictPolicy` for handling ID duplication with a *running* execution.
+enum IdReusePolicy {
+    ID_REUSE_POLICY_UNSPECIFIED = 0;
+    // Always allow starting an execution using the same entity ID.
+    ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
+    // Allow starting an execution using the same ID, only when the last execution's final state is one of [terminated,
+    // cancelled, timed out, failed].
+    ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
+    // Do not permit re-use of the ID for this execution. Future start requests could potentially change the policy,
+    // allowing re-use of the ID.
+    ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+}
+
+// Defines what to do when trying to start an execution with the same ID as a *running* execution.
+// Note that it is *never* valid to have two actively running instances of the same execution ID.
+//
+// See `IdReusePolicy` for handling execution ID duplication with a *closed* execution.
+enum IdConflictPolicy {
+    ID_CONFLICT_POLICY_UNSPECIFIED = 0;
+    // Don't start a new execution; instead return `ExecutionAlreadyStarted` error.
+    ID_CONFLICT_POLICY_FAIL = 1;
+    // Don't start a new execution; instead return a handle for the running execution.
+    ID_CONFLICT_POLICY_USE_EXISTING = 2;
+    // Terminate the running execution before starting a new one.
+    ID_CONFLICT_POLICY_TERMINATE_EXISTING = 3;
+}
