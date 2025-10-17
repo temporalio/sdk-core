@@ -529,7 +529,10 @@ fn after_shutdown_checks(
 async fn worker_heartbeat_sticky_cache_miss() {
     let wf_name = "worker_heartbeat_cache_miss";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter.worker_config.max_cached_workflows(1_usize);
+    starter
+        .worker_config
+        .max_cached_workflows(1_usize)
+        .max_outstanding_workflow_tasks(2_usize);
 
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
@@ -595,11 +598,6 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .unwrap();
 
         HISTORY_WF1_ACTIVITY_STARTED.notified().await;
-
-        client_for_orchestrator
-            .get_workflow_execution_history(wf1_id.clone(), Some(wf1_run.clone()), vec![])
-            .await
-            .unwrap();
 
         let wf2_run = submitter
             .submit_wf(
