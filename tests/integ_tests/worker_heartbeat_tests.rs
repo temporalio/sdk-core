@@ -1,4 +1,4 @@
-use crate::common::{ANY_PORT, CoreWfStarter, get_integ_telem_options};
+use crate::common::{ANY_PORT, CoreWfStarter, eventually, get_integ_telem_options};
 use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::StreamExt;
@@ -807,77 +807,90 @@ async fn worker_heartbeat_failure_metrics() {
 
     let test_fut = async {
         ACT_FAIL.notified().await;
-
-        // Give time for heartbeat to reflect activity failure
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
         let client = starter.get_client().await;
-        let mut raw_client = (*client).clone();
+        eventually(
+            || async {
+                let mut raw_client = (*client).clone();
 
-        let workers_list = WorkflowService::list_workers(
-            &mut raw_client,
-            ListWorkersRequest {
-                namespace: client.namespace().to_owned(),
-                page_size: 100,
-                next_page_token: Vec::new(),
-                query: String::new(),
+                let workers_list = WorkflowService::list_workers(
+                    &mut raw_client,
+                    ListWorkersRequest {
+                        namespace: client.namespace().to_owned(),
+                        page_size: 100,
+                        next_page_token: Vec::new(),
+                        query: String::new(),
+                    },
+                )
+                .await
+                .unwrap()
+                .into_inner();
+                let worker_info = workers_list
+                    .workers_info
+                    .iter()
+                    .find(|worker_info| {
+                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+                            hb.worker_instance_key == worker_instance_key.to_string()
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap();
+                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+                assert_eq!(
+                    heartbeat.worker_instance_key,
+                    worker_instance_key.to_string()
+                );
+                let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+                if activity_slots.last_interval_failure_tasks >= 1 {
+                    return Ok(());
+                }
+                Err("activity_slots.last_interval_failure_tasks still 0, retrying")
             },
+            Duration::from_millis(150),
         )
         .await
-        .unwrap()
-        .into_inner();
-        let worker_info = workers_list
-            .workers_info
-            .iter()
-            .find(|worker_info| {
-                if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                    hb.worker_instance_key == worker_instance_key.to_string()
-                } else {
-                    false
-                }
-            })
-            .unwrap();
-        let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-        assert_eq!(
-            heartbeat.worker_instance_key,
-            worker_instance_key.to_string()
-        );
-        let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
-        assert!(activity_slots.last_interval_failure_tasks >= 1);
+        .unwrap();
 
         WF_FAIL.notified().await;
 
-        // Give time for heartbeat to reflect workflow failure
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        eventually(
+            || async {
+                let mut raw_client = (*client).clone();
+                let workers_list = WorkflowService::list_workers(
+                    &mut raw_client,
+                    ListWorkersRequest {
+                        namespace: client.namespace().to_owned(),
+                        page_size: 100,
+                        next_page_token: Vec::new(),
+                        query: String::new(),
+                    },
+                )
+                .await
+                .unwrap()
+                .into_inner();
+                let worker_info = workers_list
+                    .workers_info
+                    .iter()
+                    .find(|worker_info| {
+                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
+                            hb.worker_instance_key == worker_instance_key.to_string()
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap();
 
-        let workers_list = WorkflowService::list_workers(
-            &mut raw_client,
-            ListWorkersRequest {
-                namespace: client.namespace().to_owned(),
-                page_size: 100,
-                next_page_token: Vec::new(),
-                query: String::new(),
+                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
+                let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+                if workflow_slots.last_interval_failure_tasks >= 1 {
+                    return Ok(());
+                }
+                Err("workflow_slots.last_interval_failure_tasks still 0, retrying")
             },
+            Duration::from_millis(150),
         )
         .await
-        .unwrap()
-        .into_inner();
-        let worker_info = workers_list
-            .workers_info
-            .iter()
-            .find(|worker_info| {
-                if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                    hb.worker_instance_key == worker_instance_key.to_string()
-                } else {
-                    false
-                }
-            })
-            .unwrap();
-
-        let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-        let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
-        assert!(workflow_slots.last_interval_failure_tasks >= 1);
-
+        .unwrap();
         client
             .signal_workflow_execution(
                 starter.get_wf_id().to_string(),
