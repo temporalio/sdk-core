@@ -62,12 +62,10 @@ use temporal_sdk_core_protos::{
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use uuid::Uuid;
 
 /// Default namespace for testing
 pub const NAMESPACE: &str = "default";
-
-/// Default task queue for testing
-pub const TEST_Q: &str = "q";
 
 /// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
@@ -102,7 +100,7 @@ pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
 pub fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
     wcb.namespace(NAMESPACE)
-        .task_queue(TEST_Q)
+        .task_queue(Uuid::new_v4().to_string())
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_bin_id".to_string(),
         })
@@ -185,7 +183,7 @@ pub fn build_fake_worker(
 }
 
 pub fn mock_worker(mocks: MocksHolder) -> Worker {
-    let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
+    let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
     let act_poller = if mocks.inputs.config.no_remote_activities {
         None
     } else {
@@ -205,7 +203,9 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
         },
         None,
         None,
+        false,
     )
+    .unwrap()
 }
 
 pub struct FakeWfResponses {
@@ -275,7 +275,7 @@ impl MocksHolder {
         }
     }
 
-    /// Uses the provided list of tasks to create a mock poller for the `TEST_Q`
+    /// Uses the provided list of tasks to create a mock poller with a randomly generated task queue
     pub fn from_client_with_activities<ACT>(
         client: impl WorkerClient + 'static,
         act_tasks: ACT,

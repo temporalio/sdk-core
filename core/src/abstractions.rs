@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
+    slot_supplier_kind: SlotSupplierKind,
     /// The number of permit owners who have acquired a permit, but are not yet meaningfully using
     /// that permit. This is useful for giving a more semantically accurate count of used task
     /// slots, since we typically wait for a permit first before polling, but that slot isn't used
@@ -54,6 +55,35 @@ pub(crate) struct PermitDealerContextData {
     pub(crate) worker_deployment_version: Option<WorkerDeploymentVersion>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SlotSupplierKind {
+    Fixed,
+    ResourceBased,
+    Custom(String),
+}
+
+impl SlotSupplierKind {
+    fn from_label(label: &str) -> Self {
+        if label == "Fixed" {
+            SlotSupplierKind::Fixed
+        } else if label == "ResourceBased" {
+            SlotSupplierKind::ResourceBased
+        } else {
+            SlotSupplierKind::Custom(label.to_string())
+        }
+    }
+}
+
+impl std::fmt::Display for SlotSupplierKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SlotSupplierKind::Fixed => f.write_str("Fixed"),
+            SlotSupplierKind::ResourceBased => f.write_str("ResourceBased"),
+            SlotSupplierKind::Custom(name) => f.write_str(name.as_str()),
+        }
+    }
+}
+
 impl<SK> MeteredPermitDealer<SK>
 where
     SK: SlotKind + 'static,
@@ -65,8 +95,11 @@ where
         context_data: Arc<PermitDealerContextData>,
         meter: Option<TemporalMeter>,
     ) -> Self {
+        let supplier_kind_label = supplier.slot_supplier_kind();
+        let slot_supplier_kind = SlotSupplierKind::from_label(supplier_kind_label.as_ref());
         Self {
             supplier,
+            slot_supplier_kind,
             unused_claimants: Arc::new(AtomicUsize::new(0)),
             extant_permits: watch::channel(0),
             metrics_ctx,
@@ -79,6 +112,10 @@ where
 
     pub(crate) fn available_permits(&self) -> Option<usize> {
         self.supplier.available_slots()
+    }
+
+    pub(crate) fn slot_supplier_kind(&self) -> &SlotSupplierKind {
+        &self.slot_supplier_kind
     }
 
     #[cfg(test)]
@@ -491,5 +528,11 @@ pub(crate) mod tests {
         drop(perm);
         // Now it'll proceed
         acquire_fut.await;
+    }
+
+    #[test]
+    fn captures_slot_supplier_kind() {
+        let dealer = fixed_size_permit_dealer::<WorkflowSlotKind>(1);
+        assert_eq!(*dealer.slot_supplier_kind(), SlotSupplierKind::Fixed);
     }
 }

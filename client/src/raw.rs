@@ -6,7 +6,7 @@ use crate::{
     Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::{namespace_kv, task_queue_kv},
-    worker_registry::{Slot, SlotManager},
+    worker_registry::{ClientWorkerSet, Slot},
 };
 use dyn_clone::DynClone;
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
@@ -33,7 +33,7 @@ use tonic::{
 trait RawClientProducer {
     /// Returns information about workers associated with this client. Implementers outside of
     /// core can safely return `None`.
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>>;
 
     /// Return a workflow service client instance
     fn workflow_client(&mut self) -> Box<dyn WorkflowService>;
@@ -175,7 +175,7 @@ impl<RC> RawClientProducer for RetryClient<RC>
 where
     RC: RawClientProducer + 'static,
 {
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         self.get_client().get_workers_info()
     }
 
@@ -253,7 +253,7 @@ impl<RC> RawClientProducer for SharedReplaceableClient<RC>
 where
     RC: RawClientProducer + Clone + Send + Sync + 'static,
 {
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         self.inner_cow().get_workers_info()
     }
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
@@ -284,7 +284,7 @@ impl<RC> RawGrpcCaller for SharedReplaceableClient<RC> where
 }
 
 impl RawClientProducer for TemporalServiceClient {
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         None
     }
 
@@ -312,7 +312,7 @@ impl RawClientProducer for TemporalServiceClient {
 impl RawGrpcCaller for TemporalServiceClient {}
 
 impl RawClientProducer for ConfiguredClient<TemporalServiceClient> {
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         Some(self.workers())
     }
 
@@ -340,7 +340,7 @@ impl RawClientProducer for ConfiguredClient<TemporalServiceClient> {
 impl RawGrpcCaller for ConfiguredClient<TemporalServiceClient> {}
 
 impl RawClientProducer for Client {
-    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
         self.inner.get_workers_info()
     }
 
@@ -480,7 +480,7 @@ macro_rules! proxy_impl {
             mut request: tonic::Request<$req>,
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             type_closure_arg(&mut request, $closure_request);
-            let data = type_closure_two_arg(&mut request, Option::<Arc<SlotManager>>::None,
+            let data = type_closure_two_arg(&mut request, Option::<Arc<ClientWorkerSet>>::None,
                                             $closure_before);
             async move {
                 type_closure_two_arg(<$client_type<_>>::$method(self, request).await,
@@ -1399,6 +1399,15 @@ proxier! {
         }
     );
     (
+        describe_worker,
+        DescribeWorkerRequest,
+        DescribeWorkerResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         record_worker_heartbeat,
         RecordWorkerHeartbeatRequest,
         RecordWorkerHeartbeatResponse,
@@ -1430,6 +1439,15 @@ proxier! {
         update_worker_config,
         UpdateWorkerConfigRequest,
         UpdateWorkerConfigResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_manager,
+        SetWorkerDeploymentManagerRequest,
+        SetWorkerDeploymentManagerResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

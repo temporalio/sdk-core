@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::get_integ_runtime_options;
 use common::{
     CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
 };
@@ -194,7 +195,7 @@ async fn workflow_load() {
     // cause us to encounter the tracing span drop bug
     telemopts.logging = None;
     init_integ_telem();
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("workflow_load", rt);
     starter
         .worker_config

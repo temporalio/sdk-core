@@ -6,13 +6,16 @@ use crate::{
     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
     worker::{client::WorkerClient, wft_poller_behavior},
 };
+use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
 use std::sync::{Arc, OnceLock};
+use std::time::SystemTime;
 use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn make_wft_poller(
     config: &WorkerConfig,
     sticky_queue_name: &Option<String>,
@@ -20,6 +23,8 @@ pub(crate) fn make_wft_poller(
     metrics: &MetricsContext,
     shutdown_token: &CancellationToken,
     wft_slots: &MeteredPermitDealer<WorkflowSlotKind>,
+    last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
 ) -> impl Stream<
     Item = Result<
         (
@@ -52,6 +57,7 @@ pub(crate) fn make_wft_poller(
         WorkflowTaskOptions {
             wft_poller_shared: wft_poller_shared.clone(),
         },
+        last_successful_poll_time,
     );
     let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
         let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
@@ -66,6 +72,7 @@ pub(crate) fn make_wft_poller(
                 sticky_metrics.record_num_pollers(np);
             }),
             WorkflowTaskOptions { wft_poller_shared },
+            sticky_last_successful_poll_time,
         )
     });
     let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(

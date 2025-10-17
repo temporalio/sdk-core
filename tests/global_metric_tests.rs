@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::get_integ_runtime_options;
 use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
@@ -71,18 +72,16 @@ async fn otel_errors_logged_as_errors() {
             .unwrap(),
     )
     .unwrap();
+    let telemopts = TelemetryOptionsBuilder::default()
+        .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
+        // Importantly, _not_ using subscriber override, is using console.
+        .logging(Logger::Console {
+            filter: construct_filter_string(Level::INFO, Level::WARN),
+        })
+        .build()
+        .unwrap();
 
-    let rt = CoreRuntime::new_assume_tokio(
-        TelemetryOptionsBuilder::default()
-            .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
-            // Importantly, _not_ using subscriber override, is using console.
-            .logging(Logger::Console {
-                filter: construct_filter_string(Level::INFO, Level::WARN),
-            })
-            .build()
-            .unwrap(),
-    )
-    .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);
     let _worker = starter.get_worker().await;
 

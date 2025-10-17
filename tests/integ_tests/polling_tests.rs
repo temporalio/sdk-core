@@ -18,7 +18,7 @@ use std::{
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core::{
-    ClientOptionsBuilder, CoreRuntime,
+    ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder,
     ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
     init_worker,
     telemetry::CoreLogStreamConsumer,
@@ -221,7 +221,9 @@ async fn switching_worker_client_changes_poll() {
 
         // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
         info!("Replacing client and polling again");
-        worker.replace_client(client2.get_client().inner().clone());
+        worker
+            .replace_client(client2.get_client().inner().clone())
+            .unwrap();
         let act2 = worker.poll_workflow_activation().await.unwrap();
         assert_eq!(wf2.run_id, act2.run_id);
         worker.complete_execution(&act2.run_id).await;
@@ -339,7 +341,11 @@ async fn replace_client_works_after_polling_failure() {
         })
         .build()
         .unwrap();
-    let rt = Arc::new(CoreRuntime::new_assume_tokio(telem_opts).unwrap());
+    let runtime_opts = RuntimeOptionsBuilder::default()
+        .telemetry_options(telem_opts)
+        .build()
+        .unwrap();
+    let rt = Arc::new(CoreRuntime::new_assume_tokio(runtime_opts).unwrap());
 
     // Spawning background task to read logs and notify the test when polling failure occurs.
     let look_for_poll_failure_log = Arc::new(AtomicBool::new(false));
@@ -477,7 +483,7 @@ async fn replace_client_works_after_polling_failure() {
 
             // Switch worker over to the main integration server.
             // The polling started on the initial server should complete with a task from the new server.
-            worker.replace_client(client_for_integ_server);
+            worker.replace_client(client_for_integ_server).unwrap();
             let act_2 = tokio::time::timeout(Duration::from_secs(60), poll_join_handle)
                 .await
                 .unwrap()
