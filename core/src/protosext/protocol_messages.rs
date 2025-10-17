@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use std::collections::HashMap;
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::Payload,
@@ -108,16 +108,9 @@ impl TryFrom<Option<prost_types::Any>> for IncomingProtocolMessageBody {
 
     fn try_from(v: Option<prost_types::Any>) -> Result<Self, Self::Error> {
         let v = v.ok_or_else(|| anyhow!("Protocol message body must be populated"))?;
-        // Undo explicit type url checks when https://github.com/fdeantoni/prost-wkt/issues/48 is
-        // fixed
-        Ok(match v.type_url.as_str() {
-            "type.googleapis.com/temporal.api.update.v1.Request" => {
-                IncomingProtocolMessageBody::UpdateRequest(
-                    v.unpack_as(update::v1::Request::default())?.try_into()?,
-                )
-            }
-            o => bail!("Could not understand protocol message type {o}"),
-        })
+        Ok(IncomingProtocolMessageBody::UpdateRequest(
+            v.to_msg::<update::v1::Request>()?.try_into()?,
+        ))
     }
 }
 

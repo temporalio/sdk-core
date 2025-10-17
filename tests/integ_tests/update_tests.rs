@@ -42,6 +42,7 @@ use temporal_sdk_core_protos::{
     test_utils::start_timer_cmd,
 };
 use tokio::{join, sync::Barrier};
+use tonic::IntoRequest;
 use uuid::Uuid;
 
 #[derive(Clone, Copy)]
@@ -116,7 +117,7 @@ async fn reapplied_updates_due_to_reset() {
         Arc::make_mut(&mut client_mut),
         #[allow(deprecated)]
         ResetWorkflowExecutionRequest {
-            namespace: client.namespace().into(),
+            namespace: client.namespace(),
             workflow_execution: Some(WorkflowExecution {
                 workflow_id: workflow_id.into(),
                 run_id: pre_reset_run_id.clone(),
@@ -125,7 +126,8 @@ async fn reapplied_updates_due_to_reset() {
             reset_reapply_type: ResetReapplyType::AllEligible as i32,
             request_id: Uuid::new_v4().to_string(),
             ..Default::default()
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()

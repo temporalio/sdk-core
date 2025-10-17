@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk, init_core_and_create_wf,
-        mock_sdk, mock_sdk_cfg,
+        ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
+        eventually, init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
     integ_tests::activity_functions::echo,
 };
@@ -25,7 +25,7 @@ use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TaskToken, TestHistoryBuilder, canned_histories,
     coresdk::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-        IntoCompletion,
+        IntoCompletion, IntoPayloadsExt,
         activity_result::{
             self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
         },
@@ -206,7 +206,7 @@ async fn activity_non_retryable_failure() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
@@ -273,7 +273,7 @@ async fn activity_non_retryable_failure_with_error() {
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
-                    identity: "integ_tester".to_owned(),
+                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
                     retry_state: RetryState::NonRetryableFailure as i32,
                 })),
                 ..Default::default()
@@ -796,6 +796,86 @@ async fn activity_cancelled_after_heartbeat_times_out() {
         .terminate_workflow_execution(task_q, None)
         .await
         .unwrap();
+}
+
+#[ignore] // Currently skipped because of https://github.com/temporalio/temporal/issues/8376
+#[tokio::test]
+async fn activity_heartbeat_not_flushed_on_success() {
+    let mut starter = init_core_and_create_wf("activity_heartbeat_not_flushed_on_success").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue().to_string();
+    let activity_id = "act-1";
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        ScheduleActivity {
+            seq: 0,
+            activity_id: activity_id.to_string(),
+            activity_type: "dontcare".to_string(),
+            task_queue: task_q.clone(),
+            schedule_to_close_timeout: Some(prost_dur!(from_secs(60))),
+            heartbeat_timeout: Some(prost_dur!(from_secs(10))),
+            retry_policy: Some(RetryPolicy {
+                maximum_attempts: 2,
+                initial_interval: Some(prost_dur!(from_secs(5))),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled
+    let task = core.poll_activity_task().await.unwrap();
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
+    // heartbeat 1 (will send immediately)
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: task.task_token.clone(),
+        details: vec!["one".into()],
+    });
+    // heartbeat 2 (would be throttled if not flushed)
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: task.task_token.clone(),
+        details: vec!["two".into()],
+    });
+    // Complete activity with fail
+    let failure = Failure::application_failure("activity failed".to_string(), false);
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityExecutionResult::fail(failure)),
+    })
+    .await
+    .unwrap();
+    // The activity is still in the pending state since it has retries left
+    let client = starter.get_client().await;
+    eventually(
+        || async {
+            // Verify pending details has the flushed heartbeat
+            let details = client
+                .describe_workflow_execution(starter.get_wf_id().to_string(), None)
+                .await
+                .unwrap();
+            let last_deets = details
+                .pending_activities
+                .into_iter()
+                .find(|i| i.activity_id == activity_id)
+                .and_then(|i| i.heartbeat_details);
+            if last_deets == ["two".into()].into_payloads() {
+                Ok(())
+            } else {
+                Err("details don't yet match")
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    client
+        .terminate_workflow_execution(task_q, None)
+        .await
+        .unwrap();
+    drain_pollers_and_shutdown(&core).await;
 }
 
 #[tokio::test]

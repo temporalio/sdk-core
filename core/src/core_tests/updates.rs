@@ -114,10 +114,10 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
         .returning(move |mut resp| {
             let msg = resp.messages.pop().unwrap();
             let orig_req = if reject {
-                let acceptance = msg.body.unwrap().unpack_as(Rejection::default()).unwrap();
+                let acceptance = msg.body.unwrap().to_msg::<Rejection>().unwrap();
                 acceptance.rejected_request.unwrap()
             } else {
-                let acceptance = msg.body.unwrap().unpack_as(Acceptance::default()).unwrap();
+                let acceptance = msg.body.unwrap().to_msg::<Acceptance>().unwrap();
                 acceptance.accepted_request.unwrap()
             };
             assert_eq!(orig_req, upd_req_body);

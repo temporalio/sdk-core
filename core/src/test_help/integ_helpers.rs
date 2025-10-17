@@ -660,7 +660,6 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                     )
                     .is_err()
                 {
-                    dbg!("Exiting mock WFT task because rcv half of stream was dropped");
                     break;
                 }
             }

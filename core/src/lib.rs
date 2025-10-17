@@ -62,7 +62,7 @@ use anyhow::bail;
 use futures_util::Stream;
 use std::sync::Arc;
 use std::time::Duration;
-use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
+use temporal_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
@@ -89,20 +89,20 @@ pub fn init_worker<CT>(
 where
     CT: Into<sealed::AnyClient>,
 {
-    let client_inner = *client.into().into_inner();
-    let client = init_worker_client(
-        worker_config.namespace.clone(),
-        worker_config.client_identity_override.clone(),
-        client_inner,
-    );
     let namespace = worker_config.namespace.clone();
-    if client.namespace() != namespace {
-        bail!("Passed in client is not bound to the same namespace as the worker");
+    if namespace.is_empty() {
+        bail!("Worker namespace cannot be empty");
     }
-    if client.namespace() == "" {
-        bail!("Client namespace cannot be empty");
-    }
-    let client_ident = client.get_identity().to_owned();
+
+    let client = RetryClient::new(
+        SharedReplaceableClient::new(init_worker_client(
+            worker_config.namespace.clone(),
+            worker_config.client_identity_override.clone(),
+            client,
+        )),
+        RetryConfig::default(),
+    );
+    let client_ident = client.identity();
     let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     if client_ident.is_empty() {
@@ -142,16 +142,19 @@ where
     rwi.into_core_worker()
 }
 
-pub(crate) fn init_worker_client(
+pub(crate) fn init_worker_client<CT>(
     namespace: String,
     client_identity_override: Option<String>,
-    client: ConfiguredClient<TemporalServiceClientWithMetrics>,
-) -> RetryClient<Client> {
-    let mut client = Client::new(client, namespace);
+    client: CT,
+) -> Client
+where
+    CT: Into<sealed::AnyClient>,
+{
+    let mut client = Client::new(*client.into().into_inner(), namespace.clone());
     if let Some(ref id_override) = client_identity_override {
         client.options_mut().identity.clone_from(id_override);
     }
-    RetryClient::new(client, RetryConfig::default())
+    client
 }
 
 /// Creates a unique sticky queue name for a worker, iff the config allows for 1 or more cached
@@ -173,44 +176,57 @@ pub(crate) fn sticky_q_name_for_worker(
 
 mod sealed {
     use super::*;
+    use temporal_client::{SharedReplaceableClient, TemporalServiceClient};
 
     /// Allows passing different kinds of clients into things that want to be flexible. Motivating
     /// use-case was worker initialization.
     ///
     /// Needs to exist in this crate to avoid blanket impl conflicts.
     pub struct AnyClient {
-        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClientWithMetrics>>,
+        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClient>>,
     }
     impl AnyClient {
-        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClientWithMetrics>> {
+        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClient>> {
             self.inner
         }
     }
 
-    impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
-        fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
-            Self {
-                inner: Box::new(c.into_inner()),
-            }
-        }
-    }
-    impl From<RetryClient<Client>> for AnyClient {
-        fn from(c: RetryClient<Client>) -> Self {
-            Self {
-                inner: Box::new(c.into_inner().into_inner()),
-            }
-        }
-    }
-    impl From<Arc<RetryClient<Client>>> for AnyClient {
-        fn from(c: Arc<RetryClient<Client>>) -> Self {
-            Self {
-                inner: Box::new(c.get_client().inner().clone()),
-            }
-        }
-    }
-    impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
-        fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
+    impl From<ConfiguredClient<TemporalServiceClient>> for AnyClient {
+        fn from(c: ConfiguredClient<TemporalServiceClient>) -> Self {
             Self { inner: Box::new(c) }
+        }
+    }
+
+    impl From<Client> for AnyClient {
+        fn from(c: Client) -> Self {
+            c.into_inner().into()
+        }
+    }
+
+    impl<T> From<RetryClient<T>> for AnyClient
+    where
+        T: Into<AnyClient>,
+    {
+        fn from(c: RetryClient<T>) -> Self {
+            c.into_inner().into()
+        }
+    }
+
+    impl<T> From<SharedReplaceableClient<T>> for AnyClient
+    where
+        T: Into<AnyClient> + Clone + Send + Sync,
+    {
+        fn from(c: SharedReplaceableClient<T>) -> Self {
+            c.inner_clone().into()
+        }
+    }
+
+    impl<T> From<Arc<T>> for AnyClient
+    where
+        T: Into<AnyClient> + Clone,
+    {
+        fn from(c: Arc<T>) -> Self {
+            Arc::unwrap_or_clone(c).into()
         }
     }
 }

@@ -40,6 +40,7 @@ mod integ_tests {
         operatorservice::v1::CreateNexusEndpointRequest,
         workflowservice::v1::ListNamespacesRequest,
     };
+    use tonic::IntoRequest;
 
     // Create a worker like a bridge would (unwraps aside)
     #[tokio::test]
@@ -68,27 +69,32 @@ mod integ_tests {
 
         // Do things with worker or client
         let _ = retrying_client
-            .list_namespaces(ListNamespacesRequest::default())
+            .list_namespaces(ListNamespacesRequest::default().into_request())
             .await;
     }
 
     pub(crate) async fn mk_nexus_endpoint(starter: &mut CoreWfStarter) -> String {
         let client = starter.get_client().await;
         let endpoint = format!("mycoolendpoint-{}", rand_6_chars());
-        let mut op_client = client.get_client().inner().operator_svc().clone();
+        let mut op_client = client.get_client().inner().operator_svc();
         op_client
-            .create_nexus_endpoint(CreateNexusEndpointRequest {
-                spec: Some(EndpointSpec {
-                    name: endpoint.to_owned(),
-                    description: None,
-                    target: Some(EndpointTarget {
-                        variant: Some(endpoint_target::Variant::Worker(endpoint_target::Worker {
-                            namespace: client.namespace().to_owned(),
-                            task_queue: starter.get_task_queue().to_owned(),
-                        })),
+            .create_nexus_endpoint(
+                CreateNexusEndpointRequest {
+                    spec: Some(EndpointSpec {
+                        name: endpoint.to_owned(),
+                        description: None,
+                        target: Some(EndpointTarget {
+                            variant: Some(endpoint_target::Variant::Worker(
+                                endpoint_target::Worker {
+                                    namespace: client.namespace(),
+                                    task_queue: starter.get_task_queue().to_owned(),
+                                },
+                            )),
+                        }),
                     }),
-                }),
-            })
+                }
+                .into_request(),
+            )
             .await
             .unwrap();
         // Endpoint creation can (as of server 1.25.2 at least) return before they are actually usable.

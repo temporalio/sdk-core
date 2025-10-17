@@ -64,12 +64,12 @@ itertools = "0.14"
 lru = "0.16"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.30", features = [
+opentelemetry_sdk = { version = "0.31", features = [
     "rt-tokio",
     "metrics",
     "spec_unstable_metrics_views",
 ], optional = true }
-opentelemetry-otlp = { version = "0.30", features = [
+opentelemetry-otlp = { version = "0.31", features = [
     "tokio",
     "metrics",
     "tls",
@@ -81,7 +81,7 @@ pid = "4.0"
 pin-project = "1.1"
 prometheus = { version = "0.14", optional = true }
 prost = { workspace = true }
-prost-types = { version = "0.6", package = "prost-wkt-types" }
+prost-types = { workspace = true }
 rand = "0.9"
 reqwest = { version = "0.12", features = [
     "json",
@@ -116,7 +116,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 ] }
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
-zip = { version = "4.6", optional = true }
+# Only need specific features to decompress zip files for ephemeral server download
+zip = { version = "4.6", optional = true, default-features = false, features = ["deflate", "bzip2", "zstd"] }
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]

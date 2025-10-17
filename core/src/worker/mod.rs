@@ -19,6 +19,8 @@ pub(crate) use activities::{
     NewLocalAct,
 };
 pub(crate) use wft_poller::WFTPollerShared;
+
+#[allow(unreachable_pub)] // re-exported in test_help::integ_helpers
 pub use workflow::LEGACY_QUERY_ID;
 
 use crate::telemetry::WorkerHeartbeatMetrics;
@@ -29,6 +31,7 @@ use crate::{
     errors::CompleteWfError,
     pollers::{BoxedActPoller, BoxedNexusPoller},
     protosext::validate_activity_completion,
+    sealed::AnyClient,
     telemetry::{
         TelemetryInstance,
         metrics::{
@@ -67,10 +70,8 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::SharedNamespaceWorkerTrait;
 use temporal_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
-use temporal_client::{
-    ConfiguredClient, SharedNamespaceWorkerTrait, TemporalServiceClientWithMetrics,
-};
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_api::worker::{
     ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind,
@@ -336,7 +337,7 @@ impl Worker {
         )
     }
 
-    /// Replace client and return a new client.
+    /// Replace client.
     ///
     /// For eager workflow purposes, this new client will now apply to future eager start requests
     /// and the older client will not. Note, if this registration fails, the worker heartbeat will
@@ -345,10 +346,10 @@ impl Worker {
     /// For worker heartbeat, this will remove an existing shared worker if it is the last worker of
     /// the old client and create a new nexus worker if it's the first client of the namespace on
     /// the new client.
-    pub fn replace_client(
-        &self,
-        new_client: ConfiguredClient<TemporalServiceClientWithMetrics>,
-    ) -> Result<(), anyhow::Error> {
+    pub fn replace_client<CT>(&self, new_client: CT) -> Result<(), anyhow::Error>
+    where
+        CT: Into<AnyClient>,
+    {
         // Unregister worker from current client, register in new client at the end
         let client_worker = self
             .client

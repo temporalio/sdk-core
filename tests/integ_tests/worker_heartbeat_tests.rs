@@ -30,6 +30,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeWorker
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListWorkersRequest;
 use tokio::sync::Notify;
 use tokio::time::sleep;
+use tonic::IntoRequest;
 use url::Url;
 
 fn within_two_minutes_ts(ts: Timestamp) -> bool {
@@ -70,7 +71,8 @@ async fn list_worker_heartbeats(
             page_size: 200,
             next_page_token: Vec::new(),
             query: query.into(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -186,7 +188,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                 page_size: 100,
                 next_page_token: Vec::new(),
                 query: String::new(),
-            },
+            }
+            .into_request(),
         )
         .await
         .unwrap()
@@ -225,7 +228,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             page_size: 100,
             next_page_token: Vec::new(),
             query: String::new(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -319,7 +323,8 @@ async fn docker_worker_heartbeat_tuner() {
             page_size: 100,
             next_page_token: Vec::new(),
             query: String::new(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -711,7 +716,8 @@ async fn worker_heartbeat_multiple_workers() {
         DescribeWorkerRequest {
             namespace: client.namespace().to_owned(),
             worker_instance_key: worker_a_key.to_string(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -731,7 +737,8 @@ async fn worker_heartbeat_multiple_workers() {
         DescribeWorkerRequest {
             namespace: client.namespace().to_owned(),
             worker_instance_key: worker_b_key.to_string(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -817,7 +824,8 @@ async fn worker_heartbeat_failure_metrics() {
                         page_size: 100,
                         next_page_token: Vec::new(),
                         query: String::new(),
-                    },
+                    }
+                    .into_request(),
                 )
                 .await
                 .unwrap()
@@ -861,7 +869,8 @@ async fn worker_heartbeat_failure_metrics() {
                         page_size: 100,
                         next_page_token: Vec::new(),
                         query: String::new(),
-                    },
+                    }
+                    .into_request(),
                 )
                 .await
                 .unwrap()
@@ -961,7 +970,8 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
             page_size: 100,
             next_page_token: Vec::new(),
             query: String::new(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()
@@ -1021,7 +1031,8 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
             page_size: 100,
             next_page_token: Vec::new(),
             query: String::new(),
-        },
+        }
+        .into_request(),
     )
     .await
     .unwrap()

@@ -56,7 +56,7 @@ pub struct ActivityInfo {
 impl ActContext {
     /// Construct new Activity Context, returning the context and the first argument to the activity
     /// (which may be a default [Payload]).
-    pub(crate) fn new(
+    pub fn new(
         worker: Arc<dyn Worker>,
         app_data: Arc<AppData>,
         cancellation_token: CancellationToken,

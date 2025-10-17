@@ -23,6 +23,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::join;
+use tonic::IntoRequest;
 
 #[rstest::rstest]
 #[tokio::test]
@@ -76,10 +77,13 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                 client
                     .get_client()
                     .clone()
-                    .describe_worker_deployment(DescribeWorkerDeploymentRequest {
-                        namespace: client.namespace().to_string(),
-                        deployment_name: deploy_name.clone(),
-                    })
+                    .describe_worker_deployment(
+                        DescribeWorkerDeploymentRequest {
+                            namespace: client.namespace(),
+                            deployment_name: deploy_name.clone(),
+                        }
+                        .into_request(),
+                    )
                     .await
             },
             Duration::from_secs(5),
@@ -92,13 +96,16 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         client
             .get_client()
             .clone()
-            .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
-                namespace: client.namespace().to_owned(),
-                deployment_name: deploy_name.clone(),
-                version: format!("{deploy_name}.1.0"),
-                conflict_token: desc_resp.conflict_token,
-                ..Default::default()
-            })
+            .set_worker_deployment_current_version(
+                SetWorkerDeploymentCurrentVersionRequest {
+                    namespace: client.namespace(),
+                    deployment_name: deploy_name.clone(),
+                    version: format!("{deploy_name}.1.0"),
+                    conflict_token: desc_resp.conflict_token,
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await
             .unwrap();
 
@@ -178,10 +185,13 @@ async fn activity_has_deployment_stamp() {
                 client
                     .get_client()
                     .clone()
-                    .describe_worker_deployment(DescribeWorkerDeploymentRequest {
-                        namespace: client.namespace().to_string(),
-                        deployment_name: deploy_name.clone(),
-                    })
+                    .describe_worker_deployment(
+                        DescribeWorkerDeploymentRequest {
+                            namespace: client.namespace(),
+                            deployment_name: deploy_name.clone(),
+                        }
+                        .into_request(),
+                    )
                     .await
             },
             Duration::from_secs(50),
@@ -194,13 +204,16 @@ async fn activity_has_deployment_stamp() {
         client
             .get_client()
             .clone()
-            .set_worker_deployment_current_version(SetWorkerDeploymentCurrentVersionRequest {
-                namespace: client.namespace().to_owned(),
-                deployment_name: deploy_name.clone(),
-                version: format!("{deploy_name}.1.0"),
-                conflict_token: desc_resp.conflict_token,
-                ..Default::default()
-            })
+            .set_worker_deployment_current_version(
+                SetWorkerDeploymentCurrentVersionRequest {
+                    namespace: client.namespace(),
+                    deployment_name: deploy_name.clone(),
+                    version: format!("{deploy_name}.1.0"),
+                    conflict_token: desc_resp.conflict_token,
+                    ..Default::default()
+                }
+                .into_request(),
+            )
             .await
             .unwrap();
 

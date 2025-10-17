@@ -71,6 +71,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::{join, sync::Barrier};
+use tonic::IntoRequest;
 use url::Url;
 
 pub(crate) async fn get_text(endpoint: String) -> String {
@@ -107,7 +108,7 @@ async fn prometheus_metrics_exported(
     assert!(raw_client.get_client().capabilities().is_some());
 
     let _ = raw_client
-        .list_namespaces(ListNamespacesRequest::default())
+        .list_namespaces(ListNamespacesRequest::default().into_request())
         .await
         .unwrap();
 
@@ -542,7 +543,7 @@ fn runtime_new() {
             .unwrap();
         assert!(raw_client.get_client().capabilities().is_some());
         let _ = raw_client
-            .list_namespaces(ListNamespacesRequest::default())
+            .list_namespaces(ListNamespacesRequest::default().into_request())
             .await
             .unwrap();
         let body = get_text(format!("http://{addr}/metrics")).await;
@@ -636,9 +637,12 @@ async fn request_fail_codes() {
         .unwrap();
 
     // Describe namespace w/ invalid argument (unset namespace field)
-    WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
-        .await
-        .unwrap_err();
+    WorkflowService::describe_namespace(
+        &mut client,
+        DescribeNamespaceRequest::default().into_request(),
+    )
+    .await
+    .unwrap_err();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
     let matching_line = body
@@ -681,9 +685,12 @@ async fn request_fail_codes_otel() {
 
     for _ in 0..10 {
         // Describe namespace w/ invalid argument (unset namespace field)
-        WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
-            .await
-            .unwrap_err();
+        WorkflowService::describe_namespace(
+            &mut client,
+            DescribeNamespaceRequest::default().into_request(),
+        )
+        .await
+        .unwrap_err();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }

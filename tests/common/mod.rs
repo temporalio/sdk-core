@@ -66,6 +66,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
+use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
@@ -82,6 +83,11 @@ pub(crate) const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 pub(crate) const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
 /// This should match the prometheus port exposed in docker-compose-ci.yaml
 pub(crate) const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
+/// If set, integ tests will use this specific version of CLI for starting dev server
+pub(crate) const CLI_VERSION_OVERRIDE_ENV_VAR: &str = "CLI_VERSION_OVERRIDE";
+pub(crate) const INTEG_CLIENT_IDENTITY: &str = "integ_tester";
+pub(crate) const INTEG_CLIENT_NAME: &str = "temporal-core";
+pub(crate) const INTEG_CLIENT_VERSION: &str = "0.1.0";
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance.
@@ -256,8 +262,7 @@ impl CoreWfStarter {
                 .get_client()
                 .inner()
                 .workflow_svc()
-                .clone()
-                .get_cluster_info(GetClusterInfoRequest::default())
+                .get_cluster_info(GetClusterInfoRequest::default().into_request())
                 .await;
             let srv_ver = semver::Version::parse(
                 &clustinfo
@@ -599,8 +604,7 @@ impl TestWorker {
                 .client
                 .as_ref()
                 .map(|c| c.namespace())
-                .unwrap_or(NAMESPACE)
-                .to_owned(),
+                .unwrap_or(NAMESPACE.to_owned()),
             workflow_id: wf_id.into(),
             run_id,
         });
@@ -752,10 +756,10 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
     let mut cb = ClientOptionsBuilder::default();
-    cb.identity("integ_tester".to_string())
+    cb.identity(INTEG_CLIENT_IDENTITY.to_string())
         .target_url(url)
-        .client_name("temporal-core".to_string())
-        .client_version("0.1.0".to_string());
+        .client_name(INTEG_CLIENT_NAME.to_string())
+        .client_version(INTEG_CLIENT_VERSION.to_string());
     if let Ok(key_file) = env::var(INTEG_API_KEY) {
         let content = std::fs::read_to_string(key_file).unwrap();
         cb.api_key(Some(content));
@@ -990,4 +994,54 @@ impl Drop for ActivationAssertionsInterceptor {
             panic!("Activation assertions interceptor was never used!")
         }
     }
+}
+
+#[cfg(feature = "ephemeral-server")]
+use temporal_sdk_core::ephemeral_server::{
+    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, default_cached_download,
+};
+
+#[cfg(feature = "ephemeral-server")]
+pub(crate) fn integ_dev_server_config(
+    mut extra_args: Vec<String>,
+) -> TemporalDevServerConfigBuilder {
+    let cli_version = if let Ok(ver_override) = env::var(CLI_VERSION_OVERRIDE_ENV_VAR) {
+        EphemeralExe::CachedDownload {
+            version: EphemeralExeVersion::Fixed(ver_override.to_owned()),
+            dest_dir: None,
+            ttl: None,
+        }
+    } else {
+        default_cached_download()
+    };
+    extra_args.extend(
+        [
+            // TODO: Delete when temporalCLI enables it by default.
+            "--dynamic-config-value".to_string(),
+            "system.enableEagerWorkflowStart=true".to_string(),
+            "--dynamic-config-value".to_string(),
+            "system.enableNexus=true".to_string(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.workerVersioningWorkflowAPIs=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.workerVersioningDataAPIs=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "system.enableDeploymentVersions=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "component.nexusoperations.recordCancelRequestCompletionEvents=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.WorkerHeartbeatsEnabled=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.ListWorkersEnabled=true".to_owned(),
+            "--search-attribute".to_string(),
+            format!("{SEARCH_ATTR_TXT}=Text"),
+            "--search-attribute".to_string(),
+            format!("{SEARCH_ATTR_INT}=Int"),
+        ]
+        .map(Into::into),
+    );
+
+    let mut config = TemporalDevServerConfigBuilder::default();
+    config.exe(cli_version).extra_args(extra_args);
+    config
 }

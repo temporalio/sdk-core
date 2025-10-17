@@ -3,6 +3,7 @@ pub(crate) mod protocol_messages;
 use crate::{
     CompleteActivityError, TaskToken,
     protosext::protocol_messages::IncomingProtocolMessage,
+    retry_logic::ValidatedRetryPolicy,
     worker::{LEGACY_QUERY_ID, LocalActivityExecutionResult},
 };
 use anyhow::anyhow;
@@ -32,7 +33,7 @@ use temporal_sdk_core_protos::{
         workflow_completion,
     },
     temporal::api::{
-        common::v1::{Payload, RetryPolicy, WorkflowExecution},
+        common::v1::{Payload, WorkflowExecution},
         enums::v1::EventType,
         failure::v1::Failure,
         history::v1::{History, HistoryEvent, MarkerRecordedEventAttributes, history_event},
@@ -135,7 +136,7 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     _cant_construct_me: (),
                 })
             }
-            _ => Err(anyhow!("Unable to interpret poll response: {value:?}",)),
+            _ => Err(anyhow!("Unable to interpret poll response: {value:?}")),
         }
     }
 }
@@ -318,7 +319,7 @@ pub(crate) struct ValidScheduleLA {
     pub(crate) arguments: Vec<Payload>,
     pub(crate) schedule_to_start_timeout: Option<Duration>,
     pub(crate) close_timeouts: LACloseTimeouts,
-    pub(crate) retry_policy: RetryPolicy,
+    pub(crate) retry_policy: ValidatedRetryPolicy,
     pub(crate) local_retry_threshold: Duration,
     pub(crate) cancellation_type: ActivityCancellationType,
     pub(crate) user_metadata: Option<UserMetadata>,
@@ -408,7 +409,8 @@ impl ValidScheduleLA {
                 ));
             }
         };
-        let retry_policy = v.retry_policy.unwrap_or_default();
+        let retry_policy =
+            ValidatedRetryPolicy::from_proto_with_defaults(v.retry_policy.unwrap_or_default());
         let local_retry_threshold = v
             .local_retry_threshold
             .try_into_or_none()

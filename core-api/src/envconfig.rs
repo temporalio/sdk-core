@@ -358,9 +358,6 @@ pub fn load_client_config_profile(
         profile.load_from_env(env_vars)?;
     }
 
-    // Apply API key → TLS auto-enabling logic
-    profile.apply_api_key_tls_logic();
-
     Ok(profile)
 }
 
@@ -527,14 +524,6 @@ impl ClientConfigProfile {
             }
         }
         Ok(())
-    }
-
-    /// Apply automatic TLS enabling when API key is present
-    pub fn apply_api_key_tls_logic(&mut self) {
-        if self.api_key.is_some() && self.tls.is_none() {
-            // If API key is present but no TLS config exists, create one with TLS enabled
-            self.tls = Some(ClientConfigTLS::default());
-        }
     }
 }
 
@@ -1583,27 +1572,6 @@ address = "localhost:7233"
     }
 
     #[test]
-    fn test_api_key_tls_auto_enable() {
-        // Test 1: When API key is present, TLS should be automatically enabled
-        let toml_str = r#"
-[profile.default]
-api_key = "my-api-key"
-"#;
-
-        let options = LoadClientConfigProfileOptions {
-            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
-            ..Default::default()
-        };
-
-        let profile = load_client_config_profile(options, None).unwrap();
-
-        // TLS should be enabled due to API key presence
-        assert!(profile.tls.is_some());
-        let tls = profile.tls.as_ref().unwrap();
-        assert_eq!(tls.disabled, None); // Not explicitly set
-    }
-
-    #[test]
     fn test_no_api_key_no_tls_is_none() {
         // Test that if no API key is present and no TLS block exists, TLS config is None
         let toml_str = r#"
@@ -1624,12 +1592,38 @@ address = "some-address"
 
     #[test]
     fn test_load_client_config_profile_from_system_env() {
-        // Set up system env vars. These tests can't be run in parallel.
-        unsafe {
-            std::env::set_var("TEMPORAL_ADDRESS", "system-address");
-            std::env::set_var("TEMPORAL_NAMESPACE", "system-namespace");
-        }
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+        let output = std::process::Command::new(cargo)
+            .arg("test")
+            .arg("-F")
+            .arg("envconfig")
+            .arg("envconfig::tests::test_load_client_config_profile_from_system_env_impl")
+            .arg("--")
+            .arg("--exact")
+            .arg("--ignored")
+            .env("TEMPORAL_ADDRESS", "system-address")
+            .env("TEMPORAL_NAMESPACE", "system-namespace")
+            .output()
+            .expect("Failed to execute subprocess test");
 
+        assert!(
+            output.status.success(),
+            "Subprocess test failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    #[test]
+    #[ignore] // Only run when explicitly called
+    fn test_load_client_config_profile_from_system_env_impl() {
+        // Check if we're in the right context
+        if std::env::var("TEMPORAL_ADDRESS").is_err()
+            || std::env::var("TEMPORAL_NAMESPACE").is_err()
+        {
+            eprintln!("Skipping test - required env vars not set");
+            return; // Early return instead of panic
+        }
         let options = LoadClientConfigProfileOptions {
             disable_file: true, // Don't load from any files
             ..Default::default()
@@ -1639,12 +1633,6 @@ address = "some-address"
         let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "system-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "system-namespace");
-
-        // Clean up
-        unsafe {
-            std::env::remove_var("TEMPORAL_ADDRESS");
-            std::env::remove_var("TEMPORAL_NAMESPACE");
-        }
     }
 
     #[test]

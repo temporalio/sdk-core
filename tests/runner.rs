@@ -2,18 +2,16 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::integ_dev_server_config;
 use anyhow::{anyhow, bail};
 use clap::Parser;
-use common::{INTEG_SERVER_TARGET_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT};
+use common::INTEG_SERVER_TARGET_ENV_VAR;
 use std::{
     env,
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporal_sdk_core::ephemeral_server::{
-    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, TestServerConfigBuilder,
-    default_cached_download,
-};
+use temporal_sdk_core::ephemeral_server::{TestServerConfigBuilder, default_cached_download};
 use tokio::{self, process::Command};
 
 /// This env var is set (to any value) if temporal CLI dev server is in use
@@ -96,44 +94,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (server, envs) = match server_kind {
         ServerKind::TemporalCLI => {
-            let cli_version = if let Some(ver_override) = option_env!("CLI_VERSION_OVERRIDE") {
-                EphemeralExe::CachedDownload {
-                    version: EphemeralExeVersion::Fixed(ver_override.to_owned()),
-                    dest_dir: None,
-                    ttl: None,
-                }
-            } else {
-                default_cached_download()
-            };
-            let config = TemporalDevServerConfigBuilder::default()
-                .exe(cli_version)
-                .extra_args(vec![
-                    // TODO: Delete when temporalCLI enables it by default.
-                    "--dynamic-config-value".to_string(),
-                    "system.enableEagerWorkflowStart=true".to_string(),
-                    "--dynamic-config-value".to_string(),
-                    "system.enableNexus=true".to_string(),
-                    "--dynamic-config-value".to_owned(),
-                    "frontend.workerVersioningWorkflowAPIs=true".to_owned(),
-                    "--dynamic-config-value".to_owned(),
-                    "frontend.workerVersioningDataAPIs=true".to_owned(),
-                    "--dynamic-config-value".to_owned(),
-                    "system.enableDeploymentVersions=true".to_owned(),
-                    "--dynamic-config-value".to_owned(),
-                    "component.nexusoperations.recordCancelRequestCompletionEvents=true".to_owned(),
-                    "--dynamic-config-value".to_owned(),
-                    "frontend.WorkerHeartbeatsEnabled=true".to_owned(),
-                    "--dynamic-config-value".to_owned(),
-                    "frontend.ListWorkersEnabled=true".to_owned(),
-                    "--http-port".to_string(),
-                    "7243".to_string(),
-                    "--search-attribute".to_string(),
-                    format!("{SEARCH_ATTR_TXT}=Text"),
-                    "--search-attribute".to_string(),
-                    format!("{SEARCH_ATTR_INT}=Int"),
-                ])
-                .ui(true)
-                .build()?;
+            let config =
+                integ_dev_server_config(vec!["--http-port".to_string(), "7243".to_string()])
+                    .ui(true)
+                    .build()?;
             println!("Using temporal CLI: {config:?}");
             (
                 Some(
