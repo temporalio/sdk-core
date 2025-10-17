@@ -20,9 +20,6 @@ mod update_state_machine;
 mod upsert_search_attributes_state_machine;
 mod workflow_task_state_machine;
 
-#[cfg(test)]
-mod transition_coverage;
-
 pub(crate) use workflow_machines::{MachinesWFTResponseContent, WorkflowMachines};
 
 use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
@@ -52,9 +49,6 @@ use update_state_machine::UpdateMachine;
 use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;
 use workflow_machines::MachineResponse;
 use workflow_task_state_machine::WorkflowTaskMachine;
-
-#[cfg(test)]
-use transition_coverage::add_coverage;
 
 #[enum_dispatch::enum_dispatch]
 #[allow(clippy::enum_variant_names, clippy::large_enum_variant)]
@@ -259,22 +253,7 @@ where
         &mut self,
         event: Self::Event,
     ) -> Result<Vec<Self::Command>, MachineError<Self::Error>> {
-        #[cfg(test)]
-        let from_state = self.state().to_string();
-        #[cfg(test)]
-        let converted_event_str = event.to_string();
-
-        let res = StateMachine::on_event(self, event);
-        if res.is_ok() {
-            #[cfg(test)]
-            add_coverage(
-                self.name().to_owned(),
-                from_state,
-                self.state().to_string(),
-                converted_event_str,
-            );
-        }
-        res
+        StateMachine::on_event(self, event)
     }
 }
 
