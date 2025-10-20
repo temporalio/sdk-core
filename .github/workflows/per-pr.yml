@@ -103,17 +103,15 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ubuntu
-      options: --cpus=1 --memory=256m
+      options: --cpus=1 --memory=512m
     steps:
       - name: Download cgroup test executable
         uses: actions/download-artifact@v5
         with:
           name: cgroup-tests-linux-x86_64
       - run: |
-            ls -lah .
-            ls -lah ./cgroup-tests-linux-x86_64 
-            chmod +x ./cgroup-tests-linux-x86_64/core-tests
-            ./cgroup-tests-linux-x86_64/core-tests cgroup_ --nocapture
+            chmod +x ./core-tests
+            ./core-tests cgroup_ --nocapture
 
 
   integ-tests:
