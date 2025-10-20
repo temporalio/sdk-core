@@ -1086,7 +1086,7 @@ mod tests {
             .saturating_sub(current_mem.free_memory);
         let half_total = current_mem.total_memory / 2;
         let expected_percentage = if cur_used > half_total {
-            (cur_used as f64 / current_mem.total_memory as f64)
+            cur_used as f64 / current_mem.total_memory as f64
         } else {
             0.5
         };
