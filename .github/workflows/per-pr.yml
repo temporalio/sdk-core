@@ -110,8 +110,10 @@ jobs:
         with:
           name: cgroup-tests-linux-x86_64
       - run: |
-            chmod +x ./cgroup-tests-linux-x86_64
-            ./cgroup-tests-linux-x86_64 cgroup_ --nocapture
+            ls -lah .
+            ls -lah ./cgroup-tests-linux-x86_64 
+            chmod +x ./cgroup-tests-linux-x86_64/core-tests
+            ./cgroup-tests-linux-x86_64/core-tests cgroup_ --nocapture
 
 
   integ-tests:
