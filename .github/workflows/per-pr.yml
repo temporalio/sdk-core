@@ -86,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         if: runner.os == 'Linux' && runner.arch == 'X64'
         with:
-          name: cgroup-tests-linux-x86
+          name: cgroup-tests-linux-x86_64
           path: ./core-tests
       - uses: actions/upload-artifact@v4
         with:
@@ -105,13 +105,13 @@ jobs:
       image: ubuntu
       options: --cpus=1 --memory=256m
     steps:
-      - name: Upload cgroup test executable
+      - name: Download cgroup test executable
         uses: actions/download-artifact@v5
         with:
-          name: cgroup-tests-linux-x86
+          name: cgroup-tests-linux-x86_64
       - run: |
-            chmod +x ./tests
-            ./core-tests cgroup_ --nocapture
+            chmod +x ./cgroup-tests-linux-x86_64
+            ./cgroup-tests-linux-x86_64 cgroup_ --nocapture
 
 
   integ-tests:
