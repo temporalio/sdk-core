@@ -22,12 +22,14 @@ mod integ_tests {
     mod queries_tests;
     mod update_tests;
     mod visibility_tests;
+    mod worker_heartbeat_tests;
     mod worker_tests;
     mod worker_versioning_tests;
     mod workflow_tests;
 
     use crate::common::{
-        CoreWfStarter, get_integ_server_options, get_integ_telem_options, rand_6_chars,
+        CoreWfStarter, get_integ_runtime_options, get_integ_server_options,
+        get_integ_telem_options, rand_6_chars,
     };
     use std::time::Duration;
     use temporal_client::{NamespacedClient, WorkflowService};
@@ -45,7 +47,9 @@ mod integ_tests {
     #[ignore] // Really a compile time check more than anything
     async fn lang_bridge_example() {
         let opts = get_integ_server_options();
-        let runtime = CoreRuntime::new_assume_tokio(get_integ_telem_options()).unwrap();
+        let runtime =
+            CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
+                .unwrap();
         let mut retrying_client = opts
             .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
             .await

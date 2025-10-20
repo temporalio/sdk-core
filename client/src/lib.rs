@@ -34,7 +34,9 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
-pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey};
+pub use worker_registry::{
+    ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot,
+};
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
@@ -390,7 +392,7 @@ pub struct ConfiguredClient<C> {
     headers: Arc<RwLock<ClientHeaders>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
-    workers: Arc<SlotManager>,
+    workers: Arc<ClientWorkerSet>,
 }
 
 impl<C> ConfiguredClient<C> {
@@ -440,8 +442,13 @@ impl<C> ConfiguredClient<C> {
     }
 
     /// Returns a cloned reference to a registry with workers using this client instance
-    pub fn workers(&self) -> Arc<SlotManager> {
+    pub fn workers(&self) -> Arc<ClientWorkerSet> {
         self.workers.clone()
+    }
+
+    /// Returns the worker grouping key, this should be unique across each client
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.workers.worker_grouping_key()
     }
 }
 
@@ -584,7 +591,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
-            workers: Arc::new(SlotManager::new()),
+            workers: Arc::new(ClientWorkerSet::new()),
         };
         if !self.skip_get_system_info {
             match client
@@ -865,6 +872,11 @@ impl Client {
     /// Consumes self and returns the underlying client
     pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClient> {
         self.inner
+    }
+
+    /// Returns the client-wide key
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.inner.worker_grouping_key()
     }
 }
 

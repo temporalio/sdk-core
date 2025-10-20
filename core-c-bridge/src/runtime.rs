@@ -16,7 +16,8 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 use temporal_sdk_core::{
-    CoreRuntime, TokioRuntimeBuilder,
+    CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
+    RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder, TokioRuntimeBuilder,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use temporal_sdk_core_api::telemetry::{
@@ -30,6 +31,7 @@ use url::Url;
 #[repr(C)]
 pub struct RuntimeOptions {
     pub telemetry: *const TelemetryOptions,
+    pub worker_heartbeat_duration_millis: u64,
 }
 
 #[repr(C)]
@@ -142,7 +144,7 @@ pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> R
             let mut runtime = Runtime {
                 core: Arc::new(
                     CoreRuntime::new(
-                        CoreTelemetryOptions::default(),
+                        CoreRuntimeOptions::default(),
                         TokioRuntimeBuilder::default(),
                     )
                     .unwrap(),
@@ -238,8 +240,21 @@ impl Runtime {
             CoreTelemetryOptions::default()
         };
 
+        let heartbeat_interval = if options.worker_heartbeat_duration_millis == 0 {
+            None
+        } else {
+            Some(Duration::from_millis(
+                options.worker_heartbeat_duration_millis,
+            ))
+        };
+
+        let core_runtime_options = CoreRuntimeOptionsBuilder::default()
+            .telemetry_options(telemetry_options)
+            .heartbeat_interval(heartbeat_interval)
+            .build()?;
+
         // Build core runtime
-        let mut core = CoreRuntime::new(telemetry_options, TokioRuntimeBuilder::default())?;
+        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;
 
         // We late-bind the metrics after core runtime is created since it needs
         // the Tokio handle

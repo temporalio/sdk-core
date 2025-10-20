@@ -1,10 +1,10 @@
 use super::*;
 use futures_util::Future;
 use std::sync::{Arc, LazyLock};
-use temporal_client::SlotManager;
+use temporal_client::ClientWorkerSet;
 
-pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
-    LazyLock::new(|| Arc::new(SlotManager::new()));
+pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<ClientWorkerSet>> =
+    LazyLock::new(|| Arc::new(ClientWorkerSet::new()));
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     signal_and_query_header: true,
@@ -30,11 +30,18 @@ pub fn mock_worker_client() -> MockWorkerClient {
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
     r.expect_shutdown_worker()
-        .returning(|_| Ok(ShutdownWorkerResponse {}));
+        .returning(|_, _| Ok(ShutdownWorkerResponse {}));
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
-    r.expect_get_identity()
+    r.expect_identity()
         .returning(|| "test-identity".to_string());
+    r.expect_worker_grouping_key().returning(Uuid::new_v4);
+    r.expect_set_heartbeat_client_fields().returning(|hb| {
+        hb.sdk_name = "test-core".to_string();
+        hb.sdk_version = "0.0.0".to_string();
+        hb.worker_identity = "test-identity".to_string();
+        hb.heartbeat_time = Some(SystemTime::now().into());
+    });
     r
 }
 
@@ -48,7 +55,7 @@ pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     r.expect_is_mock().returning(|| true);
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
-    r.expect_get_identity()
+    r.expect_identity()
         .returning(|| "test-identity".to_string());
     r
 }
@@ -68,7 +75,7 @@ mockall::mock! {
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_nexus_task<'a, 'b>(&self, poll_options: PollOptions)
+        fn poll_nexus_task<'a, 'b>(&self, poll_options: PollOptions, send_heartbeat: bool)
             -> impl Future<Output = Result<PollNexusTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
@@ -139,7 +146,7 @@ mockall::mock! {
         fn respond_legacy_query<'a, 'b>(
             &self,
             task_token: TaskToken,
-        query_result: LegacyQueryResult,
+            query_result: LegacyQueryResult,
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
@@ -147,16 +154,22 @@ mockall::mock! {
           impl Future<Output = Result<DescribeNamespaceResponse>> + Send + 'b
           where 'a: 'b, Self: 'b;
 
-        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
+        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String, worker_heartbeat: Option<WorkerHeartbeat>) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn record_worker_heartbeat<'a, 'b>(&self, heartbeat: WorkerHeartbeat) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
+        fn record_worker_heartbeat<'a, 'b>(
+            &self,
+            namespace: String,
+            heartbeat: Vec<WorkerHeartbeat>
+        ) -> impl Future<Output = Result<RecordWorkerHeartbeatResponse>> + Send + 'b where 'a: 'b, Self: 'b;
 
         fn replace_client(&self, new_client: Client);
         fn capabilities(&self) -> Option<Capabilities>;
-        fn workers(&self) -> Arc<SlotManager>;
+        fn workers(&self) -> Arc<ClientWorkerSet>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
-        fn get_identity(&self) -> String;
+        fn identity(&self) -> String;
+        fn worker_grouping_key(&self) -> Uuid;
+        fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
     }
 }

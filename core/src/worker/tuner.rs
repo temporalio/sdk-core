@@ -3,9 +3,11 @@ mod resource_based;
 
 pub use fixed_size::FixedSizeSlotSupplier;
 pub use resource_based::{
-    RealSysInfo, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner,
+    ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner,
     ResourceSlotOptions,
 };
+
+pub(crate) use resource_based::{RealSysInfo, SystemResourceInfo};
 
 use std::sync::Arc;
 use temporal_sdk_core_api::worker::{
@@ -126,6 +128,9 @@ impl TunerHolderOptions {
             }
             None => {}
         }
+        if let Some(tuner) = rb_tuner {
+            builder.sys_info(tuner.sys_info());
+        }
         Ok(builder.build())
     }
 }
@@ -187,6 +192,7 @@ pub struct TunerBuilder {
     local_activity_slot_supplier:
         Option<Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>>,
     nexus_slot_supplier: Option<Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>>,
+    sys_info: Option<Arc<dyn SystemResourceInfo + Send + Sync>>,
 }
 
 impl TunerBuilder {
@@ -241,6 +247,17 @@ impl TunerBuilder {
     ) -> &mut Self {
         self.nexus_slot_supplier = Some(supplier);
         self
+    }
+
+    /// Sets a field that implements [SystemResourceInfo]
+    pub fn sys_info(&mut self, sys_info: Arc<dyn SystemResourceInfo + Send + Sync>) -> &mut Self {
+        self.sys_info = Some(sys_info);
+        self
+    }
+
+    /// Gets the field that implements [SystemResourceInfo]
+    pub fn get_sys_info(&self) -> Option<Arc<dyn SystemResourceInfo + Send + Sync>> {
+        self.sys_info.clone()
     }
 
     /// Build a [WorkerTuner] from the configured slot suppliers
