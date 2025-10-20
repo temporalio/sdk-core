@@ -1081,20 +1081,29 @@ mod tests {
             "RealSysInfo total_mem should equal min(cgroup limit, host total)"
         );
 
+        let cur_used = current_mem
+            .total_memory
+            .saturating_sub(current_mem.free_memory);
+        let half_total = current_mem.total_memory / 2;
+        let expected_percentage = if cur_used > half_total {
+            (cur_used as f64 / current_mem.total_memory as f64)
+        } else {
+            0.5
+        };
         //allocate to half of memory
-        let cur_used = current_mem.total_memory - current_mem.free_memory;
-        let to_allocate: usize = ((current_mem.total_memory / 2) - cur_used) as usize;
+        let to_allocate: usize = (half_total).saturating_sub(cur_used) as usize;
         let _buf = black_box(vec![1u8; to_allocate]);
 
         //make sure we sleep enough to let real_sys_info need a refresh
         sleep(Duration::from_millis(200));
 
         let percentage = sys_info.used_mem_percent();
-        let diff = percentage - 0.5;
+        let diff = (percentage - expected_percentage).abs();
 
         assert!(
             diff < 0.2,
-            "RealSysInfo used_mem_percentage should be ~= 50%"
+            "RealSysInfo used_mem_percentage should be ~= {}%",
+            expected_percentage * 100.0
         );
     }
 

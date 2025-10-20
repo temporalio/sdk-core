@@ -109,7 +109,8 @@ jobs:
         uses: actions/download-artifact@v5
         with:
           name: cgroup-tests-linux-x86_64
-      - run: |
+      - name: Run tests
+        run: |
             chmod +x ./core-tests
             ./core-tests cgroup_ --nocapture
 
