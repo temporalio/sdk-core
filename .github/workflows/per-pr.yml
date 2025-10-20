@@ -76,6 +76,18 @@ jobs:
             core.exportVariable('RUSTFLAGS', '-Csymbol-mangling-version=v0');
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -- --include-ignored --nocapture
+      - name: Find test executable for cgroup tests
+        id: find-cgroup-test
+        if: runner.os == 'Linux' && runner.arch == 'X86'
+        run: |
+          test_executable=$(cargo build --tests --message-format json | jq -r 'select(.profile?.test == true and .target?.name == "temporal_sdk_core" and .executable) | .executable'
+          cp $test_executable ./core-tests
+      - name: Upload cgroup test executable
+        uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && runner.arch == 'X86'
+        with:
+          name: cgroup-tests-linux-x86
+          path: ./core-tests
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -84,6 +96,23 @@ jobs:
         with:
           name: state-machine-coverage
           path: machine_coverage/
+
+  cgroup-tests:
+    name: cgroup tests
+    needs: test
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu
+      options: --cpus=1 --memory=256m
+    steps:
+      - name: Upload cgroup test executable
+        uses: actions/download-artifact@v5
+        with:
+          name: cgroup-tests-linux-x86
+      - run: |
+            chmod +x ./tests
+            ./core-tests cgroup_ --nocapture
+
 
   integ-tests:
     name: Integ tests
