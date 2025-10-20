@@ -213,3 +213,7 @@ required-features = [
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "generate-fsm-diagrams"
+path = "src/bin/generate_fsm_diagrams.rs"
