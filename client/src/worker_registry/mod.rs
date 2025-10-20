@@ -461,6 +461,7 @@ mod tests {
         mock_provider
             .expect_worker_instance_key()
             .return_const(worker_instance_key);
+        mock_provider.expect_deployment_options().return_const(None);
 
         if heartbeat_enabled {
             mock_provider

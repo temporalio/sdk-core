@@ -1601,6 +1601,7 @@ mod tests {
         operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
     };
     use tonic::IntoRequest;
+    use uuid::Uuid;
 
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
@@ -1854,6 +1855,11 @@ mod tests {
         mock_provider
             .expect_deployment_options()
             .return_const(Some(deployment_opts.clone()));
+        mock_provider.expect_heartbeat_enabled().return_const(false);
+        let uuid = Uuid::new_v4();
+        mock_provider
+            .expect_worker_instance_key()
+            .return_const(uuid);
 
         let client_worker_set = Arc::new(ClientWorkerSet::new());
         client_worker_set
