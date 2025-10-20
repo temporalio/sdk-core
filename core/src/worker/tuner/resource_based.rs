@@ -693,11 +693,13 @@ mod tests {
     use super::*;
     use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
     use std::cell::RefCell;
+    use std::hint::black_box;
     use std::rc::Rc;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
     };
+    use std::thread::sleep;
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 
     struct FakeMIS {
@@ -973,5 +975,95 @@ mod tests {
             .calc_cpu_percent()
             .expect("expected usage value");
         assert!(cpu_percent > 0., "expected cpu percent > 0");
+    }
+
+    #[test]
+    fn cgroup_realsysinfo_uses_cgroup_limits_cpu() {
+        let sys_info = RealSysInfo::new();
+        let cgroup_info = CGroupCpuInfo::new(CgroupV2CpuFileSystem);
+        let Some(CGroupCpuLimits { quota, period }) = cgroup_info.read_cpus_limit() else {
+            eprintln!("Skipping: unable to read cpu quota.");
+            return;
+        };
+        let CpuQuota::Limited(limit) = quota else {
+            eprintln!("Skipping: cpu quota reported unlimited");
+            return;
+        };
+
+        // Prime the internal CPU tracker with some activity.
+        let baseline_time = Instant::now();
+        let prev_usage = cgroup_info
+            .read_cpu_usage()
+            .expect("unable to read cpu usage baseline");
+
+        // Consume some CPU so that the next refresh observes a measurable delta.
+        burn_cpu(Duration::from_millis(300));
+
+        let cpu_usage = sys_info.used_cpu_percent();
+        let measurement_end = Instant::now();
+        let current_usage = cgroup_info
+            .read_cpu_usage()
+            .expect("unable to read cpu usage after refresh");
+
+        let elapsed_us = measurement_end.duration_since(baseline_time).as_micros() as f64;
+        let usage_delta = current_usage.saturating_sub(prev_usage) as f64;
+        assert!(usage_delta > 0.0, "zero cpu usage delta observed");
+
+        let expected_cpu = usage_delta * period as f64 / (limit as f64 * elapsed_us);
+        let cpu_diff = (cpu_usage - expected_cpu).abs();
+        const CPU_TOLERANCE: f64 = 0.3;
+        assert!(
+            cpu_diff <= CPU_TOLERANCE,
+            "RealSysInfo CPU percent {cpu_usage:.3} diverged from cgroup calculation \
+         {expected_cpu:.3} by {cpu_diff:.3}"
+        );
+    }
+
+    #[test]
+    fn cgroup_realsysinfo_uses_cgroup_limits_mem() {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let Some(current_mem) = sys.cgroup_limits() else {
+            eprintln!("Skipping: unable to read cgroup memory details");
+            return;
+        };
+
+        if current_mem.total_memory == sys.total_memory() {
+            eprintln!("Skipping: no memory limit detected. limit == total host memory");
+            return;
+        }
+
+        let sys_info = RealSysInfo::new();
+
+        assert_eq!(
+            sys_info.total_mem(),
+            current_mem.total_memory, //sysinfo::System does min(cgroup limit, host total) internally
+            "RealSysInfo total_mem should equal min(cgroup limit, host total)"
+        );
+
+        //allocate to half of memory
+        let cur_used = current_mem.total_memory - current_mem.free_memory;
+        let to_allocate: usize = ((current_mem.total_memory / 2) - cur_used) as usize;
+        let _buf = black_box(vec![1u8; to_allocate]);
+
+        //make sure we sleep enough to let real_sys_info need a refresh
+        sleep(Duration::from_millis(200));
+
+        let percentage = sys_info.used_mem_percent();
+        let diff = percentage - 0.5;
+
+        assert!(
+            diff < 0.2,
+            "RealSysInfo used_mem_percentage should be ~= 50%"
+        );
+    }
+
+    fn burn_cpu(duration: Duration) {
+        let start = Instant::now();
+        let mut value: u64 = 0;
+        while start.elapsed() < duration {
+            value = value.wrapping_add(1);
+            black_box(value);
+        }
     }
 }
