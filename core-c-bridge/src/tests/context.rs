@@ -153,6 +153,7 @@ impl Context {
 
         let RuntimeOrFail { runtime, fail } = temporal_core_runtime_new(&RuntimeOptions {
             telemetry: std::ptr::null(),
+            worker_heartbeat_duration_millis: 0,
         });
 
         if let Some(fail) = byte_array_to_string(runtime, fail) {

@@ -41,10 +41,9 @@ pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{
-    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
-    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
-    TunerBuilder, TunerHolder, TunerHolderOptions, TunerHolderOptionsBuilder, Worker, WorkerConfig,
-    WorkerConfigBuilder,
+    FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
+    ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
+    TunerHolderOptions, TunerHolderOptionsBuilder, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 
 /// Expose [WorkerClient] symbols
@@ -61,7 +60,8 @@ use crate::{
 };
 use anyhow::bail;
 use futures_util::Stream;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+use std::time::Duration;
 use temporal_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
@@ -89,40 +89,40 @@ pub fn init_worker<CT>(
 where
     CT: Into<sealed::AnyClient>,
 {
-    if worker_config.namespace.is_empty() {
+    let namespace = worker_config.namespace.clone();
+    if namespace.is_empty() {
         bail!("Worker namespace cannot be empty");
     }
 
     let client = RetryClient::new(
-        SharedReplaceableClient::new(init_worker_client(&worker_config, client)),
+        SharedReplaceableClient::new(init_worker_client(
+            worker_config.namespace.clone(),
+            worker_config.client_identity_override.clone(),
+            client,
+        )),
         RetryConfig::default(),
     );
     let client_ident = client.identity();
-    let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
+    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     if client_ident.is_empty() {
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 
-    let heartbeat_fn = worker_config
-        .heartbeat_interval
-        .map(|_| Arc::new(OnceLock::new()));
-
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
-        worker_config.namespace.clone(),
-        client_ident,
+        namespace.clone(),
+        client_ident.clone(),
         worker_config.versioning_strategy.clone(),
-        heartbeat_fn.clone(),
     ));
 
-    Ok(Worker::new(
-        worker_config,
+    Worker::new(
+        worker_config.clone(),
         sticky_q,
-        client_bag,
+        client_bag.clone(),
         Some(&runtime.telemetry),
-        heartbeat_fn,
-    ))
+        runtime.heartbeat_interval,
+    )
 }
 
 /// Create a worker for replaying one or more existing histories. It will auto-shutdown as soon as
@@ -142,12 +142,16 @@ where
     rwi.into_core_worker()
 }
 
-pub(crate) fn init_worker_client<CT>(config: &WorkerConfig, client: CT) -> Client
+pub(crate) fn init_worker_client<CT>(
+    namespace: String,
+    client_identity_override: Option<String>,
+    client: CT,
+) -> Client
 where
     CT: Into<sealed::AnyClient>,
 {
-    let mut client = Client::new(*client.into().into_inner(), config.namespace.clone());
-    if let Some(ref id_override) = config.client_identity_override {
+    let mut client = Client::new(*client.into().into_inner(), namespace.clone());
+    if let Some(ref id_override) = client_identity_override {
         client.options_mut().identity.clone_from(id_override);
     }
     client
@@ -157,9 +161,9 @@ where
 /// workflows.
 pub(crate) fn sticky_q_name_for_worker(
     process_identity: &str,
-    config: &WorkerConfig,
+    max_cached_workflows: usize,
 ) -> Option<String> {
-    if config.max_cached_workflows > 0 {
+    if max_cached_workflows > 0 {
         Some(format!(
             "{}-{}",
             &process_identity,
@@ -234,6 +238,21 @@ pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
     runtime_handle: tokio::runtime::Handle,
+    heartbeat_interval: Option<Duration>,
+}
+
+/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptionsBuilder]
+#[derive(derive_builder::Builder)]
+#[non_exhaustive]
+#[derive(Default)]
+pub struct RuntimeOptions {
+    /// Telemetry configuration options.
+    #[builder(default)]
+    telemetry_options: TelemetryOptions,
+    /// Optional worker heartbeat interval - This configures the heartbeat setting of all
+    /// workers created using this runtime.
+    #[builder(default = "Some(Duration::from_secs(60))")]
+    heartbeat_interval: Option<Duration>,
 }
 
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions
@@ -268,13 +287,13 @@ impl CoreRuntime {
     /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
     /// [CoreRuntime::new_assume_tokio].
     pub fn new<F>(
-        telemetry_options: TelemetryOptions,
+        runtime_options: RuntimeOptions,
         mut tokio_builder: TokioRuntimeBuilder<F>,
     ) -> Result<Self, anyhow::Error>
     where
         F: Fn() + Send + Sync + 'static,
     {
-        let telemetry = telemetry_init(telemetry_options)?;
+        let telemetry = telemetry_init(runtime_options.telemetry_options)?;
         let subscriber = telemetry.trace_subscriber();
         let runtime = tokio_builder
             .inner
@@ -289,7 +308,8 @@ impl CoreRuntime {
             })
             .build()?;
         let _rg = runtime.enter();
-        let mut me = Self::new_assume_tokio_initialized_telem(telemetry);
+        let mut me =
+            Self::new_assume_tokio_initialized_telem(telemetry, runtime_options.heartbeat_interval);
         me.runtime = Some(runtime);
         Ok(me)
     }
@@ -299,9 +319,12 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio(telemetry_options: TelemetryOptions) -> Result<Self, anyhow::Error> {
-        let telemetry = telemetry_init(telemetry_options)?;
-        Ok(Self::new_assume_tokio_initialized_telem(telemetry))
+    pub fn new_assume_tokio(runtime_options: RuntimeOptions) -> Result<Self, anyhow::Error> {
+        let telemetry = telemetry_init(runtime_options.telemetry_options)?;
+        Ok(Self::new_assume_tokio_initialized_telem(
+            telemetry,
+            runtime_options.heartbeat_interval,
+        ))
     }
 
     /// Construct a runtime from an already-initialized telemetry instance, assuming a tokio runtime
@@ -309,7 +332,10 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance) -> Self {
+    pub fn new_assume_tokio_initialized_telem(
+        telemetry: TelemetryInstance,
+        heartbeat_interval: Option<Duration>,
+    ) -> Self {
         let runtime_handle = tokio::runtime::Handle::current();
         if let Some(sub) = telemetry.trace_subscriber() {
             set_trace_subscriber_for_current_thread(sub);
@@ -318,6 +344,7 @@ impl CoreRuntime {
             telemetry,
             runtime: None,
             runtime_handle,
+            heartbeat_interval,
         }
     }
 

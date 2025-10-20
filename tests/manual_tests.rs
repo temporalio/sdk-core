@@ -5,6 +5,7 @@
 #[allow(dead_code)]
 mod common;
 
+use crate::common::get_integ_runtime_options;
 use common::{CoreWfStarter, prom_metrics, rand_6_chars};
 use futures_util::{
     StreamExt,
@@ -41,7 +42,7 @@ async fn poller_load_spiky() {
         } else {
             prom_metrics(None)
         };
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
     starter
         .worker_config
@@ -200,7 +201,7 @@ async fn poller_load_sustained() {
         } else {
             prom_metrics(None)
         };
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
     starter
         .worker_config
@@ -291,7 +292,7 @@ async fn poller_load_spike_then_sustained() {
         } else {
             prom_metrics(None)
         };
-    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
     starter
         .worker_config

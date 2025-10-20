@@ -446,6 +446,7 @@ typedef struct TemporalCoreTelemetryOptions {
 
 typedef struct TemporalCoreRuntimeOptions {
   const struct TemporalCoreTelemetryOptions *telemetry;
+  uint64_t worker_heartbeat_duration_millis;
 } TemporalCoreRuntimeOptions;
 
 typedef struct TemporalCoreTestServerOptions {
@@ -985,8 +986,8 @@ void temporal_core_worker_validate(struct TemporalCoreWorker *worker,
                                    void *user_data,
                                    TemporalCoreWorkerCallback callback);
 
-void temporal_core_worker_replace_client(struct TemporalCoreWorker *worker,
-                                         struct TemporalCoreClient *new_client);
+const struct TemporalCoreByteArray *temporal_core_worker_replace_client(struct TemporalCoreWorker *worker,
+                                                                        struct TemporalCoreClient *new_client);
 
 void temporal_core_worker_poll_workflow_activation(struct TemporalCoreWorker *worker,
                                                    void *user_data,

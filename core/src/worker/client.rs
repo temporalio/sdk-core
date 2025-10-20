@@ -1,18 +1,19 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::{
-    abstractions::dbg_panic, protosext::legacy_query_failure, worker::heartbeat::HeartbeatFn,
-};
-use std::{
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use crate::protosext::legacy_query_failure;
+use parking_lot::Mutex;
+use prost_types::Duration as PbDuration;
+use std::collections::HashMap;
+use std::time::SystemTime;
+use std::{sync::Arc, time::Duration};
 use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
-    SharedReplaceableClient, SlotManager, WorkflowService,
+    Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
+    RetryClient, SharedReplaceableClient, WorkflowService,
 };
 use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerSlotsInfo;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::{workflow_commands::QueryResult, workflow_completion},
@@ -37,6 +38,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use uuid::Uuid;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -51,7 +53,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
-    heartbeat_data: Option<Arc<OnceLock<HeartbeatFn>>>,
+    worker_heartbeat_map: Arc<Mutex<HashMap<String, ClientHeartbeatData>>>,
 }
 
 impl WorkerClientBag {
@@ -60,14 +62,13 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
-        heartbeat_data: Option<Arc<OnceLock<HeartbeatFn>>>,
     ) -> Self {
         Self {
             client,
             namespace,
             identity,
             worker_versioning_strategy,
-            heartbeat_data,
+            worker_heartbeat_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -124,19 +125,6 @@ impl WorkerClientBag {
             None
         }
     }
-
-    fn capture_heartbeat(&self) -> Option<WorkerHeartbeat> {
-        if let Some(heartbeat_data) = self.heartbeat_data.as_ref() {
-            if let Some(hb) = heartbeat_data.get() {
-                hb()
-            } else {
-                dbg_panic!("Heartbeat function never set");
-                None
-            }
-        } else {
-            None
-        }
-    }
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
@@ -160,6 +148,7 @@ pub trait WorkerClient: Sync + Send {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse>;
     /// Complete a workflow task
     async fn complete_workflow_task(
@@ -225,11 +214,16 @@ pub trait WorkerClient: Sync + Send {
     /// Describe the namespace
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
-    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
+    async fn shutdown_worker(
+        &self,
+        sticky_task_queue: String,
+        final_heartbeat: Option<WorkerHeartbeat>,
+    ) -> Result<ShutdownWorkerResponse>;
     /// Record a worker heartbeat
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
     /// Replace the underlying client
@@ -237,13 +231,18 @@ pub trait WorkerClient: Sync + Send {
     /// Return server capabilities
     fn capabilities(&self) -> Option<Capabilities>;
     /// Return workers using this client
-    fn workers(&self) -> Arc<SlotManager>;
+    fn workers(&self) -> Arc<ClientWorkerSet>;
     /// Indicates if this is a mock client
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
     /// Get worker identity
-    fn get_identity(&self) -> String;
+    fn identity(&self) -> String;
+    /// Get worker grouping key
+    fn worker_grouping_key(&self) -> Uuid;
+    /// Sets the client-reliant fields for WorkerHeartbeat. This also updates client-level tracking
+    /// of heartbeat fields, like last heartbeat timestamp.
+    fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
 }
 
 /// Configuration options shared by workflow, activity, and Nexus polling calls
@@ -357,6 +356,7 @@ impl WorkerClient for WorkerClientBag {
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
+        _send_heartbeat: bool,
     ) -> Result<PollNexusTaskQueueResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
@@ -369,7 +369,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: self.capture_heartbeat().into_iter().collect(),
+            worker_heartbeat: Vec::new(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -684,13 +684,22 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
-    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse> {
+    async fn shutdown_worker(
+        &self,
+        sticky_task_queue: String,
+        final_heartbeat: Option<WorkerHeartbeat>,
+    ) -> Result<ShutdownWorkerResponse> {
+        let mut final_heartbeat = final_heartbeat;
+        if let Some(w) = final_heartbeat.as_mut() {
+            w.status = WorkerStatus::Shutdown.into();
+            self.set_heartbeat_client_fields(w);
+        }
         let request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: self.capture_heartbeat(),
+            worker_heartbeat: final_heartbeat,
         };
 
         Ok(
@@ -700,27 +709,26 @@ impl WorkerClient for WorkerClientBag {
         )
     }
 
-    fn replace_client(&self, new_client: Client) {
-        self.client.get_client().replace_client(new_client);
-    }
-
     async fn record_worker_heartbeat(
         &self,
-        heartbeat: WorkerHeartbeat,
+        namespace: String,
+        worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
+        let request = RecordWorkerHeartbeatRequest {
+            namespace,
+            identity: self.identity.clone(),
+            worker_heartbeat,
+        };
         Ok(self
             .client
             .clone()
-            .record_worker_heartbeat(
-                RecordWorkerHeartbeatRequest {
-                    namespace: self.namespace.clone(),
-                    identity: self.identity.clone(),
-                    worker_heartbeat: vec![heartbeat],
-                }
-                .into_request(),
-            )
+            .record_worker_heartbeat(request.into_request())
             .await?
             .into_inner())
+    }
+
+    fn replace_client(&self, new_client: Client) {
+        self.client.get_client().replace_client(new_client);
     }
 
     fn capabilities(&self) -> Option<Capabilities> {
@@ -732,7 +740,7 @@ impl WorkerClient for WorkerClientBag {
             .cloned()
     }
 
-    fn workers(&self) -> Arc<SlotManager> {
+    fn workers(&self) -> Arc<ClientWorkerSet> {
         self.client.get_client().inner_cow().inner().workers()
     }
 
@@ -746,8 +754,56 @@ impl WorkerClient for WorkerClientBag {
         (opts.client_name.clone(), opts.client_version.clone())
     }
 
-    fn get_identity(&self) -> String {
+    fn identity(&self) -> String {
         self.identity.clone()
+    }
+
+    fn worker_grouping_key(&self) -> Uuid {
+        self.client.get_client().inner_cow().worker_grouping_key()
+    }
+
+    fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat) {
+        if let Some(host_info) = heartbeat.host_info.as_mut() {
+            host_info.process_key = self.worker_grouping_key().to_string();
+        }
+        heartbeat.worker_identity = WorkerClient::identity(self);
+        let sdk_name_and_ver = self.sdk_name_and_version();
+        heartbeat.sdk_name = sdk_name_and_ver.0;
+        heartbeat.sdk_version = sdk_name_and_ver.1;
+
+        let now = SystemTime::now();
+        heartbeat.heartbeat_time = Some(now.into());
+        let mut heartbeat_map = self.worker_heartbeat_map.lock();
+        let client_heartbeat_data = heartbeat_map
+            .entry(heartbeat.worker_instance_key.clone())
+            .or_default();
+        let elapsed_since_last_heartbeat =
+            client_heartbeat_data.last_heartbeat_time.map(|hb_time| {
+                let dur = now.duration_since(hb_time).unwrap_or(Duration::ZERO);
+                PbDuration {
+                    seconds: dur.as_secs() as i64,
+                    nanos: dur.subsec_nanos() as i32,
+                }
+            });
+        heartbeat.elapsed_since_last_heartbeat = elapsed_since_last_heartbeat;
+        client_heartbeat_data.last_heartbeat_time = Some(now);
+
+        update_slots(
+            &mut heartbeat.workflow_task_slots_info,
+            &mut client_heartbeat_data.workflow_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.activity_task_slots_info,
+            &mut client_heartbeat_data.activity_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.nexus_task_slots_info,
+            &mut client_heartbeat_data.nexus_task_slots_info,
+        );
+        update_slots(
+            &mut heartbeat.local_activity_slots_info,
+            &mut client_heartbeat_data.local_activity_slots_info,
+        );
     }
 }
 
@@ -785,4 +841,32 @@ pub struct WorkflowTaskCompletion {
     pub metering_metadata: MeteringMetadata,
     /// Versioning behavior of the workflow, if any.
     pub versioning_behavior: VersioningBehavior,
+}
+
+#[derive(Clone, Default)]
+struct SlotsInfo {
+    total_processed_tasks: i32,
+    total_failed_tasks: i32,
+}
+
+#[derive(Clone, Default)]
+struct ClientHeartbeatData {
+    last_heartbeat_time: Option<SystemTime>,
+
+    workflow_task_slots_info: SlotsInfo,
+    activity_task_slots_info: SlotsInfo,
+    nexus_task_slots_info: SlotsInfo,
+    local_activity_slots_info: SlotsInfo,
+}
+
+fn update_slots(slots_info: &mut Option<WorkerSlotsInfo>, client_heartbeat_data: &mut SlotsInfo) {
+    if let Some(wft_slot_info) = slots_info.as_mut() {
+        wft_slot_info.last_interval_processed_tasks =
+            wft_slot_info.total_processed_tasks - client_heartbeat_data.total_processed_tasks;
+        wft_slot_info.last_interval_failure_tasks =
+            wft_slot_info.total_failed_tasks - client_heartbeat_data.total_failed_tasks;
+
+        client_heartbeat_data.total_processed_tasks = wft_slot_info.total_processed_tasks;
+        client_heartbeat_data.total_failed_tasks = wft_slot_info.total_failed_tasks;
+    }
 }
