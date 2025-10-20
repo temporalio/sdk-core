@@ -486,11 +486,18 @@ impl Worker {
             shutdown_token.child_token(),
         );
 
+        let deployment_options = match &config.versioning_strategy {
+            temporal_sdk_core_api::worker::WorkerVersioningStrategy::WorkerDeploymentBased(
+                opts,
+            ) => Some(opts.clone()),
+            _ => None,
+        };
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_slots.clone(),
             external_wft_tx,
+            deployment_options,
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         let sdk_name_and_ver = client.sdk_name_and_version();
