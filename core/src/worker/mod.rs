@@ -571,11 +571,18 @@ impl Worker {
             shutdown_token.child_token(),
         );
 
+        let deployment_options = match &config.versioning_strategy {
+            temporal_sdk_core_api::worker::WorkerVersioningStrategy::WorkerDeploymentBased(
+                opts,
+            ) => Some(opts.clone()),
+            _ => None,
+        };
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_slots.clone(),
             external_wft_tx,
+            deployment_options,
         );
         let worker_instance_key = Uuid::new_v4();
         let worker_status = Arc::new(Mutex::new(WorkerStatus::Running));
@@ -1003,6 +1010,10 @@ impl ClientWorker for ClientWorkerRegistrator {
 
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
         self.slot_provider.try_reserve_wft_slot()
+    }
+
+    fn deployment_options(&self) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions> {
+        self.slot_provider.deployment_options()
     }
 
     fn worker_instance_key(&self) -> Uuid {

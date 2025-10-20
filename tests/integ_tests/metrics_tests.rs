@@ -31,7 +31,7 @@ use temporal_sdk_core_api::{
     errors::PollError,
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
-        PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
+        PrometheusExporterOptionsBuilder, TaskQueueLabelStrategy, TelemetryOptionsBuilder,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
             MetricParameters, MetricParametersBuilder, NewAttributes,
@@ -1326,4 +1326,93 @@ async fn prometheus_label_nonsense() {
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("some_counter{thing=\"foo\"} 2"));
     assert!(body.contains("some_counter{blerp=\"baz\"} 2"));
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn sticky_queue_label_strategy(
+    #[values(
+        TaskQueueLabelStrategy::UseNormal,
+        TaskQueueLabelStrategy::UseNormalAndSticky
+    )]
+    strategy: TaskQueueLabelStrategy,
+) {
+    let (mut telemopts, addr, _aborter) = prom_metrics(Some(
+        PrometheusExporterOptionsBuilder::default()
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .build()
+            .unwrap(),
+    ));
+    telemopts.task_queue_label_strategy = strategy;
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let wf_name = format!("sticky_queue_label_strategy_{strategy:?}");
+    let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
+    // Enable sticky queues by setting a reasonable cache size
+    starter.worker_config.max_cached_workflows(10_usize);
+    starter.worker_config.no_remote_activities(true);
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.clone(), |ctx: WfContext| async move {
+        ctx.timer(Duration::from_millis(1)).await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_name.clone(),
+            wf_name,
+            vec![],
+            WorkflowOptions {
+                enable_eager_workflow_start: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // Give metrics time to be recorded
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+
+    let poll_metrics: Vec<_> = body
+        .lines()
+        .filter(|l| {
+            l.contains("temporal_long_request")
+                && l.contains("operation=\"PollWorkflowTaskQueue\"")
+                && l.contains(&format!("namespace=\"{NAMESPACE}\""))
+        })
+        .collect();
+
+    assert!(!poll_metrics.is_empty(), "Should have poll metrics");
+
+    match strategy {
+        TaskQueueLabelStrategy::UseNormalAndSticky => {
+            // With UseNormalAndSticky, we should see sticky queue names
+            let has_sticky = poll_metrics.iter().any(|l| {
+                l.contains("task_queue=")
+                    && l.contains("WorkflowTask")
+                    && !l.contains(&format!("task_queue=\"{task_queue}\""))
+            });
+
+            assert!(
+                has_sticky,
+                "With UseNormalAndSticky, should see sticky queue names in metrics. Metrics:\n{}",
+                poll_metrics.join("\n")
+            );
+        }
+        TaskQueueLabelStrategy::UseNormal => {
+            // With UseNormal, ALL metrics should use the normal queue name
+            for l in &poll_metrics {
+                if l.contains("task_queue=") && l.contains("WorkflowTask") {
+                    assert!(
+                        l.contains(&format!("task_queue=\"{task_queue}\"")),
+                        "With UseNormal, all workflow task_queue labels should use normal name. Found: {l}",
+                    );
+                }
+            }
+        }
+        _ => unreachable!("Test only covers UseNormal and UseNormalAndSticky"),
+    }
 }

@@ -58,6 +58,7 @@ pub(super) struct SlotProvider {
     task_queue: String,
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     external_wft_tx: WFTStreamSender,
+    deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
 }
 
 impl SlotProvider {
@@ -66,12 +67,14 @@ impl SlotProvider {
         task_queue: String,
         wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         external_wft_tx: WFTStreamSender,
+        deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
     ) -> Self {
         Self {
             namespace,
             task_queue,
             wft_semaphore,
             external_wft_tx,
+            deployment_options,
         }
     }
     pub(super) fn namespace(&self) -> &str {
@@ -85,6 +88,11 @@ impl SlotProvider {
             Some(permit) => Some(Box::new(Slot::new(permit, self.external_wft_tx.clone()))),
             None => None,
         }
+    }
+    pub(super) fn deployment_options(
+        &self,
+    ) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions> {
+        self.deployment_options.clone()
     }
 }
 
@@ -122,6 +130,7 @@ mod tests {
             "my_queue".to_string(),
             wft_semaphore,
             external_wft_tx,
+            None,
         );
 
         let slot = provider
@@ -143,6 +152,7 @@ mod tests {
                 "my_queue".to_string(),
                 wft_semaphore,
                 external_wft_tx,
+                None,
             );
             assert!(provider.try_reserve_wft_slot().is_some());
         }
@@ -160,6 +170,7 @@ mod tests {
                 "my_queue".to_string(),
                 wft_semaphore.clone(),
                 external_wft_tx,
+                None,
             );
             let slot = provider.try_reserve_wft_slot();
             assert!(slot.is_some());

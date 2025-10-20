@@ -23,6 +23,14 @@ pub trait Slot {
     ) -> Result<(), anyhow::Error>;
 }
 
+/// Result of reserving a workflow task slot, including deployment options if applicable.
+pub(crate) struct SlotReservation {
+    /// The reserved slot for processing the workflow task
+    pub slot: Box<dyn Slot + Send>,
+    /// Worker deployment options, if the worker is using deployment-based versioning
+    pub deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
+}
+
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 struct SlotKey {
     namespace: String,
@@ -62,13 +70,17 @@ impl ClientWorkerSetImpl {
         &self,
         namespace: String,
         task_queue: String,
-    ) -> Option<Box<dyn Slot + Send>> {
+    ) -> Option<SlotReservation> {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(p) = self.slot_providers.get(&key)
             && let Some(worker) = self.all_workers.get(p)
             && let Some(slot) = worker.try_reserve_wft_slot()
         {
-            return Some(slot);
+            let deployment_options = worker.deployment_options();
+            return Some(SlotReservation {
+                slot,
+                deployment_options,
+            });
         }
         None
     }
@@ -197,11 +209,12 @@ impl ClientWorkerSet {
     }
 
     /// Try to reserve a compatible processing slot in any of the registered workers.
+    /// Returns the slot and the worker's deployment options (if using deployment-based versioning).
     pub(crate) fn try_reserve_wft_slot(
         &self,
         namespace: String,
         task_queue: String,
-    ) -> Option<Box<dyn Slot + Send>> {
+    ) -> Option<SlotReservation> {
         self.worker_manager
             .read()
             .try_reserve_wft_slot(namespace, task_queue)
@@ -273,6 +286,9 @@ pub trait ClientWorker: Send + Sync {
     /// to process exactly one workflow task.
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn Slot + Send>>;
 
+    /// Get the worker deployment options for this worker, if using deployment-based versioning.
+    fn deployment_options(&self) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>;
+
     /// Unique identifier for this worker instance.
     /// This must be stable across the worker's lifetime and unique per instance.
     fn worker_instance_key(&self) -> Uuid;
@@ -324,6 +340,7 @@ mod tests {
             });
         mock_provider.expect_namespace().return_const(namespace);
         mock_provider.expect_task_queue().return_const(task_queue);
+        mock_provider.expect_deployment_options().return_const(None);
         mock_provider
             .expect_heartbeat_enabled()
             .return_const(heartbeat_enabled);

@@ -586,7 +586,9 @@ async fn call_workflow_service(
         "DescribeTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_task_queue)
         }
-        "DescribeWorker" => rpc_call_on_trait!(client, call, WorkflowService, describe_worker),
+        "DescribeWorker" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_worker)
+        }
         "DescribeWorkerDeployment" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_worker_deployment)
         }

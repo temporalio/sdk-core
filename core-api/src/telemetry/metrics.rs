@@ -1,12 +1,14 @@
-use crate::dbg_panic;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::{dbg_panic, telemetry::TaskQueueLabelStrategy};
 use std::{
     any::Any,
     borrow::Cow,
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
     ops::Deref,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -284,6 +286,7 @@ impl From<&'static str> for MetricParameters {
 pub struct TemporalMeter {
     pub inner: Arc<dyn CoreMeter>,
     pub default_attribs: NewAttributes,
+    pub task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 
 impl Deref for TemporalMeter {
