@@ -21,7 +21,8 @@ use temporalio_common::telemetry::{
     TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, TokioRuntimeBuilder,
+    CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
+    RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder, TokioRuntimeBuilder,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;

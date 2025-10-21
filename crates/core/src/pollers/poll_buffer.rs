@@ -9,7 +9,6 @@ use crate::{
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use governor::{Quota, RateLimiter};
-use std::time::SystemTime;
 use std::{
     cmp,
     fmt::Debug,
@@ -18,7 +17,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use temporalio_client::{ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, NoRetryOnMatching};
 use temporalio_common::{

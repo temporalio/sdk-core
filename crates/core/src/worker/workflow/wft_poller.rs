@@ -8,8 +8,10 @@ use crate::{
 };
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
-use std::sync::{Arc, OnceLock};
-use std::time::SystemTime;
+use std::{
+    sync::{Arc, OnceLock},
+    time::SystemTime,
+};
 use temporalio_common::{
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     worker::{WorkerConfig, WorkflowSlotKind},

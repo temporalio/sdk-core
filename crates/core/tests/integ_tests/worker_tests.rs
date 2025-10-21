@@ -1,6 +1,8 @@
-use crate::common::get_integ_runtime_options;
 use crate::{
-    common::{CoreWfStarter, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg},
+    common::{
+        CoreWfStarter, get_integ_runtime_options, get_integ_server_options,
+        get_integ_telem_options, mock_sdk_cfg,
+    },
     shared_tests,
 };
 use assert_matches::assert_matches;
@@ -57,8 +59,8 @@ use temporalio_sdk::{
 use temporalio_sdk_core::{
     CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder, init_worker,
     test_help::{
-        FakeWfResponses, MockPollCfg, ResponseType, TEST_Q, build_mock_pollers,
-        drain_pollers_and_shutdown, hist_to_poll_resp, mock_worker, mock_worker_client,
+        FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
+        hist_to_poll_resp, mock_worker, mock_worker_client,
     },
 };
 use tokio::sync::{Barrier, Notify, Semaphore};

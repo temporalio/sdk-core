@@ -4,21 +4,17 @@ pub(crate) mod mocks;
 use crate::protosext::legacy_query_failure;
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
-use std::collections::HashMap;
-use std::time::SystemTime;
-use std::{sync::Arc, time::Duration};
-use temporal_client::{
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+use temporalio_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
     RetryClient, SharedReplaceableClient, WorkflowService,
 };
-use temporalio_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
-    SharedReplaceableClient, SlotManager, WorkflowService,
-};
 use temporalio_common::{
-    protos::temporal::api::enums::v1::WorkerStatus;
-use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerSlotsInfo;
-use temporal_sdk_core_protos::{
+    protos::{
         TaskToken,
         coresdk::{workflow_commands::QueryResult, workflow_completion},
         temporal::api::{
@@ -29,7 +25,8 @@ use temporal_sdk_core_protos::{
             },
             deployment,
             enums::v1::{
-                TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
+                TaskQueueKind, VersioningBehavior, WorkerStatus, WorkerVersioningMode,
+                WorkflowTaskFailedCause,
             },
             failure::v1::Failure,
             nexus,
@@ -37,7 +34,7 @@ use temporal_sdk_core_protos::{
             query::v1::WorkflowQueryResult,
             sdk::v1::WorkflowTaskCompletedMetadata,
             taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-            worker::v1::WorkerHeartbeat,
+            worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
             workflowservice::v1::{get_system_info_response::Capabilities, *},
         },
     },

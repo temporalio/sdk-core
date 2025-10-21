@@ -58,8 +58,7 @@ use crate::{
 };
 use anyhow::bail;
 use futures_util::Stream;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use temporalio_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
 use temporalio_common::{
     Worker as WorkerTrait,

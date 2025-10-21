@@ -1,8 +1,7 @@
-use crate::common::get_integ_runtime_options;
 use crate::{
     common::{
         ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
-        get_integ_server_options, get_integ_telem_options, prom_metrics,
+        get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, prom_metrics,
     },
     integ_tests::mk_nexus_endpoint,
 };

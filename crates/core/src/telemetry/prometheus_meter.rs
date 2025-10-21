@@ -820,7 +820,7 @@ mod tests {
             METRIC_PREFIX.to_string(),
             Some(Arc::new(meter)),
             true,
-            temporal_sdk_core_api::telemetry::TaskQueueLabelStrategy::UseNormal,
+            temporalio_common::telemetry::TaskQueueLabelStrategy::UseNormal,
         );
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
         mc.worker_registered();

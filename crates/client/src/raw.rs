@@ -651,13 +651,13 @@ proxier! {
                         Some(reservation) => {
                             // Populate eager_worker_deployment_options from the slot reservation
                             if let Some(opts) = reservation.deployment_options {
-                                req_mut.eager_worker_deployment_options = Some(temporal_sdk_core_protos::temporal::api::deployment::v1::WorkerDeploymentOptions {
+                                req_mut.eager_worker_deployment_options = Some(temporalio_common::protos::temporal::api::deployment::v1::WorkerDeploymentOptions {
                                     deployment_name: opts.version.deployment_name,
                                     build_id: opts.version.build_id,
                                     worker_versioning_mode: if opts.use_worker_versioning {
-                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
+                                        temporalio_common::protos::temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
                                     } else {
-                                        temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
+                                        temporalio_common::protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
                                     },
                                 });
                             }
@@ -1795,8 +1795,10 @@ mod tests {
     #[tokio::test]
     async fn eager_reservations_attach_deployment_options(#[case] use_worker_versioning: bool) {
         use crate::worker_registry::{MockClientWorker, MockSlot};
-        use temporal_sdk_core_api::worker::{WorkerDeploymentOptions, WorkerDeploymentVersion};
-        use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerVersioningMode;
+        use temporalio_common::{
+            protos::temporal::api::enums::v1::WorkerVersioningMode,
+            worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
+        };
 
         let expected_mode = if use_worker_versioning {
             WorkerVersioningMode::Versioned
@@ -1905,7 +1907,7 @@ mod tests {
             namespace: "test-namespace".to_string(),
             workflow_id: "test-wf-id".to_string(),
             workflow_type: Some(
-                temporal_sdk_core_protos::temporal::api::common::v1::WorkflowType {
+                temporalio_common::protos::temporal::api::common::v1::WorkflowType {
                     name: "test-workflow".to_string(),
                 },
             ),

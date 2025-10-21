@@ -23,13 +23,11 @@ pub(crate) use wft_poller::WFTPollerShared;
 #[allow(unreachable_pub)] // re-exported in test_help::integ_helpers
 pub use workflow::LEGACY_QUERY_ID;
 
-use crate::telemetry::WorkerHeartbeatMetrics;
-use crate::worker::heartbeat::{HeartbeatFn, SharedNamespaceWorker};
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
     errors::CompleteWfError,
-    pollers::{BoxedActPoller, BoxedNexusPoller},
+    pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
     sealed::AnyClient,
     telemetry::{
@@ -42,15 +40,13 @@ use crate::{
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
         client::WorkerClient,
+        heartbeat::{HeartbeatFn, SharedNamespaceWorker},
         nexus::NexusManager,
         workflow::{
-            LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller::make_wft_poller,
+            LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller,
+            wft_poller::make_wft_poller,
         },
     },
-};
-use crate::{
-    pollers::{ActivityTaskOptions, LongPollBuffer},
-    worker::workflow::wft_poller,
 };
 use activities::WorkerActivityTasks;
 use anyhow::bail;
@@ -59,32 +55,21 @@ use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
 use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
-use std::sync::atomic::AtomicU64;
-use std::time::SystemTime;
 use std::{
     convert::TryInto,
     future,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
-use temporalio_client::SharedNamespaceWorkerTrait;
-use temporalio_client::{ClientWorker, HeartbeatCallback, Slot as SlotTrait};
-use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
-use temporal_sdk_core_api::worker::{
-    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind,
+use temporalio_client::{
+    ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
-use temporalio_client::WorkerKey;
 use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
-    protos::temporal::api::deployment;
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkerStatus;
-use temporal_sdk_core_protos::temporal::api::worker::v1::{
-    WorkerHeartbeat, WorkerHostInfo, WorkerPollerInfo, WorkerSlotsInfo,
-};
-use temporal_sdk_core_protos::{
+    protos::{
         TaskToken,
         coresdk::{
             ActivityTaskCompletion,
@@ -95,11 +80,17 @@ use temporal_sdk_core_protos::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            enums::v1::TaskQueueKind,
+            deployment,
+            enums::v1::{TaskQueueKind, WorkerStatus},
             taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+            worker::v1::{WorkerHeartbeat, WorkerHostInfo, WorkerPollerInfo, WorkerSlotsInfo},
         },
     },
-    worker::PollerBehavior,
+    telemetry::metrics::{TemporalMeter, WorkerHeartbeatMetrics},
+    worker::{
+        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind,
+        WorkflowSlotKind,
+    },
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -573,9 +564,9 @@ impl Worker {
         );
 
         let deployment_options = match &config.versioning_strategy {
-            temporal_sdk_core_api::worker::WorkerVersioningStrategy::WorkerDeploymentBased(
-                opts,
-            ) => Some(opts.clone()),
+            temporalio_common::worker::WorkerVersioningStrategy::WorkerDeploymentBased(opts) => {
+                Some(opts.clone())
+            }
             _ => None,
         };
         let provider = SlotProvider::new(
@@ -1013,7 +1004,7 @@ impl ClientWorker for ClientWorkerRegistrator {
         self.slot_provider.try_reserve_wft_slot()
     }
 
-    fn deployment_options(&self) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions> {
+    fn deployment_options(&self) -> Option<temporalio_common::worker::WorkerDeploymentOptions> {
         self.slot_provider.deployment_options()
     }
 

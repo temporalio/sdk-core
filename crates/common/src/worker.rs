@@ -4,8 +4,7 @@ use crate::{
         coresdk,
         coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
         temporal,
-        temporal::api::enums::v1::VersioningBehavior,
-        temporal::api::worker::v1::PluginInfo,
+        temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
     },
     telemetry::metrics::TemporalMeter,
 };

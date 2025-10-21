@@ -13,7 +13,7 @@ categories = ["development-tools"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-history_builders = ["uuid", "rand"]
+history_builders = ["rand"]
 otel_impls = ["dep:opentelemetry"]
 envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
@@ -40,7 +40,7 @@ tonic-prost = { workspace = true }
 tracing = "0.1"
 tracing-core = "0.1"
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"], optional = true }
+uuid = { version = "1.18", features = ["v4"] }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }

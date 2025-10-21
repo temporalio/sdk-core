@@ -1148,7 +1148,7 @@ mod tests {
             METRIC_PREFIX.to_string(),
             Some(call_buffer.clone()),
             true,
-            temporal_sdk_core_api::telemetry::TaskQueueLabelStrategy::UseNormal,
+            temporalio_common::telemetry::TaskQueueLabelStrategy::UseNormal,
         );
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
         mc.forced_cache_eviction();

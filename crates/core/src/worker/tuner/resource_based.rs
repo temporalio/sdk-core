@@ -1,6 +1,5 @@
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
-use std::sync::mpsc;
 use std::{
     fs,
     marker::PhantomData,
@@ -8,6 +7,7 @@ use std::{
     sync::{
         Arc, OnceLock,
         atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc,
     },
     thread,
     time::{Duration, Instant},

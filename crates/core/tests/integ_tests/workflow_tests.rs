@@ -18,11 +18,10 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
-use crate::common::get_integ_runtime_options;
 use crate::{
     common::{
-        CoreWfStarter, history_from_proto_binary, init_core_and_create_wf,
-        init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
+        CoreWfStarter, get_integ_runtime_options, history_from_proto_binary,
+        init_core_and_create_wf, init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
     },
     integ_tests::{activity_functions::echo, metrics_tests},
 };

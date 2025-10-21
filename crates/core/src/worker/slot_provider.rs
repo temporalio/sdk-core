@@ -7,10 +7,10 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-use temporalio_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
+use temporalio_client::Slot as SlotTrait;
 use temporalio_common::{
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    worker::WorkflowSlotKind,
+    worker::{WorkerDeploymentOptions, WorkflowSlotKind},
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
@@ -60,7 +60,7 @@ pub(super) struct SlotProvider {
     task_queue: String,
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     external_wft_tx: WFTStreamSender,
-    deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
+    deployment_options: Option<WorkerDeploymentOptions>,
 }
 
 impl SlotProvider {
@@ -69,7 +69,7 @@ impl SlotProvider {
         task_queue: String,
         wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         external_wft_tx: WFTStreamSender,
-        deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
+        deployment_options: Option<WorkerDeploymentOptions>,
     ) -> Self {
         Self {
             namespace,
@@ -91,9 +91,7 @@ impl SlotProvider {
             None => None,
         }
     }
-    pub(super) fn deployment_options(
-        &self,
-    ) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions> {
+    pub(super) fn deployment_options(&self) -> Option<WorkerDeploymentOptions> {
         self.deployment_options.clone()
     }
 }

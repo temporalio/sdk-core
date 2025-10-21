@@ -4,13 +4,19 @@
 
 use anyhow::bail;
 use parking_lot::RwLock;
-use std::collections::{
-    HashMap,
-    hash_map::Entry::{Occupied, Vacant},
+use std::{
+    collections::{
+        HashMap,
+        hash_map::Entry::{Occupied, Vacant},
+    },
+    sync::Arc,
 };
-use std::sync::Arc;
-use temporalio_common::protos::temporal::api::worker::v1::WorkerHeartbeat;
-use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+use temporalio_common::{
+    protos::temporal::api::{
+        worker::v1::WorkerHeartbeat, workflowservice::v1::PollWorkflowTaskQueueResponse,
+    },
+    worker::WorkerDeploymentOptions,
+};
 use uuid::Uuid;
 
 /// This trait represents a slot reserved for processing a WFT by a worker.
@@ -28,7 +34,7 @@ pub(crate) struct SlotReservation {
     /// The reserved slot for processing the workflow task
     pub slot: Box<dyn Slot + Send>,
     /// Worker deployment options, if the worker is using deployment-based versioning
-    pub deployment_options: Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>,
+    pub deployment_options: Option<WorkerDeploymentOptions>,
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -287,7 +293,7 @@ pub trait ClientWorker: Send + Sync {
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn Slot + Send>>;
 
     /// Get the worker deployment options for this worker, if using deployment-based versioning.
-    fn deployment_options(&self) -> Option<temporal_sdk_core_api::worker::WorkerDeploymentOptions>;
+    fn deployment_options(&self) -> Option<WorkerDeploymentOptions>;
 
     /// Unique identifier for this worker instance.
     /// This must be stable across the worker's lifetime and unique per instance.

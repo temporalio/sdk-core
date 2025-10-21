@@ -1,18 +1,16 @@
-use crate::WorkerClient;
-use crate::worker::{TaskPollers, WorkerTelemetry};
+use crate::{
+    WorkerClient,
+    worker::{TaskPollers, WorkerTelemetry},
+};
 use parking_lot::Mutex;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-use temporal_client::SharedNamespaceWorkerTrait;
-use temporal_sdk_core_api::worker::{
-    PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy,
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
+use temporalio_client::SharedNamespaceWorkerTrait;
 use temporalio_common::{
-    protos::temporal::api::worker::v1::{WorkerHeartbeat, WorkerHostInfo},
-    worker::WorkerConfig,
+    protos::temporal::api::worker::v1::WorkerHeartbeat,
+    worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
-use tokio::{sync::Notify, task::JoinHandle, time::MissedTickBehavior};
+use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 /// Callback used to collect heartbeat data from each worker at the time of heartbeat

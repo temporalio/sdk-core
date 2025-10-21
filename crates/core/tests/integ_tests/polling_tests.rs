@@ -34,7 +34,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    ClientOptionsBuilder, CoreRuntime,
+    ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder,
     ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
     init_worker,
     telemetry::CoreLogStreamConsumer,
