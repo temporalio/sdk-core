@@ -104,6 +104,8 @@ jobs:
     container:
       image: ubuntu
       options: --cpus=1 --memory=512m
+    env:
+      CGROUP_TESTS_ENABLED: true
     steps:
       - name: Download cgroup test executable
         uses: actions/download-artifact@v5

@@ -513,16 +513,16 @@ impl RealSysInfoInner {
             );
 
             let cpu = self.cgroup_cpu_info.calc_cpu_percent().unwrap_or_else(|| {
-                //there won't be a cgroup cpu usage if there is no limit applied to the cgroup
-                //or if an error is encountered when reading cpu.stat or cpu.max
-                //in these cases, fallback to global cpu usage
+                // There won't be a cgroup cpu usage if there is no limit applied to the cgroup
+                // or if an error is encountered when reading cpu.stat or cpu.max.
+                // In these cases, fallback to global cpu usage.
                 lock.refresh_cpu_usage();
                 lock.global_cpu_usage() as f64 / 100.
             });
             self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         } else {
-            //always update the total_mem b/c we could transiently fall to host if
-            // lock.cgroup_limits() returns None
+            // Always update the total_mem b/c we could transiently fall to host if
+            // lock.cgroup_limits() returns None.
             self.total_mem.store(lock.total_memory(), Ordering::Release);
             self.cur_mem_usage
                 .store(lock.used_memory(), Ordering::Release);
@@ -733,6 +733,7 @@ mod tests {
     use super::*;
     use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
     use std::cell::RefCell;
+    use std::env;
     use std::hint::black_box;
     use std::rc::Rc;
     use std::sync::{
@@ -1019,12 +1020,17 @@ mod tests {
 
     #[test]
     fn cgroup_realsysinfo_uses_cgroup_limits_cpu() {
+        if env::var("CGROUP_TESTS_ENABLED").is_err() {
+            eprintln!("Skipping: cgroup tests not enabled");
+            return;
+        }
+
         let sys_info = RealSysInfo::new();
         let cgroup_info = CGroupCpuInfo::new(CgroupV2CpuFileSystem);
-        let Some(CGroupCpuLimits { quota, period }) = cgroup_info.read_cpus_limit() else {
-            eprintln!("Skipping: unable to read cpu quota.");
-            return;
-        };
+        let CGroupCpuLimits { quota, period } = cgroup_info
+            .read_cpus_limit()
+            .expect("unable to read cpu quota.");
+
         let CpuQuota::Limited(limit) = quota else {
             eprintln!("Skipping: cpu quota reported unlimited");
             return;
@@ -1061,12 +1067,16 @@ mod tests {
 
     #[test]
     fn cgroup_realsysinfo_uses_cgroup_limits_mem() {
+        if env::var("CGROUP_TESTS_ENABLED").is_err() {
+            eprintln!("Skipping: cgroup tests not enabled");
+            return;
+        }
+
         let mut sys = sysinfo::System::new();
         sys.refresh_memory();
-        let Some(current_mem) = sys.cgroup_limits() else {
-            eprintln!("Skipping: unable to read cgroup memory details");
-            return;
-        };
+        let current_mem = sys
+            .cgroup_limits()
+            .expect("unable to read cgroup memory details");
 
         if current_mem.total_memory == sys.total_memory() {
             eprintln!("Skipping: no memory limit detected. limit == total host memory");
@@ -1077,7 +1087,7 @@ mod tests {
 
         assert_eq!(
             sys_info.total_mem(),
-            current_mem.total_memory, //sysinfo::System does min(cgroup limit, host total) internally
+            current_mem.total_memory, // sysinfo::System does min(cgroup limit, host total) internally
             "RealSysInfo total_mem should equal min(cgroup limit, host total)"
         );
 
@@ -1090,11 +1100,11 @@ mod tests {
         } else {
             0.5
         };
-        //allocate to half of memory
+        // allocate to half of memory
         let to_allocate: usize = (half_total).saturating_sub(cur_used) as usize;
         let _buf = black_box(vec![1u8; to_allocate]);
 
-        //make sure we sleep enough to let real_sys_info need a refresh
+        // make sure we sleep enough to let real_sys_info need a refresh
         sleep(Duration::from_millis(200));
 
         let percentage = sys_info.used_mem_percent();

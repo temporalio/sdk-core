@@ -22,4 +22,4 @@ memory="${2:-256m}"
 
 printf 'Running with cpus=%s memory=%s\n' "$cpus" "$memory"
 
-docker run --rm -v "$PWD":/app -w /app --cpus="$cpus" --memory="$memory" ubuntu bash -c "./$relative_path cgroup_ --nocapture"
+docker run --rm -v "$PWD":/app -w /app --cpus="$cpus" --memory="$memory" --env CGROUP_TESTS_ENABLED=true ubuntu bash -c "./$relative_path cgroup_ --nocapture"
