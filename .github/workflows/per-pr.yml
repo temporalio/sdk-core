@@ -43,7 +43,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
+        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -80,7 +80,7 @@ jobs:
         id: find-cgroup-test
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |
-          test_executable=$(cargo build --tests --message-format json | jq -r 'select(.profile?.test == true and .target?.name == "temporal_sdk_core" and .executable) | .executable')
+          test_executable=$(cargo build --tests --message-format json | jq -r 'select(.profile?.test == true and .target?.name == "temporalio_sdk_core" and .executable) | .executable')
           cp $test_executable ./core-tests
       - name: Upload cgroup test executable
         uses: actions/upload-artifact@v4
@@ -113,8 +113,8 @@ jobs:
           name: cgroup-tests-linux-x86_64
       - name: Run tests
         run: |
-            chmod +x ./core-tests
-            ./core-tests cgroup_ --nocapture
+          chmod +x ./core-tests
+          ./core-tests cgroup_ --nocapture
 
 
   integ-tests:
@@ -123,7 +123,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
+        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -229,7 +229,7 @@ jobs:
         run: cargo rustc --package temporalio-sdk-core-c-bridge --features xz2-static -- --crate-type=staticlib
 
       - name: Build C test program
-        run: gcc -I./crates/core-c-bridge/include crates/core/tests/c_bridge_smoke_test.c target/debug/deps/libtemporalio_sdk_core_c_bridge.a -lpthread -ldl -lm -o test
+        run: gcc -I./crates/sdk-core-c-bridge/include crates/sdk-core/tests/c_bridge_smoke_test.c target/debug/deps/libtemporalio_sdk_core_c_bridge.a -lpthread -ldl -lm -o test
 
       - name: Run C test program
         run: ./test
