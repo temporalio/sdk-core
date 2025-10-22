@@ -30,7 +30,7 @@ tokio-stream = "0.1"
 tracing = "0.1"
 
 [dependencies.temporalio-sdk-core]
-path = "../core"
+path = "../sdk-core"
 version = "0.1"
 default-features = false
 

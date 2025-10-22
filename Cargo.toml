@@ -1,11 +1,11 @@
 [workspace]
 members = [
-    "crates/core",
+    "crates/sdk-core",
     "crates/client",
     "crates/common",
     "crates/macros",
     "crates/sdk",
-    "crates/core-c-bridge",
+    "crates/sdk-core-c-bridge",
 ]
 resolver = "2"
 

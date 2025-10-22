@@ -40,7 +40,7 @@ xz2 = { version = "0.1" }
 path = "../client"
 
 [dependencies.temporalio-sdk-core]
-path = "../core"
+path = "../sdk-core"
 features = ["ephemeral-server"]
 
 [dependencies.temporalio-common]
