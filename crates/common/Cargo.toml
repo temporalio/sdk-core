@@ -1,0 +1,52 @@
+[package]
+name = "temporalio-common"
+version = "0.1.0"
+edition = "2024"
+authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
+license-file = { workspace = true }
+description = "Common functionality for the Temporal SDK Core, Client, and Rust SDK"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+history_builders = ["rand"]
+otel_impls = ["dep:opentelemetry"]
+envconfig = ["dep:toml", "dep:dirs"]
+serde_serialize = []
+test-utilities = ["history_builders"]
+
+[dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+base64 = "0.22"
+dirs = { version = "6.0", optional = true }
+derive_builder = { workspace = true }
+derive_more = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+prost = { workspace = true }
+prost-wkt = "0.7"
+prost-types = { workspace = true }
+rand = { version = "0.9", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = { workspace = true }
+toml = { version = "0.9", optional = true }
+tonic = { workspace = true }
+tonic-prost = { workspace = true }
+tracing = "0.1"
+tracing-core = "0.1"
+url = "2.5"
+uuid = { version = "1.18", features = ["v4"] }
+
+[build-dependencies]
+tonic-prost-build = { workspace = true }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tempfile = "3.21"

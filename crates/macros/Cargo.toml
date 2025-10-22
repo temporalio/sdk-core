@@ -1,0 +1,23 @@
+[package]
+name = "temporalio-macros"
+version = "0.1.0"
+edition = "2024"
+authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
+license-file = { workspace = true }
+description = "Procmacros used in Temporal Core & Rust SDKs"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+derive_more = { workspace = true }
+proc-macro2 = "1.0"
+syn = { version = "2.0", features = ["default", "extra-traits"] }
+quote = "1.0"
+
+[dev-dependencies]
+# This is to enable doctests for the macros
+temporalio-common = { path = "../common" }
+
+[package.metadata.workspaces]
+independent = true

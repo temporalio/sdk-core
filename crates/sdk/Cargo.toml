@@ -1,0 +1,46 @@
+[package]
+name = "temporalio-sdk"
+version = "0.1.0-alpha.1"
+edition = "2024"
+authors = ["Spencer Judge <spencer@temporal.io>"]
+license-file = { workspace = true }
+description = "Temporal Rust SDK"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
+
+[dependencies]
+async-trait = "0.1"
+anyhow = "1.0"
+derive_more = { workspace = true }
+futures-util = { version = "0.3", default-features = false }
+parking_lot = { version = "0.12", features = ["send_guard"] }
+prost-types = { workspace = true }
+serde = "1.0"
+tokio = { version = "1.47", features = [
+    "rt",
+    "rt-multi-thread",
+    "parking_lot",
+    "time",
+    "fs",
+] }
+tokio-util = { version = "0.7" }
+tokio-stream = "0.1"
+tracing = "0.1"
+
+[dependencies.temporalio-sdk-core]
+path = "../sdk-core"
+version = "0.1"
+default-features = false
+
+[dependencies.temporalio-common]
+path = "../common"
+version = "0.1"
+
+[dependencies.temporalio-client]
+path = "../client"
+version = "0.1"
+
+[lints]
+workspace = true

@@ -26,18 +26,16 @@ installed to build Core.
 
 This repo is composed of multiple crates:
 
-- temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions.
-- temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service.
-- temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core.
-- temporal-sdk-core `./core` - The Core implementation.
-- temporal-sdk-core-c-bridge `./core-c-bridge` - Provides C bindings for Core.
-- temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
-- rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
-  (contains subcrates). It is Temporal-agnostic.
+- temporalio-client `./crates/client` - Defines client(s) for interacting with the Temporal gRPC service.
+- temporalio-common `./crates/common` - Common code & protobuf definitions
+- temporalio-sdk-core `./crates/core` - The Core implementation.
+- temporalio-sdk-core-c-bridge `./crates/core-c-bridge` - Provides C bindings for Core.
+- temporalio-macros `./crates/macros` - Implements procedural macros used by core and the SDK.
+- temporalio-sdk `./crates/sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
 
 Visualized (dev dependencies are in blue):
 
-![Crate dependency graph](./etc/deps.svg)
+![Crate dependency graph](./arch_docs/diagrams/deps.svg)
 
 All the following commands are enforced for each pull request:
 
@@ -64,8 +62,8 @@ To format all code run:
 ## Linting
 
 We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
-You can run it using:
-`cargo clippy --all -- -D warnings`
+We have a couple aliases for linting that make sure various targets are hit:
+`cargo lint` and `cargo test-lint`.
 
 ## Debugging
 
@@ -79,10 +77,10 @@ crate::telemetry::telemetry_init_fallback();
 
 The passed in options to initialization can be customized to export to an OTel collector, etc.
 
-To run integ tests with OTel collection on, you can use `integ-with-otel.sh`. You will want to make
-sure you are running the collector via docker, which can be done like so:
+To run integ tests with OTel collection on, you can use `etc/integ-with-otel.sh`. You will want to
+make sure you are running the collector via docker, which can be done like so:
 
-`docker-compose -f docker/docker-compose.yaml -f docker/docker-compose-telem.yaml up`
+`docker-compose -f etc/docker/docker-compose.yaml -f etc/docker/docker-compose-telem.yaml up`
 
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
 equivalent.
@@ -137,4 +135,3 @@ pre-alpha in terms of its API surface. Since it's still using Core underneath, i
 functional. We do not currently have any firm plans to productionize this SDK. If you want to write
 workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
 time without warning and we do not provide any support guarantees.
-
