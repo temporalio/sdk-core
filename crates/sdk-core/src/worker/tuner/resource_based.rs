@@ -233,14 +233,10 @@ impl PidControllers {
 
 impl MetricInstruments {
     fn new(meter: TemporalMeter) -> Self {
-        let mem_usage = meter.inner.gauge_f64("resource_slots_mem_usage".into());
-        let cpu_usage = meter.inner.gauge_f64("resource_slots_cpu_usage".into());
-        let mem_pid_output = meter
-            .inner
-            .gauge_f64("resource_slots_mem_pid_output".into());
-        let cpu_pid_output = meter
-            .inner
-            .gauge_f64("resource_slots_cpu_pid_output".into());
+        let mem_usage = meter.gauge_f64("resource_slots_mem_usage".into());
+        let cpu_usage = meter.gauge_f64("resource_slots_cpu_usage".into());
+        let mem_pid_output = meter.gauge_f64("resource_slots_mem_pid_output".into());
+        let cpu_pid_output = meter.gauge_f64("resource_slots_cpu_pid_output".into());
         let attribs = meter.inner.new_attributes(meter.default_attribs);
         Self {
             attribs,
@@ -732,15 +728,17 @@ impl CGroupCpuFileSystem for CgroupV2CpuFileSystem {
 mod tests {
     use super::*;
     use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
-    use std::cell::RefCell;
-    use std::env;
-    use std::hint::black_box;
-    use std::rc::Rc;
-    use std::sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
+    use std::{
+        cell::RefCell,
+        env,
+        hint::black_box,
+        rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+        thread::sleep,
     };
-    use std::thread::sleep;
     use temporalio_common::worker::WorkflowSlotKind;
 
     struct FakeMIS {
