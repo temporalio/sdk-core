@@ -647,13 +647,19 @@ proxier! {
                     let namespace = req_mut.namespace.clone();
                     let task_queue = req_mut.task_queue.as_ref()
                                         .map(|tq| tq.name.clone()).unwrap_or_default();
-                    let deployment_build_id = req_mut.eager_worker_deployment_options.clone().map(|opt| opt.build_id);
-                    match workers.try_reserve_wft_slot(namespace, task_queue, deployment_build_id) {
+                    match workers.try_reserve_wft_slot(namespace, task_queue) {
                         Some(reservation) => {
                             // Populate eager_worker_deployment_options from the slot reservation
                             if let Some(opts) = reservation.deployment_options {
-                                req_mut.eager_worker_deployment_options = Some(opts.into());
-                            }
+                                req_mut.eager_worker_deployment_options = Some(temporalio_common::protos::temporal::api::deployment::v1::WorkerDeploymentOptions {
+                                    deployment_name: opts.version.deployment_name,
+                                    build_id: opts.version.build_id,
+                                    worker_versioning_mode: if opts.use_worker_versioning {
+                                        temporalio_common::protos::temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
+                                    } else {
+                                        temporalio_common::protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
+                                    },
+                                });                            }
                             slot = Some(reservation.slot);
                         }
                         None => req_mut.request_eager_execution = false
@@ -1910,7 +1916,6 @@ mod tests {
                 normal_name: String::new(),
             }),
             request_eager_execution: true,
-            eager_worker_deployment_options: Some(deployment_opts.into()),
             ..Default::default()
         };
 

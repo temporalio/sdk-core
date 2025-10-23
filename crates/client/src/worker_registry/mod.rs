@@ -2,9 +2,9 @@
 //! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
-use crate::dbg_panic;
 use anyhow::bail;
 use parking_lot::RwLock;
+use rand::seq::IndexedRandom;
 use std::{
     collections::{
         HashMap,
@@ -42,23 +42,21 @@ pub(crate) struct SlotReservation {
 struct SlotKey {
     namespace: String,
     task_queue: String,
-    deployment_build_id: Option<String>,
 }
 
 impl SlotKey {
-    fn new(namespace: String, task_queue: String, deployment_build_id: Option<String>) -> SlotKey {
+    fn new(namespace: String, task_queue: String) -> SlotKey {
         SlotKey {
             namespace,
             task_queue,
-            deployment_build_id,
         }
     }
 }
 
 /// This is an inner class for [ClientWorkerSet] needed to hide the mutex.
 struct ClientWorkerSetImpl {
-    /// Maps slot keys to slot provider worker.
-    slot_providers: HashMap<SlotKey, Uuid>,
+    /// Maps slot keys to slot provider worker UUID and deployment build ID.
+    slot_providers: HashMap<SlotKey, Vec<(Uuid, Option<String>)>>,
     /// Maps worker_instance_key to registered workers
     all_workers: HashMap<Uuid, Arc<dyn ClientWorker + Send + Sync>>,
     /// Maps namespace to shared worker for worker heartbeating
@@ -79,24 +77,20 @@ impl ClientWorkerSetImpl {
         &self,
         namespace: String,
         task_queue: String,
-        deployment_build_id: Option<String>,
     ) -> Option<SlotReservation> {
-        let key = SlotKey::new(namespace, task_queue, deployment_build_id.clone());
-        if let Some(p) = self.slot_providers.get(&key)
-            && let Some(worker) = self.all_workers.get(p)
-            && let Some(slot) = worker.try_reserve_wft_slot()
-        {
-            let deployment_options = worker.deployment_options();
-            let worker_set_build_id = deployment_options.clone().map(|opts| opts.version.build_id);
-            if worker_set_build_id != deployment_build_id {
-                dbg_panic!(
-                    "Deployment build id mismatch: {worker_set_build_id:?}, {deployment_build_id:?}"
-                );
+        let key = SlotKey::new(namespace, task_queue);
+        if let Some(worker_list) = self.slot_providers.get(&key) {
+            let worker_id = worker_list.choose(&mut rand::rng());
+            if let Some(worker_entry) = worker_id
+                && let Some(worker) = self.all_workers.get(&worker_entry.0)
+                && let Some(slot) = worker.try_reserve_wft_slot()
+            {
+                let deployment_options = worker.deployment_options();
+                return Some(SlotReservation {
+                    slot,
+                    deployment_options,
+                });
             }
-            return Some(SlotReservation {
-                slot,
-                deployment_options,
-            });
         }
         None
     }
@@ -109,13 +103,22 @@ impl ClientWorkerSetImpl {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
-            worker
-                .deployment_options()
-                .map(|opts| opts.version.build_id),
         );
-        if self.slot_providers.contains_key(&slot_key) && !skip_client_worker_set_check {
+        let build_id = worker
+            .deployment_options()
+            .map(|opts| opts.version.build_id);
+        if self.slot_providers.contains_key(&slot_key)
+            && self
+                .slot_providers
+                .values()
+                .flat_map(|vec| vec.iter())
+                .any(|(_, opt)| {
+                    opt.as_ref() == build_id.as_ref()
+                })
+            && !skip_client_worker_set_check
+        {
             bail!(
-                "Registration of multiple workers on the same namespace and task queue for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.",
+                "Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed: {slot_key:?}, worker_instance_key: {:?}.",
                 worker.worker_instance_key()
             );
         }
@@ -136,8 +139,12 @@ impl ClientWorkerSetImpl {
             shared_worker.register_callback(worker_instance_key, heartbeat_callback);
         }
 
-        self.slot_providers
-            .insert(slot_key.clone(), worker.worker_instance_key());
+        match self.slot_providers.entry(slot_key.clone()) {
+            Occupied(o) => o.into_mut().push((worker.worker_instance_key(), build_id)),
+            Vacant(v) => {
+                v.insert(vec![(worker.worker_instance_key(), build_id)]);
+            }
+        };
 
         self.all_workers
             .insert(worker.worker_instance_key(), worker);
@@ -159,9 +166,6 @@ impl ClientWorkerSetImpl {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
-            worker
-                .deployment_options()
-                .map(|opts| opts.version.build_id),
         );
 
         self.slot_providers.remove(&slot_key);
@@ -236,11 +240,10 @@ impl ClientWorkerSet {
         &self,
         namespace: String,
         task_queue: String,
-        deployment_build_id: Option<String>,
     ) -> Option<SlotReservation> {
         self.worker_manager
             .read()
-            .try_reserve_wft_slot(namespace, task_queue, deployment_build_id)
+            .try_reserve_wft_slot(namespace, task_queue)
     }
 
     /// Register a local worker that can provide WFT processing slots and potentially worker heartbeating.
@@ -392,7 +395,7 @@ mod tests {
             } else {
                 // Should get error for duplicate namespace+task_queue combinations
                 assert!(result.unwrap_err().to_string().contains(
-                    "Registration of multiple workers on the same namespace and task queue"
+                    "Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed"
                 ));
             }
         }
@@ -532,7 +535,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Registration of multiple workers on the same namespace and task queue")
+                .contains("Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed")
         );
 
         assert_eq!(1, manager.num_providers());
