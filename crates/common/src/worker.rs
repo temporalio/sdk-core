@@ -4,7 +4,7 @@ use crate::{
         coresdk,
         coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
         temporal,
-        temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
+        temporal::api::{deployment, enums::v1::VersioningBehavior, worker::v1::PluginInfo},
     },
     telemetry::metrics::TemporalMeter,
 };
@@ -642,6 +642,20 @@ pub struct WorkerDeploymentOptions {
     /// The default versioning behavior to use for workflows that do not pass one to Core.
     /// It is a startup-time error to specify `Some(Unspecified)` here.
     pub default_versioning_behavior: Option<VersioningBehavior>,
+}
+
+impl From<WorkerDeploymentOptions> for deployment::v1::WorkerDeploymentOptions {
+    fn from(v: WorkerDeploymentOptions) -> Self {
+        Self {
+            deployment_name: v.version.deployment_name,
+            build_id: v.version.build_id,
+            worker_versioning_mode: if v.use_worker_versioning {
+                temporal::api::enums::v1::WorkerVersioningMode::Versioned.into()
+            } else {
+                temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]

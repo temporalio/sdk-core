@@ -2,6 +2,7 @@
 //! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
+use crate::dbg_panic;
 use anyhow::bail;
 use parking_lot::RwLock;
 use std::{
@@ -41,13 +42,15 @@ pub(crate) struct SlotReservation {
 struct SlotKey {
     namespace: String,
     task_queue: String,
+    deployment_build_id: Option<String>,
 }
 
 impl SlotKey {
-    fn new(namespace: String, task_queue: String) -> SlotKey {
+    fn new(namespace: String, task_queue: String, deployment_build_id: Option<String>) -> SlotKey {
         SlotKey {
             namespace,
             task_queue,
+            deployment_build_id,
         }
     }
 }
@@ -76,13 +79,20 @@ impl ClientWorkerSetImpl {
         &self,
         namespace: String,
         task_queue: String,
+        deployment_build_id: Option<String>,
     ) -> Option<SlotReservation> {
-        let key = SlotKey::new(namespace, task_queue);
+        let key = SlotKey::new(namespace, task_queue, deployment_build_id.clone());
         if let Some(p) = self.slot_providers.get(&key)
             && let Some(worker) = self.all_workers.get(p)
             && let Some(slot) = worker.try_reserve_wft_slot()
         {
             let deployment_options = worker.deployment_options();
+            let worker_set_build_id = deployment_options.clone().map(|opts| opts.version.build_id);
+            if worker_set_build_id != deployment_build_id {
+                dbg_panic!(
+                    "Deployment build id mismatch: {worker_set_build_id:?}, {deployment_build_id:?}"
+                );
+            }
             return Some(SlotReservation {
                 slot,
                 deployment_options,
@@ -99,6 +109,9 @@ impl ClientWorkerSetImpl {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
+            worker
+                .deployment_options()
+                .map(|opts| opts.version.build_id),
         );
         if self.slot_providers.contains_key(&slot_key) && !skip_client_worker_set_check {
             bail!(
@@ -146,6 +159,9 @@ impl ClientWorkerSetImpl {
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
+            worker
+                .deployment_options()
+                .map(|opts| opts.version.build_id),
         );
 
         self.slot_providers.remove(&slot_key);
@@ -220,10 +236,11 @@ impl ClientWorkerSet {
         &self,
         namespace: String,
         task_queue: String,
+        deployment_build_id: Option<String>,
     ) -> Option<SlotReservation> {
         self.worker_manager
             .read()
-            .try_reserve_wft_slot(namespace, task_queue)
+            .try_reserve_wft_slot(namespace, task_queue, deployment_build_id)
     }
 
     /// Register a local worker that can provide WFT processing slots and potentially worker heartbeating.

@@ -78,6 +78,7 @@ use temporalio_common::{
         },
     },
     telemetry::metrics::TemporalMeter,
+    worker::WorkerDeploymentOptions,
 };
 use tonic::{
     Code, IntoRequest,
@@ -1242,8 +1243,11 @@ pub struct WorkflowOptions {
     /// Optionally associate extra search attributes with a workflow
     pub search_attributes: Option<HashMap<String, Payload>>,
 
-    /// Optionally enable Eager Workflow Start, a latency optimization using local workers
-    /// NOTE: Experimental and incompatible with versioning with BuildIDs
+    /// Optionally enable Eager Workflow Start, a latency optimization using local workers.
+    /// If using versioning with build IDs, `eager_worker_deployment_options`
+    /// must also be specified.
+    ///
+    /// NOTE: Experimental for versioning with BuildIDs
     pub enable_eager_workflow_start: bool,
 
     /// Optionally set a retry policy for the workflow
@@ -1258,6 +1262,12 @@ pub struct WorkflowOptions {
 
     /// Priority for the workflow
     pub priority: Option<Priority>,
+
+    /// Optional deployment options for eager workflow start. Required if using versioning
+    /// with build IDs and eager workflow start. If this is specified, `enable_eager_workflow_start`
+    /// must also be specified, otherwise this field will be ignored.
+    /// NOTE: Experimental
+    pub eager_worker_deployment_options: Option<WorkerDeploymentOptions>,
 }
 
 /// Priority contains metadata that controls relative ordering of task processing
@@ -1394,6 +1404,9 @@ where
                     links: options.links,
                     completion_callbacks: options.completion_callbacks,
                     priority: options.priority.map(Into::into),
+                    eager_worker_deployment_options: options
+                        .eager_worker_deployment_options
+                        .map(Into::into),
                     ..Default::default()
                 }
                 .into_request(),
