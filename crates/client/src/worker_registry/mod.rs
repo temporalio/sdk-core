@@ -182,7 +182,7 @@ impl ClientWorkerSetImpl {
 
     #[cfg(test)]
     fn num_providers(&self) -> usize {
-        self.slot_providers.len()
+        self.slot_providers.values().map(|v| v.len()).sum()
     }
 
     #[cfg(test)]
@@ -471,7 +471,7 @@ mod tests {
         namespace: String,
         task_queue: String,
         heartbeat_enabled: bool,
-        worker_instance_key: Uuid,
+        build_id: Option<String>,
     ) -> MockClientWorker {
         let mut mock_provider = MockClientWorker::new();
         mock_provider
@@ -486,8 +486,23 @@ mod tests {
             .return_const(heartbeat_enabled);
         mock_provider
             .expect_worker_instance_key()
-            .return_const(worker_instance_key);
-        mock_provider.expect_deployment_options().return_const(None);
+            .return_const(Uuid::new_v4());
+        let deployment_name = "test-deployment".to_string();
+        let build_id_for_closure = build_id.clone();
+        mock_provider
+            .expect_deployment_options()
+            .returning(move || {
+                build_id_for_closure
+                    .as_ref()
+                    .map(|build_id| WorkerDeploymentOptions {
+                        version: temporalio_common::worker::WorkerDeploymentVersion {
+                            deployment_name: deployment_name.clone(),
+                            build_id: build_id.clone(),
+                        },
+                        use_worker_versioning: true,
+                        default_versioning_behavior: None,
+                    })
+            });
 
         if heartbeat_enabled {
             mock_provider
@@ -515,7 +530,7 @@ mod tests {
             "test_namespace".to_string(),
             "test_queue".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
 
         // Same namespace+task_queue but different worker instance
@@ -523,7 +538,7 @@ mod tests {
             "test_namespace".to_string(),
             "test_queue".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
 
         manager.register_worker(Arc::new(worker1), false).unwrap();
@@ -547,6 +562,69 @@ mod tests {
     }
 
     #[test]
+    fn duplicate_namespace_with_different_build_ids_succeeds() {
+        let manager = ClientWorkerSet::new();
+        let namespace = "test_namespace".to_string();
+        let task_queue = "test_queue".to_string();
+
+        let worker1 =
+            new_mock_provider_with_heartbeat(namespace.clone(), task_queue.clone(), false, None);
+        let worker1_instance_key = worker1.worker_instance_key();
+        let worker2 = new_mock_provider_with_heartbeat(
+            namespace.clone(),
+            task_queue.clone(),
+            false,
+            Some("build-1".to_string()),
+        );
+        let worker2_instance_key = worker2.worker_instance_key();
+        let worker3 =
+            new_mock_provider_with_heartbeat(namespace.clone(), task_queue.clone(), false, None);
+        let worker4 = new_mock_provider_with_heartbeat(
+            namespace.clone(),
+            task_queue.clone(),
+            false,
+            Some("build-1".to_string()),
+        );
+
+        manager.register_worker(Arc::new(worker1), false).unwrap();
+
+        manager
+            .register_worker(Arc::new(worker2), false)
+            .expect("worker with new build ID should register");
+        assert_eq!(2, manager.num_providers());
+
+        assert!(manager
+            .register_worker(Arc::new(worker3), false).unwrap_err().to_string()
+            .contains("Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed"));
+
+        assert!(manager
+            .register_worker(Arc::new(worker4), false).unwrap_err().to_string()
+            .contains("Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed"));
+        assert_eq!(2, manager.num_providers());
+
+        let impl_ref = manager.worker_manager.read();
+        let slot_key = SlotKey::new(namespace, task_queue);
+        let providers = impl_ref
+            .slot_providers
+            .get(&slot_key)
+            .expect("slot providers should exist for namespace/task queue");
+        assert_eq!(2, providers.len());
+
+        let mut build_ids: Vec<_> = providers
+            .iter()
+            .filter_map(|(_, build)| build.clone())
+            .collect();
+        build_ids.sort();
+        assert_eq!(
+            providers,
+            &vec![
+                (worker1_instance_key, None),
+                (worker2_instance_key, Some("build-1".to_string())),
+            ]
+        );
+    }
+
+    #[test]
     fn multiple_workers_same_namespace_share_heartbeat_manager() {
         let manager = ClientWorkerSet::new();
 
@@ -554,7 +632,7 @@ mod tests {
             "shared_namespace".to_string(),
             "queue1".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
 
         // Same namespace but different task queue
@@ -562,7 +640,7 @@ mod tests {
             "shared_namespace".to_string(),
             "queue2".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
 
         manager.register_worker(Arc::new(worker1), false).unwrap();
@@ -586,13 +664,13 @@ mod tests {
             "namespace1".to_string(),
             "queue1".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
         let worker2 = new_mock_provider_with_heartbeat(
             "namespace2".to_string(),
             "queue1".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
 
         manager.register_worker(Arc::new(worker1), false).unwrap();
@@ -616,13 +694,13 @@ mod tests {
             "test_namespace".to_string(),
             "queue1".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
         let worker2 = new_mock_provider_with_heartbeat(
             "test_namespace".to_string(),
             "queue2".to_string(),
             true,
-            Uuid::new_v4(),
+            None,
         );
         let worker_instance_key1 = worker1.worker_instance_key();
         let worker_instance_key2 = worker2.worker_instance_key();
