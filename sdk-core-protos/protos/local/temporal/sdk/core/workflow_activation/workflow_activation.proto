@@ -92,6 +92,8 @@ message WorkflowActivation {
     // build id, if this worker was using the deprecated Build ID-only
     // feature(s).
     common.WorkerDeploymentVersion deployment_version_for_current_task = 9;
+    // The last seen SDK version from the most recent WFT completed event
+    string last_sdk_version = 10;
 }
 
 message WorkflowActivationJob {

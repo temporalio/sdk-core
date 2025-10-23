@@ -203,6 +203,15 @@ impl InternalFlags {
             Self::Disabled => Either::Right(iter::empty()),
         }
     }
+
+    pub(crate) fn last_sdk_version(&self) -> Option<&str> {
+        match self {
+            InternalFlags::Enabled {
+                last_sdk_version, ..
+            } if !last_sdk_version.is_empty() => Some(last_sdk_version),
+            InternalFlags::Enabled { .. } | InternalFlags::Disabled => None,
+        }
+    }
 }
 
 impl CoreInternalFlags {
