@@ -1415,3 +1415,61 @@ async fn sticky_queue_label_strategy(
         _ => unreachable!("Test only covers UseNormal and UseNormalAndSticky"),
     }
 }
+
+#[tokio::test]
+async fn resource_based_tuner_metrics() {
+    use temporalio_sdk_core::ResourceBasedTuner;
+
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let wf_name = "resource_based_tuner_metrics";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.clear_max_outstanding_opts();
+
+    // Create a resource-based tuner with reasonable thresholds
+    let tuner = ResourceBasedTuner::new(0.8, 0.8);
+    starter.worker_config.tuner(Arc::new(tuner));
+
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        ctx.timer(Duration::from_millis(100)).await;
+        Ok(().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    worker.run_until_done().await.unwrap();
+
+    // Give metrics time to be recorded (metrics are emitted every 1 second)
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+
+    // Verify that the resource-based tuner metrics are present
+    assert!(
+        body.contains("temporal_resource_slots_mem_usage"),
+        "Memory usage metric should be present"
+    );
+    assert!(
+        body.contains("temporal_resource_slots_cpu_usage"),
+        "CPU usage metric should be present"
+    );
+    assert!(
+        body.contains("temporal_resource_slots_mem_pid_output"),
+        "Memory PID output metric should be present"
+    );
+    assert!(
+        body.contains("temporal_resource_slots_cpu_pid_output"),
+        "CPU PID output metric should be present"
+    );
+}
