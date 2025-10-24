@@ -465,6 +465,11 @@ impl WorkflowMachines {
             continue_as_new_suggested: self.continue_as_new_suggested,
             deployment_version_for_current_task: deployment_version_for_current_task
                 .map(Into::into),
+            last_sdk_version: (*self.observed_internal_flags)
+                .borrow()
+                .last_sdk_version()
+                .unwrap_or_default()
+                .to_owned(),
         }
     }
 

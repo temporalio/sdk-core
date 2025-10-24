@@ -156,7 +156,6 @@ impl AllPermitsTracker {
 
 #[derive(Clone)]
 pub(crate) struct WorkerTelemetry {
-    metric_meter: Option<TemporalMeter>,
     temporal_metric_meter: Option<TemporalMeter>,
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
 }
@@ -313,7 +312,6 @@ impl Worker {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
         let worker_telemetry = telem_instance.map(|telem| WorkerTelemetry {
-            metric_meter: telem.get_metric_meter(),
             temporal_metric_meter: telem.get_temporal_metric_meter(),
             trace_subscriber: telem.trace_subscriber(),
         });
@@ -382,7 +380,7 @@ impl Worker {
                     config.task_queue.clone(),
                     wt.temporal_metric_meter.clone(),
                 ),
-                wt.metric_meter.clone(),
+                wt.temporal_metric_meter.clone(),
             )
         } else {
             (MetricsContext::no_op(), None)
