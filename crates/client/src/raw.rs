@@ -659,8 +659,7 @@ proxier! {
                                     } else {
                                         temporalio_common::protos::temporal::api::enums::v1::WorkerVersioningMode::Unversioned.into()
                                     },
-                                });
-                            }
+                                });                            }
                             slot = Some(reservation.slot);
                         }
                         None => req_mut.request_eager_execution = false

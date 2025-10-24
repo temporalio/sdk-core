@@ -1243,7 +1243,7 @@ pub struct WorkflowOptions {
     pub search_attributes: Option<HashMap<String, Payload>>,
 
     /// Optionally enable Eager Workflow Start, a latency optimization using local workers
-    /// NOTE: Experimental and incompatible with versioning with BuildIDs
+    /// NOTE: Experimental
     pub enable_eager_workflow_start: bool,
 
     /// Optionally set a retry policy for the workflow
