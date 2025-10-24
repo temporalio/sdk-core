@@ -182,7 +182,12 @@ impl ClientWorkerSetImpl {
             worker.task_queue().to_string(),
         );
 
-        self.slot_providers.remove(&slot_key);
+        if let Some(slot_vec) = self.slot_providers.get_mut(&slot_key) {
+            slot_vec.retain(|(worker_id, _)| *worker_id != worker_instance_key);
+            if slot_vec.is_empty() {
+                self.slot_providers.remove(&slot_key);
+            }
+        }
 
         if let Some(w) = self.shared_worker.get_mut(worker.namespace()) {
             let (callback, is_empty) = w.unregister_callback(worker.worker_instance_key());
@@ -475,6 +480,75 @@ mod tests {
     }
 
     #[test]
+    fn reserve_wft_slot_retries_respects_slot_boundary() {
+        let mut manager = ClientWorkerSetImpl::new();
+        let namespace = "retry_namespace".to_string();
+        let task_queue = "retry_queue".to_string();
+
+        let failing_worker_id = Uuid::new_v4();
+        let mut failing_worker = MockClientWorker::new();
+        failing_worker
+            .expect_try_reserve_wft_slot()
+            .times(1)
+            .returning(|| None);
+        failing_worker
+            .expect_namespace()
+            .return_const(namespace.clone());
+        failing_worker
+            .expect_task_queue()
+            .return_const(task_queue.clone());
+        failing_worker
+            .expect_deployment_options()
+            .return_const(WorkerDeploymentOptions {
+                version: temporalio_common::worker::WorkerDeploymentVersion {
+                    deployment_name: "test-deployment".to_string(),
+                    build_id: "build-fail".to_string(),
+                },
+                use_worker_versioning: true,
+                default_versioning_behavior: None,
+            });
+        failing_worker
+            .expect_worker_instance_key()
+            .return_const(failing_worker_id);
+        failing_worker
+            .expect_heartbeat_enabled()
+            .return_const(false);
+
+        // On a separate task queue
+        let succeeding_worker_id = Uuid::new_v4();
+        let mut succeeding_worker = MockClientWorker::new();
+        succeeding_worker.expect_try_reserve_wft_slot().times(0);
+        succeeding_worker
+            .expect_namespace()
+            .return_const(namespace.clone());
+        succeeding_worker
+            .expect_task_queue()
+            .return_const("other_task_queue".to_string());
+        succeeding_worker
+            .expect_deployment_options()
+            .return_const(None);
+        succeeding_worker
+            .expect_worker_instance_key()
+            .return_const(succeeding_worker_id);
+        succeeding_worker
+            .expect_heartbeat_enabled()
+            .return_const(false);
+
+        manager
+            .register(Arc::new(failing_worker), false)
+            .expect("failing worker registration succeeds");
+        manager
+            .register(Arc::new(succeeding_worker), false)
+            .expect("succeeding worker registration succeeds");
+
+        let reservation = manager.try_reserve_wft_slot(namespace.clone(), task_queue.clone());
+        assert!(
+            reservation.is_none(),
+            "succeeding_worker should not be picked due to it being on a separate task queue"
+        );
+    }
+
+    #[test]
     fn registry_keeps_one_provider_per_namespace() {
         let manager = ClientWorkerSet::new();
         let mut worker_keys = vec![];
@@ -700,26 +774,38 @@ mod tests {
             .contains("Registration of multiple workers on the same namespace, task queue, and deployment build ID for the same client not allowed"));
         assert_eq!(2, manager.num_providers());
 
-        let impl_ref = manager.worker_manager.read();
-        let slot_key = SlotKey::new(namespace, task_queue);
-        let providers = impl_ref
-            .slot_providers
-            .get(&slot_key)
-            .expect("slot providers should exist for namespace/task queue");
-        assert_eq!(2, providers.len());
+        {
+            let impl_ref = manager.worker_manager.read();
+            let slot_key = SlotKey::new(namespace.clone(), task_queue.clone());
+            let providers = impl_ref
+                .slot_providers
+                .get(&slot_key)
+                .expect("slot providers should exist for namespace/task queue");
+            assert_eq!(2, providers.len());
 
-        let mut build_ids: Vec<_> = providers
-            .iter()
-            .filter_map(|(_, build)| build.clone())
-            .collect();
-        build_ids.sort();
-        assert_eq!(
-            providers,
-            &vec![
-                (worker1_instance_key, None),
-                (worker2_instance_key, Some("build-1".to_string())),
-            ]
-        );
+            assert_eq!(
+                providers,
+                &vec![
+                    (worker1_instance_key, None),
+                    (worker2_instance_key, Some("build-1".to_string())),
+                ]
+            );
+        }
+
+        manager.unregister_worker(worker2_instance_key).unwrap();
+
+        {
+            let impl_ref = manager.worker_manager.read();
+            let slot_key = SlotKey::new(namespace.clone(), task_queue.clone());
+            let providers = impl_ref
+                .slot_providers
+                .get(&slot_key)
+                .expect("slot providers should exist for namespace/task queue");
+
+            assert_eq!(1, providers.len());
+
+            assert_eq!(providers, &vec![(worker1_instance_key, None),]);
+        }
     }
 
     #[test]
