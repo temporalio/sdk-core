@@ -80,19 +80,36 @@ impl ClientWorkerSetImpl {
     ) -> Option<SlotReservation> {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(worker_list) = self.slot_providers.get(&key) {
-            let worker_id = worker_list.choose(&mut rand::rng());
-            if let Some(worker_entry) = worker_id
-                && let Some(worker) = self.all_workers.get(&worker_entry.0)
-                && let Some(slot) = worker.try_reserve_wft_slot()
-            {
-                let deployment_options = worker.deployment_options();
-                return Some(SlotReservation {
-                    slot,
-                    deployment_options,
-                });
+            for worker_id in Self::worker_ids_in_selection_order(worker_list) {
+                if let Some(worker) = self.all_workers.get(&worker_id)
+                    && let Some(slot) = worker.try_reserve_wft_slot()
+                {
+                    let deployment_options = worker.deployment_options();
+                    return Some(SlotReservation {
+                        slot,
+                        deployment_options,
+                    });
+                }
             }
         }
         None
+    }
+
+    fn worker_ids_in_selection_order(worker_list: &[(Uuid, Option<String>)]) -> Vec<Uuid> {
+        // For tests we return workers in the order they're registered, so we can test
+        // the retry mechanism deterministically
+        if cfg!(test) {
+            worker_list
+                .iter()
+                .map(|(worker_id, _)| *worker_id)
+                .collect()
+        } else {
+            let mut rng = rand::rng();
+            worker_list
+                .choose_multiple(&mut rng, worker_list.len())
+                .map(|(worker_id, _)| *worker_id)
+                .collect()
+        }
     }
 
     fn register(
@@ -110,11 +127,8 @@ impl ClientWorkerSetImpl {
         if self.slot_providers.contains_key(&slot_key)
             && self
                 .slot_providers
-                .values()
-                .flat_map(|vec| vec.iter())
-                .any(|(_, opt)| {
-                    opt.as_ref() == build_id.as_ref()
-                })
+                .get(&slot_key)
+                .is_some_and(|vec| vec.iter().any(|(_, opt)| opt.as_ref() == build_id.as_ref()))
             && !skip_client_worker_set_check
         {
             bail!(
@@ -374,6 +388,90 @@ mod tests {
             .expect_worker_instance_key()
             .return_const(Uuid::new_v4());
         mock_provider
+    }
+
+    #[test]
+    fn reserve_wft_slot_retries_another_worker_when_first_has_no_slot() {
+        let mut manager = ClientWorkerSetImpl::new();
+        let namespace = "retry_namespace".to_string();
+        let task_queue = "retry_queue".to_string();
+
+        let failing_worker_id = Uuid::new_v4();
+        let mut failing_worker = MockClientWorker::new();
+        failing_worker
+            .expect_try_reserve_wft_slot()
+            .times(1)
+            .returning(|| None);
+        failing_worker
+            .expect_namespace()
+            .return_const(namespace.clone());
+        failing_worker
+            .expect_task_queue()
+            .return_const(task_queue.clone());
+        failing_worker
+            .expect_deployment_options()
+            .return_const(WorkerDeploymentOptions {
+                version: temporalio_common::worker::WorkerDeploymentVersion {
+                    deployment_name: "test-deployment".to_string(),
+                    build_id: "build-fail".to_string(),
+                },
+                use_worker_versioning: true,
+                default_versioning_behavior: None,
+            });
+        failing_worker
+            .expect_worker_instance_key()
+            .return_const(failing_worker_id);
+        failing_worker
+            .expect_heartbeat_enabled()
+            .return_const(false);
+
+        let succeeding_worker_id = Uuid::new_v4();
+        let mut succeeding_worker = MockClientWorker::new();
+        succeeding_worker
+            .expect_try_reserve_wft_slot()
+            .times(1)
+            .returning(|| Some(new_mock_slot(false)));
+        succeeding_worker
+            .expect_namespace()
+            .return_const(namespace.clone());
+        succeeding_worker
+            .expect_task_queue()
+            .return_const(task_queue.clone());
+        let success_deployment_options = WorkerDeploymentOptions {
+            version: temporalio_common::worker::WorkerDeploymentVersion {
+                deployment_name: "test-deployment".to_string(),
+                build_id: "build-success".to_string(),
+            },
+            use_worker_versioning: true,
+            default_versioning_behavior: None,
+        };
+        succeeding_worker
+            .expect_deployment_options()
+            .return_const(success_deployment_options.clone());
+        succeeding_worker
+            .expect_worker_instance_key()
+            .return_const(succeeding_worker_id);
+        succeeding_worker
+            .expect_heartbeat_enabled()
+            .return_const(false);
+
+        manager
+            .register(Arc::new(failing_worker), false)
+            .expect("failing worker registration succeeds");
+        manager
+            .register(Arc::new(succeeding_worker), false)
+            .expect("succeeding worker registration succeeds");
+
+        let reservation = manager.try_reserve_wft_slot(namespace.clone(), task_queue.clone());
+
+        let reservation_deployment_options = reservation
+            .expect("succeeding worker was used after failing worker failed")
+            .deployment_options
+            .unwrap();
+        assert_eq!(
+            reservation_deployment_options, success_deployment_options,
+            "deployment options bubble through from succeeding worker"
+        );
     }
 
     #[test]
