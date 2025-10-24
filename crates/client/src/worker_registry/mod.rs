@@ -4,7 +4,7 @@
 
 use anyhow::bail;
 use parking_lot::RwLock;
-use rand::seq::IndexedRandom;
+use rand::seq::SliceRandom;
 use std::{
     collections::{
         HashMap,
@@ -80,7 +80,7 @@ impl ClientWorkerSetImpl {
     ) -> Option<SlotReservation> {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(worker_list) = self.slot_providers.get(&key) {
-            for worker_id in Self::worker_ids_in_selection_order(worker_list) {
+            for worker_id in Self::worker_ids_in_selection_order(&worker_list.clone()) {
                 if let Some(worker) = self.all_workers.get(&worker_id)
                     && let Some(slot) = worker.try_reserve_wft_slot()
                 {
@@ -105,10 +105,9 @@ impl ClientWorkerSetImpl {
                 .collect()
         } else {
             let mut rng = rand::rng();
-            worker_list
-                .choose_multiple(&mut rng, worker_list.len())
-                .map(|(worker_id, _)| *worker_id)
-                .collect()
+            let mut shuffled: Vec<_> = worker_list.to_vec();
+            shuffled.shuffle(&mut rng);
+            shuffled.iter().map(|(worker_id, _)| *worker_id).collect()
         }
     }
 
