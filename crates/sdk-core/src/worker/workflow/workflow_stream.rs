@@ -288,17 +288,24 @@ impl WFStream {
                     failure,
                     is_autocomplete,
                     ..
-                } => rh.failed_completion(
-                    failure.force_cause(),
-                    if is_autocomplete {
-                        EvictionReason::Unspecified
-                    } else {
-                        EvictionReason::LangFail
-                    },
-                    failure,
-                    is_autocomplete,
-                    complete.response_tx,
-                ),
+                } => {
+                    let forced_cause = failure.force_cause();
+                    rh.failed_completion(
+                        if forced_cause == WorkflowTaskFailedCause::Unspecified {
+                            WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
+                        } else {
+                            forced_cause
+                        },
+                        if is_autocomplete {
+                            EvictionReason::Unspecified
+                        } else {
+                            EvictionReason::LangFail
+                        },
+                        failure,
+                        is_autocomplete,
+                        complete.response_tx,
+                    )
+                }
             },
             NewOrFetchedComplete::Fetched(update, paginator) => {
                 rh.fetched_page_completion(update, *paginator)
