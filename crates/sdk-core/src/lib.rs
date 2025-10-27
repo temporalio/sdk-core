@@ -113,31 +113,12 @@ where
         worker_config.versioning_strategy.clone(),
     ));
 
-    let heartbeat_interval = if runtime.heartbeat_interval.is_some() {
-        let describe_namespace = runtime
-            .tokio_handle()
-            .block_on(client_bag.describe_namespace())?;
-        if let Some(namespace_info) = describe_namespace.namespace_info
-            && let Some(capabilities) = namespace_info.capabilities
-            && capabilities.worker_heartbeats
-        {
-            runtime.heartbeat_interval
-        } else {
-            warn!(
-                "Worker heartbeating configured for runtime, but server version does not support it."
-            );
-            None
-        }
-    } else {
-        None
-    };
-
     Worker::new(
         worker_config.clone(),
         sticky_q,
         client_bag.clone(),
         Some(&runtime.telemetry),
-        heartbeat_interval,
+        runtime.heartbeat_interval,
     )
 }
 

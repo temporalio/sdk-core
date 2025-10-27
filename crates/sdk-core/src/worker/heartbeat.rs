@@ -67,6 +67,25 @@ impl SharedNamespaceWorker {
         let heartbeat_map_clone = heartbeat_map.clone();
 
         tokio::spawn(async move {
+            match client_clone.describe_namespace().await {
+                Ok(namespace_resp) => {
+                    if namespace_resp
+                        .namespace_info
+                        .and_then(|info| info.capabilities)
+                        .map(|caps| caps.worker_heartbeats)
+                        != Some(true)
+                    {
+                        warn!(
+                            "Worker heartbeating configured for runtime, but server version does not support it."
+                        );
+                        return;
+                    }
+                }
+                Err(e) => {
+                    warn!(error=?e, "Network error while describing namespace for heartbeat capabilities");
+                    return;
+                }
+            }
             let mut ticker = tokio::time::interval(heartbeat_interval);
             loop {
                 tokio::select! {
