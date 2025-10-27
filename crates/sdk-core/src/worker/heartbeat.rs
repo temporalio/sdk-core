@@ -78,11 +78,13 @@ impl SharedNamespaceWorker {
                         warn!(
                             "Worker heartbeating configured for runtime, but server version does not support it."
                         );
+                        worker.shutdown().await;
                         return;
                     }
                 }
                 Err(e) => {
                     warn!(error=?e, "Network error while describing namespace for heartbeat capabilities");
+                    worker.shutdown().await;
                     return;
                 }
             }
@@ -101,6 +103,7 @@ impl SharedNamespaceWorker {
                         }
                         if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
+                                worker.shutdown().await;
                                 return;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
