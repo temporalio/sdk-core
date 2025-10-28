@@ -167,7 +167,10 @@ mod tests {
         time::Duration,
     };
     use temporalio_common::{
-        protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse,
+        protos::temporal::api::namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+        protos::temporal::api::workflowservice::v1::{
+            DescribeNamespaceResponse, RecordWorkerHeartbeatResponse,
+        },
         worker::PollerBehavior,
     };
 
@@ -202,6 +205,18 @@ mod tests {
                 Ok(RecordWorkerHeartbeatResponse {})
             },
         );
+        mock.expect_describe_namespace().returning(move || {
+            Ok(DescribeNamespaceResponse {
+                namespace_info: Some(NamespaceInfo {
+                    capabilities: Some(Capabilities {
+                        worker_heartbeats: true,
+                        ..Capabilities::default()
+                    }),
+                    ..NamespaceInfo::default()
+                }),
+                ..DescribeNamespaceResponse::default()
+            })
+        });
 
         let config = test_worker_cfg()
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
