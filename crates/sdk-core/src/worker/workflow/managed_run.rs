@@ -405,7 +405,7 @@ impl ManagedRun {
             }) {
                 ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                     tt,
-                    WorkflowTaskFailedCause::Unspecified,
+                    WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
                     Failure::application_failure(reason, true).into(),
                 ))
             } else {
@@ -888,7 +888,7 @@ impl ManagedRun {
             // We just checked it is some, unwrap OK.
             let c = self.completion_waiting_on_page_fetch.take().unwrap();
             let run_upd = self.failed_completion(
-                WorkflowTaskFailedCause::Unspecified,
+                WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
                 info.reason,
                 Failure::application_failure(info.message, false).into(),
                 true,
@@ -1022,7 +1022,7 @@ impl ManagedRun {
                     let fail_cause = if matches!(&fail.source, WFMachinesError::Nondeterminism(_)) {
                         WorkflowTaskFailedCause::NonDeterministicError
                     } else {
-                        WorkflowTaskFailedCause::Unspecified
+                        WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
                     };
                     self.failed_completion(
                         fail_cause,
