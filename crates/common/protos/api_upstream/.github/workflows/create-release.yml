@@ -20,6 +20,9 @@ on:
         description: An ID used by external tools to identify workflow runs(can be left empty when running manually)
         default: "none"
         type: string
+
+permissions:
+  contents: read
 jobs:
   dispatch:
     runs-on: ubuntu-latest
@@ -130,6 +133,8 @@ jobs:
           gh release create "$TAG" --target "$REF" --latest --generate-notes --notes-start-tag "$BASE_TAG" --draft
 
   release-api-go:
+    permissions:
+      contents: write
     needs: [prepare-inputs, create-release]
     if: |
       !cancelled() &&
