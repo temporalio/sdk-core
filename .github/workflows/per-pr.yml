@@ -6,6 +6,10 @@ on: # rebuild any PRs and main branch changes
     branches:
       - master
 
+permissions:
+  contents: read
+  actions: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
