@@ -1287,6 +1287,40 @@ async fn fail_wft_then_recover() {
 }
 
 #[tokio::test]
+async fn default_wft_fail_cause_is_worker_unhandled() {
+    let t = canned_histories::single_timer("1");
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        mock_worker_client(),
+    );
+    mh.num_expected_fails = 1;
+    mh.expect_fail_wft_matcher = Box::new(|_, cause, _| {
+        matches!(
+            cause,
+            WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
+        )
+    });
+    let mock = build_mock_pollers(mh);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        Failure {
+            message: "Simulated workflow failure".to_string(),
+            ..Default::default()
+        },
+        None,
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
 async fn poll_response_triggers_wf_error() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);

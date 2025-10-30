@@ -63,6 +63,7 @@ where
         self.config.max_cached_workflows = 1;
         self.config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
         self.config.no_remote_activities = true;
+        self.config.skip_client_worker_set_check = true;
         let historator = Historator::new(self.history_stream);
         let post_activate = historator.get_post_activate_hook();
         let shutdown_tok = historator.get_shutdown_setter();
