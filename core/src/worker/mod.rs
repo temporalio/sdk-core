@@ -1025,8 +1025,7 @@ impl ClientWorker for ClientWorkerRegistrator {
     }
 
     fn heartbeat_enabled(&self) -> bool {
-        //self.heartbeat_manager.is_some()
-        false
+        self.heartbeat_manager.is_some()
     }
 
     fn heartbeat_callback(&self) -> Option<HeartbeatCallback> {
