@@ -11,6 +11,7 @@ use temporal_sdk_core_api::worker::{
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Callback used to collect heartbeat data from each worker at the time of heartbeat
@@ -80,7 +81,7 @@ impl SharedNamespaceWorker {
                             client_clone.set_heartbeat_client_fields(&mut heartbeat);
                             hb_to_send.push(heartbeat);
                         }
-                        if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).await {
+                        if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).instrument(tracing::info_span!("record_worker_heartbeat")).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
                                 return;
                             }
@@ -91,7 +92,7 @@ impl SharedNamespaceWorker {
                         ticker.reset();
                     }
                     _ = cancel_clone.cancelled() => {
-                        worker.shutdown().await;
+                        worker.shutdown().instrument(tracing::info_span!("heatbeat worker shut down")).await;
                         return;
                     }
                 }
