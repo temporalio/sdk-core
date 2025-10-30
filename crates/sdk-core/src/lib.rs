@@ -12,6 +12,8 @@ extern crate tracing;
 extern crate core;
 
 mod abstractions;
+#[cfg(feature = "antithesis_assertions")]
+mod antithesis;
 #[cfg(feature = "debug-plugin")]
 pub mod debug_client;
 #[cfg(feature = "ephemeral-server")]
