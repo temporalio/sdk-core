@@ -83,6 +83,7 @@ impl SharedNamespaceWorker {
                         }
                         if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).instrument(tracing::info_span!("record_worker_heartbeat")).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
+                                warn!("Heartbeat not implemented");
                                 break;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
