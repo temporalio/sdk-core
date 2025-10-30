@@ -286,13 +286,13 @@ impl WorkerTrait for Worker {
         self.local_act_mgr.shutdown_initiated();
 
         if !self.workflows.ever_polled() {
-            info!("Workflow wasn't polled. Skipping send");
+            info!("Workflow was polled. Skipping send");
             self.local_act_mgr.workflows_have_shutdown();
         } else {
             // Bump the workflow stream with a pointless input, since if a client initiates shutdown
             // and then immediately blocks waiting on a workflow activation poll, it's possible that
             // there may not be any more inputs ever, and that poll will never resolve.
-            info!("Workflow was polled. Sending");
+            info!("Workflow wasn't polled. Sending");
             self.workflows.send_get_state_info_msg();
         }
     }
@@ -1025,8 +1025,7 @@ impl ClientWorker for ClientWorkerRegistrator {
     }
 
     fn heartbeat_enabled(&self) -> bool {
-        // self.heartbeat_manager.is_some()
-        false
+        self.heartbeat_manager.is_some()
     }
 
     fn heartbeat_callback(&self) -> Option<HeartbeatCallback> {
