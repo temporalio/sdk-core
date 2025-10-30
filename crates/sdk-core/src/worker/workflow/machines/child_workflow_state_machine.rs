@@ -496,7 +496,19 @@ impl ChildWorkflowMachine {
                 | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
                     self.adapt_response(c, None)
                 }
-                x => panic!("Invalid cancel event response {x:?}"),
+                x => {
+                    crate::antithesis::assert_always!(
+                        "child workflow cancel yields supported command",
+                        false,
+                        ::serde_json::json!({
+                            "workflow_id": self.shared_state.workflow_id.clone(),
+                            "run_id": self.shared_state.run_id.clone(),
+                            "unexpected_command": format!("{x:?}"),
+                            "state": self.state().to_string(),
+                        })
+                    );
+                    panic!("Invalid cancel event response {x:?}");
+                }
             })
             .flatten_ok()
             .try_collect()?;
