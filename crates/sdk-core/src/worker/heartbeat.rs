@@ -67,6 +67,27 @@ impl SharedNamespaceWorker {
         let heartbeat_map_clone = heartbeat_map.clone();
 
         tokio::spawn(async move {
+            match client_clone.describe_namespace().await {
+                Ok(namespace_resp) => {
+                    if namespace_resp
+                        .namespace_info
+                        .and_then(|info| info.capabilities)
+                        .map(|caps| caps.worker_heartbeats)
+                        != Some(true)
+                    {
+                        warn!(
+                            "Worker heartbeating configured for runtime, but server version does not support it."
+                        );
+                        worker.shutdown().await;
+                        return;
+                    }
+                }
+                Err(e) => {
+                    warn!(error=?e, "Network error while describing namespace for heartbeat capabilities");
+                    worker.shutdown().await;
+                    return;
+                }
+            }
             let mut ticker = tokio::time::interval(heartbeat_interval);
             loop {
                 tokio::select! {
@@ -82,6 +103,7 @@ impl SharedNamespaceWorker {
                         }
                         if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
+                                worker.shutdown().await;
                                 return;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
@@ -145,7 +167,10 @@ mod tests {
         time::Duration,
     };
     use temporalio_common::{
-        protos::temporal::api::workflowservice::v1::RecordWorkerHeartbeatResponse,
+        protos::temporal::api::namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+        protos::temporal::api::workflowservice::v1::{
+            DescribeNamespaceResponse, RecordWorkerHeartbeatResponse,
+        },
         worker::PollerBehavior,
     };
 
@@ -180,6 +205,18 @@ mod tests {
                 Ok(RecordWorkerHeartbeatResponse {})
             },
         );
+        mock.expect_describe_namespace().returning(move || {
+            Ok(DescribeNamespaceResponse {
+                namespace_info: Some(NamespaceInfo {
+                    capabilities: Some(Capabilities {
+                        worker_heartbeats: true,
+                        ..Capabilities::default()
+                    }),
+                    ..NamespaceInfo::default()
+                }),
+                ..DescribeNamespaceResponse::default()
+            })
+        });
 
         let config = test_worker_cfg()
             .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
