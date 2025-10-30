@@ -263,7 +263,7 @@ impl Workflows {
     }
 
     pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
-        self.ever_polled.store(true, atomic::Ordering::Release);
+        self.ever_polled.store(true, atomic::Ordering::SeqCst);
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
@@ -659,7 +659,7 @@ impl Workflows {
     }
 
     pub(super) fn ever_polled(&self) -> bool {
-        self.ever_polled.load(atomic::Ordering::Acquire)
+        self.ever_polled.load(atomic::Ordering::SeqCst)
     }
 
     /// Must be called after every activation completion has finished
