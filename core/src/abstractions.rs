@@ -386,10 +386,23 @@ impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
 pub(crate) struct UsedMeteredSemPermit<SK: SlotKind>(#[allow(dead_code)] OwnedMeteredSemPermit<SK>);
 
 macro_rules! dbg_panic {
-  ($($arg:tt)*) => {
-      error!($($arg)*);
-      debug_assert!(false, $($arg)*);
-  };
+    ($($arg:tt)*) => {{
+        let message = format!($($arg)*);
+        error!("{}", message);
+
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_always!(
+            false,
+            "dbg_panic invariant triggered",
+            ::serde_json::json!({
+                "message": message,
+                "file": file!(),
+                "line": line!(),
+                "module": module_path!(),
+            })
+        );
+        debug_assert!(false, "{}", message);
+    }};
 }
 pub(crate) use dbg_panic;
 

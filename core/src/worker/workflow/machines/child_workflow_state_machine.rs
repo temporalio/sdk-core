@@ -3,6 +3,7 @@ use super::{
     workflow_machines::MachineResponse,
 };
 use crate::{
+    abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
     worker::workflow::{InternalFlagsRef, machines::HistEventData},
 };
@@ -497,7 +498,10 @@ impl ChildWorkflowMachine {
                 | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
                     self.adapt_response(c, None)
                 }
-                x => panic!("Invalid cancel event response {x:?}"),
+                x => {
+                    dbg_panic!("Invalid cancel event response {x:?}");
+                    panic!("Invalid cancel event response {x:?}");
+                }
             })
             .flatten_ok()
             .try_collect()?;

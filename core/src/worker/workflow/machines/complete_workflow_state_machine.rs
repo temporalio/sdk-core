@@ -2,8 +2,8 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
     workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{StateMachine, TransitionResult, fsm};
+use crate::{abstractions::dbg_panic, worker::workflow::machines::HistEventData};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,
@@ -42,7 +42,10 @@ pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachin
             .pop()
         {
             Some(CompleteWFCommand::AddCommand(c)) => c,
-            _ => panic!("complete wf machine on_schedule must produce command"),
+            unexpected => {
+                dbg_panic!("complete wf machine on_schedule must produce command: {unexpected:?}");
+                panic!("complete wf machine on_schedule must produce command");
+            }
         };
     NewMachineWithCommand {
         command: add_cmd,

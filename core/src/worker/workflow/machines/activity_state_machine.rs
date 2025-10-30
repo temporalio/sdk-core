@@ -193,7 +193,10 @@ impl ActivityMachine {
                 ActivityMachineCommand::Cancel(details) => {
                     vec![self.create_cancelation_resolve(details).into()]
                 }
-                x => panic!("Invalid cancel event response {x:?}"),
+                x => {
+                    dbg_panic!("Invalid cancel event response {x:?}");
+                    panic!("Invalid cancel event response {x:?}");
+                }
             })
             .collect();
         Ok(res)

@@ -30,9 +30,11 @@ tokio-console = ["console-subscriber"]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest"]
 test-utilities = ["dep:assert_matches", "dep:bimap"]
+antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
 anyhow = "1.0"
+antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = ["full"] }
 assert_matches = { version = "1.5", optional = true }
 bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
