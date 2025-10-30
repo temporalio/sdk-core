@@ -719,6 +719,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_heartbeat,
         };
+        tracing::info!("making record_worker_heartbeat request");
         Ok(self
             .client
             .clone()
