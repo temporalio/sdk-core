@@ -83,7 +83,7 @@ impl SharedNamespaceWorker {
                         }
                         if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).instrument(tracing::info_span!("record_worker_heartbeat")).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
-                                return;
+                                break;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
                         }
@@ -92,11 +92,14 @@ impl SharedNamespaceWorker {
                         ticker.reset();
                     }
                     _ = cancel_clone.cancelled() => {
-                        worker.shutdown().instrument(tracing::info_span!("heatbeat worker shut down")).await;
-                        return;
+                        break;
                     }
                 }
             }
+            worker
+                .shutdown()
+                .instrument(tracing::info_span!("heatbeat worker shut down"))
+                .await;
         });
 
         Ok(Self {
