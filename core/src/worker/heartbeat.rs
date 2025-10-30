@@ -80,12 +80,14 @@ impl SharedNamespaceWorker {
                             client_clone.set_heartbeat_client_fields(&mut heartbeat);
                             hb_to_send.push(heartbeat);
                         }
+                        /*
                         if let Err(e) = client_clone.record_worker_heartbeat(namespace_clone.clone(), hb_to_send).await {
                             if matches!(e.code(), tonic::Code::Unimplemented) {
                                 return;
                             }
                             warn!(error=?e, "Network error while sending worker heartbeat");
                         }
+                        */
                     }
                     _ = reset_notify.notified() => {
                         ticker.reset();
