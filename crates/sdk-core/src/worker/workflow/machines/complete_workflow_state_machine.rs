@@ -41,7 +41,16 @@ pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachin
             .pop()
         {
             Some(CompleteWFCommand::AddCommand(c)) => c,
-            _ => panic!("complete wf machine on_schedule must produce command"),
+            unexpected => {
+                crate::antithesis::assert_always!(
+                    "complete workflow scheduling yields command",
+                    false,
+                    ::serde_json::json!({
+                        "unexpected": format!("{unexpected:?}"),
+                    })
+                );
+                panic!("complete wf machine on_schedule must produce command");
+            }
         };
     NewMachineWithCommand {
         command: add_cmd,

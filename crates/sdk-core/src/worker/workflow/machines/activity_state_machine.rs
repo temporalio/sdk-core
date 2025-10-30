@@ -193,7 +193,18 @@ impl ActivityMachine {
                 ActivityMachineCommand::Cancel(details) => {
                     vec![self.create_cancelation_resolve(details).into()]
                 }
-                x => panic!("Invalid cancel event response {x:?}"),
+                x => {
+                    crate::antithesis::assert_always!(
+                        "activity cancel yields supported command",
+                        false,
+                        ::serde_json::json!({
+                            "activity_seq": self.shared_state.attrs.seq,
+                            "unexpected_command": format!("{x:?}"),
+                            "state": self.state().to_string(),
+                        })
+                    );
+                    panic!("Invalid cancel event response {x:?}");
+                }
             })
             .collect();
         Ok(res)

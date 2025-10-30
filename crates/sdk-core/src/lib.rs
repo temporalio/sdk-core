@@ -95,14 +95,13 @@ where
     crate::antithesis::ensure_init();
     let namespace = worker_config.namespace.clone();
     if namespace.is_empty() {
-        #[cfg(feature = "antithesis_assertions")]
-        crate::antithesis::assert_always_failure(
+        crate::antithesis::assert_always_failure!(
             "worker namespace must not be empty",
             ::serde_json::json!({
                 "namespace": namespace.clone(),
                 "task_queue": worker_config.task_queue.clone(),
                 "has_identity_override": worker_config.client_identity_override.is_some(),
-            }),
+            })
         );
         bail!("Worker namespace cannot be empty");
     }
@@ -119,13 +118,12 @@ where
     let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     if client_ident.is_empty() {
-        #[cfg(feature = "antithesis_assertions")]
-        crate::antithesis::assert_always_failure(
+        crate::antithesis::assert_always_failure!(
             "client identity must not be empty",
             ::serde_json::json!({
                 "namespace": namespace.clone(),
                 "task_queue": worker_config.task_queue.clone(),
-            }),
+            })
         );
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
