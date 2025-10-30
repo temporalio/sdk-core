@@ -264,11 +264,13 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
+        info!("Acquiring status lock");
         {
             *self.status.lock() = WorkerStatus::ShuttingDown;
         }
         // First, unregister worker from the client
         if !self.client_worker_registrator.shared_namespace_worker {
+            info!("Unregistering worker");
             let _res = self
                 .client
                 .workers()
@@ -284,11 +286,13 @@ impl WorkerTrait for Worker {
         self.local_act_mgr.shutdown_initiated();
 
         if !self.workflows.ever_polled() {
+            info!("Workflow was polled. Skipping send");
             self.local_act_mgr.workflows_have_shutdown();
         } else {
             // Bump the workflow stream with a pointless input, since if a client initiates shutdown
             // and then immediately blocks waiting on a workflow activation poll, it's possible that
             // there may not be any more inputs ever, and that poll will never resolve.
+            info!("Workflow wasn't polled. Sending");
             self.workflows.send_get_state_info_msg();
         }
     }
