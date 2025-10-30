@@ -286,17 +286,13 @@ impl WorkerTrait for Worker {
         self.local_act_mgr.shutdown_initiated();
 
         if !self.workflows.ever_polled() {
-            info!(
-            key=%self.worker_instance_key,
-            "Workflow was polled. Skipping send");
+            info!("Workflow was polled. Skipping send");
             self.local_act_mgr.workflows_have_shutdown();
         } else {
             // Bump the workflow stream with a pointless input, since if a client initiates shutdown
             // and then immediately blocks waiting on a workflow activation poll, it's possible that
             // there may not be any more inputs ever, and that poll will never resolve.
-            info!(
-            key=%self.worker_instance_key,
-            "Workflow wasn't polled. Sending");
+            info!("Workflow wasn't polled. Sending");
             self.workflows.send_get_state_info_msg();
         }
     }
@@ -892,7 +888,6 @@ impl Worker {
 
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
-        info!(key=%self.worker_instance_key, "polling for next WorkflowActivation");
         let r = self.workflows.next_workflow_activation().await;
         // In the event workflows are shutdown or erroring, begin shutdown of everything else. Once
         // they are shut down, tell the local activity manager that, so that it can know to cancel
