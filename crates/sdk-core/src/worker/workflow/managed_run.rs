@@ -1142,6 +1142,7 @@ impl ManagedRun {
                 }
             }
 
+            let attempt = self.wft.as_ref().map(|t| t.info.attempt).unwrap_or(1);
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,
                 action: ActivationAction::WftComplete {
@@ -1151,6 +1152,7 @@ impl ManagedRun {
                     query_responses,
                     sdk_metadata: machines_wft_response.metadata_for_complete(),
                     versioning_behavior: data.versioning_behavior,
+                    attempt,
                 },
             })
         } else {

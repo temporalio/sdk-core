@@ -341,13 +341,14 @@ impl Workflows {
                         force_new_wft,
                         sdk_metadata,
                         mut versioning_behavior,
+                        attempt,
                     },
             } => {
                 let reserved_act_permits =
                     self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                 debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           messages=%messages.display(), force_new_wft,
-                           "Sending responses to server");
+                       messages=%messages.display(), force_new_wft,
+                       "Sending responses to server");
                 if let Some(default_vb) = self.default_versioning_behavior.as_ref()
                     && versioning_behavior == VersioningBehavior::Unspecified
                 {
@@ -393,7 +394,11 @@ impl Workflows {
                                 response.activity_tasks,
                             );
                         }
-                        Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
+                        // Reply with a task failure if we got grpc too large from server, but
+                        // not if this is a nonfirst attempt to avoid spamming.
+                        Err(e)
+                            if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) && attempt < 2 =>
+                        {
                             let failure = Failure {
                                 failure: Some(
                                     temporalio_common::protos::temporal::api::failure::v1::Failure {
@@ -417,6 +422,7 @@ impl Workflows {
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
                                 .await;
+                            return Err(e);
                         }
                         e => {
                             e?;
@@ -992,6 +998,7 @@ pub(crate) enum ActivationAction {
         force_new_wft: bool,
         sdk_metadata: WorkflowTaskCompletedMetadata,
         versioning_behavior: VersioningBehavior,
+        attempt: u32,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: Box<QueryResult> },
