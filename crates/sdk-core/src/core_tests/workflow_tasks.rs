@@ -27,6 +27,7 @@ use std::{
     },
     time::Duration,
 };
+use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -3069,4 +3070,51 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         2,
         "At peak, there should be exactly 2 pollers active at the same time"
     );
+}
+
+#[tokio::test]
+async fn grpc_message_too_large_doesnt_spam_task_fails() {
+    crate::telemetry::telemetry_init_fallback();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let mut mock_client = mock_worker_client();
+    // Return message too large error upon completions
+    mock_client
+        .expect_complete_workflow_task()
+        .times(5)
+        .returning(|_| {
+            dbg!("What??");
+            let mut err = tonic::Status::new(tonic::Code::ResourceExhausted, "message too large");
+            // This key is what we look for
+            err.metadata_mut().insert(MESSAGE_TOO_LARGE_KEY, 1.into());
+            Err(err)
+        });
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [
+            ResponseType::AllHistory,
+            ResponseType::AllHistory,
+            ResponseType::AllHistory,
+            ResponseType::AllHistory,
+            ResponseType::AllHistory,
+        ],
+        mock_client,
+    );
+    mh.num_expected_fails = 1;
+
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    // Since the mock makes us fail 5 times, we should succeed on the fifth
+    for _ in 0..6 {
+        let act = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&act.run_id).await;
+    }
+    core.drain_pollers_and_shutdown().await;
+    // Mock only expects 1 task failure, and would fail here if we spammed
 }
