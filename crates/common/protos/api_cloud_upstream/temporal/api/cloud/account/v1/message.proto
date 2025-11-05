@@ -10,6 +10,7 @@ option ruby_package = "Temporalio::Api::Cloud::Account::V1";
 option csharp_namespace = "Temporalio.Api.Cloud.Account.V1";
 
 import "temporal/api/cloud/resource/v1/message.proto";
+import "temporal/api/cloud/sink/v1/message.proto";
 
 message MetricsSpec {
     // The ca cert(s) in PEM format that clients connecting to the metrics endpoint can use for authentication.
@@ -43,4 +44,21 @@ message Account {
     string async_operation_id = 5;
     // Information related to metrics.
     Metrics metrics = 6;
+}
+
+// AuditLogSinkSpec is only used by Audit Log
+message AuditLogSinkSpec {
+  // Name of the sink e.g. "audit_log_01"
+  string name = 1;
+
+  oneof sink_type {
+    // The KinesisSpec when destination_type is Kinesis
+    api.cloud.sink.v1.KinesisSpec kinesis_sink = 2;
+
+    // The PubSubSpec when destination_type is PubSub
+    api.cloud.sink.v1.PubSubSpec pub_sub_sink = 3;
+  }
+
+  // Enabled indicates whether the sink is enabled or not.
+  bool enabled = 4;
 }

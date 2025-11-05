@@ -22,7 +22,7 @@ import "temporal/api/cloud/connectivityrule/v1/message.proto";
 
 message GetUsersRequest {
     // The requested size of the page to retrieve - optional.
-    // Cannot exceed 1000. Defaults to 100. 
+    // Cannot exceed 1000. Defaults to 100.
     int32 page_size = 1;
     // The page token if this is continuing from another response - optional.
     string page_token = 2;
@@ -144,8 +144,8 @@ message CreateNamespaceResponse {
 
 message GetNamespacesRequest {
     // The requested size of the page to retrieve.
-    // Cannot exceed 1000. 
-    // Optional, defaults to 100. 
+    // Cannot exceed 1000.
+    // Optional, defaults to 100.
     int32 page_size = 1;
     // The page token if this is continuing from another response.
     // Optional, defaults to empty.
@@ -387,7 +387,7 @@ message DeleteApiKeyResponse {
 
 message GetNexusEndpointsRequest {
     // The requested size of the page to retrieve - optional.
-    // Cannot exceed 1000. Defaults to 100. 
+    // Cannot exceed 1000. Defaults to 100.
     int32 page_size = 1;
 
     // The page token if this is continuing from another response - optional.
@@ -694,6 +694,25 @@ message UpdateServiceAccountResponse {
     temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
 }
 
+message SetServiceAccountNamespaceAccessRequest {
+    // The ID of the service account to update.
+    string service_account_id = 1;
+    // The namespace to set permissions for.
+    string namespace = 2;
+    // The namespace access to assign the service account.
+    temporal.api.cloud.identity.v1.NamespaceAccess access = 3;
+    // The version of the service account for which this update is intended for.
+    // The latest version can be found in the GetServiceAccount response.
+    string resource_version = 4;
+    // The ID to use for this async operation - optional.
+    string async_operation_id = 5;
+}
+
+message SetServiceAccountNamespaceAccessResponse {
+    // The async operation.
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
 message DeleteServiceAccountRequest {
     // The ID of the service account to delete;
     string service_account_id = 1;
@@ -715,18 +734,18 @@ message GetUsageRequest {
     // Must be: within the last 90 days from the current date.
     // Must be: midnight UTC time.
     google.protobuf.Timestamp start_time_inclusive = 1;
-    
+
     // Filter for UTC time < - optional.
     // Defaults to: start of the next UTC day.
     // Must be: within the last 90 days from the current date.
     // Must be: midnight UTC time.
     google.protobuf.Timestamp end_time_exclusive = 2;
-    
+
     // The requested size of the page to retrieve - optional.
     // Each count corresponds to a single object - per day per namespace
     // Cannot exceed 1000. Defaults to 100.
     int32 page_size = 3;
-    
+
     // The page token if this is continuing from another response - optional.
     string page_token = 4;
 }
@@ -853,11 +872,11 @@ message ValidateNamespaceExportSinkResponse {
 message UpdateNamespaceTagsRequest {
     // The namespace to set tags for.
     string namespace = 1;
-    // A list of tags to add or update. 
-    // If a key of an existing tag is added, the tag's value is updated. 
+    // A list of tags to add or update.
+    // If a key of an existing tag is added, the tag's value is updated.
     // At least one of tags_to_upsert or tags_to_remove must be specified.
     map<string, string> tags_to_upsert = 2;
-    // A list of tag keys to remove. 
+    // A list of tag keys to remove.
     // If a tag key doesn't exist, it is silently ignored.
     // At least one of tags_to_upsert or tags_to_remove must be specified.
     repeated string tags_to_remove = 3;
@@ -868,7 +887,7 @@ message UpdateNamespaceTagsRequest {
 message UpdateNamespaceTagsResponse {
     // The async operation.
     temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
-} 
+}
 
 message CreateConnectivityRuleRequest {
     // The connectivity rule specification.
@@ -927,4 +946,12 @@ message DeleteConnectivityRuleRequest {
 message DeleteConnectivityRuleResponse {
     // The async operation
     temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
+message ValidateAccountAuditLogSinkRequest {
+  // The audit log sink spec that will be validated
+  temporal.api.cloud.account.v1.AuditLogSinkSpec spec = 1;
+}
+
+message ValidateAccountAuditLogSinkResponse {
 }
