@@ -21,7 +21,7 @@ service CloudService {
             get: "/cloud/users",
         };
     }
-    
+
     // Get a user
     rpc GetUser(GetUserRequest) returns (GetUserResponse) {
         option (google.api.http) = {
@@ -192,7 +192,7 @@ service CloudService {
             get: "/cloud/nexus/endpoints",
         };
     }
-    
+
     // Get a nexus endpoint
     rpc GetNexusEndpoint(GetNexusEndpointRequest) returns (GetNexusEndpointResponse) {
         option (google.api.http) = {
@@ -320,6 +320,14 @@ service CloudService {
         };
     }
 
+    // Set a service account's access to a namespace.
+    rpc SetServiceAccountNamespaceAccess(SetServiceAccountNamespaceAccessRequest) returns (SetServiceAccountNamespaceAccessResponse) {
+        option (google.api.http) = {
+            post: "/cloud/namespaces/{namespace}/service-accounts/{service_account_id}/access",
+            body: "*"
+        };
+    }
+
     // Delete a service account.
     rpc DeleteServiceAccount(DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse) {
         option (google.api.http) = {
@@ -358,7 +366,7 @@ service CloudService {
         };
     }
 
-    // Get an export sink 
+    // Get an export sink
     rpc GetNamespaceExportSink(GetNamespaceExportSinkRequest) returns (GetNamespaceExportSinkResponse) {
         option (google.api.http) = {
             get: "/cloud/namespaces/{namespace}/export-sinks/{name}"
@@ -430,6 +438,15 @@ service CloudService {
     rpc DeleteConnectivityRule(DeleteConnectivityRuleRequest) returns (DeleteConnectivityRuleResponse) {
         option (google.api.http) = {
             delete: "/cloud/connectivity-rules/{connectivity_rule_id}"
+        };
+    }
+
+    // Validate customer audit log sink is accessible from Temporal's workflow by delivering an empty file to the specified sink.
+    // The operation verifies that the sink is correctly configured, accessible and ready to receive audit logs.
+    rpc ValidateAccountAuditLogSink(ValidateAccountAuditLogSinkRequest) returns (ValidateAccountAuditLogSinkResponse) {
+        option (google.api.http) = {
+            post: "/cloud/account/audit-logs/sink/validate",
+            body: "*"
         };
     }
 }
