@@ -39,3 +39,25 @@ message GCSSpec {
     // The region of the gcs bucket
     string region = 4;
 }
+
+message KinesisSpec {
+    // The role Temporal Cloud assumes when writing records to Kinesis
+    string role_name = 1;
+
+    // Destination Kinesis endpoint arn for temporal to send data to.
+    string destination_uri = 2;
+
+    // The sink's region.
+    string region = 3;
+}
+
+message PubSubSpec{
+    // The customer service account id that Temporal Cloud impersonates for writing records to customer's pubsub topic
+    string service_account_id = 1;
+
+    // Destination pubsub topic name for us
+    string topic_name = 2;
+
+    // The gcp project id of pubsub topic and service account
+    string gcp_project_id = 3;
+}

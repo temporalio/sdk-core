@@ -1058,6 +1058,17 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
         "DeleteConnectivityRule" => {
             rpc_call_on_trait!(client, call, CloudService, delete_connectivity_rule)
         }
+        "SetServiceAccountNamespaceAccess" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                CloudService,
+                set_service_account_namespace_access
+            )
+        }
+        "ValidateAccountAuditLogSink" => {
+            rpc_call_on_trait!(client, call, CloudService, validate_account_audit_log_sink)
+        }
         rpc => Err(anyhow::anyhow!("Unknown RPC call {rpc}")),
     }
 }
