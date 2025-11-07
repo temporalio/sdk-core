@@ -259,16 +259,18 @@ impl WorkerTrait for Worker {
             *self.status.lock() = WorkerStatus::ShuttingDown;
         }
         // First, unregister worker from the client, disabling eager workflow start
+        warn!("{:?} // First, unregister worker from the client, disabling eager workflow start", self.worker_instance_key());
         if !self.client_worker_registrator.shared_namespace_worker {
             if let Err(e) = self
                 .client
                 .workers()
                 .unregister_worker(self.worker_instance_key) {
-                warn!("Failed to unregister worker {}", e);
+                warn!("{:?} Failed to unregister worker {}", self.worker_instance_key(), e);
             }
         }
 
         // Second, we want to stop polling of both activity and workflow tasks
+        warn!("{:?} // Second, we want to stop polling of both activity and workflow tasks", self.worker_instance_key());
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
@@ -276,13 +278,18 @@ impl WorkerTrait for Worker {
         // activity poll in case this worker is an activity-only worker.
         self.local_act_mgr.shutdown_initiated();
 
+        warn!("{:?} if self.workflows.ever_polled()", self.worker_instance_key());
         if !self.workflows.ever_polled() {
+            warn!("{:?} workflows_have_shutdown()", self.worker_instance_key());
             self.local_act_mgr.workflows_have_shutdown();
+            warn!("{:?} workflows_have_shutdown() done", self.worker_instance_key());
         } else {
             // Bump the workflow stream with a pointless input, since if a client initiates shutdown
             // and then immediately blocks waiting on a workflow activation poll, it's possible that
             // there may not be any more inputs ever, and that poll will never resolve.
+            warn!("{:?} send_get_state_info_msg()", self.worker_instance_key());
             self.workflows.send_get_state_info_msg();
+            warn!("{:?} send_get_state_info_msg() done", self.worker_instance_key());
         }
     }
 
@@ -684,6 +691,7 @@ impl Worker {
     /// Will shutdown the worker. Does not resolve until all outstanding workflow tasks have been
     /// completed
     async fn shutdown(&self) {
+        warn!("shutdown {:?}", self.worker_instance_key);
         self.initiate_shutdown();
         if let Some(name) = self.workflows.get_sticky_queue_name() {
             let heartbeat = self
@@ -693,6 +701,7 @@ impl Worker {
                 .map(|hm| hm.heartbeat_callback.clone()());
 
             // This is a best effort call and we can still shutdown the worker if it fails
+            warn!("// This is a best effort call and we can still shutdown the worker if it fails");
             match self.client.shutdown_worker(name, heartbeat).await {
                 Err(err)
                     if !matches!(
