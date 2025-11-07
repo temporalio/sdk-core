@@ -265,6 +265,7 @@ impl Workflows {
     }
 
     pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
+        warn!("next_workflow_activation self.ever_polled.store");
         self.ever_polled.store(true, atomic::Ordering::Release);
         loop {
             let al = {
@@ -708,6 +709,7 @@ impl Workflows {
     /// Sends a message to the workflow processing stream. Returns true if the message was sent
     /// successfully.
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
+        warn!("send_local");
         let msg = msg.into();
         let print_err = match &msg {
             LocalInputs::GetStateInfo(_) => false,

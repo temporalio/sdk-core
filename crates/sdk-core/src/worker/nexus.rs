@@ -101,6 +101,7 @@ impl NexusManager {
 
     /// Block until then next nexus task is received from server
     pub(super) async fn next_nexus_task(&self) -> Result<NexusTask, PollError> {
+        warn!("next_nexus_task self.ever_polled.store");
         self.ever_polled.store(true, Ordering::Relaxed);
         let mut sl = self.task_stream.lock().await;
         let r = sl.next().await.unwrap_or_else(|| Err(PollError::ShutDown));
