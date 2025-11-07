@@ -12,13 +12,11 @@ use std::{
     },
     sync::Arc,
 };
-use temporalio_common::{
-    protos::temporal::api::{
-        worker::v1::WorkerHeartbeat, workflowservice::v1::PollWorkflowTaskQueueResponse,
-    },
-    worker::WorkerDeploymentOptions,
-};
+use temporalio_common::{protos::temporal::api::{
+    worker::v1::WorkerHeartbeat, workflowservice::v1::PollWorkflowTaskQueueResponse,
+}, worker::WorkerDeploymentOptions};
 use uuid::Uuid;
+use crate::dbg_panic;
 
 /// This trait represents a slot reserved for processing a WFT by a worker.
 #[cfg_attr(test, mockall::automock)]
@@ -81,15 +79,20 @@ impl ClientWorkerSetImpl {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(worker_list) = self.slot_providers.get(&key) {
             for worker_id in Self::worker_ids_in_selection_order(&worker_list.clone()) {
-                if let Some(worker) = self.all_workers.get(&worker_id)
-                    && let Some(slot) = worker.try_reserve_wft_slot()
-                {
-                    let deployment_options = worker.deployment_options();
-                    return Some(SlotReservation {
-                        slot,
-                        deployment_options,
-                    });
+                warn!("Using worker id {} out of worker_list {:?}", worker_id, worker_list);
+                if let Some(worker) = self.all_workers.get(&worker_id) {
+                    if let Some(slot) = worker.try_reserve_wft_slot()
+                    {
+                        let deployment_options = worker.deployment_options();
+                        return Some(SlotReservation {
+                            slot,
+                            deployment_options,
+                        });
+                    }
+                } else {
+                    dbg_panic!("worker ({key:?}) from from worker_list should never be missing from all_workers list");
                 }
+
             }
         }
         None
@@ -136,21 +139,25 @@ impl ClientWorkerSetImpl {
             );
         }
 
-        if worker.heartbeat_enabled()
-            && let Some(heartbeat_callback) = worker.heartbeat_callback()
-        {
-            let worker_instance_key = worker.worker_instance_key();
-            let namespace = worker.namespace().to_string();
+        if worker.heartbeat_enabled() {
+            if let Some(heartbeat_callback) = worker.heartbeat_callback()
+            {
+                let worker_instance_key = worker.worker_instance_key();
+                let namespace = worker.namespace().to_string();
 
-            let shared_worker = match self.shared_worker.entry(namespace.clone()) {
-                Occupied(o) => o.into_mut(),
-                Vacant(v) => {
-                    let shared_worker = worker.new_shared_namespace_worker()?;
-                    v.insert(shared_worker)
-                }
-            };
-            shared_worker.register_callback(worker_instance_key, heartbeat_callback);
+                let shared_worker = match self.shared_worker.entry(namespace.clone()) {
+                    Occupied(o) => o.into_mut(),
+                    Vacant(v) => {
+                        let shared_worker = worker.new_shared_namespace_worker()?;
+                        v.insert(shared_worker)
+                    }
+                };
+                shared_worker.register_callback(worker_instance_key, heartbeat_callback);
+            } else {
+                dbg_panic!("missing heartbeat callback for worker heartbeat");
+            }
         }
+
 
         match self.slot_providers.entry(slot_key.clone()) {
             Occupied(o) => o.into_mut().push((worker.worker_instance_key(), build_id)),

@@ -258,12 +258,14 @@ impl WorkerTrait for Worker {
         {
             *self.status.lock() = WorkerStatus::ShuttingDown;
         }
-        // First, unregister worker from the client
+        // First, unregister worker from the client, disabling eager workflow start
         if !self.client_worker_registrator.shared_namespace_worker {
-            let _res = self
+            if let Err(e) = self
                 .client
                 .workers()
-                .unregister_worker(self.worker_instance_key);
+                .unregister_worker(self.worker_instance_key) {
+                warn!("Failed to unregister worker {}", e);
+            }
         }
 
         // Second, we want to stop polling of both activity and workflow tasks
