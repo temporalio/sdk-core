@@ -78,6 +78,7 @@ impl ClientWorkerSetImpl {
     ) -> Option<SlotReservation> {
         let key = SlotKey::new(namespace, task_queue);
         if let Some(worker_list) = self.slot_providers.get(&key) {
+            warn!("worker_list: {worker_list:?}");
             for worker_id in Self::worker_ids_in_selection_order(&worker_list.clone()) {
                 warn!("Using worker id {} out of worker_list {:?}", worker_id, worker_list);
                 if let Some(worker) = self.all_workers.get(&worker_id) {
@@ -119,6 +120,7 @@ impl ClientWorkerSetImpl {
         worker: Arc<dyn ClientWorker + Send + Sync>,
         skip_client_worker_set_check: bool,
     ) -> Result<(), anyhow::Error> {
+        warn!("registering worker with key: {:?}", worker.worker_instance_key());
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
@@ -158,7 +160,7 @@ impl ClientWorkerSetImpl {
             }
         }
 
-
+        warn!("Entry for slot providers, {:?}", self.slot_providers.entry(slot_key.clone()));
         match self.slot_providers.entry(slot_key.clone()) {
             Occupied(o) => o.into_mut().push((worker.worker_instance_key(), build_id)),
             Vacant(v) => {
@@ -166,6 +168,7 @@ impl ClientWorkerSetImpl {
             }
         };
 
+        warn!("Inserting {:?} into all_workers", worker.worker_instance_key());
         self.all_workers
             .insert(worker.worker_instance_key(), worker);
 
