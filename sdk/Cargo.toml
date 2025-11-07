@@ -42,7 +42,7 @@ version = "0.1"
 
 [features]
 default = []
-antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
+antithesis_assertions = ["temporal-sdk-core/antithesis_assertions"]
 
 [lints]
 workspace = true
