@@ -361,7 +361,12 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None, None).unwrap()
+        let sticky_queue_name = if config.max_cached_workflows > 0 {
+            Some(format!("sticky-{}", config.task_queue))
+        } else {
+            None
+        };
+        Self::new(config, sticky_queue_name, Arc::new(client), None, None).unwrap()
     }
 
     pub(crate) fn new_with_pollers(
@@ -698,7 +703,10 @@ impl Worker {
                         tonic::Code::Unimplemented | tonic::Code::Unavailable
                     ) =>
                 {
-                    warn!("Failed to shutdown sticky queue  {:?}", err);
+                    warn!(
+                        "shutdown_worker rpc errored during worker shutdown: {:?}",
+                        err
+                    );
                 }
                 _ => {}
             }

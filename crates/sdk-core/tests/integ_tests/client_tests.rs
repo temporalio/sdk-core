@@ -1,17 +1,20 @@
-use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options, http_proxy::HttpProxy};
+use crate::common::{
+    CoreWfStarter, NAMESPACE,
+    fake_grpc_server::{GenericService, fake_server},
+    get_integ_server_options,
+    http_proxy::HttpProxy,
+};
 use assert_matches::assert_matches;
-use futures_util::{FutureExt, future::BoxFuture};
+use futures_util::FutureExt;
 use http_body_util::Full;
 use prost::Message;
 use std::{
     collections::HashMap,
-    convert::Infallible,
     env,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
-    task::{Context, Poll},
     time::Duration,
 };
 use temporalio_client::{
@@ -27,16 +30,9 @@ use temporalio_common::protos::temporal::api::{
 };
 #[cfg(unix)]
 use tokio::net::UnixListener;
-use tokio::{
-    net::TcpListener,
-    sync::{mpsc::UnboundedSender, oneshot},
-};
+use tokio::{net::TcpListener, sync::oneshot};
 use tonic::{
-    Code, IntoRequest, Request, Status,
-    body::Body,
-    codegen::{Service, http::Response},
-    server::NamedService,
-    transport::Server,
+    Code, IntoRequest, Request, Status, body::Body, codegen::http::Response, transport::Server,
 };
 use tracing::info;
 
@@ -109,97 +105,6 @@ async fn per_call_timeout_respected_one_call() {
         res.unwrap_err().code(),
         Code::DeadlineExceeded | Code::Cancelled
     );
-}
-
-#[derive(Clone)]
-struct GenericService<F> {
-    header_to_parse: &'static str,
-    header_tx: UnboundedSender<String>,
-    response_maker: F,
-}
-impl<F> Service<tonic::codegen::http::Request<Body>> for GenericService<F>
-where
-    F: FnMut(tonic::codegen::http::Request<Body>) -> BoxFuture<'static, Response<Body>>,
-{
-    type Response = Response<Body>;
-    type Error = Infallible;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: tonic::codegen::http::Request<Body>) -> Self::Future {
-        self.header_tx
-            .send(
-                String::from_utf8_lossy(
-                    req.headers()
-                        .get(self.header_to_parse)
-                        .map(|hv| hv.as_bytes())
-                        .unwrap_or_default(),
-                )
-                .to_string(),
-            )
-            .unwrap();
-        let r = (self.response_maker)(req);
-        async move { Ok(r.await) }.boxed()
-    }
-}
-impl<F> NamedService for GenericService<F> {
-    const NAME: &'static str = "temporal.api.workflowservice.v1.WorkflowService";
-}
-
-struct FakeServer {
-    addr: std::net::SocketAddr,
-    shutdown_tx: oneshot::Sender<()>,
-    header_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-    pub server_handle: tokio::task::JoinHandle<()>,
-}
-
-async fn fake_server<F>(response_maker: F) -> FakeServer
-where
-    F: FnMut(tonic::codegen::http::Request<Body>) -> BoxFuture<'static, Response<Body>>
-        + Clone
-        + Send
-        + Sync
-        + 'static,
-{
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let (header_tx, header_rx) = tokio::sync::mpsc::unbounded_channel();
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let server_handle = tokio::spawn(async move {
-        Server::builder()
-            .add_service(GenericService {
-                header_to_parse: "grpc-timeout",
-                header_tx,
-                response_maker,
-            })
-            .serve_with_incoming_shutdown(
-                tokio_stream::wrappers::TcpListenerStream::new(listener),
-                async {
-                    shutdown_rx.await.ok();
-                },
-            )
-            .await
-            .unwrap();
-    });
-
-    FakeServer {
-        addr,
-        shutdown_tx,
-        header_rx,
-        server_handle,
-    }
-}
-
-impl FakeServer {
-    async fn shutdown(self) {
-        self.shutdown_tx.send(()).unwrap();
-        self.server_handle.await.unwrap();
-    }
 }
 
 #[tokio::test]

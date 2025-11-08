@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        CoreWfStarter, get_integ_runtime_options, get_integ_server_options,
-        get_integ_telem_options, mock_sdk_cfg,
+        CoreWfStarter, fake_grpc_server::fake_server, get_integ_runtime_options,
+        get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
     shared_tests,
 };
@@ -11,7 +11,10 @@ use std::{
     cell::Cell,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering::Relaxed},
+        atomic::{
+            AtomicBool, AtomicU8,
+            Ordering::{self, Relaxed},
+        },
     },
     time::Duration,
 };
@@ -860,4 +863,32 @@ async fn test_custom_slot_supplier_simple() {
         total_reserves, total_releases,
         "Number of reserves should equal number of releases"
     );
+}
+
+#[tokio::test]
+async fn shutdown_worker_not_retried() {
+    let shutdown_call_count = Arc::new(AtomicU8::new(0));
+    let scc = shutdown_call_count.clone();
+    let fs = fake_server(move |req| {
+        if req.uri().to_string().contains("ShutdownWorker") {
+            scc.fetch_add(1, Ordering::Relaxed);
+        }
+        let s = tonic::Status::new(tonic::Code::Unknown, "bla").into_http();
+        async { s }.boxed()
+    })
+    .await;
+
+    let mut opts = get_integ_server_options();
+    let uri = format!("http://localhost:{}", fs.addr.port())
+        .parse()
+        .unwrap();
+    opts.target_url = uri;
+    opts.skip_get_system_info = true;
+    let client = opts.connect("ns", None).await.unwrap();
+
+    let wf_type = "shutdown_worker_not_retried";
+    let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));
+    let worker = starter.get_worker().await;
+    drain_pollers_and_shutdown(&worker).await;
+    assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
 }
