@@ -702,7 +702,7 @@ impl Worker {
 
             // This is a best effort call and we can still shutdown the worker if it fails
             warn!("// This is a best effort call and we can still shutdown the worker if it fails");
-            match self.client.shutdown_worker(name, heartbeat).await {
+            match self.client.shutdown_worker(name, heartbeat).await { // TODO: timeout to 5s?
                 Err(err)
                     if !matches!(
                         err.code(),
@@ -713,6 +713,7 @@ impl Worker {
                 }
                 _ => {}
             }
+            warn!("shutdown call done");
         }
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
@@ -720,23 +721,28 @@ impl Worker {
             .wait_all_outstanding_tasks_finished()
             .await;
         // Wait for workflows to finish
+        warn!("// Wait for workflows to finish");
         self.workflows
             .shutdown()
             .await
             .expect("Workflow processing terminates cleanly");
         // Wait for activities to finish
+        warn!("// Wait for activities to finish");
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
         // Wait for nexus tasks to finish
+        warn!("// Wait for nexus tasks to finish");
         self.nexus_mgr.shutdown().await;
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
+        warn!("// Wait for all permits to be released, but don't totally hang real-world shutdown.");
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
         }
+        warn!("// Wait for all permits to be released, but don't totally hang real-world shutdown!!!");
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
