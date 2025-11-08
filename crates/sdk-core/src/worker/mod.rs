@@ -53,7 +53,7 @@ use anyhow::bail;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
@@ -137,7 +137,7 @@ pub struct Worker {
     /// Used to track worker client
     client_worker_registrator: Arc<ClientWorkerRegistrator>,
     /// Status of the worker
-    status: Arc<Mutex<WorkerStatus>>,
+    status: Arc<RwLock<WorkerStatus>>,
 }
 
 struct AllPermitsTracker {
@@ -256,7 +256,7 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         {
-            *self.status.lock() = WorkerStatus::ShuttingDown;
+            *self.status.write() = WorkerStatus::ShuttingDown;
         }
         // First, unregister worker from the client
         if !self.client_worker_registrator.shared_namespace_worker {
@@ -276,12 +276,11 @@ impl WorkerTrait for Worker {
 
         if !self.workflows.ever_polled() {
             self.local_act_mgr.workflows_have_shutdown();
-        } else {
-            // Bump the workflow stream with a pointless input, since if a client initiates shutdown
-            // and then immediately blocks waiting on a workflow activation poll, it's possible that
-            // there may not be any more inputs ever, and that poll will never resolve.
-            self.workflows.send_get_state_info_msg();
         }
+        // Bump the workflow stream with a pointless input, since if a client initiates shutdown
+        // and then immediately blocks waiting on a workflow activation poll, it's possible that
+        // there may not be any more inputs ever, and that poll will never resolve.
+        self.workflows.send_get_state_info_msg();
     }
 
     async fn shutdown(&self) {
@@ -580,7 +579,7 @@ impl Worker {
             deployment_options,
         );
         let worker_instance_key = Uuid::new_v4();
-        let worker_status = Arc::new(Mutex::new(WorkerStatus::Running));
+        let worker_status = Arc::new(RwLock::new(WorkerStatus::Running));
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = worker_heartbeat_interval.map(|hb_interval| {
@@ -1056,7 +1055,7 @@ struct HeartbeatMetrics {
     wf_sticky_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     act_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     nexus_last_suc_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    status: Arc<Mutex<WorkerStatus>>,
+    status: Arc<RwLock<WorkerStatus>>,
     sys_info: Arc<dyn SystemResourceInfo + Send + Sync>,
 }
 
@@ -1102,7 +1101,7 @@ impl WorkerHeartbeatManager {
                 task_queue: config.task_queue.clone(),
                 deployment_version,
 
-                status: (*heartbeat_manager_metrics.status.lock()) as i32,
+                status: (*heartbeat_manager_metrics.status.read()) as i32,
                 start_time,
                 plugins: config.plugins.clone(),
 

@@ -2,7 +2,7 @@ use crate::{
     WorkerClient,
     worker::{TaskPollers, WorkerTelemetry},
 };
-use parking_lot::Mutex;
+use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporalio_client::SharedNamespaceWorkerTrait;
 use temporalio_common::{
@@ -20,7 +20,7 @@ pub(crate) type HeartbeatFn = Arc<dyn Fn() -> WorkerHeartbeat + Send + Sync>;
 /// worker heartbeats to the server. This invokes callbacks on all workers in the same process that
 /// share the same namespace.
 pub(crate) struct SharedNamespaceWorker {
-    heartbeat_map: Arc<Mutex<HashMap<Uuid, HeartbeatFn>>>,
+    heartbeat_map: Arc<RwLock<HashMap<Uuid, HeartbeatFn>>>,
     namespace: String,
     cancel: CancellationToken,
 }
@@ -63,7 +63,7 @@ impl SharedNamespaceWorker {
         let client_clone = client;
         let namespace_clone = namespace.clone();
 
-        let heartbeat_map = Arc::new(Mutex::new(HashMap::<Uuid, HeartbeatFn>::new()));
+        let heartbeat_map = Arc::new(RwLock::new(HashMap::<Uuid, HeartbeatFn>::new()));
         let heartbeat_map_clone = heartbeat_map.clone();
 
         tokio::spawn(async move {
@@ -93,7 +93,10 @@ impl SharedNamespaceWorker {
                 tokio::select! {
                     _ = ticker.tick() => {
                         let mut hb_to_send = Vec::new();
-                        for (_instance_key, heartbeat_callback) in heartbeat_map_clone.lock().iter() {
+                        let hb_callbacks = {
+                            heartbeat_map_clone.read().values().cloned().collect::<Vec<_>>()
+                        };
+                        for heartbeat_callback in hb_callbacks {
                             let mut heartbeat = heartbeat_callback();
                             // All of these heartbeat details rely on a client. To avoid circular
                             // dependencies, this must be populated from within SharedNamespaceWorker
@@ -135,11 +138,12 @@ impl SharedNamespaceWorkerTrait for SharedNamespaceWorker {
 
     fn register_callback(&self, worker_instance_key: Uuid, heartbeat_callback: HeartbeatFn) {
         self.heartbeat_map
-            .lock()
+            .write()
             .insert(worker_instance_key, heartbeat_callback);
     }
+
     fn unregister_callback(&self, worker_instance_key: Uuid) -> (Option<HeartbeatFn>, bool) {
-        let mut heartbeat_map = self.heartbeat_map.lock();
+        let mut heartbeat_map = self.heartbeat_map.write();
         let heartbeat_callback = heartbeat_map.remove(&worker_instance_key);
         if heartbeat_map.is_empty() {
             self.cancel.cancel();
@@ -148,7 +152,7 @@ impl SharedNamespaceWorkerTrait for SharedNamespaceWorker {
     }
 
     fn num_workers(&self) -> usize {
-        self.heartbeat_map.lock().len()
+        self.heartbeat_map.read().len()
     }
 }
 
