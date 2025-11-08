@@ -55,6 +55,8 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use std::sync::atomic::AtomicU8;
+use std::sync::atomic::Ordering::{Acquire, Relaxed};
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
     errors::{CompleteWfError, PollError},
@@ -131,7 +133,7 @@ pub(crate) struct Workflows {
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     local_act_mgr: Arc<LocalActivityManager>,
-    ever_polled: AtomicBool,
+    ever_polled: AtomicU8,
     default_versioning_behavior: Option<VersioningBehavior>,
 }
 
@@ -259,14 +261,19 @@ impl Workflows {
             activity_tasks_handle,
             wft_semaphore,
             local_act_mgr,
-            ever_polled: AtomicBool::new(false),
+            ever_polled: AtomicU8::new(0),
             default_versioning_behavior,
         }
     }
 
     pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
         warn!("next_workflow_activation self.ever_polled.store");
-        self.ever_polled.store(true, atomic::Ordering::Release);
+        let res = self.ever_polled.compare_exchange(0, 1, Acquire, Relaxed);
+        warn!("res: {res:?}");
+        if let Err(ever_polled) = res && ever_polled > 1 {
+            return Err(PollError::ShutDown);
+        }
+        // self.ever_polled.store(1, atomic::Ordering::Release);
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
@@ -668,7 +675,7 @@ impl Workflows {
     }
 
     pub(super) fn ever_polled(&self) -> bool {
-        self.ever_polled.load(atomic::Ordering::Acquire)
+        self.ever_polled.fetch_or(2, Acquire) & 1 == 1
     }
 
     /// Must be called after every activation completion has finished
