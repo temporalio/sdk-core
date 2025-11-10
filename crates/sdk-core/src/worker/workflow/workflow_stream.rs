@@ -147,6 +147,11 @@ impl WFStream {
                                 });
                                 None
                             }
+                            LocalInputs::WorkerShutdown => {
+                                // Worker shutdown message is used to bump the stream to ensure
+                                // pending workflow activation polls resolve during shutdown
+                                None
+                            }
                         }
                     }
                     WFStreamInput::FailedFetch {
@@ -633,6 +638,7 @@ pub(super) enum LocalInputs {
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
     GetStateInfo(GetStateInfoMsg),
+    WorkerShutdown,
 }
 impl LocalInputs {
     fn run_id(&self) -> Option<&str> {
@@ -643,7 +649,7 @@ impl LocalInputs {
             LocalInputs::PostActivation(pa) => &pa.run_id,
             LocalInputs::RequestEviction(re) => &re.run_id,
             LocalInputs::HeartbeatTimeout(hb) => hb,
-            LocalInputs::GetStateInfo(_) => return None,
+            LocalInputs::GetStateInfo(_) | LocalInputs::WorkerShutdown => return None,
         })
     }
 }
