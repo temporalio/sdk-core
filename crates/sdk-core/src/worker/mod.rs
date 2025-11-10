@@ -266,6 +266,10 @@ impl WorkerTrait for Worker {
                 .unregister_worker(self.worker_instance_key);
         }
 
+        // Push a Worker Shutdown message to the workflow activation queue. This ensures that
+        // any pending workflow activation polls will resolve, even if there are no other inputs.
+        self.workflows.send_worker_shutdown();
+
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
@@ -274,13 +278,12 @@ impl WorkerTrait for Worker {
         // activity poll in case this worker is an activity-only worker.
         self.local_act_mgr.shutdown_initiated();
 
+        // If workflows have never been polled, immediately tell the local activity manager
+        // that workflows have shut down, so it can proceed with shutdown without waiting.
+        // This is particularly important for activity-only workers.
         if !self.workflows.ever_polled() {
             self.local_act_mgr.workflows_have_shutdown();
         }
-        // Bump the workflow stream with a pointless input, since if a client initiates shutdown
-        // and then immediately blocks waiting on a workflow activation poll, it's possible that
-        // there may not be any more inputs ever, and that poll will never resolve.
-        self.workflows.send_get_state_info_msg();
     }
 
     async fn shutdown(&self) {

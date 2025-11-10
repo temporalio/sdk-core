@@ -626,6 +626,12 @@ impl Workflows {
         rx
     }
 
+    /// Send a `WorkerShutdown` message to the workflow stream. This ensures that any pending
+    /// workflow activation polls will resolve during shutdown, even if there are no other inputs.
+    pub(super) fn send_worker_shutdown(&self) {
+        self.send_local(LocalInputs::WorkerShutdown);
+    }
+
     /// Query the state of workflow management. Can return `None` if workflow state is shut down.
     pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
         let rx = self.send_get_state_info_msg();
