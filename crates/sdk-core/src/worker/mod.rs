@@ -266,9 +266,9 @@ impl WorkerTrait for Worker {
                 .unregister_worker(self.worker_instance_key);
         }
 
-        // Push a Worker Shutdown message to the workflow activation queue. This ensures that
+        // Push a BumpStream message to the workflow activation queue. This ensures that
         // any pending workflow activation polls will resolve, even if there are no other inputs.
-        self.workflows.send_worker_shutdown();
+        self.workflows.bump_stream();
 
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
