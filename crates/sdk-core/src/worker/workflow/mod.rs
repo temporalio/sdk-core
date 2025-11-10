@@ -202,13 +202,6 @@ impl Workflows {
                     .unwrap();
                 let local = LocalSet::new();
                 local.block_on(&rt, async move {
-                    let mut stream = WFStream::build(
-                        basics,
-                        extracted_wft_stream,
-                        locals_stream,
-                        local_activity_request_sink,
-                    );
-
                     // However, we want to avoid plowing ahead until we've been asked to poll at
                     // least once. This supports activity-only workers.
                     let do_poll = tokio::select! {
@@ -222,6 +215,14 @@ impl Workflows {
                     if !do_poll {
                         return;
                     }
+
+                    let mut stream = WFStream::build(
+                        basics,
+                        extracted_wft_stream,
+                        locals_stream,
+                        local_activity_request_sink,
+                    );
+
                     while let Some(output) = stream.next().await {
                         match output {
                             Ok(o) => {

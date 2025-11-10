@@ -329,6 +329,10 @@ pub struct NoRetryOnMatching {
     pub predicate: fn(&tonic::Status) -> bool,
 }
 
+/// A request extension that forces overriding the current retry policy of the [RetryClient].
+#[derive(Clone, Debug)]
+pub struct RetryConfigForCall(pub RetryConfig);
+
 impl Debug for ClientTlsConfig {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

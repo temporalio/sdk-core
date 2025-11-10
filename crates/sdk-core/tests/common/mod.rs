@@ -1,6 +1,7 @@
 //! Common integration testing utilities
 //! These utilities are specific to integration tests and depend on the full temporal-client stack.
 
+pub(crate) mod fake_grpc_server;
 pub(crate) mod http_proxy;
 pub(crate) mod workflows;
 
@@ -240,11 +241,11 @@ struct InitializedWorker {
 impl CoreWfStarter {
     pub(crate) fn new(test_name: &str) -> Self {
         init_integ_telem();
-        Self::_new(test_name, None, None)
+        Self::new_with_overrides(test_name, None, None)
     }
 
     pub(crate) fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
-        Self::_new(test_name, Some(runtime), None)
+        Self::new_with_overrides(test_name, Some(runtime), None)
     }
 
     /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
@@ -260,7 +261,7 @@ impl CoreWfStarter {
             check_mlsv = true;
             None
         };
-        let mut s = Self::_new(test_name, None, client);
+        let mut s = Self::new_with_overrides(test_name, None, client);
 
         if check_mlsv && !version_req.is_empty() {
             let clustinfo = (*s.get_client().await)
@@ -291,7 +292,7 @@ impl CoreWfStarter {
         Some(s)
     }
 
-    fn _new(
+    pub(crate) fn new_with_overrides(
         test_name: &str,
         runtime_override: Option<CoreRuntime>,
         client_override: Option<RetryClient<Client>>,
@@ -450,7 +451,7 @@ impl CoreWfStarter {
                 let rt = if let Some(ref rto) = self.runtime_override {
                     rto
                 } else {
-                    INTEG_TESTS_RT.get().unwrap()
+                    init_integ_telem().unwrap()
                 };
                 let cfg = self
                     .worker_config

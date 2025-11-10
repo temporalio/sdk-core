@@ -11,7 +11,7 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
-    RetryClient, SharedReplaceableClient, WorkflowService,
+    RetryClient, RetryConfig, RetryConfigForCall, SharedReplaceableClient, WorkflowService,
 };
 use temporalio_common::{
     protos::{
@@ -697,16 +697,20 @@ impl WorkerClient for WorkerClientBag {
             w.status = WorkerStatus::Shutdown.into();
             self.set_heartbeat_client_fields(w);
         }
-        let request = ShutdownWorkerRequest {
+        let mut request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
             worker_heartbeat: final_heartbeat,
-        };
+        }
+        .into_request();
+        request
+            .extensions_mut()
+            .insert(RetryConfigForCall(RetryConfig::no_retries()));
 
         Ok(
-            WorkflowService::shutdown_worker(&mut self.client.clone(), request.into_request())
+            WorkflowService::shutdown_worker(&mut self.client.clone(), request)
                 .await?
                 .into_inner(),
         )
