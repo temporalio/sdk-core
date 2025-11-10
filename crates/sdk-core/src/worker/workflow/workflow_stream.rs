@@ -148,8 +148,8 @@ impl WFStream {
                                 None
                             }
                             LocalInputs::BumpStream => {
-                                // Worker shutdown message is used to bump the stream to ensure
-                                // pending workflow activation polls resolve during shutdown
+                                // Ensures pending workflow activation polls resolve for
+                                // scenarios like during shutdown
                                 None
                             }
                         }
