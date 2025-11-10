@@ -626,10 +626,10 @@ impl Workflows {
         rx
     }
 
-    /// Send a `WorkerShutdown` message to the workflow stream. This ensures that any pending
-    /// workflow activation polls will resolve during shutdown, even if there are no other inputs.
-    pub(super) fn send_worker_shutdown(&self) {
-        self.send_local(LocalInputs::WorkerShutdown);
+    /// Send a `BumpStream` message to the workflow stream. This ensures that any pending
+    /// workflow activation polls will resolve, like during shutdown, even if there are no other inputs.
+    pub(super) fn bump_stream(&self) {
+        self.send_local(LocalInputs::BumpStream);
     }
 
     /// Query the state of workflow management. Can return `None` if workflow state is shut down.
@@ -654,7 +654,7 @@ impl Workflows {
                 let mut interval = tokio::time::interval(Duration::from_millis(10));
                 loop {
                     interval.tick().await;
-                    let _ = self.get_state_info().await;
+                    self.bump_stream();
                 }
             });
             let (_, jh_res) = tokio::join!(
