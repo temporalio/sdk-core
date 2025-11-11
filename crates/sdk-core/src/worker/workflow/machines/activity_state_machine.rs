@@ -173,6 +173,16 @@ impl ActivityMachine {
                 | ActivityMachineState::TimedOut(_)
         ) {
             // Ignore attempted cancels in terminal states
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Activity cancel ignored in terminal state",
+                ::serde_json::json!({
+                    "seq": self.shared_state.attrs.seq,
+                    "state": format!("{:?}", self.state())
+                })
+            );
+
             debug!(
                 "Attempted to cancel already resolved activity (seq {})",
                 self.shared_state.attrs.seq
@@ -430,6 +440,16 @@ impl ScheduledEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity timed out before starting",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "timeout_type": attrs.timeout_type,
+                "state": "ScheduledEventRecorded"
+            })
+        );
         notify_lang_activity_timed_out(dat, attrs)
     }
 
@@ -437,12 +457,27 @@ impl ScheduledEventRecorded {
         self,
         dat: &mut SharedState,
     ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancelled in scheduled state",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         create_request_cancel_activity_task_command(
             dat,
             ScheduledActivityCancelCommandCreated::default(),
         )
     }
     pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity abandoned",
+            ::serde_json::json!({"mode": "Abandon"})
+        );
         notify_lang_activity_cancelled(None)
     }
 }
@@ -455,6 +490,14 @@ impl Started {
         self,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity completed successfully",
+            ::serde_json::json!({
+                "has_result": attrs.result.is_some()
+            })
+        );
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Complete(attrs.result)],
             Completed::default(),
@@ -465,6 +508,16 @@ impl Started {
         dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity task failed",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "activity_type": dat.attrs.activity_type,
+                "retry_state": attrs.retry_state
+            })
+        );
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))],
             Failed::default(),
@@ -476,6 +529,16 @@ impl Started {
         dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity timed out after starting",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "timeout_type": attrs.timeout_type,
+                "state": "Started"
+            })
+        );
         notify_lang_activity_timed_out(dat, attrs)
     }
 
@@ -483,12 +546,27 @@ impl Started {
         self,
         dat: &mut SharedState,
     ) -> ActivityMachineTransition<StartedActivityCancelCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancelled after started",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         create_request_cancel_activity_task_command(
             dat,
             StartedActivityCancelCommandCreated::default(),
         )
     }
     pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity abandoned in started state",
+            ::serde_json::json!({"state": "Started"})
+        );
         notify_lang_activity_cancelled(None)
     }
 }
@@ -505,6 +583,14 @@ impl ScheduledActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancellation completed",
+            ::serde_json::json!({
+                "has_details": attrs.details.is_some()
+            })
+        );
         notify_if_not_already_cancelled(dat, |_| notify_lang_activity_cancelled(Some(attrs)))
     }
 
@@ -535,6 +621,14 @@ impl StartedActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity completed despite cancel request",
+            ::serde_json::json!({
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         notify_if_not_already_cancelled(dat, |_| {
             TransitionResult::commands(vec![ActivityMachineCommand::Complete(attrs.result)])
         })
@@ -544,6 +638,14 @@ impl StartedActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity failed despite cancel request",
+            ::serde_json::json!({
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         notify_if_not_already_cancelled(dat, |dat| {
             TransitionResult::commands(vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))])
         })
@@ -650,6 +752,15 @@ impl Canceled {
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might start anyway. Ignore the result.
         if dat.cancellation_type == ActivityCancellationType::Abandon {
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Abandoned activity can start after cancellation",
+                ::serde_json::json!({
+                    "seq_num": seq_num,
+                    "cancellation_type": "Abandon"
+                })
+            );
             TransitionResult::default()
         } else {
             TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
@@ -665,6 +776,14 @@ impl Canceled {
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might complete anyway. Ignore the result.
         if dat.cancellation_type == ActivityCancellationType::Abandon {
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Abandoned activity can complete after cancellation",
+                ::serde_json::json!({
+                    "activity_id": dat.attrs.activity_id
+                })
+            );
             TransitionResult::default()
         } else {
             TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
