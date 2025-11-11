@@ -41,5 +41,20 @@ macro_rules! assert_sometimes {
     }};
 }
 
+/// Assert that a code location is unreachable during Antithesis fuzz testing.
+/// Use this for code paths that should never be reached (bugs, invariant violations).
+macro_rules! assert_unreachable {
+    ($message:literal, $details:expr) => {{
+        $crate::antithesis::ensure_init();
+        let details: ::serde_json::Value = $details;
+        ::antithesis_sdk::assert_unreachable!($message, &details);
+    }};
+    ($message:literal) => {{
+        $crate::antithesis::ensure_init();
+        ::antithesis_sdk::assert_unreachable!($message);
+    }};
+}
+
 pub(crate) use assert_always;
 pub(crate) use assert_sometimes;
+pub(crate) use assert_unreachable;
