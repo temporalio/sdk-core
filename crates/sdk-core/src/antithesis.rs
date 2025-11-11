@@ -27,4 +27,19 @@ macro_rules! assert_always {
     }};
 }
 
+/// Assert that a condition is sometimes true during Antithesis fuzz testing.
+/// This checks that the condition occurs at least once across the entire test session.
+macro_rules! assert_sometimes {
+    ($condition:expr, $message:literal, $details:expr) => {{
+        $crate::antithesis::ensure_init();
+        let details: ::serde_json::Value = $details;
+        ::antithesis_sdk::assert_sometimes!($condition, $message, &details);
+    }};
+    ($condition:expr, $message:literal) => {{
+        $crate::antithesis::ensure_init();
+        ::antithesis_sdk::assert_sometimes!($condition, $message);
+    }};
+}
+
 pub(crate) use assert_always;
+pub(crate) use assert_sometimes;
