@@ -192,6 +192,14 @@ impl StartCommandCreated {
 
     pub(super) fn on_cancel(self, dat: &mut SharedState) -> TimerMachineTransition<Canceled> {
         dat.cancelled_before_sent = true;
+
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Timer cancelled before sent to server",
+            ::serde_json::json!({"timer_seq": dat.attrs.seq})
+        );
+
         TransitionResult::default()
     }
 }
@@ -219,6 +227,13 @@ impl StartCommandRecorded {
         self,
         dat: &mut SharedState,
     ) -> TimerMachineTransition<CancelTimerCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Timer cancelled after started",
+            ::serde_json::json!({"timer_seq": dat.attrs.seq})
+        );
+
         TransitionResult::ok(
             vec![TimerMachineCommand::IssueCancelCmd(
                 CancelTimer { seq: dat.attrs.seq }.into(),
