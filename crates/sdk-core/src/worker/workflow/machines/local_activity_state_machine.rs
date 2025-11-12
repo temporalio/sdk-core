@@ -10,6 +10,8 @@ use crate::{
         workflow::{
             InternalFlagsRef,
             machines::{HistEventData, activity_state_machine::activity_fail_info},
+            fatal,
+            nondeterminism,
         },
     },
 };
@@ -162,7 +164,7 @@ pub(super) fn new_local_activity(
         }
     } else {
         if maybe_pre_resolved.is_some() {
-            return Err(WFMachinesError::Nondeterminism(
+            return Err(nondeterminism!("{}", 
                 "Local activity cannot be created as pre-resolved while not replaying".to_string(),
             ));
         }
@@ -210,10 +212,10 @@ impl LocalActivityMachine {
             LocalActivityMachineState::ResultNotified(_) => Ok(false),
             LocalActivityMachineState::WaitingMarkerEvent(_) => Ok(true),
             LocalActivityMachineState::WaitingMarkerEventPreResolved(_) => Ok(true),
-            _ => Err(WFMachinesError::Fatal(format!(
+            _ => Err(fatal!(
                 "Attempted to check for LA marker handling in invalid state {}",
                 self.state()
-            ))),
+            )),
         }
     }
 
@@ -241,12 +243,12 @@ impl LocalActivityMachine {
         let mut res =
             OnEventWrapper::on_event_mut(self, LocalActivityMachineEvents::StartedNonReplayWFT)
                 .map_err(|e| match e {
-                    MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                    MachineError::InvalidTransition => fatal!(
                         "Invalid transition while notifying local activity (seq {})\
                          of non-replay-wft-started in {}",
                         self.shared_state.attrs.seq,
                         self.state(),
-                    )),
+                    ),
                     MachineError::Underlying(e) => e,
                 })?;
         let res = res.pop().expect("Always produces one response");
@@ -295,12 +297,12 @@ impl LocalActivityMachine {
             LocalActivityMachineEvents::HandleResult(dat)
         };
         let res = OnEventWrapper::on_event_mut(self, evt).map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+            MachineError::InvalidTransition => fatal!(
                 "Invalid transition resolving local activity (seq {}, from marker: {}) in {}",
                 self.shared_state.attrs.seq,
                 from_marker,
                 self.state(),
-            )),
+            ),
             MachineError::Underlying(e) => e,
         })?;
 
@@ -542,16 +544,16 @@ impl ResultNotified {
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         if self.result_type == ResultType::Completed && dat.result.is_err() {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            return TransitionResult::Err(nondeterminism!(
                 "Local activity (seq {}) completed successfully locally, but history said \
                  it failed!",
                 shared.attrs.seq
-            )));
+            ));
         } else if self.result_type == ResultType::Failed && dat.result.is_ok() {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            return TransitionResult::Err(nondeterminism!(
                 "Local activity (seq {}) failed locally, but history said it completed!",
                 shared.attrs.seq
-            )));
+            ));
         }
         verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
@@ -811,15 +813,15 @@ impl TryFrom<HistEventData> for LocalActivityMachineEvents {
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
         let e = e.event;
         if e.event_type() != EventType::MarkerRecorded {
-            return Err(WFMachinesError::Nondeterminism(format!(
+            return Err(nondeterminism!(
                 "Local activity machine cannot handle this event: {e}"
-            )));
+            ));
         }
 
         match e.into_local_activity_marker_details() {
             Some(marker_dat) => Ok(LocalActivityMachineEvents::MarkerRecorded(marker_dat)),
-            _ => Err(WFMachinesError::Nondeterminism(
-                "Local activity machine encountered an unparsable marker".to_string(),
+            _ => Err(nondeterminism!(
+                "Local activity machine encountered an unparsable marker"
             )),
         }
     }
@@ -830,11 +832,11 @@ fn verify_marker_data_matches(
     dat: &CompleteLocalActivityData,
 ) -> Result<(), WFMachinesError> {
     if shared.attrs.seq != dat.marker_dat.seq {
-        return Err(WFMachinesError::Nondeterminism(format!(
+        return Err(nondeterminism!(
             "Local activity marker data has sequence number {} but matched against LA \
             command with sequence number {}",
             dat.marker_dat.seq, shared.attrs.seq
-        )));
+        ));
     }
     // Here we use whether or not we were replaying when we _first invoked_ the LA, because we
     // are always replaying when we see the marker recorded event, and that would make this check
@@ -844,18 +846,18 @@ fn verify_marker_data_matches(
         !shared.replaying_when_invoked,
     ) {
         if dat.marker_dat.activity_id != shared.attrs.activity_id {
-            return Err(WFMachinesError::Nondeterminism(format!(
+            return Err(nondeterminism!(
                 "Activity id of recorded marker '{}' does not \
                  match activity id of local activity command '{}'",
                 dat.marker_dat.activity_id, shared.attrs.activity_id
-            )));
+            ));
         }
         if dat.marker_dat.activity_type != shared.attrs.activity_type {
-            return Err(WFMachinesError::Nondeterminism(format!(
+            return Err(nondeterminism!(
                 "Activity type of recorded marker '{}' does not \
                  match activity type of local activity command '{}'",
                 dat.marker_dat.activity_type, shared.attrs.activity_type
-            )));
+            ));
         }
     }
 

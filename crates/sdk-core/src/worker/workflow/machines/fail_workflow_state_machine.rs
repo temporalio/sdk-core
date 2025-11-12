@@ -2,7 +2,7 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::machines::HistEventData;
+use crate::worker::workflow::{machines::HistEventData, nondeterminism, fatal};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::FailWorkflowExecution,
@@ -84,9 +84,9 @@ impl TryFrom<HistEventData> for FailWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionFailed => Self::WorkflowExecutionFailed,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Fail workflow machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }

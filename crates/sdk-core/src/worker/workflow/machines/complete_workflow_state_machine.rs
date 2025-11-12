@@ -2,7 +2,7 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::{abstractions::dbg_panic, worker::workflow::machines::HistEventData};
+use crate::{abstractions::dbg_panic, worker::workflow::{machines::HistEventData, nondeterminism, fatal}};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,
@@ -60,9 +60,9 @@ impl TryFrom<HistEventData> for CompleteWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionCompleted => Self::WorkflowExecutionCompleted,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Complete workflow machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }

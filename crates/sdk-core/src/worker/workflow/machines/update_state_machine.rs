@@ -4,7 +4,11 @@ use super::{
 };
 use crate::{
     protosext::protocol_messages::UpdateRequest,
-    worker::workflow::machines::{HistEventData, NewMachineWithResponse},
+    worker::workflow::{
+        machines::{HistEventData, NewMachineWithResponse},
+        fatal,
+        nondeterminism,
+    },
 };
 use itertools::Itertools;
 use prost::EncodeError;
@@ -121,10 +125,10 @@ impl UpdateMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         let cmds = match resp.response {
             None => {
-                return Err(WFMachinesError::Fatal(format!(
+                return Err(fatal!(
                     "Update response for update {} had an empty result, this is a lang layer bug.",
                     &self.shared_state.meta.update_id
-                )));
+                ));
             }
             Some(update_response::Response::Accepted(_)) => {
                 self.on_event(UpdateMachineEvents::Accept)
@@ -137,11 +141,11 @@ impl UpdateMachine {
             }
         }
         .map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::Nondeterminism(format!(
+            MachineError::InvalidTransition => nondeterminism!(
                 "Invalid transition while handling update response (id {}) in state {}",
                 &self.shared_state.meta.update_id,
                 self.state(),
-            )),
+            ),
             MachineError::Underlying(e) => e,
         })?;
         cmds.into_iter()
@@ -175,7 +179,7 @@ impl UpdateMachine {
         msg: UpdateMsg,
     ) -> Result<MachineResponse, WFMachinesError> {
         let accept_body = msg.pack().map_err(|e| {
-            WFMachinesError::Fatal(format!("Failed to serialize update response: {e:?}"))
+            fatal!("Failed to serialize update response: {e:?}")
         })?;
         Ok(MachineResponse::IssueNewMessage(ProtocolMessage {
             id: outgoing_id.clone(),
@@ -223,9 +227,9 @@ impl TryFrom<HistEventData> for UpdateMachineEvents {
                 UpdateMachineEvents::WorkflowExecutionUpdateCompleted
             }
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Update machine does not handle this event: {e}"
-                )));
+                ))
             }
         })
     }

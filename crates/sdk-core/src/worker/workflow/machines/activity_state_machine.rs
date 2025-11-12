@@ -7,7 +7,7 @@ use super::{
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    worker::workflow::{InternalFlagsRef, machines::HistEventData},
+    worker::workflow::{InternalFlagsRef, machines::HistEventData, fatal, nondeterminism},
 };
 use std::convert::{TryFrom, TryInto};
 use temporalio_common::protos::{
@@ -179,7 +179,7 @@ impl ActivityMachine {
                 "Activity cancel ignored in terminal state",
                 ::serde_json::json!({
                     "seq": self.shared_state.attrs.seq,
-                    "state": format!("{:?}", self.state())
+                    "state": format!("{}", self.state())
                 })
             );
 
@@ -236,9 +236,9 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                         last_task_in_history,
                     })
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Activity scheduled attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             EventType::ActivityTaskStarted => Self::ActivityTaskStarted(e.event_id),
@@ -249,9 +249,9 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCompleted(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Activity completion attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             EventType::ActivityTaskFailed => {
@@ -260,9 +260,9 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskFailed(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Activity failure attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             EventType::ActivityTaskTimedOut => {
@@ -271,9 +271,9 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskTimedOut(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Activity timeout attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             EventType::ActivityTaskCancelRequested => Self::ActivityTaskCancelRequested,
@@ -283,15 +283,15 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCanceled(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Activity cancellation attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Activity machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }
@@ -388,18 +388,18 @@ impl ScheduleCommandCreated {
             sched_dat.last_task_in_history,
         ) {
             if sched_dat.act_id != dat.attrs.activity_id {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Activity id of scheduled event '{}' does not \
                  match activity id of activity command '{}'",
                     sched_dat.act_id, dat.attrs.activity_id
-                )));
+                ));
             }
             if sched_dat.act_type != dat.attrs.activity_type {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Activity type of scheduled event '{}' does not \
                  match activity type of activity command '{}'",
                     sched_dat.act_type, dat.attrs.activity_type
-                )));
+                ));
             }
         }
         dat.scheduled_event_id = sched_dat.event_id;
@@ -446,7 +446,6 @@ impl ScheduledEventRecorded {
             "Activity timed out before starting",
             ::serde_json::json!({
                 "activity_id": dat.attrs.activity_id,
-                "timeout_type": attrs.timeout_type,
                 "state": "ScheduledEventRecorded"
             })
         );
@@ -535,7 +534,6 @@ impl Started {
             "Activity timed out after starting",
             ::serde_json::json!({
                 "activity_id": dat.attrs.activity_id,
-                "timeout_type": attrs.timeout_type,
                 "state": "Started"
             })
         );
@@ -763,10 +761,10 @@ impl Canceled {
             );
             TransitionResult::default()
         } else {
-            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            TransitionResult::Err(nondeterminism!(
                 "Non-Abandon cancel mode activities cannot be started after being cancelled. \
                  Seq: {seq_num:?}"
-            )))
+            ))
         }
     }
     pub(super) fn on_activity_task_completed(
@@ -786,9 +784,9 @@ impl Canceled {
             );
             TransitionResult::default()
         } else {
-            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            TransitionResult::Err(nondeterminism!(
                 "Non-Abandon cancel mode activities cannot be completed after being cancelled: {attrs:?}"
-            )))
+            ))
         }
     }
 }
@@ -914,9 +912,9 @@ fn convert_payloads(
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
-        WFMachinesError::Fatal(format!(
+        fatal!(
             "Not exactly one payload in activity result ({pe}) for event: {event_info:?}"
-        ))
+        )
     })
 }
 

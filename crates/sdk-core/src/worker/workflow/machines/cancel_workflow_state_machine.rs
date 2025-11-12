@@ -2,7 +2,7 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::machines::HistEventData;
+use crate::worker::workflow::{machines::HistEventData, nondeterminism, fatal};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::CancelWorkflowExecution,
@@ -67,9 +67,9 @@ impl TryFrom<HistEventData> for CancelWorkflowMachineEvents {
         Ok(match EventType::try_from(e.event_type) {
             Ok(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Cancel workflow machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }

@@ -29,6 +29,8 @@ use crate::{
         machines::{
             HistEventData, upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE,
         },
+        fatal,
+        nondeterminism,
     },
 };
 use anyhow::Context;
@@ -129,7 +131,7 @@ pub(super) fn has_change<'a>(
         let mut serialized = all_ids
             .as_json_payload()
             .context("Could not serialize search attribute value for patch machine")
-            .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
+            .map_err(|e| fatal!("{}", e.to_string()))?;
 
         if serialized.data.len() >= MAX_SEARCH_ATTR_PAYLOAD_SIZE {
             warn!(
@@ -219,10 +221,10 @@ impl Notified {
         id: String,
     ) -> PatchMachineTransition<MarkerCommandRecorded> {
         if id != dat.patch_id {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            return TransitionResult::Err(nondeterminism!(
                 "Change id {} does not match expected id {}",
                 id, dat.patch_id
-            )));
+            ));
         }
         TransitionResult::default()
     }
@@ -256,9 +258,9 @@ impl TryFrom<HistEventData> for PatchMachineEvents {
         let e = e.event;
         match e.get_patch_marker_details() {
             Some((id, _)) => Ok(Self::MarkerRecorded(id)),
-            _ => Err(WFMachinesError::Nondeterminism(format!(
+            _ => Err(nondeterminism!(
                 "Change machine cannot handle this event: {e}"
-            ))),
+            )),
         }
     }
 }

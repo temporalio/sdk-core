@@ -2,7 +2,7 @@ use super::{
     EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper, StateMachine,
     TransitionResult, WFMachinesAdapter, WFMachinesError, fsm,
 };
-use crate::worker::workflow::machines::HistEventData;
+use crate::worker::workflow::{machines::HistEventData, nondeterminism, fatal};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
@@ -73,9 +73,9 @@ impl TryFrom<HistEventData> for ContinueAsNewWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionContinuedAsNew => Self::WorkflowExecutionContinuedAsNew,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Continue as new workflow machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }

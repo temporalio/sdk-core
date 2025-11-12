@@ -243,10 +243,10 @@ impl ManagedRun {
             let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
                 return Err(RunUpdateErr {
-                    source: WFMachinesError::Fatal(format!(
+                    source: crate::worker::workflow::fatal!(
                         "Machines created for {} with no jobs",
                         self.wfm.machines.run_id
-                    )),
+                    ),
                     complete_resp_chan: None,
                 });
             }

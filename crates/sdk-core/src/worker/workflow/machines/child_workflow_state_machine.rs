@@ -5,7 +5,7 @@ use super::{
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    worker::workflow::{InternalFlagsRef, machines::HistEventData},
+    worker::workflow::{InternalFlagsRef, machines::HistEventData, fatal, nondeterminism},
 };
 use itertools::Itertools;
 use std::{
@@ -134,7 +134,7 @@ pub(super) struct Cancelled {
 }
 
 fn completion_of_not_abandoned_err() -> WFMachinesError {
-    WFMachinesError::Nondeterminism(
+    nondeterminism!("{}", 
         "Child workflows which don't have the ABANDON cancellation type cannot complete after \
          being cancelled."
             .to_string(),
@@ -146,7 +146,7 @@ impl Cancelled {
         self,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
         if self.seen_cancelled_event {
-            ChildWorkflowMachineTransition::Err(WFMachinesError::Fatal(
+            ChildWorkflowMachineTransition::Err(fatal!("{}", 
                 "Child workflow has already seen a ChildWorkflowExecutionCanceledEvent, and now \
                  another is being applied! This is a bug, please report."
                     .to_string(),
@@ -234,18 +234,18 @@ impl StartCommandCreated {
             event_dat.last_task_in_history,
         ) {
             if event_dat.wf_id != state.workflow_id {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Child workflow id of scheduled event '{}' does not \
                      match child workflow id of command '{}'",
                     event_dat.wf_id, state.workflow_id
-                )));
+                ));
             }
             if event_dat.wf_type != state.workflow_type {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Child workflow type of scheduled event '{}' does not \
                      match child workflow type of command '{}'",
                     event_dat.wf_type, state.workflow_type
-                )));
+                ));
             }
         }
         state.initiated_event_id = event_dat.event_id;
@@ -533,7 +533,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                         last_task_in_history,
                     })
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "StartChildWorkflowExecutionInitiated attributes were unset".to_string(),
                     ));
                 }
@@ -547,13 +547,13 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 {
                     Self::StartChildWorkflowExecutionFailed(
                         StartChildWorkflowExecutionFailedCause::try_from(cause).map_err(|_| {
-                            WFMachinesError::Fatal(
+                            fatal!("{}", 
                                 "Invalid StartChildWorkflowExecutionFailedCause".to_string(),
                             )
                         })?,
                     )
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "StartChildWorkflowExecutionFailed attributes were unset".to_string(),
                     ));
                 }
@@ -573,7 +573,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                         started_event_id: e.event_id,
                     })
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "ChildWorkflowExecutionStarted attributes were unset or malformed"
                             .to_string(),
                     ));
@@ -588,7 +588,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 {
                     Self::ChildWorkflowExecutionCompleted(result)
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "ChildWorkflowExecutionCompleted attributes were unset or malformed"
                             .to_string(),
                     ));
@@ -601,7 +601,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 {
                     Self::ChildWorkflowExecutionFailed(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "ChildWorkflowExecutionFailed attributes were unset".to_string(),
                     ));
                 }
@@ -613,7 +613,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 {
                     Self::ChildWorkflowExecutionTimedOut(atts.retry_state())
                 } else {
-                    return Err(WFMachinesError::Fatal(
+                    return Err(fatal!("{}", 
                         "ChildWorkflowExecutionTimedOut attributes were unset or malformed"
                             .to_string(),
                     ));
@@ -624,9 +624,9 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
             }
             Ok(EventType::ChildWorkflowExecutionCanceled) => Self::ChildWorkflowExecutionCancelled,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Child workflow machine does not handle this event: {e:?}"
-                )));
+                ))
             }
         })
     }
@@ -773,9 +773,9 @@ fn convert_payloads(
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
-        WFMachinesError::Fatal(format!(
+        fatal!(
             "Not exactly one payload in child workflow result ({pe}) for event: {event_info:?}"
-        ))
+        )
     })
 }
 
