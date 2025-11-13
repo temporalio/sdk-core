@@ -36,6 +36,7 @@ pub use temporalio_common::protos::temporal::api::{
 pub use tonic;
 pub use worker_registry::{
     ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot,
+    WorkerCapabilities,
 };
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,

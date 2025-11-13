@@ -652,12 +652,26 @@ impl Worker {
             )
         });
 
+        // Determine worker capabilities based on configuration
+        let capabilities = temporalio_client::WorkerCapabilities {
+            handles_workflows: !matches!(
+                config.workflow_task_poller_behavior,
+                PollerBehavior::SimpleMaximum(0)
+            ),
+            handles_activities: !config.no_remote_activities,
+            handles_nexus: !matches!(
+                config.nexus_task_poller_behavior,
+                PollerBehavior::SimpleMaximum(0)
+            ),
+        };
+
         let client_worker_registrator = Arc::new(ClientWorkerRegistrator {
             worker_instance_key,
             slot_provider: provider,
             heartbeat_manager: worker_heartbeat,
             client: RwLock::new(client.clone()),
             shared_namespace_worker,
+            capabilities,
         });
 
         if !shared_namespace_worker {
@@ -1088,6 +1102,7 @@ struct ClientWorkerRegistrator {
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     client: RwLock<Arc<dyn WorkerClient>>,
     shared_namespace_worker: bool,
+    capabilities: temporalio_client::WorkerCapabilities,
 }
 
 impl ClientWorker for ClientWorkerRegistrator {
@@ -1135,6 +1150,10 @@ impl ClientWorker for ClientWorkerRegistrator {
         } else {
             bail!("Shared namespace worker creation never be called without a heartbeat manager");
         }
+    }
+
+    fn worker_capabilities(&self) -> temporalio_client::WorkerCapabilities {
+        self.capabilities
     }
 }
 

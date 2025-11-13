@@ -1598,7 +1598,7 @@ proxier! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptionsBuilder, RetryClient};
+    use crate::{ClientOptionsBuilder, RetryClient, WorkerCapabilities};
     use std::collections::HashSet;
     use temporalio_common::protos::temporal::api::{
         operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
@@ -1865,6 +1865,13 @@ mod tests {
         mock_provider
             .expect_worker_instance_key()
             .return_const(uuid);
+        mock_provider
+            .expect_worker_capabilities()
+            .return_const(WorkerCapabilities {
+                handles_workflows: true,
+                handles_activities: true,
+                handles_nexus: true,
+            });
 
         let client_worker_set = Arc::new(ClientWorkerSet::new());
         client_worker_set
