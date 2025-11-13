@@ -43,6 +43,7 @@ pub struct WorkerOptions {
     pub identity_override: ByteArrayRef,
     pub max_cached_workflows: u32,
     pub tuner: TunerHolder,
+    pub task_types: u8,
     pub no_remote_activities: bool,
     pub sticky_queue_schedule_to_start_timeout_millis: u64,
     pub max_heartbeat_throttle_interval_millis: u64,
@@ -1183,6 +1184,13 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .client_identity_override(opt.identity_override.to_option_string())
             .max_cached_workflows(opt.max_cached_workflows as usize)
             .tuner(Arc::new(converted_tuner))
+            .task_types({
+                if opt.task_types == 0 {
+                    temporalio_common::worker::WorkerTaskTypes::all()
+                } else {
+                    temporalio_common::worker::WorkerTaskTypes::from_bits_truncate(opt.task_types)
+                }
+            })
             .no_remote_activities(opt.no_remote_activities)
             .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
                 opt.sticky_queue_schedule_to_start_timeout_millis,

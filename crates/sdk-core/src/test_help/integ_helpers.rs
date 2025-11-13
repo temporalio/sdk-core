@@ -194,12 +194,14 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
         sticky_q,
         mocks.client,
         TaskPollers::Mocked {
-            wft_stream: mocks.inputs.wft_stream,
+            wft_stream: Some(mocks.inputs.wft_stream),
             act_poller,
-            nexus_poller: mocks
-                .inputs
-                .nexus_poller
-                .unwrap_or_else(|| mock_poller_from_resps([])),
+            nexus_poller: Some(
+                mocks
+                    .inputs
+                    .nexus_poller
+                    .unwrap_or_else(|| mock_poller_from_resps([])),
+            ),
         },
         None,
         None,

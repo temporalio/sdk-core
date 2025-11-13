@@ -115,14 +115,14 @@ pub struct Worker {
     client: Arc<dyn WorkerClient>,
     /// Worker instance key, unique identifier for this worker
     worker_instance_key: Uuid,
-    /// Manages all workflows and WFT processing
-    workflows: Workflows,
+    /// Manages all workflows and WFT processing. None if workflow polling is disabled.
+    workflows: Option<Workflows>,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
-    /// Manages local activities
-    local_act_mgr: Arc<LocalActivityManager>,
-    /// Manages Nexus tasks
-    nexus_mgr: NexusManager,
+    /// Manages local activities. None if workflow polling is disabled (local activities require workflows).
+    local_act_mgr: Option<Arc<LocalActivityManager>>,
+    /// Manages Nexus tasks. None if nexus polling is disabled.
+    nexus_mgr: Option<NexusManager>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -186,7 +186,10 @@ impl WorkerTrait for Worker {
 
     #[instrument(skip(self))]
     async fn poll_nexus_task(&self) -> Result<NexusTask, PollError> {
-        self.nexus_mgr.next_nexus_task().await
+        match &self.nexus_mgr {
+            Some(mgr) => mgr.next_nexus_task().await,
+            None => Err(PollError::ShutDown),
+        }
     }
 
     async fn complete_workflow_activation(
@@ -268,7 +271,9 @@ impl WorkerTrait for Worker {
 
         // Push a BumpStream message to the workflow activation queue. This ensures that
         // any pending workflow activation polls will resolve, even if there are no other inputs.
-        self.workflows.bump_stream();
+        if let Some(workflows) = &self.workflows {
+            workflows.bump_stream();
+        }
 
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
@@ -276,13 +281,15 @@ impl WorkerTrait for Worker {
         }
         // Let the manager know that shutdown has been initiated to try to unblock the local
         // activity poll in case this worker is an activity-only worker.
-        self.local_act_mgr.shutdown_initiated();
+        if let Some(la_mgr) = &self.local_act_mgr {
+            la_mgr.shutdown_initiated();
 
-        // If workflows have never been polled, immediately tell the local activity manager
-        // that workflows have shut down, so it can proceed with shutdown without waiting.
-        // This is particularly important for activity-only workers.
-        if !self.workflows.ever_polled() {
-            self.local_act_mgr.workflows_have_shutdown();
+            // If workflows have never been polled, immediately tell the local activity manager
+            // that workflows have shut down, so it can proceed with shutdown without waiting.
+            // This is particularly important for activity-only workers.
+            if self.workflows.as_ref().is_none_or(|w| !w.ever_polled()) {
+                la_mgr.workflows_have_shutdown();
+            }
         }
     }
 
@@ -444,30 +451,35 @@ impl Worker {
             slot_context_data.clone(),
             meter.clone(),
         );
+        let effective_task_types = config.effective_task_types();
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let wft_stream = make_wft_poller(
-                    &config,
-                    &sticky_queue_name,
-                    &client,
-                    &metrics,
-                    &shutdown_token,
-                    &wft_slots,
-                    wf_last_suc_poll_time.clone(),
-                    wf_sticky_last_suc_poll_time.clone(),
-                );
-                let wft_stream = if !client.is_mock() {
-                    // Some replay tests combine a mock client with real pollers,
-                    // and they don't need to use the external stream
-                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx))
-                        .left_stream()
+                let wft_stream = if effective_task_types.polls_workflows() {
+                    let stream = make_wft_poller(
+                        &config,
+                        &sticky_queue_name,
+                        &client,
+                        &metrics,
+                        &shutdown_token,
+                        &wft_slots,
+                        wf_last_suc_poll_time.clone(),
+                        wf_sticky_last_suc_poll_time.clone(),
+                    )
+                    .boxed();
+                    let stream = if !client.is_mock() {
+                        // Some replay tests combine a mock client with real pollers,
+                        // and they don't need to use the external stream
+                        stream::select(stream, UnboundedReceiverStream::new(external_wft_rx))
+                            .left_stream()
+                    } else {
+                        stream.right_stream()
+                    };
+                    Some(stream)
                 } else {
-                    wft_stream.right_stream()
+                    None
                 };
 
-                let act_poll_buffer = if config.no_remote_activities {
-                    None
-                } else {
+                let act_poll_buffer = if effective_task_types.polls_activities() {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
@@ -483,23 +495,28 @@ impl Worker {
                         act_last_suc_poll_time.clone(),
                     );
                     Some(Box::from(ap) as BoxedActPoller)
+                } else {
+                    None
                 };
 
-                let np_metrics = metrics.with_new_attrs([nexus_poller()]);
-
-                let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
-                    client.clone(),
-                    config.task_queue.clone(),
-                    config.nexus_task_poller_behavior,
-                    nexus_slots.clone(),
-                    shutdown_token.child_token(),
-                    Some(move |np| np_metrics.record_num_pollers(np)),
-                    nexus_last_suc_poll_time.clone(),
-                    shared_namespace_worker,
-                )) as BoxedNexusPoller;
+                let nexus_poll_buffer = if effective_task_types.polls_nexus() {
+                    let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                    Some(Box::new(LongPollBuffer::new_nexus_task(
+                        client.clone(),
+                        config.task_queue.clone(),
+                        config.nexus_task_poller_behavior,
+                        nexus_slots.clone(),
+                        shutdown_token.child_token(),
+                        Some(move |np| np_metrics.record_num_pollers(np)),
+                        nexus_last_suc_poll_time.clone(),
+                        shared_namespace_worker,
+                    )) as BoxedNexusPoller)
+                } else {
+                    None
+                };
 
                 #[cfg(any(feature = "test-utilities", test))]
-                let wft_stream = wft_stream.left_stream();
+                let wft_stream = wft_stream.map(|s| s.left_stream());
                 (wft_stream, act_poll_buffer, nexus_poll_buffer)
             }
             #[cfg(any(feature = "test-utilities", test))]
@@ -510,25 +527,27 @@ impl Worker {
             } => {
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
-                let np = MockPermittedPollBuffer::new(Arc::new(nexus_slots.clone()), nexus_poller);
-                let wft_semaphore = wft_slots.clone();
-                let wfs = wft_stream.then(move |s| {
-                    let wft_semaphore = wft_semaphore.clone();
-                    async move {
-                        let permit = wft_semaphore.acquire_owned().await;
-                        s.map(|s| (s, permit))
-                    }
+                let np = nexus_poller
+                    .map(|np| MockPermittedPollBuffer::new(Arc::new(nexus_slots.clone()), np));
+                let wfs = wft_stream.map(|stream| {
+                    let wft_semaphore = wft_slots.clone();
+                    let wfs = stream.then(move |s| {
+                        let wft_semaphore = wft_semaphore.clone();
+                        async move {
+                            let permit = wft_semaphore.acquire_owned().await;
+                            s.map(|s| (s, permit))
+                        }
+                    });
+                    wfs.right_stream()
                 });
-                let wfs = wfs.right_stream();
                 (
                     wfs,
                     ap.map(|ap| Box::new(ap) as BoxedActPoller),
-                    Box::new(np) as BoxedNexusPoller,
+                    np.map(|np| Box::new(np) as BoxedNexusPoller),
                 )
             }
         };
 
-        let (hb_tx, hb_rx) = unbounded_channel();
         let la_permit_dealer = MeteredPermitDealer::new(
             tuner.local_activity_slot_supplier(),
             metrics.with_new_attrs([local_activity_worker_type()]),
@@ -537,12 +556,21 @@ impl Worker {
             meter.clone(),
         );
         let la_permits = la_permit_dealer.get_extant_count_rcv();
-        let local_act_mgr = Arc::new(LocalActivityManager::new(
-            config.namespace.clone(),
-            la_permit_dealer.clone(),
-            hb_tx,
-            metrics.clone(),
-        ));
+
+        let (local_act_mgr, la_sink, hb_rx) = if effective_task_types.polls_workflows() {
+            let (hb_tx, hb_rx) = unbounded_channel();
+            let local_act_mgr = Arc::new(LocalActivityManager::new(
+                config.namespace.clone(),
+                la_permit_dealer.clone(),
+                hb_tx,
+                metrics.clone(),
+            ));
+            let la_sink = LAReqSink::new(local_act_mgr.clone());
+            (Some(local_act_mgr), Some(la_sink), Some(hb_rx))
+        } else {
+            (None, None, None)
+        };
+
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
                 act_slots.clone(),
@@ -559,14 +587,15 @@ impl Worker {
         if !poll_on_non_local_activities && !shared_namespace_worker {
             info!("Activity polling is disabled for this worker");
         };
-        let la_sink = LAReqSink::new(local_act_mgr.clone());
 
-        let nexus_mgr = NexusManager::new(
-            nexus_poller,
-            metrics.clone(),
-            config.graceful_shutdown_period,
-            shutdown_token.child_token(),
-        );
+        let nexus_mgr = nexus_poller.map(|poller| {
+            NexusManager::new(
+                poller,
+                metrics.clone(),
+                config.graceful_shutdown_period,
+                shutdown_token.child_token(),
+            )
+        });
 
         let deployment_options = match &config.versioning_strategy {
             temporalio_common::worker::WorkerVersioningStrategy::WorkerDeploymentBased(opts) => {
@@ -626,47 +655,51 @@ impl Worker {
         Ok(Self {
             worker_instance_key,
             client: client.clone(),
-            workflows: Workflows::new(
-                WorkflowBasics {
-                    worker_config: Arc::new(config.clone()),
-                    shutdown_token: shutdown_token.child_token(),
-                    metrics,
-                    server_capabilities: client.capabilities().unwrap_or_default(),
-                    sdk_name: sdk_name_and_ver.0,
-                    sdk_version: sdk_name_and_ver.1,
-                    default_versioning_behavior: config
-                        .versioning_strategy
-                        .default_versioning_behavior(),
-                },
-                sticky_queue_name.map(|sq| StickyExecutionAttributes {
-                    worker_task_queue: Some(TaskQueue {
-                        name: sq,
-                        kind: TaskQueueKind::Sticky as i32,
-                        normal_name: config.task_queue.clone(),
+            workflows: wft_stream.map(|stream| {
+                Workflows::new(
+                    WorkflowBasics {
+                        worker_config: Arc::new(config.clone()),
+                        shutdown_token: shutdown_token.child_token(),
+                        metrics,
+                        server_capabilities: client.capabilities().unwrap_or_default(),
+                        sdk_name: sdk_name_and_ver.0,
+                        sdk_version: sdk_name_and_ver.1,
+                        default_versioning_behavior: config
+                            .versioning_strategy
+                            .default_versioning_behavior(),
+                    },
+                    sticky_queue_name.map(|sq| StickyExecutionAttributes {
+                        worker_task_queue: Some(TaskQueue {
+                            name: sq,
+                            kind: TaskQueueKind::Sticky as i32,
+                            normal_name: config.task_queue.clone(),
+                        }),
+                        schedule_to_start_timeout: Some(
+                            config
+                                .sticky_queue_schedule_to_start_timeout
+                                .try_into()
+                                .expect("timeout fits into proto"),
+                        ),
                     }),
-                    schedule_to_start_timeout: Some(
-                        config
-                            .sticky_queue_schedule_to_start_timeout
-                            .try_into()
-                            .expect("timeout fits into proto"),
-                    ),
-                }),
-                client,
-                wft_slots,
-                wft_stream,
-                la_sink,
-                local_act_mgr.clone(),
-                hb_rx,
-                at_task_mgr.as_ref().and_then(|mgr| {
-                    match config.max_task_queue_activities_per_second {
-                        Some(persec) if persec > 0.0 => None,
-                        _ => Some(mgr.get_handle_for_workflows()),
-                    }
-                }),
-                worker_telemetry
-                    .as_ref()
-                    .and_then(|telem| telem.trace_subscriber.clone()),
-            ),
+                    client,
+                    wft_slots,
+                    stream,
+                    la_sink.expect("LA sink must exist when workflows enabled"),
+                    local_act_mgr
+                        .clone()
+                        .expect("LA manager must exist when workflows enabled"),
+                    hb_rx.expect("Heartbeat channel must exist when workflows enabled"),
+                    at_task_mgr.as_ref().and_then(|mgr| {
+                        match config.max_task_queue_activities_per_second {
+                            Some(persec) if persec > 0.0 => None,
+                            _ => Some(mgr.get_handle_for_workflows()),
+                        }
+                    }),
+                    worker_telemetry
+                        .as_ref()
+                        .and_then(|telem| telem.trace_subscriber.clone()),
+                )
+            }),
             at_task_mgr,
             local_act_mgr,
             config,
@@ -690,45 +723,51 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        if let Some(name) = self.workflows.get_sticky_queue_name() {
-            let heartbeat = self
-                .client_worker_registrator
-                .heartbeat_manager
-                .as_ref()
-                .map(|hm| hm.heartbeat_callback.clone()());
+        if let Some(workflows) = &self.workflows {
+            if let Some(name) = workflows.get_sticky_queue_name() {
+                let heartbeat = self
+                    .client_worker_registrator
+                    .heartbeat_manager
+                    .as_ref()
+                    .map(|hm| hm.heartbeat_callback.clone()());
 
-            // This is a best effort call and we can still shutdown the worker if it fails
-            match self.client.shutdown_worker(name, heartbeat).await {
-                Err(err)
-                    if !matches!(
-                        err.code(),
-                        tonic::Code::Unimplemented | tonic::Code::Unavailable
-                    ) =>
-                {
-                    warn!(
-                        "shutdown_worker rpc errored during worker shutdown: {:?}",
-                        err
-                    );
+                // This is a best effort call and we can still shutdown the worker if it fails
+                match self.client.shutdown_worker(name, heartbeat).await {
+                    Err(err)
+                        if !matches!(
+                            err.code(),
+                            tonic::Code::Unimplemented | tonic::Code::Unavailable
+                        ) =>
+                    {
+                        warn!(
+                            "shutdown_worker rpc errored during worker shutdown: {:?}",
+                            err
+                        );
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         }
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
-        self.local_act_mgr
-            .wait_all_outstanding_tasks_finished()
-            .await;
+        if let Some(la_mgr) = &self.local_act_mgr {
+            la_mgr.wait_all_outstanding_tasks_finished().await;
+        }
         // Wait for workflows to finish
-        self.workflows
-            .shutdown()
-            .await
-            .expect("Workflow processing terminates cleanly");
+        if let Some(workflows) = &self.workflows {
+            workflows
+                .shutdown()
+                .await
+                .expect("Workflow processing terminates cleanly");
+        }
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
         // Wait for nexus tasks to finish
-        self.nexus_mgr.shutdown().await;
+        if let Some(nexus) = &self.nexus_mgr {
+            nexus.shutdown().await;
+        }
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
@@ -752,30 +791,38 @@ impl Worker {
 
     /// Returns number of currently cached workflows
     pub async fn cached_workflows(&self) -> usize {
-        self.workflows
-            .get_state_info()
-            .await
-            .map(|r| r.cached_workflows)
-            .unwrap_or_default()
+        match &self.workflows {
+            Some(workflows) => workflows
+                .get_state_info()
+                .await
+                .map(|r| r.cached_workflows)
+                .unwrap_or_default(),
+            None => 0,
+        }
     }
 
     /// Returns number of currently outstanding workflow tasks
     #[cfg(test)]
     pub(crate) async fn outstanding_workflow_tasks(&self) -> usize {
-        self.workflows
-            .get_state_info()
-            .await
-            .map(|r| r.outstanding_wft)
-            .unwrap_or_default()
+        match &self.workflows {
+            Some(workflows) => workflows
+                .get_state_info()
+                .await
+                .map(|r| r.outstanding_wft)
+                .unwrap_or_default(),
+            None => 0,
+        }
     }
 
     #[allow(unused)]
     pub(crate) fn available_wft_permits(&self) -> Option<usize> {
-        self.workflows.available_wft_permits()
+        self.workflows
+            .as_ref()
+            .and_then(|w| w.available_wft_permits())
     }
     #[cfg(test)]
     pub(crate) fn unused_wft_permits(&self) -> Option<usize> {
-        self.workflows.unused_wft_permits()
+        self.workflows.as_ref().and_then(|w| w.unused_wft_permits())
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
@@ -817,17 +864,23 @@ impl Worker {
                 future::pending::<()>().await;
                 unreachable!()
             }
-            match self.local_act_mgr.next_pending().await {
-                Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),
-                Some(NextPendingLAAction::Autocomplete(action)) => {
-                    Ok(self.handle_la_complete_action(action))
-                }
-                None => {
-                    if self.shutdown_token.is_cancelled() {
-                        self.local_activities_complete
-                            .store(true, Ordering::Relaxed);
+            match &self.local_act_mgr {
+                Some(la_mgr) => match la_mgr.next_pending().await {
+                    Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),
+                    Some(NextPendingLAAction::Autocomplete(action)) => {
+                        Ok(self.handle_la_complete_action(action))
                     }
-                    Ok(None)
+                    None => {
+                        if self.shutdown_token.is_cancelled() {
+                            self.local_activities_complete
+                                .store(true, Ordering::Relaxed);
+                        }
+                        Ok(None)
+                    }
+                },
+                None => {
+                    future::pending::<()>().await;
+                    unreachable!()
                 }
             }
         };
@@ -884,18 +937,25 @@ impl Worker {
 
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
-        let r = self.workflows.next_workflow_activation().await;
-        // In the event workflows are shutdown or erroring, begin shutdown of everything else. Once
-        // they are shut down, tell the local activity manager that, so that it can know to cancel
-        // any remaining outstanding LAs and shutdown.
-        if let Err(ref e) = r {
-            // This is covering the situation where WFT pollers dying is the reason for shutdown
-            self.initiate_shutdown();
-            if matches!(e, PollError::ShutDown) {
-                self.local_act_mgr.workflows_have_shutdown();
+        match &self.workflows {
+            Some(workflows) => {
+                let r = workflows.next_workflow_activation().await;
+                // In the event workflows are shutdown or erroring, begin shutdown of everything else. Once
+                // they are shut down, tell the local activity manager that, so that it can know to cancel
+                // any remaining outstanding LAs and shutdown.
+                if let Err(ref e) = r {
+                    // This is covering the situation where WFT pollers dying is the reason for shutdown
+                    self.initiate_shutdown();
+                    if matches!(e, PollError::ShutDown)
+                        && let Some(la_mgr) = &self.local_act_mgr
+                    {
+                        la_mgr.workflows_have_shutdown();
+                    }
+                }
+                r
             }
+            None => Err(PollError::ShutDown), // Workflow polling is disabled
         }
-        r
     }
 
     #[instrument(skip(self, completion),
@@ -905,16 +965,24 @@ impl Worker {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        self.workflows
-            .activation_completed(
-                completion,
-                false,
-                self.post_activate_hook
-                    .as_ref()
-                    .map(|h| |data: PostActivateHookData| h(self, data)),
-            )
-            .await?;
-        Ok(())
+        match &self.workflows {
+            Some(workflows) => {
+                workflows
+                    .activation_completed(
+                        completion,
+                        false,
+                        self.post_activate_hook
+                            .as_ref()
+                            .map(|h| |data: PostActivateHookData| h(self, data)),
+                    )
+                    .await?;
+                Ok(())
+            }
+            None => Err(CompleteWfError::MalformedWorkflowCompletion {
+                reason: "Workflow polling is disabled for this worker".to_string(),
+                run_id: completion.run_id,
+            }),
+        }
     }
 
     #[instrument(
@@ -926,9 +994,10 @@ impl Worker {
         tt: TaskToken,
         status: nexus_task_completion::Status,
     ) -> Result<(), CompleteNexusError> {
-        self.nexus_mgr
-            .complete_task(tt, status, &*self.client)
-            .await
+        match &self.nexus_mgr {
+            Some(mgr) => mgr.complete_task(tt, status, &*self.client).await,
+            None => Err(CompleteNexusError::NexusNotEnabled),
+        }
     }
 
     /// Request a workflow eviction
@@ -938,7 +1007,9 @@ impl Worker {
         message: impl Into<String>,
         reason: EvictionReason,
     ) {
-        self.workflows.request_eviction(run_id, message, reason);
+        if let Some(workflows) = &self.workflows {
+            workflows.request_eviction(run_id, message, reason);
+        }
     }
 
     /// Sets a function to be called at the end of each activation completion
@@ -950,11 +1021,13 @@ impl Worker {
     }
 
     fn complete_local_act(&self, task_token: TaskToken, la_res: LocalActivityExecutionResult) {
-        if self
-            .handle_la_complete_action(self.local_act_mgr.complete(&task_token, la_res))
-            .is_some()
-        {
-            dbg_panic!("Should never be a task from direct completion");
+        if let Some(la_mgr) = &self.local_act_mgr {
+            if self
+                .handle_la_complete_action(la_mgr.complete(&task_token, la_res))
+                .is_some()
+            {
+                dbg_panic!("Should never be a task from direct completion");
+            }
         }
     }
 
@@ -974,7 +1047,9 @@ impl Worker {
     }
 
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
-        self.workflows.notify_of_local_result(run_id, res);
+        if let Some(workflows) = &self.workflows {
+            workflows.notify_of_local_result(run_id, res);
+        }
     }
 
     async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
@@ -1220,9 +1295,9 @@ pub(crate) enum TaskPollers {
     Real,
     #[cfg(any(feature = "test-utilities", test))]
     Mocked {
-        wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
+        wft_stream: Option<BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>>,
         act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
-        nexus_poller: BoxedPoller<PollNexusTaskQueueResponse>,
+        nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     },
 }
 

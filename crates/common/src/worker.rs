@@ -8,6 +8,7 @@ use crate::{
     },
     telemetry::metrics::TemporalMeter,
 };
+use bitflags::bitflags;
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -15,6 +16,39 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
+bitflags! {
+    /// Specifies which task types a worker will poll for.
+    ///
+    /// This allows fine-grained control over what kinds of work this worker handles.
+    /// Workers can be configured to handle any combination of workflows, activities, and nexus operations.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub struct WorkerTaskTypes: u8 {
+        /// Poll for workflow tasks
+        const WORKFLOWS = 0b001;
+        /// Poll for activity tasks (remote activities)
+        const ACTIVITIES = 0b010;
+        /// Poll for nexus tasks
+        const NEXUS = 0b100;
+    }
+}
+
+impl WorkerTaskTypes {
+    /// Returns true if this worker should poll for workflow tasks
+    pub fn polls_workflows(&self) -> bool {
+        self.contains(Self::WORKFLOWS)
+    }
+
+    /// Returns true if this worker should poll for activity tasks
+    pub fn polls_activities(&self) -> bool {
+        self.contains(Self::ACTIVITIES)
+    }
+
+    /// Returns true if this worker should poll for nexus tasks
+    pub fn polls_nexus(&self) -> bool {
+        self.contains(Self::NEXUS)
+    }
+}
 
 /// Defines per-worker configuration options
 #[derive(Clone, derive_builder::Builder)]
@@ -64,8 +98,24 @@ pub struct WorkerConfig {
     /// worker's task queue
     #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
     pub nexus_task_poller_behavior: PollerBehavior,
+    /// Specifies which task types this worker will poll for.
+    ///
+    /// By default, workers poll for all task types (workflows, activities, and nexus).
+    /// You can restrict this to any combination. For example, a workflow-only worker would use
+    /// `WorkerTaskTypes::WORKFLOWS`, while a worker handling activities and nexus but not workflows
+    /// would use `WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS`. If using in combination
+    /// with `no_remote_activites`, it must be ensured that `ACTIVITIES` is not selected, as
+    /// validation will fail.
+    ///
+    /// Note: At least one task type must be specified or the worker will fail validation.
+    #[builder(default = "WorkerTaskTypes::all()")]
+    pub task_types: WorkerTaskTypes,
     /// If set to true this worker will only handle workflow tasks and local activities, it will not
-    /// poll for activity tasks.
+    /// poll for activity tasks. If this is used with `task_types`, users must ensure
+    /// `WorkerTaskTypes::ACTIVITIES` is not set.
+    ///
+    /// This is equivalent to setting
+    /// `task_types = WorkerTaskTypes::WORKFLOWS | WorkerTaskTypes::NEXUS`.
     #[builder(default = "false")]
     pub no_remote_activities: bool,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
@@ -175,6 +225,18 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
+    /// Returns the effective task types this worker should poll for, taking into account
+    /// `no_remote_activities` field.
+    ///
+    /// If `no_remote_activities` is true, activities are excluded from the task types.
+    pub fn effective_task_types(&self) -> WorkerTaskTypes {
+        if self.no_remote_activities {
+            self.task_types - WorkerTaskTypes::ACTIVITIES
+        } else {
+            self.task_types
+        }
+    }
+
     /// Returns true if the configuration specifies we should fail a workflow on a certain error
     /// type rather than failing the workflow task.
     pub fn should_fail_workflow(
@@ -218,6 +280,24 @@ impl WorkerConfigBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
+        let task_types = self.task_types.unwrap_or_else(WorkerTaskTypes::all);
+        if task_types.is_empty() {
+            return Err("At least one task type must be enabled in `task_types`".to_owned());
+        }
+
+        // Handle backward compatibility with no_remote_activities
+        if let Some(true) = self.no_remote_activities {
+            // If no_remote_activities is set to true, warn if task_types was also explicitly set
+            // and includes activities
+            if self.task_types.is_some() && task_types.contains(WorkerTaskTypes::ACTIVITIES) {
+                return Err(
+                    "Conflicting configuration: `no_remote_activities` is true but `task_types` includes ACTIVITIES. \
+                     Please update `task_types` to not allow for ACTIVITIES."
+                        .to_owned(),
+                );
+            }
+        }
+
         if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
             b.validate()?
         }
@@ -247,6 +327,17 @@ impl WorkerConfigBuilder {
         }
         if matches!(self.max_outstanding_nexus_tasks.as_ref(), Some(Some(v)) if *v == 0) {
             return Err("`max_outstanding_nexus_tasks` must be > 0".to_owned());
+        }
+
+        // Validate workflow cache is consistent with task_types
+        if !task_types.contains(WorkerTaskTypes::WORKFLOWS)
+            && let Some(cache) = self.max_cached_workflows.as_ref()
+            && *cache > 0
+        {
+            return Err(
+                    "Cannot have `max_cached_workflows` > 0 when workflows are not enabled in `task_types`"
+                        .to_owned(),
+                );
         }
 
         if let Some(cache) = self.max_cached_workflows.as_ref()
