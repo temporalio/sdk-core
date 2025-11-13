@@ -36,6 +36,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -184,10 +185,15 @@ pub fn build_fake_worker(
 
 pub fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
-    let act_poller = if mocks.inputs.config.no_remote_activities {
-        None
-    } else {
+    let act_poller = if mocks
+        .inputs
+        .config
+        .task_types
+        .contains(WorkerTaskTypes::ACTIVITIES)
+    {
         mocks.inputs.act_poller
+    } else {
+        None
     };
     Worker::new_with_pollers(
         mocks.inputs.config,

@@ -20,6 +20,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptionsBuilder,
     worker::PollerBehavior,
@@ -214,7 +215,7 @@ async fn poller_load_sustained() {
             maximum: 200,
             initial: 5,
         })
-        .no_remote_activities(true);
+        .task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);

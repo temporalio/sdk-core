@@ -3,6 +3,7 @@ use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     protos::{
@@ -85,7 +86,7 @@ async fn happy_parent(ctx: WfContext) -> WorkflowResult<()> {
 #[tokio::test]
 async fn child_workflow_happy_path() {
     let mut starter = CoreWfStarter::new("child-workflows");
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
 
     worker.register_wf(PARENT_WF_TYPE.to_string(), happy_parent);
@@ -106,7 +107,7 @@ async fn child_workflow_happy_path() {
 #[tokio::test]
 async fn abandoned_child_bug_repro() {
     let mut starter = CoreWfStarter::new("child-workflow-abandon-bug");
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
@@ -177,7 +178,7 @@ async fn abandoned_child_bug_repro() {
 #[tokio::test]
 async fn abandoned_child_resolves_post_cancel() {
     let mut starter = CoreWfStarter::new("child-workflow-resolves-post-cancel");
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
@@ -244,7 +245,7 @@ async fn abandoned_child_resolves_post_cancel() {
 async fn cancelled_child_gets_reason() {
     let wf_name = "cancelled-child-gets-reason";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_string(), move |ctx: WfContext| async move {

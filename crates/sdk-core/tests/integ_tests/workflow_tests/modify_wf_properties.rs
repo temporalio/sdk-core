@@ -9,6 +9,7 @@ use temporalio_common::protos::{
         enums::v1::EventType,
     },
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
@@ -29,7 +30,7 @@ async fn sends_modify_wf_props() {
     let wf_name = "can_upsert_memo";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name, memo_upserter);

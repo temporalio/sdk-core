@@ -44,7 +44,6 @@ pub struct WorkerOptions {
     pub max_cached_workflows: u32,
     pub tuner: TunerHolder,
     pub task_types: u8,
-    pub no_remote_activities: bool,
     pub sticky_queue_schedule_to_start_timeout_millis: u64,
     pub max_heartbeat_throttle_interval_millis: u64,
     pub default_heartbeat_throttle_interval_millis: u64,
@@ -1191,7 +1190,6 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                     temporalio_common::worker::WorkerTaskTypes::from_bits_truncate(opt.task_types)
                 }
             })
-            .no_remote_activities(opt.no_remote_activities)
             .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
                 opt.sticky_queue_schedule_to_start_timeout_millis,
             ))

@@ -22,6 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::{
         coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
@@ -349,7 +350,7 @@ async fn can_paginate_long_history() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .no_remote_activities(true)
+        .task_types(WorkerTaskTypes::WORKFLOWS)
         // Do not use sticky queues so we are forced to paginate once history gets long
         .max_cached_workflows(0_usize);
 

@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -28,7 +29,7 @@ pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
@@ -40,7 +41,7 @@ async fn timer_workflow_workflow_driver() {
 async fn timer_workflow_manual() {
     let mut starter = init_core_and_create_wf("timer_workflow").await;
     let core = starter.get_worker().await;
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -64,7 +65,7 @@ async fn timer_workflow_manual() {
 async fn timer_cancel_workflow() {
     let mut starter = init_core_and_create_wf("timer_cancel_workflow").await;
     let core = starter.get_worker().await;
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -123,7 +124,7 @@ async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), parallel_timer_wf);
 

@@ -15,7 +15,7 @@ fn test_default_configuration_polls_all_types() {
         .build()
         .expect("Failed to build default config");
 
-    let effective = config.effective_task_types();
+    let effective = config.task_types;
     assert!(
         effective.polls_workflows(),
         "Should poll workflows by default"
@@ -38,7 +38,7 @@ fn test_workflow_only_worker() {
         .build()
         .expect("Failed to build workflow-only config");
 
-    let effective = config.effective_task_types();
+    let effective = config.task_types;
     assert!(effective.polls_workflows(), "Should poll workflows");
     assert!(!effective.polls_activities(), "Should NOT poll activities");
     assert!(!effective.polls_nexus(), "Should NOT poll nexus");
@@ -55,25 +55,9 @@ fn test_activity_and_nexus_worker() {
         .build()
         .expect("Failed to build activity+nexus config");
 
-    let effective = config.effective_task_types();
+    let effective = config.task_types;
     assert!(!effective.polls_workflows(), "Should NOT poll workflows");
     assert!(effective.polls_activities(), "Should poll activities");
-    assert!(effective.polls_nexus(), "Should poll nexus");
-}
-
-#[test]
-fn test_backward_compatibility_with_no_remote_activities() {
-    let config = WorkerConfigBuilder::default()
-        .namespace("default")
-        .task_queue("test-queue")
-        .versioning_strategy(default_versioning_strategy())
-        .no_remote_activities(true)
-        .build()
-        .expect("Failed to build config with no_remote_activities");
-
-    let effective = config.effective_task_types();
-    assert!(effective.polls_workflows(), "Should poll workflows");
-    assert!(!effective.polls_activities(), "Should NOT poll activities");
     assert!(effective.polls_nexus(), "Should poll nexus");
 }
 
@@ -116,26 +100,6 @@ fn test_workflow_cache_without_workflows_fails() {
 }
 
 #[test]
-fn test_conflicting_no_remote_activities_and_task_types_fails() {
-    #[allow(deprecated)]
-    let result = WorkerConfigBuilder::default()
-        .namespace("default")
-        .task_queue("test-queue")
-        .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::ACTIVITIES)
-        .no_remote_activities(true)
-        .build();
-
-    assert!(result.is_err(), "Conflicting settings should fail");
-
-    let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("Conflicting configuration"),
-        "Error should mention conflict: {err}",
-    );
-}
-
-#[test]
 fn test_all_combinations() {
     let combinations = [
         (WorkerTaskTypes::WORKFLOWS, "workflows only"),
@@ -165,7 +129,7 @@ fn test_all_combinations() {
             .build()
             .unwrap_or_else(|e| panic!("Failed to build config for {description}: {e:?}"));
 
-        let effective = config.effective_task_types();
+        let effective = config.task_types;
         assert_eq!(
             effective, task_types,
             "Effective types should match for {description}",

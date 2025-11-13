@@ -451,10 +451,9 @@ impl Worker {
             slot_context_data.clone(),
             meter.clone(),
         );
-        let effective_task_types = config.effective_task_types();
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let wft_stream = if effective_task_types.polls_workflows() {
+                let wft_stream = if config.task_types.polls_workflows() {
                     let stream = make_wft_poller(
                         &config,
                         &sticky_queue_name,
@@ -479,7 +478,7 @@ impl Worker {
                     None
                 };
 
-                let act_poll_buffer = if effective_task_types.polls_activities() {
+                let act_poll_buffer = if config.task_types.polls_activities() {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
@@ -499,7 +498,7 @@ impl Worker {
                     None
                 };
 
-                let nexus_poll_buffer = if effective_task_types.polls_nexus() {
+                let nexus_poll_buffer = if config.task_types.polls_nexus() {
                     let np_metrics = metrics.with_new_attrs([nexus_poller()]);
                     Some(Box::new(LongPollBuffer::new_nexus_task(
                         client.clone(),
@@ -525,6 +524,24 @@ impl Worker {
                 act_poller,
                 nexus_poller,
             } => {
+                use temporalio_common::worker::WorkerTaskTypes;
+
+                let wft_stream = config
+                    .task_types
+                    .contains(WorkerTaskTypes::WORKFLOWS)
+                    .then_some(wft_stream)
+                    .flatten();
+                let act_poller = config
+                    .task_types
+                    .contains(WorkerTaskTypes::ACTIVITIES)
+                    .then_some(act_poller)
+                    .flatten();
+                let nexus_poller = config
+                    .task_types
+                    .contains(WorkerTaskTypes::NEXUS)
+                    .then_some(nexus_poller)
+                    .flatten();
+
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
                 let np = nexus_poller
@@ -557,7 +574,7 @@ impl Worker {
         );
         let la_permits = la_permit_dealer.get_extant_count_rcv();
 
-        let (local_act_mgr, la_sink, hb_rx) = if effective_task_types.polls_workflows() {
+        let (local_act_mgr, la_sink, hb_rx) = if config.task_types.polls_workflows() {
             let (hb_tx, hb_rx) = unbounded_channel();
             let local_act_mgr = Arc::new(LocalActivityManager::new(
                 config.namespace.clone(),

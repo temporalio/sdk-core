@@ -103,21 +103,11 @@ pub struct WorkerConfig {
     /// By default, workers poll for all task types (workflows, activities, and nexus).
     /// You can restrict this to any combination. For example, a workflow-only worker would use
     /// `WorkerTaskTypes::WORKFLOWS`, while a worker handling activities and nexus but not workflows
-    /// would use `WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS`. If using in combination
-    /// with `no_remote_activites`, it must be ensured that `ACTIVITIES` is not selected, as
-    /// validation will fail.
+    /// would use `WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS`.
     ///
     /// Note: At least one task type must be specified or the worker will fail validation.
     #[builder(default = "WorkerTaskTypes::all()")]
     pub task_types: WorkerTaskTypes,
-    /// If set to true this worker will only handle workflow tasks and local activities, it will not
-    /// poll for activity tasks. If this is used with `task_types`, users must ensure
-    /// `WorkerTaskTypes::ACTIVITIES` is not set.
-    ///
-    /// This is equivalent to setting
-    /// `task_types = WorkerTaskTypes::WORKFLOWS | WorkerTaskTypes::NEXUS`.
-    #[builder(default = "false")]
-    pub no_remote_activities: bool,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.
     #[builder(default = "Duration::from_secs(10)")]
@@ -225,18 +215,6 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
-    /// Returns the effective task types this worker should poll for, taking into account
-    /// `no_remote_activities` field.
-    ///
-    /// If `no_remote_activities` is true, activities are excluded from the task types.
-    pub fn effective_task_types(&self) -> WorkerTaskTypes {
-        if self.no_remote_activities {
-            self.task_types - WorkerTaskTypes::ACTIVITIES
-        } else {
-            self.task_types
-        }
-    }
-
     /// Returns true if the configuration specifies we should fail a workflow on a certain error
     /// type rather than failing the workflow task.
     pub fn should_fail_workflow(
@@ -283,19 +261,6 @@ impl WorkerConfigBuilder {
         let task_types = self.task_types.unwrap_or_else(WorkerTaskTypes::all);
         if task_types.is_empty() {
             return Err("At least one task type must be enabled in `task_types`".to_owned());
-        }
-
-        // Handle backward compatibility with no_remote_activities
-        if let Some(true) = self.no_remote_activities {
-            // If no_remote_activities is set to true, warn if task_types was also explicitly set
-            // and includes activities
-            if self.task_types.is_some() && task_types.contains(WorkerTaskTypes::ACTIVITIES) {
-                return Err(
-                    "Conflicting configuration: `no_remote_activities` is true but `task_types` includes ACTIVITIES. \
-                     Please update `task_types` to not allow for ACTIVITIES."
-                        .to_owned(),
-                );
-            }
         }
 
         if let Some(b) = self.workflow_task_poller_behavior.as_ref() {

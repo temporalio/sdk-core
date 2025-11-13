@@ -4,6 +4,7 @@ use crate::{
 };
 use std::time::Duration;
 use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::{
         coresdk::{
@@ -44,7 +45,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                 default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
             },
         ))
-        .no_remote_activities(true);
+        .task_types(WorkerTaskTypes::WORKFLOWS);
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 

@@ -5,6 +5,7 @@ use crate::{
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporalio_client::SharedNamespaceWorkerTrait;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::temporal::api::worker::v1::WorkerHeartbeat,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
@@ -38,7 +39,7 @@ impl SharedNamespaceWorker {
                 "temporal-sys/worker-commands/{namespace}/{}",
                 client.worker_grouping_key(),
             ))
-            .no_remote_activities(true)
+            .task_types(WorkerTaskTypes::NEXUS)
             .max_outstanding_nexus_tasks(5_usize)
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "1.0".to_owned(),

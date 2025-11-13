@@ -6,6 +6,7 @@ use temporalio_common::protos::{
     coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     temporal::api::enums::v1::{CommandType, WorkflowExecutionStatus},
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
@@ -32,7 +33,7 @@ async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn cancel_during_timer() {
     let wf_name = "cancel_during_timer";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_string(), cancelled_wf);
