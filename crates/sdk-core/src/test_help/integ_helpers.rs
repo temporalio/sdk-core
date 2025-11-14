@@ -36,7 +36,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -189,7 +189,7 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
         .inputs
         .config
         .task_types
-        .contains(WorkerTaskTypes::ACTIVITIES)
+        .contains(&WorkerTaskType::Activities)
     {
         mocks.inputs.act_poller
     } else {

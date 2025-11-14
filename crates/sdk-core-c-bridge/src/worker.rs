@@ -1183,13 +1183,9 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .client_identity_override(opt.identity_override.to_option_string())
             .max_cached_workflows(opt.max_cached_workflows as usize)
             .tuner(Arc::new(converted_tuner))
-            .task_types({
-                if opt.task_types == 0 {
-                    temporalio_common::worker::WorkerTaskTypes::all()
-                } else {
-                    temporalio_common::worker::WorkerTaskTypes::from_bits_truncate(opt.task_types)
-                }
-            })
+            .task_types(temporalio_common::worker::worker_task_types::from_bits(
+                opt.task_types,
+            ))
             .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
                 opt.sticky_queue_schedule_to_start_timeout_millis,
             ))

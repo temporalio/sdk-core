@@ -1,4 +1,8 @@
-use temporalio_common::worker::{WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy};
+use std::collections::HashSet;
+use temporalio_common::worker::{
+    WorkerConfigBuilder, WorkerTaskType, WorkerTaskTypes, WorkerVersioningStrategy,
+    worker_task_types,
+};
 
 fn default_versioning_strategy() -> WorkerVersioningStrategy {
     WorkerVersioningStrategy::None {
@@ -15,16 +19,19 @@ fn test_default_configuration_polls_all_types() {
         .build()
         .expect("Failed to build default config");
 
-    let effective = config.task_types;
+    let effective = &config.task_types;
     assert!(
-        effective.polls_workflows(),
+        effective.contains(&WorkerTaskType::Workflows),
         "Should poll workflows by default"
     );
     assert!(
-        effective.polls_activities(),
+        effective.contains(&WorkerTaskType::Activities),
         "Should poll activities by default"
     );
-    assert!(effective.polls_nexus(), "Should poll nexus by default");
+    assert!(
+        effective.contains(&WorkerTaskType::Nexus),
+        "Should poll nexus by default"
+    );
 }
 
 #[test]
@@ -33,32 +40,53 @@ fn test_workflow_only_worker() {
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::WORKFLOWS)
+        .task_types(HashSet::from([WorkerTaskType::Workflows]))
         .max_cached_workflows(0usize)
         .build()
         .expect("Failed to build workflow-only config");
 
-    let effective = config.task_types;
-    assert!(effective.polls_workflows(), "Should poll workflows");
-    assert!(!effective.polls_activities(), "Should NOT poll activities");
-    assert!(!effective.polls_nexus(), "Should NOT poll nexus");
+    let effective = &config.task_types;
+    assert!(
+        effective.contains(&WorkerTaskType::Workflows),
+        "Should poll workflows"
+    );
+    assert!(
+        !effective.contains(&WorkerTaskType::Activities),
+        "Should NOT poll activities"
+    );
+    assert!(
+        !effective.contains(&WorkerTaskType::Nexus),
+        "Should NOT poll nexus"
+    );
 }
 
 #[test]
 fn test_activity_and_nexus_worker() {
+    let types: WorkerTaskTypes = [WorkerTaskType::Activities, WorkerTaskType::Nexus]
+        .into_iter()
+        .collect();
     let config = WorkerConfigBuilder::default()
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS)
+        .task_types(types)
         .max_cached_workflows(0usize)
         .build()
         .expect("Failed to build activity+nexus config");
 
-    let effective = config.task_types;
-    assert!(!effective.polls_workflows(), "Should NOT poll workflows");
-    assert!(effective.polls_activities(), "Should poll activities");
-    assert!(effective.polls_nexus(), "Should poll nexus");
+    let effective = &config.task_types;
+    assert!(
+        !effective.contains(&WorkerTaskType::Workflows),
+        "Should NOT poll workflows"
+    );
+    assert!(
+        effective.contains(&WorkerTaskType::Activities),
+        "Should poll activities"
+    );
+    assert!(
+        effective.contains(&WorkerTaskType::Nexus),
+        "Should poll nexus"
+    );
 }
 
 #[test]
@@ -67,7 +95,7 @@ fn test_empty_task_types_fails_validation() {
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::empty())
+        .task_types(WorkerTaskTypes::new())
         .build();
 
     assert!(result.is_err(), "Empty task_types should fail validation");
@@ -84,7 +112,7 @@ fn test_workflow_cache_without_workflows_fails() {
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::ACTIVITIES)
+        .task_types(worker_task_types::activities())
         .max_cached_workflows(10usize)
         .build();
 
@@ -102,22 +130,28 @@ fn test_workflow_cache_without_workflows_fails() {
 #[test]
 fn test_all_combinations() {
     let combinations = [
-        (WorkerTaskTypes::WORKFLOWS, "workflows only"),
-        (WorkerTaskTypes::ACTIVITIES, "activities only"),
-        (WorkerTaskTypes::NEXUS, "nexus only"),
+        (worker_task_types::workflows(), "workflows only"),
+        (worker_task_types::activities(), "activities only"),
+        (worker_task_types::nexus(), "nexus only"),
         (
-            WorkerTaskTypes::WORKFLOWS | WorkerTaskTypes::ACTIVITIES,
+            [WorkerTaskType::Workflows, WorkerTaskType::Activities]
+                .into_iter()
+                .collect(),
             "workflows + activities",
         ),
         (
-            WorkerTaskTypes::WORKFLOWS | WorkerTaskTypes::NEXUS,
+            [WorkerTaskType::Workflows, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
             "workflows + nexus",
         ),
         (
-            WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS,
+            [WorkerTaskType::Activities, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
             "activities + nexus",
         ),
-        (WorkerTaskTypes::all(), "all types"),
+        (worker_task_types::all(), "all types"),
     ];
 
     for (task_types, description) in combinations {
@@ -125,7 +159,7 @@ fn test_all_combinations() {
             .namespace("default")
             .task_queue("test-queue")
             .versioning_strategy(default_versioning_strategy())
-            .task_types(task_types)
+            .task_types(task_types.clone())
             .build()
             .unwrap_or_else(|e| panic!("Failed to build config for {description}: {e:?}"));
 

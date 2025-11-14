@@ -8,7 +8,6 @@ use crate::{
     },
     telemetry::metrics::TemporalMeter,
 };
-use bitflags::bitflags;
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -17,36 +16,70 @@ use std::{
     time::Duration,
 };
 
-bitflags! {
-    /// Specifies which task types a worker will poll for.
-    ///
-    /// This allows fine-grained control over what kinds of work this worker handles.
-    /// Workers can be configured to handle any combination of workflows, activities, and nexus operations.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub struct WorkerTaskTypes: u8 {
-        /// Poll for workflow tasks
-        const WORKFLOWS = 0b001;
-        /// Poll for activity tasks (remote activities)
-        const ACTIVITIES = 0b010;
-        /// Poll for nexus tasks
-        const NEXUS = 0b100;
-    }
+/// Represents a single task type that a worker can poll for
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WorkerTaskType {
+    /// Poll for workflow tasks
+    Workflows,
+    /// Poll for activity tasks (remote activities)
+    Activities,
+    /// Poll for nexus tasks
+    Nexus,
 }
 
-impl WorkerTaskTypes {
-    /// Returns true if this worker should poll for workflow tasks
-    pub fn polls_workflows(&self) -> bool {
-        self.contains(Self::WORKFLOWS)
+/// Specifies which task types a worker will poll for.
+///
+/// This is a set of [WorkerTaskType] values. Workers can be configured to handle
+/// any combination of workflows, activities, and nexus operations.
+pub type WorkerTaskTypes = HashSet<WorkerTaskType>;
+
+/// Helper functions for working with WorkerTaskTypes
+pub mod worker_task_types {
+    use super::{WorkerTaskType, WorkerTaskTypes};
+
+    /// Create a set with all task types enabled
+    pub fn all() -> WorkerTaskTypes {
+        [
+            WorkerTaskType::Workflows,
+            WorkerTaskType::Activities,
+            WorkerTaskType::Nexus,
+        ]
+        .into_iter()
+        .collect()
     }
 
-    /// Returns true if this worker should poll for activity tasks
-    pub fn polls_activities(&self) -> bool {
-        self.contains(Self::ACTIVITIES)
+    /// Create a set with only workflow tasks enabled
+    pub fn workflows() -> WorkerTaskTypes {
+        [WorkerTaskType::Workflows].into_iter().collect()
     }
 
-    /// Returns true if this worker should poll for nexus tasks
-    pub fn polls_nexus(&self) -> bool {
-        self.contains(Self::NEXUS)
+    /// Create a set with only activity tasks enabled
+    pub fn activities() -> WorkerTaskTypes {
+        [WorkerTaskType::Activities].into_iter().collect()
+    }
+
+    /// Create a set with only nexus tasks enabled
+    pub fn nexus() -> WorkerTaskTypes {
+        [WorkerTaskType::Nexus].into_iter().collect()
+    }
+
+    /// Create a set from a bitmask (for C FFI compatibility)
+    /// 0x01 = Workflows, 0x02 = Activities, 0x04 = Nexus
+    pub fn from_bits(bits: u8) -> WorkerTaskTypes {
+        if bits == 0 {
+            return all();
+        }
+        let mut set = WorkerTaskTypes::new();
+        if bits & 0x01 != 0 {
+            set.insert(WorkerTaskType::Workflows);
+        }
+        if bits & 0x02 != 0 {
+            set.insert(WorkerTaskType::Activities);
+        }
+        if bits & 0x04 != 0 {
+            set.insert(WorkerTaskType::Nexus);
+        }
+        set
     }
 }
 
@@ -101,12 +134,10 @@ pub struct WorkerConfig {
     /// Specifies which task types this worker will poll for.
     ///
     /// By default, workers poll for all task types (workflows, activities, and nexus).
-    /// You can restrict this to any combination. For example, a workflow-only worker would use
-    /// `WorkerTaskTypes::WORKFLOWS`, while a worker handling activities and nexus but not workflows
-    /// would use `WorkerTaskTypes::ACTIVITIES | WorkerTaskTypes::NEXUS`.
+    /// You can restrict this to any combination.
     ///
     /// Note: At least one task type must be specified or the worker will fail validation.
-    #[builder(default = "WorkerTaskTypes::all()")]
+    #[builder(default = "worker_task_types::all()")]
     pub task_types: WorkerTaskTypes,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.
@@ -258,7 +289,11 @@ impl WorkerConfigBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
-        let task_types = self.task_types.unwrap_or_else(WorkerTaskTypes::all);
+        let task_types = self
+            .task_types
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(worker_task_types::all);
         if task_types.is_empty() {
             return Err("At least one task type must be enabled in `task_types`".to_owned());
         }
@@ -295,7 +330,7 @@ impl WorkerConfigBuilder {
         }
 
         // Validate workflow cache is consistent with task_types
-        if !task_types.contains(WorkerTaskTypes::WORKFLOWS)
+        if !task_types.contains(&WorkerTaskType::Workflows)
             && let Some(cache) = self.max_cached_workflows.as_ref()
             && *cache > 0
         {

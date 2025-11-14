@@ -6,6 +6,7 @@ mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
 
+pub(crate) use temporalio_common::worker::WorkerTaskType;
 pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
@@ -453,7 +454,7 @@ impl Worker {
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let wft_stream = if config.task_types.polls_workflows() {
+                let wft_stream = if config.task_types.contains(&WorkerTaskType::Workflows) {
                     let stream = make_wft_poller(
                         &config,
                         &sticky_queue_name,
@@ -478,7 +479,7 @@ impl Worker {
                     None
                 };
 
-                let act_poll_buffer = if config.task_types.polls_activities() {
+                let act_poll_buffer = if config.task_types.contains(&WorkerTaskType::Activities) {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
@@ -498,7 +499,7 @@ impl Worker {
                     None
                 };
 
-                let nexus_poll_buffer = if config.task_types.polls_nexus() {
+                let nexus_poll_buffer = if config.task_types.contains(&WorkerTaskType::Nexus) {
                     let np_metrics = metrics.with_new_attrs([nexus_poller()]);
                     Some(Box::new(LongPollBuffer::new_nexus_task(
                         client.clone(),
@@ -524,21 +525,19 @@ impl Worker {
                 act_poller,
                 nexus_poller,
             } => {
-                use temporalio_common::worker::WorkerTaskTypes;
-
                 let wft_stream = config
                     .task_types
-                    .contains(WorkerTaskTypes::WORKFLOWS)
+                    .contains(&WorkerTaskType::Workflows)
                     .then_some(wft_stream)
                     .flatten();
                 let act_poller = config
                     .task_types
-                    .contains(WorkerTaskTypes::ACTIVITIES)
+                    .contains(&WorkerTaskType::Activities)
                     .then_some(act_poller)
                     .flatten();
                 let nexus_poller = config
                     .task_types
-                    .contains(WorkerTaskTypes::NEXUS)
+                    .contains(&WorkerTaskType::Nexus)
                     .then_some(nexus_poller)
                     .flatten();
 
@@ -574,19 +573,20 @@ impl Worker {
         );
         let la_permits = la_permit_dealer.get_extant_count_rcv();
 
-        let (local_act_mgr, la_sink, hb_rx) = if config.task_types.polls_workflows() {
-            let (hb_tx, hb_rx) = unbounded_channel();
-            let local_act_mgr = Arc::new(LocalActivityManager::new(
-                config.namespace.clone(),
-                la_permit_dealer.clone(),
-                hb_tx,
-                metrics.clone(),
-            ));
-            let la_sink = LAReqSink::new(local_act_mgr.clone());
-            (Some(local_act_mgr), Some(la_sink), Some(hb_rx))
-        } else {
-            (None, None, None)
-        };
+        let (local_act_mgr, la_sink, hb_rx) =
+            if config.task_types.contains(&WorkerTaskType::Workflows) {
+                let (hb_tx, hb_rx) = unbounded_channel();
+                let local_act_mgr = Arc::new(LocalActivityManager::new(
+                    config.namespace.clone(),
+                    la_permit_dealer.clone(),
+                    hb_tx,
+                    metrics.clone(),
+                ));
+                let la_sink = LAReqSink::new(local_act_mgr.clone());
+                (Some(local_act_mgr), Some(la_sink), Some(hb_rx))
+            } else {
+                (None, None, None)
+            };
 
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
@@ -740,29 +740,29 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        if let Some(workflows) = &self.workflows {
-            if let Some(name) = workflows.get_sticky_queue_name() {
-                let heartbeat = self
-                    .client_worker_registrator
-                    .heartbeat_manager
-                    .as_ref()
-                    .map(|hm| hm.heartbeat_callback.clone()());
+        if let Some(workflows) = &self.workflows
+            && let Some(name) = workflows.get_sticky_queue_name()
+        {
+            let heartbeat = self
+                .client_worker_registrator
+                .heartbeat_manager
+                .as_ref()
+                .map(|hm| hm.heartbeat_callback.clone()());
 
-                // This is a best effort call and we can still shutdown the worker if it fails
-                match self.client.shutdown_worker(name, heartbeat).await {
-                    Err(err)
-                        if !matches!(
-                            err.code(),
-                            tonic::Code::Unimplemented | tonic::Code::Unavailable
-                        ) =>
-                    {
-                        warn!(
-                            "shutdown_worker rpc errored during worker shutdown: {:?}",
-                            err
-                        );
-                    }
-                    _ => {}
+            // This is a best effort call and we can still shutdown the worker if it fails
+            match self.client.shutdown_worker(name, heartbeat).await {
+                Err(err)
+                    if !matches!(
+                        err.code(),
+                        tonic::Code::Unimplemented | tonic::Code::Unavailable
+                    ) =>
+                {
+                    warn!(
+                        "shutdown_worker rpc errored during worker shutdown: {:?}",
+                        err
+                    );
                 }
+                _ => {}
             }
         }
         // We need to wait for all local activities to finish so no more workflow task heartbeats
@@ -896,8 +896,9 @@ impl Worker {
                     }
                 },
                 None => {
-                    future::pending::<()>().await;
-                    unreachable!()
+                    self.local_activities_complete
+                        .store(true, Ordering::Relaxed);
+                    Ok(None)
                 }
             }
         };
@@ -943,13 +944,10 @@ impl Worker {
 
         if let Some(atm) = &self.at_task_mgr {
             atm.complete(task_token, status, &*self.client).await;
+            Ok(())
         } else {
-            error!(
-                "Tried to complete activity {} on a worker that does not have an activity manager",
-                task_token
-            );
+            Err(CompleteActivityError::ActivityNotEnabled)
         }
-        Ok(())
     }
 
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
@@ -971,7 +969,7 @@ impl Worker {
                 }
                 r
             }
-            None => Err(PollError::ShutDown), // Workflow polling is disabled
+            None => Err(PollError::ShutDown),
         }
     }
 
@@ -995,10 +993,7 @@ impl Worker {
                     .await?;
                 Ok(())
             }
-            None => Err(CompleteWfError::MalformedWorkflowCompletion {
-                reason: "Workflow polling is disabled for this worker".to_string(),
-                run_id: completion.run_id,
-            }),
+            None => Err(CompleteWfError::WorkflowNotEnabled),
         }
     }
 
@@ -1026,6 +1021,8 @@ impl Worker {
     ) {
         if let Some(workflows) = &self.workflows {
             workflows.request_eviction(run_id, message, reason);
+        } else {
+            dbg_panic!("trying to request wf eviction when workflows not enabled for this worker");
         }
     }
 
@@ -1066,6 +1063,8 @@ impl Worker {
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         if let Some(workflows) = &self.workflows {
             workflows.notify_of_local_result(run_id, res);
+        } else {
+            dbg_panic!("trying to notify local result when workflows not enabled for this worker");
         }
     }
 

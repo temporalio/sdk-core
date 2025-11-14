@@ -14,13 +14,14 @@ use futures_util::{
     stream::FuturesUnordered,
 };
 use rand::{Rng, SeedableRng};
+use std::collections::HashSet;
 use std::{
     mem,
     net::SocketAddr,
     time::{Duration, Instant},
 };
 use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_common::{
     protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptionsBuilder,
     worker::PollerBehavior,
@@ -215,7 +216,7 @@ async fn poller_load_sustained() {
             maximum: 200,
             initial: 5,
         })
-        .task_types(WorkerTaskTypes::WORKFLOWS);
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);

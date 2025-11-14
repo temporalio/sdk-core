@@ -19,7 +19,7 @@ use std::{
 pub use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::worker_task_types;
 use temporalio_common::{
     protos::{
         coresdk::workflow_activation::remove_from_cache::EvictionReason,
@@ -63,7 +63,7 @@ where
     pub(crate) fn into_core_worker(mut self) -> Result<Worker, anyhow::Error> {
         self.config.max_cached_workflows = 1;
         self.config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
-        self.config.task_types = WorkerTaskTypes::WORKFLOWS;
+        self.config.task_types = worker_task_types::workflows();
         self.config.skip_client_worker_set_check = true;
         let historator = Historator::new(self.history_stream);
         let post_activate = historator.get_post_activate_hook();

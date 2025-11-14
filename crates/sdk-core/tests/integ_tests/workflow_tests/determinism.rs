@@ -1,4 +1,5 @@
 use crate::common::{CoreWfStarter, WorkflowHandleExt, mock_sdk, mock_sdk_cfg};
+use std::collections::HashSet;
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -12,7 +13,7 @@ use temporalio_common::protos::{
         failure::v1::Failure,
     },
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_sdk::{
     ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
     WorkflowResult,
@@ -53,7 +54,9 @@ pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<
 async fn test_determinism_error_then_recovers() {
     let wf_name = "test_determinism_error_then_recovers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);

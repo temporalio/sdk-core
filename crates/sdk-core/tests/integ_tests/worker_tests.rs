@@ -7,6 +7,7 @@ use crate::{
 };
 use assert_matches::assert_matches;
 use futures_util::FutureExt;
+use std::collections::HashSet;
 use std::{
     cell::Cell,
     sync::{
@@ -19,7 +20,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::{WorkerTaskType, worker_task_types};
 use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
@@ -68,6 +69,7 @@ use temporalio_sdk_core::{
     },
 };
 use tokio::sync::{Barrier, Notify, Semaphore};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -178,7 +180,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
-        .task_types(WorkerTaskTypes::WORKFLOWS)
+        .task_types(HashSet::from([WorkerTaskType::Workflows]))
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
     // Set the limits to zero so it's essentially unwilling to hand out slots
@@ -211,7 +213,9 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 async fn oversize_grpc_message() {
     let wf_name = "oversize_grpc_message";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
@@ -892,4 +896,53 @@ async fn shutdown_worker_not_retried() {
     let worker = starter.get_worker().await;
     drain_pollers_and_shutdown(&worker).await;
     assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn worker_type_shutdown_all_combinations() {
+    let combinations = [
+        (worker_task_types::workflows(), "workflows only"),
+        (worker_task_types::activities(), "activities only"),
+        (worker_task_types::nexus(), "nexus only"),
+        (
+            [WorkerTaskType::Workflows, WorkerTaskType::Activities]
+                .into_iter()
+                .collect(),
+            "workflows + activities",
+        ),
+        (
+            [WorkerTaskType::Workflows, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
+            "workflows + nexus",
+        ),
+        (
+            [WorkerTaskType::Activities, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
+            "activities + nexus",
+        ),
+        (worker_task_types::all(), "all types"),
+    ];
+
+    for (task_types, description) in combinations {
+        let wf_type = format!("worker_type_shutdown_{}", description.replace(" ", "_"));
+        let mut starter = CoreWfStarter::new(&wf_type);
+        if !task_types.contains(&WorkerTaskType::Workflows) {
+            starter.worker_config.max_cached_workflows(0usize);
+        }
+        starter.worker_config.task_types(task_types);
+
+        let worker = starter.get_worker().await;
+
+        let shutdown_result = timeout(Duration::from_secs(1), async {
+            drain_pollers_and_shutdown(&worker).await;
+        })
+        .await;
+
+        assert!(
+            shutdown_result.is_ok(),
+            "Worker shutdown should not hang for {description}"
+        );
+    }
 }

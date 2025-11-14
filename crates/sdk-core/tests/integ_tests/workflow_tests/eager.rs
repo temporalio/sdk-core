@@ -1,7 +1,8 @@
 use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options};
+use std::collections::HashSet;
 use std::time::Duration;
 use temporalio_client::WorkflowClientTrait;
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_sdk::{WfContext, WorkflowResult};
 
 pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
@@ -15,7 +16,9 @@ async fn eager_wf_start() {
     starter.workflow_options.enable_eager_workflow_start = true;
     // hang the test if eager task dispatch failed
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), eager_wf);
     starter.eager_start_with_worker(wf_name, &mut worker).await;
@@ -29,7 +32,9 @@ async fn eager_wf_start_different_clients() {
     starter.workflow_options.enable_eager_workflow_start = true;
     // hang the test if wf task needs retry
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), eager_wf);
 

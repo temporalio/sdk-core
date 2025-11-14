@@ -1,12 +1,13 @@
 //! Shared tests that are meant to be run against both local dev server and cloud
 
 use crate::common::CoreWfStarter;
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use temporalio_common::protos::temporal::api::{
     enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_sdk::WfContext;
 
 pub(crate) mod priority;
@@ -16,7 +17,9 @@ pub(crate) async fn grpc_message_too_large() {
     let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, "")
         .await
         .unwrap();
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);

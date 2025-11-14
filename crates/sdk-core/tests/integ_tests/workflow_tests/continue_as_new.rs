@@ -1,4 +1,5 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
+use std::collections::HashSet;
 use std::time::Duration;
 use temporalio_client::WorkflowOptions;
 use temporalio_common::protos::{
@@ -6,7 +7,7 @@ use temporalio_common::protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     temporal::api::enums::v1::CommandType,
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
@@ -27,7 +28,9 @@ async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
@@ -49,7 +52,7 @@ async fn continue_as_new_multiple_concurrent() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(WorkerTaskTypes::WORKFLOWS)
+        .task_types(HashSet::from([WorkerTaskType::Workflows]))
         .max_cached_workflows(5_usize)
         .max_outstanding_workflow_tasks(5_usize);
     let mut worker = starter.worker().await;

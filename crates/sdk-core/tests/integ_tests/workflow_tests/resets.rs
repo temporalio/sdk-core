@@ -3,6 +3,7 @@ use crate::{
     integ_tests::activity_functions::echo,
 };
 use futures_util::StreamExt;
+use std::collections::HashSet;
 use std::{
     sync::{
         Arc,
@@ -17,7 +18,7 @@ use temporalio_common::protos::{
         common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
     },
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_sdk::{LocalActivityOptions, WfContext};
 use tokio::sync::Notify;
 use tonic::IntoRequest;
@@ -28,7 +29,9 @@ const POST_RESET_SIG: &str = "post-reset";
 async fn reset_workflow() {
     let wf_name = "reset_me_wf";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
     let notify = Arc::new(Notify::new());
@@ -114,7 +117,9 @@ async fn reset_workflow() {
 async fn reset_randomseed() {
     let wf_name = "reset_randomseed";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes::WORKFLOWS);
+    starter
+        .worker_config
+        .task_types(HashSet::from([WorkerTaskType::Workflows]));
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
     let notify = Arc::new(Notify::new());

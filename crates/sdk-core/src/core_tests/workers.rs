@@ -14,6 +14,7 @@ use crate::{
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
+use temporalio_common::worker::WorkerTaskType;
 use temporalio_common::{
     Worker,
     protos::{
@@ -29,9 +30,10 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::{PollerBehavior, WorkerTaskTypes},
+    worker::{PollerBehavior, worker_task_types},
 };
 use tokio::sync::{Barrier, watch};
+use tokio::time::timeout;
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
@@ -135,7 +137,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
     let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock);
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|w| {
-        w.task_types = WorkerTaskTypes::WORKFLOWS;
+        w.task_types = worker_task_types::workflows();
         w.max_cached_workflows = 1;
     });
     let worker = mock_worker(mock);
@@ -367,4 +369,52 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
             PollError::ShutDown
         );
     });
+}
+
+#[tokio::test]
+async fn test_worker_type_shutdown_all_combinations() {
+    let combinations = [
+        (worker_task_types::workflows(), "workflows only"),
+        (worker_task_types::activities(), "activities only"),
+        (worker_task_types::nexus(), "nexus only"),
+        (
+            [WorkerTaskType::Workflows, WorkerTaskType::Activities]
+                .into_iter()
+                .collect(),
+            "workflows + activities",
+        ),
+        (
+            [WorkerTaskType::Workflows, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
+            "workflows + nexus",
+        ),
+        (
+            [WorkerTaskType::Activities, WorkerTaskType::Nexus]
+                .into_iter()
+                .collect(),
+            "activities + nexus",
+        ),
+        (worker_task_types::all(), "all types"),
+    ];
+
+    for (task_types, description) in combinations {
+        let mut cfg = test_worker_cfg();
+        cfg.task_types(task_types);
+
+        let mock_inputs = MockWorkerInputs {
+            config: cfg.build().unwrap(),
+            ..Default::default()
+        };
+        let worker = mock_worker(MocksHolder::from_mock_worker(
+            mock_worker_client(),
+            mock_inputs,
+        ));
+
+        let shutdown_result = timeout(Duration::from_secs(1), worker.shutdown()).await;
+        assert!(
+            shutdown_result.is_ok(),
+            "worker shutdown should not hang for {description}"
+        );
+    }
 }
