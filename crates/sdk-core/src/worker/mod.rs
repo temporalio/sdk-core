@@ -1035,13 +1035,12 @@ impl Worker {
     }
 
     fn complete_local_act(&self, task_token: TaskToken, la_res: LocalActivityExecutionResult) {
-        if let Some(la_mgr) = &self.local_act_mgr {
-            if self
+        if let Some(la_mgr) = &self.local_act_mgr
+            && self
                 .handle_la_complete_action(la_mgr.complete(&task_token, la_res))
                 .is_some()
-            {
-                dbg_panic!("Should never be a task from direct completion");
-            }
+        {
+            dbg_panic!("Should never be a task from direct completion");
         }
     }
 
