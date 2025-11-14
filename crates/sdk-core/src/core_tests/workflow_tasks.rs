@@ -66,7 +66,7 @@ use temporalio_common::{
     },
     worker::{
         PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerTaskType, WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkerTaskTypes, WorkflowSlotKind,
     },
 };
 use tokio::{
@@ -2671,7 +2671,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
             .max_cached_workflows(10_usize)
             .max_outstanding_workflow_tasks(10_usize)
             .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
-            .task_types(HashSet::from([WorkerTaskType::Workflows]))
+            .task_types(WorkerTaskTypes::workflow_only())
             .build()
             .unwrap(),
         mock_client,
@@ -2731,7 +2731,7 @@ async fn poller_wont_poll_until_lang_polls() {
 
     let worker = Worker::new_test(
         test_worker_cfg()
-            .task_types(HashSet::from([WorkerTaskType::Workflows]))
+            .task_types(WorkerTaskTypes::workflow_only())
             .build()
             .unwrap(),
         mock_client,
@@ -2876,7 +2876,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
                     .build(),
             ))
             .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
-            .task_types(HashSet::from([WorkerTaskType::Workflows]))
+            .task_types(WorkerTaskTypes::workflow_only())
             .build()
             .unwrap(),
         mock_client,
@@ -3024,7 +3024,7 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
             .max_outstanding_workflow_tasks(2_usize)
             .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
             .nonsticky_to_sticky_poll_ratio(0.2)
-            .task_types(HashSet::from([WorkerTaskType::Workflows]))
+            .task_types(WorkerTaskTypes::workflow_only())
             .build()
             .unwrap(),
         Some("stickytq".to_string()),

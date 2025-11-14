@@ -1,8 +1,7 @@
 use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options};
-use std::collections::HashSet;
 use std::time::Duration;
 use temporalio_client::WorkflowClientTrait;
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 
 pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
@@ -18,7 +17,7 @@ async fn eager_wf_start() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), eager_wf);
     starter.eager_start_with_worker(wf_name, &mut worker).await;
@@ -34,7 +33,7 @@ async fn eager_wf_start_different_clients() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), eager_wf);
 

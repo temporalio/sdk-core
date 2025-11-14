@@ -7,7 +7,6 @@ use crate::{
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::collections::HashSet;
 use std::{
     collections::HashMap,
     env,
@@ -18,7 +17,7 @@ use std::{
 use temporalio_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     errors::PollError,
@@ -921,10 +920,11 @@ async fn nexus_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nexus_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
@@ -1103,7 +1103,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(
@@ -1188,7 +1188,7 @@ async fn metrics_available_from_custom_slot_supplier() {
         CoreWfStarter::new_with_runtime("metrics_available_from_custom_slot_supplier", rt);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     starter.worker_config.clear_max_outstanding_opts();
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
@@ -1359,7 +1359,7 @@ async fn sticky_queue_label_strategy(
     starter.worker_config.max_cached_workflows(10_usize);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
@@ -1437,7 +1437,7 @@ async fn resource_based_tuner_metrics() {
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     starter.worker_config.clear_max_outstanding_opts();
 
     // Create a resource-based tuner with reasonable thresholds

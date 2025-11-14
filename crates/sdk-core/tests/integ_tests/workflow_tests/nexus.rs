@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::bail;
 use assert_matches::assert_matches;
-use std::collections::HashSet;
 use std::{
     sync::{
         Arc,
@@ -13,7 +12,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::PollError,
     protos::{
@@ -59,10 +58,11 @@ async fn nexus_basic(
 ) {
     let wf_name = "nexus_basic";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
@@ -207,10 +207,11 @@ async fn nexus_async(
 ) {
     let wf_name = "nexus_async";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
@@ -437,10 +438,11 @@ async fn nexus_async(
 async fn nexus_cancel_before_start() {
     let wf_name = "nexus_cancel_before_start";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     let mut worker = starter.worker().await;
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
@@ -482,10 +484,11 @@ async fn nexus_cancel_before_start() {
 async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_period: bool) {
     let wf_name = "nexus_must_complete_task_to_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     if use_grace_period {
         starter
             .worker_config
@@ -585,10 +588,11 @@ async fn nexus_cancellation_types(
 ) {
     let wf_name = "nexus_cancellation_types";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(HashSet::from([
-        WorkerTaskType::Workflows,
-        WorkerTaskType::Nexus,
-    ]));
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_activities: false,
+        enable_nexus: true,
+    });
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 

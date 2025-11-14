@@ -1,12 +1,11 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use std::collections::HashSet;
 use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
     temporal::api::enums::v1::{CommandType, EventType},
 };
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
@@ -43,7 +42,7 @@ async fn sends_cancel_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_cancel_to_other_wf");
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf("sender", cancel_sender);
     worker.register_wf("receiver", cancel_receiver);

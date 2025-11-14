@@ -43,7 +43,7 @@ pub struct WorkerOptions {
     pub identity_override: ByteArrayRef,
     pub max_cached_workflows: u32,
     pub tuner: TunerHolder,
-    pub task_types: u8,
+    pub task_types: WorkerTaskTypes,
     pub sticky_queue_schedule_to_start_timeout_millis: u64,
     pub max_heartbeat_throttle_interval_millis: u64,
     pub default_heartbeat_throttle_interval_millis: u64,
@@ -56,6 +56,23 @@ pub struct WorkerOptions {
     pub nexus_task_poller_behavior: PollerBehavior,
     pub nondeterminism_as_workflow_fail: bool,
     pub nondeterminism_as_workflow_fail_for_types: ByteArrayRefArray,
+}
+
+#[repr(C)]
+pub struct WorkerTaskTypes {
+    pub enable_workflows: bool,
+    pub enable_activities: bool,
+    pub enable_nexus: bool,
+}
+
+impl From<&WorkerTaskTypes> for temporalio_common::worker::WorkerTaskTypes {
+    fn from(t: &WorkerTaskTypes) -> Self {
+        Self {
+            enable_workflows: t.enable_workflows,
+            enable_activities: t.enable_activities,
+            enable_nexus: t.enable_nexus,
+        }
+    }
 }
 
 #[repr(C)]
@@ -1183,8 +1200,8 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .client_identity_override(opt.identity_override.to_option_string())
             .max_cached_workflows(opt.max_cached_workflows as usize)
             .tuner(Arc::new(converted_tuner))
-            .task_types(temporalio_common::worker::worker_task_types::from_bits(
-                opt.task_types,
+            .task_types(temporalio_common::worker::WorkerTaskTypes::from(
+                &opt.task_types,
             ))
             .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
                 opt.sticky_queue_schedule_to_start_timeout_millis,

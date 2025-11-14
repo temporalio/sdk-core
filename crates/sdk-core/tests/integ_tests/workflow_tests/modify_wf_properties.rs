@@ -1,5 +1,4 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use std::collections::HashSet;
 use temporalio_client::WorkflowClientTrait;
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
@@ -10,7 +9,7 @@ use temporalio_common::protos::{
         enums::v1::EventType,
     },
 };
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
@@ -33,7 +32,7 @@ async fn sends_modify_wf_props() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name, memo_upserter);

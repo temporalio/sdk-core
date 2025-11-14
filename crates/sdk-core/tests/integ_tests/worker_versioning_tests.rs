@@ -2,10 +2,8 @@ use crate::{
     common::{CoreWfStarter, eventually},
     integ_tests::activity_functions::echo,
 };
-use std::collections::HashSet;
 use std::time::Duration;
 use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
-use temporalio_common::worker::WorkerTaskType;
 use temporalio_common::{
     protos::{
         coresdk::{
@@ -20,7 +18,9 @@ use temporalio_common::{
             },
         },
     },
-    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy},
+    worker::{
+        WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes, WorkerVersioningStrategy,
+    },
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::test_help::WorkerTestHelpers;
@@ -46,7 +46,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                 default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
             },
         ))
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 

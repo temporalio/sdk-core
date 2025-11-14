@@ -1,6 +1,6 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use futures_util::StreamExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
@@ -16,7 +16,8 @@ use temporalio_common::protos::{
         enums::v1::{CommandType, EventType},
     },
 };
-use temporalio_common::worker::WorkerTaskType;
+
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
     WorkflowResult,
@@ -49,7 +50,7 @@ async fn sends_signal_to_missing_wf() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), signal_sender);
 
@@ -90,7 +91,7 @@ async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf("sender", signal_sender);
     worker.register_wf("receiver", signal_receiver);
@@ -121,7 +122,7 @@ async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf("receiver_signal", signal_with_create_wf_receiver);
 
@@ -169,7 +170,7 @@ async fn sends_signal_to_child() {
     let mut starter = CoreWfStarter::new("sends_signal_to_child");
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf("child_signaler", signals_child);
     worker.register_wf("child_receiver", signal_receiver);

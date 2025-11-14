@@ -6,7 +6,6 @@ mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
 
-pub(crate) use temporalio_common::worker::WorkerTaskType;
 pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
@@ -454,7 +453,7 @@ impl Worker {
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let wft_stream = if config.task_types.contains(&WorkerTaskType::Workflows) {
+                let wft_stream = if config.task_types.enable_workflows {
                     let stream = make_wft_poller(
                         &config,
                         &sticky_queue_name,
@@ -479,7 +478,7 @@ impl Worker {
                     None
                 };
 
-                let act_poll_buffer = if config.task_types.contains(&WorkerTaskType::Activities) {
+                let act_poll_buffer = if config.task_types.enable_activities {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
@@ -499,7 +498,7 @@ impl Worker {
                     None
                 };
 
-                let nexus_poll_buffer = if config.task_types.contains(&WorkerTaskType::Nexus) {
+                let nexus_poll_buffer = if config.task_types.enable_nexus {
                     let np_metrics = metrics.with_new_attrs([nexus_poller()]);
                     Some(Box::new(LongPollBuffer::new_nexus_task(
                         client.clone(),
@@ -525,21 +524,27 @@ impl Worker {
                 act_poller,
                 nexus_poller,
             } => {
+                println!("wft_stream {:?}", wft_stream.is_some());
                 let wft_stream = config
                     .task_types
-                    .contains(&WorkerTaskType::Workflows)
+                    .enable_workflows
                     .then_some(wft_stream)
                     .flatten();
+                println!("wft_stream after {:?}", wft_stream.is_some());
+                println!("act_poller {:?}", act_poller.is_some());
                 let act_poller = config
                     .task_types
-                    .contains(&WorkerTaskType::Activities)
+                    .enable_activities
                     .then_some(act_poller)
                     .flatten();
+                println!("act_poller after {:?}", act_poller.is_some());
+                println!("nexus_poller {:?}", nexus_poller.is_some());
                 let nexus_poller = config
                     .task_types
-                    .contains(&WorkerTaskType::Nexus)
+                    .enable_nexus
                     .then_some(nexus_poller)
                     .flatten();
+                println!("nexus_poller after {:?}", nexus_poller.is_some());
 
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
@@ -573,20 +578,19 @@ impl Worker {
         );
         let la_permits = la_permit_dealer.get_extant_count_rcv();
 
-        let (local_act_mgr, la_sink, hb_rx) =
-            if config.task_types.contains(&WorkerTaskType::Workflows) {
-                let (hb_tx, hb_rx) = unbounded_channel();
-                let local_act_mgr = Arc::new(LocalActivityManager::new(
-                    config.namespace.clone(),
-                    la_permit_dealer.clone(),
-                    hb_tx,
-                    metrics.clone(),
-                ));
-                let la_sink = LAReqSink::new(local_act_mgr.clone());
-                (Some(local_act_mgr), Some(la_sink), Some(hb_rx))
-            } else {
-                (None, None, None)
-            };
+        let (local_act_mgr, la_sink, hb_rx) = if config.task_types.enable_workflows {
+            let (hb_tx, hb_rx) = unbounded_channel();
+            let local_act_mgr = Arc::new(LocalActivityManager::new(
+                config.namespace.clone(),
+                la_permit_dealer.clone(),
+                hb_tx,
+                metrics.clone(),
+            ));
+            let la_sink = LAReqSink::new(local_act_mgr.clone());
+            (Some(local_act_mgr), Some(la_sink), Some(hb_rx))
+        } else {
+            (None, None, None)
+        };
 
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(

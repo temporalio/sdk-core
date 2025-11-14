@@ -738,6 +738,12 @@ typedef struct TemporalCoreTunerHolder {
   struct TemporalCoreSlotSupplier nexus_task_slot_supplier;
 } TemporalCoreTunerHolder;
 
+typedef struct TemporalCoreWorkerTaskTypes {
+  bool enable_workflows;
+  bool enable_activities;
+  bool enable_nexus;
+} TemporalCoreWorkerTaskTypes;
+
 typedef struct TemporalCorePollerBehaviorSimpleMaximum {
   uintptr_t simple_maximum;
 } TemporalCorePollerBehaviorSimpleMaximum;
@@ -765,7 +771,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCoreByteArrayRef identity_override;
   uint32_t max_cached_workflows;
   struct TemporalCoreTunerHolder tuner;
-  uint8_t task_types;
+  struct TemporalCoreWorkerTaskTypes task_types;
   uint64_t sticky_queue_schedule_to_start_timeout_millis;
   uint64_t max_heartbeat_throttle_interval_millis;
   uint64_t default_heartbeat_throttle_interval_millis;

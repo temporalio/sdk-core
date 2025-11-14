@@ -29,7 +29,8 @@ use temporalio_common::protos::{
         },
     },
 };
-use temporalio_common::worker::WorkerTaskType;
+
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
 use tokio::{join, sync::Notify};
@@ -58,7 +59,7 @@ async fn writes_change_markers() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), changes_wf);
 
@@ -94,7 +95,7 @@ async fn can_add_change_markers() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
@@ -120,7 +121,7 @@ async fn replaying_with_patch_marker() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
 
@@ -139,7 +140,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     starter
         .worker_config
         .max_cached_workflows(0_usize)
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     // Include a task failure as well to make sure that works
     static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
@@ -164,7 +165,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
@@ -197,7 +198,7 @@ async fn deprecated_patch_removal() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     let wf_id = starter.get_task_queue().to_string();

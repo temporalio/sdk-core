@@ -1,5 +1,4 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
-use std::collections::HashSet;
 use std::time::Duration;
 use temporalio_client::WorkflowClientTrait;
 use temporalio_common::protos::{
@@ -7,7 +6,7 @@ use temporalio_common::protos::{
     coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     temporal::api::enums::v1::{CommandType, WorkflowExecutionStatus},
 };
-use temporalio_common::worker::WorkerTaskType;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
@@ -36,7 +35,7 @@ async fn cancel_during_timer() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .task_types(HashSet::from([WorkerTaskType::Workflows]));
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_string(), cancelled_wf);
