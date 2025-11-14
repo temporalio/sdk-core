@@ -765,7 +765,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCoreByteArrayRef identity_override;
   uint32_t max_cached_workflows;
   struct TemporalCoreTunerHolder tuner;
-  bool no_remote_activities;
+  uint8_t task_types;
   uint64_t sticky_queue_schedule_to_start_timeout_millis;
   uint64_t max_heartbeat_throttle_interval_millis;
   uint64_t default_heartbeat_throttle_interval_millis;
