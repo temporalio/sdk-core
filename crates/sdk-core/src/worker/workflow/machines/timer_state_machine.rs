@@ -4,7 +4,7 @@ use super::{
     EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{WFMachinesError, machines::HistEventData, fatal, nondeterminism};
+use crate::worker::workflow::{WFMachinesError, fatal, machines::HistEventData, nondeterminism};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{
@@ -120,15 +120,13 @@ impl TryFrom<HistEventData> for TimerMachineEvents {
                 {
                     Self::TimerFired(attrs)
                 } else {
-                    return Err(fatal!(
-                        "Timer fired attribs were unset: {e}"
-                    ));
+                    return Err(fatal!("Timer fired attribs were unset: {e}"));
                 }
             }
             _ => {
                 return Err(nondeterminism!(
                     "Timer machine does not handle this event: {e}"
-                ))
+                ));
             }
         })
     }
@@ -218,7 +216,8 @@ impl StartCommandRecorded {
         } else {
             TransitionResult::Err(nondeterminism!(
                 "Timer fired event did not have expected timer id {}, it was {}!",
-                dat.attrs.seq, attrs.timer_id
+                dat.attrs.seq,
+                attrs.timer_id
             ))
         }
     }

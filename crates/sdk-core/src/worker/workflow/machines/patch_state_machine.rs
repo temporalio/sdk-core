@@ -25,11 +25,10 @@ use crate::{
     internal_flags::CoreInternalFlags,
     protosext::HistoryEventExt,
     worker::workflow::{
-        InternalFlagsRef,
+        InternalFlagsRef, fatal,
         machines::{
             HistEventData, upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE,
         },
-        fatal,
         nondeterminism,
     },
 };
@@ -131,7 +130,7 @@ pub(super) fn has_change<'a>(
         let mut serialized = all_ids
             .as_json_payload()
             .context("Could not serialize search attribute value for patch machine")
-            .map_err(|e| fatal!("{}", e.to_string()))?;
+            .map_err(|e| fatal!("{}", e))?;
 
         if serialized.data.len() >= MAX_SEARCH_ATTR_PAYLOAD_SIZE {
             warn!(
@@ -223,7 +222,8 @@ impl Notified {
         if id != dat.patch_id {
             return TransitionResult::Err(nondeterminism!(
                 "Change id {} does not match expected id {}",
-                id, dat.patch_id
+                id,
+                dat.patch_id
             ));
         }
         TransitionResult::default()

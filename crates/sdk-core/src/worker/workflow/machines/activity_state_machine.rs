@@ -7,7 +7,7 @@ use super::{
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    worker::workflow::{InternalFlagsRef, machines::HistEventData, fatal, nondeterminism},
+    worker::workflow::{InternalFlagsRef, fatal, machines::HistEventData, nondeterminism},
 };
 use std::convert::{TryFrom, TryInto};
 use temporalio_common::protos::{
@@ -236,9 +236,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                         last_task_in_history,
                     })
                 } else {
-                    return Err(fatal!(
-                        "Activity scheduled attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Activity scheduled attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskStarted => Self::ActivityTaskStarted(e.event_id),
@@ -249,9 +247,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCompleted(attrs)
                 } else {
-                    return Err(fatal!(
-                        "Activity completion attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Activity completion attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskFailed => {
@@ -260,9 +256,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskFailed(attrs)
                 } else {
-                    return Err(fatal!(
-                        "Activity failure attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Activity failure attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskTimedOut => {
@@ -271,9 +265,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskTimedOut(attrs)
                 } else {
-                    return Err(fatal!(
-                        "Activity timeout attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Activity timeout attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskCancelRequested => Self::ActivityTaskCancelRequested,
@@ -283,9 +275,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCanceled(attrs)
                 } else {
-                    return Err(fatal!(
-                        "Activity cancellation attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Activity cancellation attributes were unset: {e}"));
                 }
             }
             _ => {
@@ -391,14 +381,16 @@ impl ScheduleCommandCreated {
                 return TransitionResult::Err(nondeterminism!(
                     "Activity id of scheduled event '{}' does not \
                  match activity id of activity command '{}'",
-                    sched_dat.act_id, dat.attrs.activity_id
+                    sched_dat.act_id,
+                    dat.attrs.activity_id
                 ));
             }
             if sched_dat.act_type != dat.attrs.activity_type {
                 return TransitionResult::Err(nondeterminism!(
                     "Activity type of scheduled event '{}' does not \
                  match activity type of activity command '{}'",
-                    sched_dat.act_type, dat.attrs.activity_type
+                    sched_dat.act_type,
+                    dat.attrs.activity_type
                 ));
             }
         }
@@ -912,9 +904,7 @@ fn convert_payloads(
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
-        fatal!(
-            "Not exactly one payload in activity result ({pe}) for event: {event_info:?}"
-        )
+        fatal!("Not exactly one payload in activity result ({pe}) for event: {event_info:?}")
     })
 }
 

@@ -1,11 +1,10 @@
 use super::{MachineError, StateMachine, TransitionResult, fsm};
 use crate::worker::workflow::{
-    WFMachinesError,
+    WFMachinesError, fatal,
     machines::{
         EventInfo, HistEventData, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
         workflow_machines::MachineResponse,
     },
-    fatal,
     nondeterminism,
 };
 use itertools::Itertools;
@@ -394,10 +393,9 @@ pub(super) struct TimedOut;
 pub(super) struct Cancelled;
 
 fn completion_of_not_abandoned_err() -> WFMachinesError {
-    nondeterminism!("{}", 
+    nondeterminism!(
         "Nexus operation which don't have the ABANDON cancellation type cannot complete after \
          being cancelled."
-            .to_string(),
     )
 }
 
@@ -457,8 +455,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                         event_id: e.event_id,
                     })
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationScheduled attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationScheduled attributes were unset or malformed"
                     ));
                 }
             }
@@ -468,8 +466,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationStarted(sa)
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationStarted attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationStarted attributes were unset or malformed"
                     ));
                 }
             }
@@ -479,8 +477,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationCompleted(ca)
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationCompleted attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationCompleted attributes were unset or malformed"
                     ));
                 }
             }
@@ -490,8 +488,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationFailed(fa)
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationFailed attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationFailed attributes were unset or malformed"
                     ));
                 }
             }
@@ -501,8 +499,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationCanceled(ca)
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationCanceled attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationCanceled attributes were unset or malformed"
                     ));
                 }
             }
@@ -512,8 +510,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationTimedOut(toa)
                 } else {
-                    return Err(nondeterminism!("{}", 
-                        "NexusOperationTimedOut attributes were unset or malformed".to_string(),
+                    return Err(nondeterminism!(
+                        "NexusOperationTimedOut attributes were unset or malformed"
                     ));
                 }
             }
@@ -527,9 +525,8 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationCancelRequestCompleted(attrs)
                 } else {
-                    return Err(nondeterminism!("{}", 
+                    return Err(nondeterminism!(
                         "NexusOperationCancelRequestCompleted attributes were unset or malformed"
-                            .to_string(),
                     ));
                 }
             }
@@ -542,16 +539,15 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                 {
                     Self::NexusOperationCancelRequestFailed(attrs)
                 } else {
-                    return Err(nondeterminism!("{}", 
+                    return Err(nondeterminism!(
                         "NexusOperationCancelRequestFailed attributes were unset or malformed"
-                            .to_string(),
                     ));
                 }
             }
             _ => {
                 return Err(nondeterminism!(
                     "Nexus operation machine does not handle this event: {e:?}"
-                ))
+                ));
             }
         })
     }

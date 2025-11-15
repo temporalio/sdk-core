@@ -4,7 +4,7 @@ use super::{
     EventInfo, StateMachine, TransitionResult, WFMachinesAdapter, WFMachinesError, fsm,
     workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{machines::HistEventData, fatal, nondeterminism};
+use crate::worker::workflow::{fatal, machines::HistEventData, nondeterminism};
 use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,
@@ -67,10 +67,9 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 let (event_id, event_type) = if let Some(ei) = event_info {
                     (ei.event_id, ei.event_type)
                 } else {
-                    return Err(fatal!("{}", 
+                    return Err(fatal!(
                         "WF Task machine should never issue a task started trigger \
                         command in response to non-history events"
-                            .to_string(),
                     ));
                 };
 
@@ -136,15 +135,13 @@ impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
                         },
                     })
                 } else {
-                    return Err(fatal!(
-                        "Workflow task failed is missing attributes: {e}"
-                    ));
+                    return Err(fatal!("Workflow task failed is missing attributes: {e}"));
                 }
             }
             _ => {
                 return Err(nondeterminism!(
                     "Event does not apply to a wf task machine: {e}"
-                ))
+                ));
             }
         })
     }

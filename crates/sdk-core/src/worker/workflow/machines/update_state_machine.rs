@@ -5,8 +5,8 @@ use super::{
 use crate::{
     protosext::protocol_messages::UpdateRequest,
     worker::workflow::{
-        machines::{HistEventData, NewMachineWithResponse},
         fatal,
+        machines::{HistEventData, NewMachineWithResponse},
         nondeterminism,
     },
 };
@@ -178,9 +178,9 @@ impl UpdateMachine {
         outgoing_id: String,
         msg: UpdateMsg,
     ) -> Result<MachineResponse, WFMachinesError> {
-        let accept_body = msg.pack().map_err(|e| {
-            fatal!("Failed to serialize update response: {e:?}")
-        })?;
+        let accept_body = msg
+            .pack()
+            .map_err(|e| fatal!("Failed to serialize update response: {e:?}"))?;
         Ok(MachineResponse::IssueNewMessage(ProtocolMessage {
             id: outgoing_id.clone(),
             protocol_instance_id: self.shared_state.instance_id.clone(),
@@ -229,7 +229,7 @@ impl TryFrom<HistEventData> for UpdateMachineEvents {
             _ => {
                 return Err(nondeterminism!(
                     "Update machine does not handle this event: {e}"
-                ))
+                ));
             }
         })
     }

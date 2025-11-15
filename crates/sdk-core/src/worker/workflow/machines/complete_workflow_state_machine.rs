@@ -2,7 +2,10 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::{abstractions::dbg_panic, worker::workflow::{machines::HistEventData, nondeterminism, fatal}};
+use crate::{
+    abstractions::dbg_panic,
+    worker::workflow::{fatal, machines::HistEventData, nondeterminism},
+};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,

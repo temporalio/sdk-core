@@ -25,9 +25,7 @@ use crate::{
         workflow::{
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
             OutgoingJob, RunBasics, WFCommand, WFCommandVariant, WFMachinesError,
-            WorkflowStartedInfo,
-            fatal,
-            nondeterminism,
+            WorkflowStartedInfo, fatal,
             history_update::NextWFT,
             machines::{
                 HistEventData, activity_state_machine::ActivityMachine,
@@ -37,6 +35,7 @@ use crate::{
                 update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
             },
+            nondeterminism,
         },
     },
 };
@@ -575,10 +574,9 @@ impl WorkflowMachines {
                 (evts, has_final_event)
             }
             NextWFT::NeedFetch => {
-                return Err(fatal!("{}", 
+                return Err(fatal!(
                     "Need to fetch history events to continue applying workflow task, but this \
                      should be prevented ahead of time! This is a Core SDK bug."
-                        .to_string(),
                 ));
             }
         };
@@ -653,7 +651,8 @@ impl WorkflowMachines {
             if eid != self.last_processed_event + 1 {
                 return Err(fatal!(
                     "History is out of order. Last processed event: {}, event id: {}",
-                    self.last_processed_event, eid
+                    self.last_processed_event,
+                    eid
                 ));
             }
             let next_event = history.peek();
@@ -784,9 +783,7 @@ impl WorkflowMachines {
                         self.local_activity_data.insert_peeked_marker(la_dat);
                     }
                 } else {
-                    return Err(fatal!(
-                        "Local activity marker was unparsable: {e:?}"
-                    ));
+                    return Err(fatal!("Local activity marker was unparsable: {e:?}"));
                 }
             } else if let Some(
                 history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref atts),
@@ -858,10 +855,9 @@ impl WorkflowMachines {
             let are_more_events =
                 next_event.is_some() || !event_dat.current_task_is_last_in_history;
             return if are_more_events {
-                Err(fatal!("{}", 
+                Err(fatal!(
                     "Machines were fed a history which has an event after workflow execution was \
                      terminated!"
-                        .to_string(),
                 ))
             } else {
                 Ok(EventHandlingOutcome::Normal)
@@ -926,9 +922,9 @@ impl WorkflowMachines {
         let event = &event_dat.event;
 
         if event.is_local_activity_marker() {
-            let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
-                fatal!("Local activity marker was unparsable: {event:?}")
-            })?;
+            let deets = event
+                .extract_local_activity_marker_data()
+                .ok_or_else(|| fatal!("Local activity marker was unparsable: {event:?}"))?;
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
@@ -961,9 +957,7 @@ impl WorkflowMachines {
             let command = if let Some(c) = maybe_command {
                 c
             } else {
-                return Err(nondeterminism!(
-                    "No command scheduled for event {event}"
-                ));
+                return Err(nondeterminism!("No command scheduled for event {event}"));
             };
 
             let canceled_before_sent = self
@@ -1086,11 +1080,11 @@ impl WorkflowMachines {
             IncomingProtocolMessageBody::UpdateRequest(ur) => {
                 let seq_id = if let SequencingId::EventId(eid) = message
                     .sequencing_id
-                    .ok_or_else(|| fatal!("{}", SEQIDERR.to_string()))?
+                    .ok_or_else(|| fatal!("{}", SEQIDERR))?
                 {
                     eid
                 } else {
-                    return Err(fatal!("{}", SEQIDERR.to_string()));
+                    return Err(fatal!("{}", SEQIDERR));
                 };
                 let um = UpdateMachine::init(
                     message.id,
@@ -1362,9 +1356,7 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA =
                         ValidScheduleLA::from_schedule_la(attrs, cmd.metadata).map_err(|e| {
-                            fatal!(
-                                "Invalid schedule local activity request (seq {seq}): {e}"
-                            )
+                            fatal!("Invalid schedule local activity request (seq {seq}): {e}")
                         })?;
                     let (la, mach_resp) = new_local_activity(
                         attrs,
@@ -1472,10 +1464,7 @@ impl WorkflowMachines {
                 }
                 WFCommandVariant::RequestCancelExternalWorkflow(attrs) => {
                     let we = attrs.workflow_execution.ok_or_else(|| {
-                        fatal!("{}", 
-                            "Cancel external workflow command had no workflow_execution field"
-                                .to_string(),
-                        )
+                        fatal!("Cancel external workflow command had no workflow_execution field")
                     })?;
                     self.add_cmd_to_wf_task(
                         new_external_cancel(
@@ -1555,9 +1544,10 @@ impl WorkflowMachines {
     }
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
-        Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
-            nondeterminism!("Missing associated machine for {id:?}")
-        })?)
+        Ok(*self
+            .id_to_machine
+            .get(&id)
+            .ok_or_else(|| nondeterminism!("Missing associated machine for {id:?}"))?)
     }
 
     fn get_machine_by_msg(&self, protocol_instance_id: &str) -> Result<MachineKey> {
@@ -1565,9 +1555,7 @@ impl WorkflowMachines {
             .machines_by_protocol_instance_id
             .get(protocol_instance_id)
             .ok_or_else(|| {
-                fatal!(
-                    "Missing associated machine for protocol message {protocol_instance_id}"
-                )
+                fatal!("Missing associated machine for protocol message {protocol_instance_id}")
             })?)
     }
 

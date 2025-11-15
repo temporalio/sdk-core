@@ -8,9 +8,8 @@ use crate::{
     worker::{
         LocalActivityExecutionResult,
         workflow::{
-            InternalFlagsRef,
+            InternalFlagsRef, fatal,
             machines::{HistEventData, activity_state_machine::activity_fail_info},
-            fatal,
             nondeterminism,
         },
     },
@@ -164,8 +163,8 @@ pub(super) fn new_local_activity(
         }
     } else {
         if maybe_pre_resolved.is_some() {
-            return Err(nondeterminism!("{}", 
-                "Local activity cannot be created as pre-resolved while not replaying".to_string(),
+            return Err(nondeterminism!(
+                "Local activity cannot be created as pre-resolved while not replaying"
             ));
         }
         Executing {}.into()
@@ -835,7 +834,8 @@ fn verify_marker_data_matches(
         return Err(nondeterminism!(
             "Local activity marker data has sequence number {} but matched against LA \
             command with sequence number {}",
-            dat.marker_dat.seq, shared.attrs.seq
+            dat.marker_dat.seq,
+            shared.attrs.seq
         ));
     }
     // Here we use whether or not we were replaying when we _first invoked_ the LA, because we
@@ -849,14 +849,16 @@ fn verify_marker_data_matches(
             return Err(nondeterminism!(
                 "Activity id of recorded marker '{}' does not \
                  match activity id of local activity command '{}'",
-                dat.marker_dat.activity_id, shared.attrs.activity_id
+                dat.marker_dat.activity_id,
+                shared.attrs.activity_id
             ));
         }
         if dat.marker_dat.activity_type != shared.attrs.activity_type {
             return Err(nondeterminism!(
                 "Activity type of recorded marker '{}' does not \
                  match activity type of local activity command '{}'",
-                dat.marker_dat.activity_type, shared.attrs.activity_type
+                dat.marker_dat.activity_type,
+                shared.attrs.activity_type
             ));
         }
     }

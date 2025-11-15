@@ -130,13 +130,11 @@ where
         if let Ok(converted_command) = command_type.try_into() {
             match OnEventWrapper::on_event_mut(self, converted_command) {
                 Ok(c) => process_machine_commands(self, c, None),
-                Err(MachineError::InvalidTransition) => {
-                    Err(nondeterminism!(
-                        "Unexpected command producing an invalid transition {:?} in state {}",
-                        command_type,
-                        self.state()
-                    ))
-                }
+                Err(MachineError::InvalidTransition) => Err(nondeterminism!(
+                    "Unexpected command producing an invalid transition {:?} in state {}",
+                    command_type,
+                    self.state()
+                )),
                 Err(MachineError::Underlying(e)) => Err(e.into()),
             }
         } else {

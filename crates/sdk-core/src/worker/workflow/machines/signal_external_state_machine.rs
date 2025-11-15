@@ -2,7 +2,7 @@ use super::{
     EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{machines::HistEventData, fatal, nondeterminism};
+use crate::worker::workflow::{fatal, machines::HistEventData, nondeterminism};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{
@@ -70,8 +70,8 @@ pub(super) fn new_external_signal(
 ) -> Result<NewMachineWithCommand, WFMachinesError> {
     let (workflow_execution, only_child) = match attrs.target {
         None => {
-            return Err(fatal!("{}", 
-                "Signal external workflow command had empty target field".to_string(),
+            return Err(fatal!(
+                "Signal external workflow command had empty target field"
             ));
         }
         Some(sig_we::Target::ChildWorkflowId(wfid)) => (
@@ -195,15 +195,13 @@ impl TryFrom<HistEventData> for SignalExternalMachineEvents {
                 {
                     Self::SignalExternalWorkflowExecutionFailed(attrs.cause())
                 } else {
-                    return Err(fatal!(
-                        "Signal workflow failed attributes were unset: {e}"
-                    ));
+                    return Err(fatal!("Signal workflow failed attributes were unset: {e}"));
                 }
             }
             _ => {
                 return Err(nondeterminism!(
                     "Signal external WF machine does not handle this event: {e}"
-                ))
+                ));
             }
         })
     }
