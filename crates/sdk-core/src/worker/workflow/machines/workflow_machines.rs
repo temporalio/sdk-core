@@ -1078,13 +1078,12 @@ impl WorkflowMachines {
 
         match message.body {
             IncomingProtocolMessageBody::UpdateRequest(ur) => {
-                let seq_id = if let SequencingId::EventId(eid) = message
-                    .sequencing_id
-                    .ok_or_else(|| fatal!("{}", SEQIDERR))?
+                let seq_id = if let SequencingId::EventId(eid) =
+                    message.sequencing_id.ok_or_else(|| fatal!("{SEQIDERR}"))?
                 {
                     eid
                 } else {
-                    return Err(fatal!("{}", SEQIDERR));
+                    return Err(fatal!("{SEQIDERR}"));
                 };
                 let um = UpdateMachine::init(
                     message.id,

@@ -1,6 +1,6 @@
 use super::{MachineError, StateMachine, TransitionResult, fsm};
 use crate::worker::workflow::{
-    WFMachinesError, fatal,
+    WFMachinesError,
     machines::{
         EventInfo, HistEventData, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
         workflow_machines::MachineResponse,

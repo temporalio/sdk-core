@@ -2,7 +2,7 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{fatal, machines::HistEventData, nondeterminism};
+use crate::worker::workflow::{machines::HistEventData, nondeterminism};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::CancelWorkflowExecution,

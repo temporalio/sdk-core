@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     abstractions::dbg_panic,
-    worker::workflow::{fatal, machines::HistEventData, nondeterminism},
+    worker::workflow::{machines::HistEventData, nondeterminism},
 };
 use std::convert::TryFrom;
 use temporalio_common::protos::{
