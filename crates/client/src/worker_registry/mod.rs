@@ -12,6 +12,7 @@ use std::{
     },
     sync::Arc,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::temporal::api::{
         worker::v1::WorkerHeartbeat, workflowservice::v1::PollWorkflowTaskQueueResponse,
@@ -53,36 +54,6 @@ impl SlotKey {
     }
 }
 
-/// Describes what task types a worker can handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WorkerCapabilities {
-    /// Whether this worker can handle workflow tasks
-    pub handles_workflows: bool,
-    /// Whether this worker can handle activity tasks
-    pub handles_activities: bool,
-    /// Whether this worker can handle nexus tasks
-    pub handles_nexus: bool,
-}
-
-impl WorkerCapabilities {
-    /// Returns true if this worker has any overlapping capabilities with another
-    pub fn overlaps_with(&self, other: &WorkerCapabilities) -> bool {
-        (self.handles_workflows && other.handles_workflows)
-            || (self.handles_activities && other.handles_activities)
-            || (self.handles_nexus && other.handles_nexus)
-    }
-
-    /// Returns true if this worker can provide WFT slots (only workflow-capable workers)
-    pub fn provides_wft_slots(&self) -> bool {
-        self.handles_workflows
-    }
-
-    /// Returns true if worker has at least one capability
-    pub fn is_valid(&self) -> bool {
-        self.handles_workflows || self.handles_activities || self.handles_nexus
-    }
-}
-
 /// Information about a registered worker in the slot provider registry
 #[derive(Debug, Clone)]
 struct RegisteredWorkerInfo {
@@ -91,15 +62,15 @@ struct RegisteredWorkerInfo {
     /// Optional deployment build ID for versioning
     build_id: Option<String>,
     /// Task types this worker can handle
-    capabilities: WorkerCapabilities,
+    task_types: WorkerTaskTypes,
 }
 
 impl RegisteredWorkerInfo {
-    fn new(worker_id: Uuid, build_id: Option<String>, capabilities: WorkerCapabilities) -> Self {
+    fn new(worker_id: Uuid, build_id: Option<String>, task_types: WorkerTaskTypes) -> Self {
         Self {
             worker_id,
             build_id,
-            capabilities,
+            task_types,
         }
     }
 }
@@ -133,7 +104,7 @@ impl ClientWorkerSetImpl {
         if let Some(worker_list) = self.slot_providers.get(&key) {
             let workflow_workers: Vec<&RegisteredWorkerInfo> = worker_list
                 .iter()
-                .filter(|info| info.capabilities.provides_wft_slots())
+                .filter(|info| info.task_types.enable_workflows)
                 .collect();
 
             for worker_id in Self::worker_ids_in_selection_order(&workflow_workers) {
@@ -176,10 +147,10 @@ impl ClientWorkerSetImpl {
         let build_id = worker
             .deployment_options()
             .map(|opts| opts.version.build_id);
-        let capabilities = worker.worker_capabilities();
+        let task_types = worker.worker_task_types();
 
-        // Validate capabilities
-        if !capabilities.is_valid() {
+        if !task_types.enable_workflows && !task_types.enable_activities && !task_types.enable_nexus
+        {
             bail!(
                 "Worker must have at least one capability enabled (workflows, activities, or nexus)"
             );
@@ -190,16 +161,16 @@ impl ClientWorkerSetImpl {
         {
             for existing_worker_info in existing_workers {
                 if existing_worker_info.build_id.as_ref() == build_id.as_ref()
-                    && capabilities.overlaps_with(&existing_worker_info.capabilities)
+                    && task_types.overlaps_with(&existing_worker_info.task_types)
                 {
                     bail!(
-                        "Registration of multiple workers with overlapping capabilities \
+                        "Registration of multiple workers with overlapping worker task types \
                         on the same namespace, task queue, and deployment build ID not allowed: \
                         {slot_key:?}, worker_instance_key: {:?} \
                         build_id: {build_id:?}, \
-                        new capabilities: {capabilities:?}, \
-                        existing capabilities: {:?}.",
-                        existing_worker_info.capabilities,
+                        new task types: {task_types:?}, \
+                        existing task types: {:?}.",
+                        existing_worker_info.task_types,
                         worker.worker_instance_key()
                     );
                 }
@@ -223,7 +194,7 @@ impl ClientWorkerSetImpl {
         }
 
         let worker_info =
-            RegisteredWorkerInfo::new(worker.worker_instance_key(), build_id, capabilities);
+            RegisteredWorkerInfo::new(worker.worker_instance_key(), build_id, task_types);
 
         match self.slot_providers.entry(slot_key.clone()) {
             Occupied(o) => o.into_mut().push(worker_info),
@@ -422,7 +393,7 @@ pub trait ClientWorker: Send + Sync {
     ) -> Result<Box<dyn SharedNamespaceWorkerTrait + Send + Sync>, anyhow::Error>;
 
     /// Returns the task types this worker can handle
-    fn worker_capabilities(&self) -> WorkerCapabilities;
+    fn worker_task_types(&self) -> WorkerTaskTypes;
 }
 
 #[cfg(test)]
@@ -468,11 +439,11 @@ mod tests {
             .expect_worker_instance_key()
             .return_const(Uuid::new_v4());
         mock_provider
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
         mock_provider
     }
@@ -512,11 +483,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         failing_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
 
         let succeeding_worker_id = Uuid::new_v4();
@@ -549,11 +520,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         succeeding_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
 
         manager
@@ -610,11 +581,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         failing_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
 
         // On a separate task queue
@@ -637,11 +608,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         succeeding_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
 
         manager
@@ -675,13 +646,10 @@ mod tests {
                 successful_registrations += 1;
                 worker_keys.push(worker_instance_key);
             } else {
-                // Should get error for overlapping capabilities
-                assert!(
-                    result
-                        .unwrap_err()
-                        .to_string()
-                        .contains("Registration of multiple workers with overlapping capabilities")
-                );
+                // Should get error for overlapping worker task types
+                assert!(result.unwrap_err().to_string().contains(
+                    "Registration of multiple workers with overlapping worker task types"
+                ));
             }
         }
 
@@ -805,11 +773,11 @@ mod tests {
         }
 
         mock_provider
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
             });
 
         mock_provider
@@ -836,14 +804,14 @@ mod tests {
 
         manager.register_worker(Arc::new(worker1), false).unwrap();
 
-        // second worker register should fail due to overlapping capabilities
+        // second worker register should fail due to overlapping worker task types
         let result = manager.register_worker(Arc::new(worker2), false);
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Registration of multiple workers with overlapping capabilities")
+                .contains("Registration of multiple workers with overlapping worker task types")
         );
 
         assert_eq!(1, manager.num_providers());
@@ -891,7 +859,7 @@ mod tests {
                 .register_worker(Arc::new(worker3), false)
                 .unwrap_err()
                 .to_string()
-                .contains("Registration of multiple workers with overlapping capabilities")
+                .contains("Registration of multiple workers with overlapping worker task types")
         );
 
         assert!(
@@ -899,7 +867,7 @@ mod tests {
                 .register_worker(Arc::new(worker4), false)
                 .unwrap_err()
                 .to_string()
-                .contains("Registration of multiple workers with overlapping capabilities")
+                .contains("Registration of multiple workers with overlapping worker task types")
         );
         assert_eq!(2, manager.num_providers());
 
@@ -1075,7 +1043,6 @@ mod tests {
         let namespace = "test_namespace".to_string();
         let task_queue = "test_queue".to_string();
 
-        // Create workflow-only worker
         let mut workflow_nexus_worker = MockClientWorker::new();
         workflow_nexus_worker
             .expect_namespace()
@@ -1093,18 +1060,13 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         workflow_nexus_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: false,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: false,
+                enable_nexus: true,
             });
-        workflow_nexus_worker
-            .expect_try_reserve_wft_slot()
-            .times(1)
-            .returning(|| Some(new_mock_slot(false)));
 
-        // Create activity-only worker
         let mut activity_worker = MockClientWorker::new();
         activity_worker
             .expect_namespace()
@@ -1122,31 +1084,22 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         activity_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: true,
+                enable_nexus: false,
             });
         activity_worker.expect_try_reserve_wft_slot().times(0); // Should not be called for activity-only worker
 
-        // Register both workers - should succeed
         manager
             .register_worker(Arc::new(workflow_nexus_worker), false)
-            .expect("workflow-only worker should register");
+            .expect("workflow-nexus worker should register");
         manager
             .register_worker(Arc::new(activity_worker), false)
             .expect("activity-only worker should register");
 
-        // Both workers should be registered
         assert_eq!(2, manager.num_providers());
-
-        // Try to reserve WFT slot - should only use workflow worker
-        let reservation = manager.try_reserve_wft_slot(namespace.clone(), task_queue.clone());
-        assert!(
-            reservation.is_some(),
-            "should be able to reserve slot from workflow worker"
-        );
     }
 
     #[test]
@@ -1155,7 +1108,7 @@ mod tests {
         let namespace = "test_namespace".to_string();
         let task_queue = "test_queue".to_string();
 
-        // Create first workflow+activity worker
+        // workflow+activity worker
         let mut worker1 = MockClientWorker::new();
         worker1.expect_namespace().return_const(namespace.clone());
         worker1.expect_task_queue().return_const(task_queue.clone());
@@ -1165,14 +1118,14 @@ mod tests {
             .return_const(Uuid::new_v4());
         worker1.expect_heartbeat_enabled().return_const(false);
         worker1
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: false,
             });
 
-        // Create second workflow+activity worker (same capabilities)
+        // workflow+activity worker
         let mut worker2 = MockClientWorker::new();
         worker2.expect_namespace().return_const(namespace.clone());
         worker2.expect_task_queue().return_const(task_queue.clone());
@@ -1182,28 +1135,27 @@ mod tests {
             .return_const(Uuid::new_v4());
         worker2.expect_heartbeat_enabled().return_const(false);
         worker2
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: false,
             });
 
         manager
             .register_worker(Arc::new(worker1), false)
             .expect("first worker should register");
 
-        // Second registration should fail due to overlapping capabilities
         let result = manager.register_worker(Arc::new(worker2), false);
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("overlapping capabilities")
+                .contains("overlapping worker task types")
         );
 
-        // Test activity-only overlap
+        // activity-only worker
         let mut worker3 = MockClientWorker::new();
         worker3.expect_namespace().return_const(namespace.clone());
         worker3.expect_task_queue().return_const(task_queue.clone());
@@ -1213,11 +1165,11 @@ mod tests {
             .return_const(Uuid::new_v4());
         worker3.expect_heartbeat_enabled().return_const(false);
         worker3
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: true,
+                enable_nexus: false,
             });
 
         let result = manager.register_worker(Arc::new(worker3), false);
@@ -1226,7 +1178,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("overlapping capabilities")
+                .contains("overlapping worker task types")
         );
     }
 
@@ -1236,7 +1188,6 @@ mod tests {
         let namespace = "test_namespace".to_string();
         let task_queue = "test_queue".to_string();
 
-        // Register activity-only worker
         let mut activity_worker = MockClientWorker::new();
         activity_worker
             .expect_namespace()
@@ -1254,14 +1205,13 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         activity_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: true,
+                enable_nexus: false,
             });
 
-        // Register nexus-only worker
         let mut nexus_worker = MockClientWorker::new();
         nexus_worker
             .expect_namespace()
@@ -1275,11 +1225,11 @@ mod tests {
             .return_const(Uuid::new_v4());
         nexus_worker.expect_heartbeat_enabled().return_const(false);
         nexus_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: false,
-                handles_nexus: true,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: false,
+                enable_nexus: true,
             });
 
         manager_impl
@@ -1289,7 +1239,6 @@ mod tests {
             .register(Arc::new(nexus_worker), false)
             .expect("nexus worker should register");
 
-        // Try to reserve WFT slot - should return None
         let reservation = manager_impl.try_reserve_wft_slot(namespace.clone(), task_queue.clone());
         assert!(
             reservation.is_none(),
@@ -1314,11 +1263,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         workflow_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: false,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: false,
+                enable_nexus: false,
             });
         workflow_worker
             .expect_try_reserve_wft_slot()
@@ -1329,7 +1278,6 @@ mod tests {
             .register(Arc::new(workflow_worker), false)
             .expect("workflow worker should register");
 
-        // Try to reserve WFT slot again - should succeed now
         let reservation = manager_impl.try_reserve_wft_slot(namespace.clone(), task_queue.clone());
         assert!(
             reservation.is_some(),
@@ -1354,11 +1302,11 @@ mod tests {
             .return_const(Uuid::new_v4());
         worker.expect_heartbeat_enabled().return_const(false);
         worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: false,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: false,
+                enable_nexus: false,
             });
 
         let result = manager.register_worker(Arc::new(worker), false);
@@ -1377,7 +1325,7 @@ mod tests {
         let namespace = "test_namespace".to_string();
         let task_queue = "test_queue".to_string();
 
-        // Register workflow-only worker
+        // workflow-only worker
         let mut workflow_worker = MockClientWorker::new();
         workflow_worker
             .expect_namespace()
@@ -1396,17 +1344,17 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         workflow_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: true,
-                handles_activities: false,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: false,
+                enable_nexus: false,
             });
         workflow_worker
             .expect_try_reserve_wft_slot()
             .returning(|| Some(new_mock_slot(false)));
 
-        // Register activity-only worker
+        // activity-only worker
         let mut activity_worker = MockClientWorker::new();
         activity_worker
             .expect_namespace()
@@ -1425,11 +1373,11 @@ mod tests {
             .expect_heartbeat_enabled()
             .return_const(false);
         activity_worker
-            .expect_worker_capabilities()
-            .return_const(WorkerCapabilities {
-                handles_workflows: false,
-                handles_activities: true,
-                handles_nexus: false,
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_activities: true,
+                enable_nexus: false,
             });
 
         manager

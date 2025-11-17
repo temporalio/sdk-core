@@ -67,6 +67,7 @@ use std::{
 use temporalio_client::{
     ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
     protos::{
@@ -652,26 +653,13 @@ impl Worker {
             )
         });
 
-        // Determine worker capabilities based on configuration
-        let capabilities = temporalio_client::WorkerCapabilities {
-            handles_workflows: !matches!(
-                config.workflow_task_poller_behavior,
-                PollerBehavior::SimpleMaximum(0)
-            ),
-            handles_activities: !config.no_remote_activities,
-            handles_nexus: !matches!(
-                config.nexus_task_poller_behavior,
-                PollerBehavior::SimpleMaximum(0)
-            ),
-        };
-
         let client_worker_registrator = Arc::new(ClientWorkerRegistrator {
             worker_instance_key,
             slot_provider: provider,
             heartbeat_manager: worker_heartbeat,
             client: RwLock::new(client.clone()),
             shared_namespace_worker,
-            capabilities,
+            task_types: config.task_types,
         });
 
         if !shared_namespace_worker {
@@ -1102,7 +1090,7 @@ struct ClientWorkerRegistrator {
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     client: RwLock<Arc<dyn WorkerClient>>,
     shared_namespace_worker: bool,
-    capabilities: temporalio_client::WorkerCapabilities,
+    task_types: WorkerTaskTypes,
 }
 
 impl ClientWorker for ClientWorkerRegistrator {
@@ -1152,8 +1140,8 @@ impl ClientWorker for ClientWorkerRegistrator {
         }
     }
 
-    fn worker_capabilities(&self) -> temporalio_client::WorkerCapabilities {
-        self.capabilities
+    fn worker_task_types(&self) -> WorkerTaskTypes {
+        self.task_types
     }
 }
 
