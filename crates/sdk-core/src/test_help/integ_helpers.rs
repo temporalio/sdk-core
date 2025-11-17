@@ -36,6 +36,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -105,6 +106,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
             build_id: "test_bin_id".to_string(),
         })
         .ignore_evicts_on_shutdown(true)
+        .task_types(WorkerTaskTypes::all())
         // Serial polling since it makes mocking much easier.
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
     wcb

@@ -119,11 +119,7 @@ pub struct WorkerConfig {
     pub nexus_task_poller_behavior: PollerBehavior,
     /// Specifies which task types this worker will poll for.
     ///
-    /// By default, workers poll for all task types (workflows, activities, and nexus).
-    /// You can restrict this to any combination.
-    ///
     /// Note: At least one task type must be specified or the worker will fail validation.
-    #[builder(default = "WorkerTaskTypes::all()")]
     pub task_types: WorkerTaskTypes,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.

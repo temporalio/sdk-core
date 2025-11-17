@@ -12,6 +12,7 @@ fn test_default_configuration_polls_all_types() {
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
+        .task_types(WorkerTaskTypes::all())
         .build()
         .expect("Failed to build default config");
 

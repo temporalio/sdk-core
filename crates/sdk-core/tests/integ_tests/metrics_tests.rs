@@ -165,6 +165,7 @@ async fn one_slot_worker_reports_available_slot() {
         .max_outstanding_workflow_tasks(2_usize)
         .max_outstanding_nexus_tasks(1_usize)
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
+        .task_types(WorkerTaskTypes::all())
         .build()
         .unwrap();
 

@@ -32,6 +32,7 @@ use temporalio_client::{
     WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
     WorkflowHandle, WorkflowOptions,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as CoreWorker,
     protos::{
@@ -59,6 +60,8 @@ use temporalio_sdk::{
         WorkerInterceptor,
     },
 };
+#[cfg(any(feature = "test-utilities", test))]
+pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
@@ -71,9 +74,6 @@ use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
-
-#[cfg(any(feature = "test-utilities", test))]
-pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -112,6 +112,7 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_build_id".to_owned(),
         })
+        .task_types(WorkerTaskTypes::all())
         .skip_client_worker_set_check(true);
     b
 }

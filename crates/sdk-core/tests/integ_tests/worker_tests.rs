@@ -90,6 +90,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "blah".to_owned(),
             })
+            .task_types(WorkerTaskTypes::all())
             .build()
             .unwrap(),
         retrying_client,
