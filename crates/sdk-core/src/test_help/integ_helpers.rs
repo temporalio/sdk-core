@@ -233,6 +233,7 @@ impl MocksHolder {
     }
 
     /// Helper to create and set an activity poller from responses
+    #[cfg(test)]
     pub(crate) fn set_act_poller_from_resps<ACT>(&mut self, act_tasks: ACT)
     where
         ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
@@ -243,6 +244,7 @@ impl MocksHolder {
     }
 
     /// Helper to create and set a nexus poller from responses
+    #[cfg(test)]
     pub(crate) fn set_nexus_poller_from_resps<NEX>(&mut self, nexus_tasks: NEX)
     where
         NEX: IntoIterator<Item = QueueResponse<PollNexusTaskQueueResponse>>,
@@ -388,9 +390,11 @@ impl MocksHolder {
         client: impl WorkerClient + 'static,
         stream: impl Stream<Item = PollWorkflowTaskQueueResponse> + Send + 'static,
     ) -> Self {
-        let wft_stream = Some(stream
-            .map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
-            .boxed());
+        let wft_stream = Some(
+            stream
+                .map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
+                .boxed(),
+        );
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: None,

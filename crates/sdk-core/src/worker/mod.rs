@@ -115,13 +115,13 @@ pub struct Worker {
     client: Arc<dyn WorkerClient>,
     /// Worker instance key, unique identifier for this worker
     worker_instance_key: Uuid,
-    /// Manages all workflows and WFT processing. None if workflow polling is disabled.
+    /// Manages all workflows and WFT processing. None if workflow polling is disabled
     workflows: Option<Workflows>,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
-    /// Manages local activities. None if workflow polling is disabled (local activities require workflows).
+    /// Manages local activities. None if workflow polling is disabled (local activities require workflows)
     local_act_mgr: Option<Arc<LocalActivityManager>>,
-    /// Manages Nexus tasks. None if nexus polling is disabled.
+    /// Manages Nexus tasks
     nexus_mgr: Option<NexusManager>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
@@ -524,27 +524,21 @@ impl Worker {
                 act_poller,
                 nexus_poller,
             } => {
-                println!("wft_stream {:?}", wft_stream.is_some());
                 let wft_stream = config
                     .task_types
                     .enable_workflows
                     .then_some(wft_stream)
                     .flatten();
-                println!("wft_stream after {:?}", wft_stream.is_some());
-                println!("act_poller {:?}", act_poller.is_some());
                 let act_poller = config
                     .task_types
                     .enable_activities
                     .then_some(act_poller)
                     .flatten();
-                println!("act_poller after {:?}", act_poller.is_some());
-                println!("nexus_poller {:?}", nexus_poller.is_some());
                 let nexus_poller = config
                     .task_types
                     .enable_nexus
                     .then_some(nexus_poller)
                     .flatten();
-                println!("nexus_poller after {:?}", nexus_poller.is_some());
 
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
@@ -965,10 +959,12 @@ impl Worker {
                 if let Err(ref e) = r {
                     // This is covering the situation where WFT pollers dying is the reason for shutdown
                     self.initiate_shutdown();
-                    if matches!(e, PollError::ShutDown)
-                        && let Some(la_mgr) = &self.local_act_mgr
-                    {
-                        la_mgr.workflows_have_shutdown();
+                    if matches!(e, PollError::ShutDown) {
+                        if let Some(la_mgr) = &self.local_act_mgr {
+                            la_mgr.workflows_have_shutdown();
+                        } else {
+                            dbg_panic!("la_mgr should be set if worker supports workflows");
+                        }
                     }
                 }
                 r

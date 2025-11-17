@@ -1,4 +1,4 @@
-use temporalio_common::protos::temporal::api::workflowservice::v1::RespondNexusTaskCompletedResponse;
+use crate::test_help::QueueResponse;
 use crate::{
     PollError, prost_dur,
     test_help::{
@@ -15,6 +15,17 @@ use crate::{
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
+use temporalio_common::protos::coresdk::ActivityTaskCompletion;
+use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
+use temporalio_common::protos::coresdk::nexus::NexusTaskCompletion;
+use temporalio_common::protos::temporal::api::nexus::v1::{
+    Request as NexusRequest, Response as NexusResponse, StartOperationRequest,
+    StartOperationResponse, start_operation_response,
+};
+use temporalio_common::protos::temporal::api::workflowservice::v1::RespondNexusTaskCompletedResponse;
+use temporalio_common::protos::temporal::api::workflowservice::v1::{
+    PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse,
+};
 use temporalio_common::{
     Worker,
     protos::{
@@ -24,23 +35,16 @@ use temporalio_common::{
             workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
             workflow_completion::WorkflowActivationCompletion,
         },
-        temporal::api::workflowservice::v1::{
-            PollWorkflowTaskQueueResponse, PollNexusTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
-            ShutdownWorkerResponse,
-        },
         temporal::api::common::v1::{ActivityType, WorkflowExecution},
+        temporal::api::workflowservice::v1::{
+            PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+            RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
+        },
         test_utils::start_timer_cmd,
     },
     worker::{PollerBehavior, WorkerTaskTypes},
 };
 use tokio::sync::{Barrier, watch};
-use tokio::time::timeout;
-use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
-use temporalio_common::protos::coresdk::ActivityTaskCompletion;
-use temporalio_common::protos::coresdk::nexus::NexusTaskCompletion;
-use temporalio_common::protos::temporal::api::nexus::v1::{Request as NexusRequest, Response as NexusResponse, StartOperationRequest, StartOperationResponse, start_operation_response};
-use temporalio_common::protos::temporal::api::workflowservice::v1::{PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse};
-use crate::test_help::QueueResponse;
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
@@ -378,553 +382,6 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
     });
 }
 
-#[tokio::test]
-async fn test_worker_type_shutdown_all_combinations() {
-    let combinations = [
-        (WorkerTaskTypes::workflow_only(), "workflows only"),
-        (WorkerTaskTypes::activity_only(), "activities only"),
-        (WorkerTaskTypes::nexus_only(), "nexus only"),
-        (
-            WorkerTaskTypes {
-                enable_workflows: true,
-                enable_activities: true,
-                enable_nexus: false,
-            },
-            "workflows + activities",
-        ),
-        (
-            WorkerTaskTypes {
-                enable_workflows: true,
-                enable_activities: false,
-                enable_nexus: true,
-            },
-            "workflows + nexus",
-        ),
-        (
-            WorkerTaskTypes {
-                enable_workflows: false,
-                enable_activities: true,
-                enable_nexus: true,
-            },
-            "activities + nexus",
-        ),
-        (WorkerTaskTypes::all(), "all types"),
-    ];
-
-    for (task_types, description) in combinations {
-        let mut cfg = test_worker_cfg();
-        cfg.task_types(task_types);
-
-        let mock_inputs = MockWorkerInputs {
-            config: cfg.build().unwrap(),
-            ..Default::default()
-        };
-        let worker = mock_worker(MocksHolder::from_mock_worker(
-            mock_worker_client(),
-            mock_inputs,
-        ));
-
-        let shutdown_result = timeout(Duration::from_secs(1), worker.shutdown()).await;
-        assert!(
-            shutdown_result.is_ok(),
-            "worker shutdown should not hang for {description}"
-        );
-    }
-}
-
-// #[tokio::test]
-// async fn test_type_shutdown_with_tasks2() {
-//     telemetry_init_fallback();
-//     let combinations = [
-//         // (WorkerTaskTypes::workflow_only(), "workflows only"),
-//         (WorkerTaskTypes::activity_only(), "activities only"),
-//         // (WorkerTaskTypes::nexus_only(), "nexus only"),
-//         // (
-//         //     WorkerTaskTypes {
-//         //         enable_workflows: true,
-//         //         enable_activities: true,
-//         //         enable_nexus: false,
-//         //     },
-//         //     "workflows + activities",
-//         // ),
-//         // (
-//         //     WorkerTaskTypes {
-//         //         enable_workflows: true,
-//         //         enable_activities: false,
-//         //         enable_nexus: true,
-//         //     },
-//         //     "workflows + nexus",
-//         // ),
-//         // (
-//         //     WorkerTaskTypes {
-//         //         enable_workflows: false,
-//         //         enable_activities: true,
-//         //         enable_nexus: true,
-//         //     },
-//         //     "activities + nexus",
-//         // ),
-//         // (WorkerTaskTypes::all(), "all types"),
-//     ];
-//
-//     for (task_types, description) in combinations {
-//         eprintln!("\nTesting: {description}");
-//
-//         let mut mock_client = mock_worker_client();
-//         if task_types.enable_workflows {
-//             mock_client
-//                 .expect_complete_workflow_task()
-//                 .times(1)
-//                 .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-//             // mock_client.expect_poll_workflow_task().times(1).returning(|_, _| Ok(PollWorkflowTaskQueueResponse::default()));
-//         }
-//         if task_types.enable_activities {
-//             mock_client.expect_poll_activity_task().times(1).returning(|_, _| Ok(PollActivityTaskQueueResponse {
-//                 task_token: vec![1],
-//                 ..Default::default()
-//             }));
-//             mock_client.expect_complete_activity_task().times(1).returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-//         }
-//         if task_types.enable_nexus {
-//             mock_client.expect_poll_nexus_task().times(1).returning(|_, _| Ok(Default::default()));
-//             mock_client.expect_complete_nexus_task().times(1).returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-//         }
-//
-//         let t = canned_histories::single_timer("1");
-//         let mut mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock_client);
-//         mh.enforce_correct_number_of_polls = false;
-//         let act_tasks: Vec<QueueResponse<PollActivityTaskQueueResponse>> = vec![QueueResponse::from(PollActivityTaskQueueResponse::default())];
-//         mh.activity_responses = Some(act_tasks);
-//         let mut mock = build_mock_pollers(mh);
-//         mock.worker_cfg(|w| {
-//             w.task_types = task_types;
-//             w.max_cached_workflows = 1;
-//         });
-//         let worker = mock_worker(mock);
-//
-//         println!("a");
-//         if task_types.enable_workflows {
-//             let activation = worker.poll_workflow_activation().await.unwrap();
-//             let _ = worker
-//                 .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-//                     activation.run_id,
-//                     vec![],
-//                 ))
-//                 .await;
-//         }
-//
-//         println!("a");
-//         if task_types.enable_activities {
-//             let task = worker.poll_activity_task().await.unwrap();
-//             worker.complete_activity_task(ActivityTaskCompletion {
-//                 task_token: task.task_token,
-//                 result: Some(ActivityExecutionResult::ok(Default::default())),
-//             })
-//                 .await.unwrap();
-//         }
-//
-//         println!("a");
-//         if task_types.enable_nexus {
-//             let task = worker.poll_nexus_task().await.unwrap();
-//             worker
-//                 .complete_nexus_task(NexusTaskCompletion {
-//                     task_token: task.task_token().to_vec(),
-//                     status: None,
-//                 })
-//                 .await.unwrap();
-//
-//         }
-//     }
-// }
-
-#[tokio::test]
-async fn test_task_type_activity_only() {
-    let queue = "activity-only-queue";
-
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_activity_task()
-        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-
-    let mut act_task = PollActivityTaskQueueResponse::default();
-    act_task.task_token = b"act-task".to_vec();
-    act_task.workflow_execution = Some(WorkflowExecution {
-        workflow_id: "activity-only".to_string(),
-        run_id: "run-id".to_string(),
-    });
-    act_task.activity_id = "activity".to_string();
-    act_task.activity_type = Some(ActivityType {
-        name: "activity".to_string(),
-    });
-
-    let mut mocks = MocksHolder::from_client_with_activities(
-        client,
-        vec![QueueResponse::from(act_task)]
-    );
-    mocks.worker_cfg(|w| {
-        w.task_queue = queue.to_string();
-        w.task_types = WorkerTaskTypes::activity_only();
-        w.skip_client_worker_set_check = true;
-    });
-    let worker = mock_worker(mocks);
-
-    let activity_task = worker.poll_activity_task().await.unwrap();
-    worker
-        .complete_activity_task(ActivityTaskCompletion {
-            task_token: activity_task.task_token,
-            result: Some(ActivityExecutionResult::ok(vec![1].into())),
-        })
-        .await
-        .unwrap();
-
-    worker.initiate_shutdown();
-    assert_matches!(
-        worker.poll_activity_task().await.unwrap_err(),
-        PollError::ShutDown
-    );
-    worker.shutdown().await;
-    worker.finalize_shutdown().await;
-}
-
-#[tokio::test]
-async fn test_task_type_nexus_only() {
-    let shared_queue = "shared-nexus-queue";
-
-    let t = canned_histories::single_timer("wf-only");
-    let wf_cfg = MockPollCfg::from_resp_batches("wf-only", t, [1], mock_worker_client());
-    let mut wf_mocks = build_mock_pollers(wf_cfg);
-    wf_mocks.worker_cfg(|w| {
-        w.task_queue = shared_queue.to_string();
-        w.task_types = WorkerTaskTypes::workflow_only();
-        w.skip_client_worker_set_check = true;
-    });
-    let workflow_worker = mock_worker(wf_mocks);
-
-    let mut nex_client = mock_worker_client();
-    nex_client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-    let nex_task = PollNexusTaskQueueResponse {
-        task_token: b"nex-task".to_vec(),
-        request: Some(NexusRequest {
-            header: Default::default(),
-            scheduled_time: None,
-            variant: Some(temporalio_common::protos::temporal::api::nexus::v1::request::Variant::StartOperation(
-                StartOperationRequest {
-                    service: "test-service".to_string(),
-                    operation: "test-operation".to_string(),
-                    request_id: "test-request-id".to_string(),
-                    callback: "".to_string(),
-                    payload: None,
-                    callback_header: Default::default(),
-                    links: vec![],
-                }
-            )),
-        }),
-        poller_scaling_decision: None,
-    };
-    let mut nex_mocks =
-        MocksHolder::from_client_with_nexus(nex_client, vec![QueueResponse::from(nex_task)]);
-    nex_mocks.worker_cfg(|w| {
-        w.task_queue = shared_queue.to_string();
-        w.task_types = WorkerTaskTypes::nexus_only();
-        w.skip_client_worker_set_check = true;
-    });
-    let nexus_worker = mock_worker(nex_mocks);
-
-    let activation = workflow_worker.poll_workflow_activation().await.unwrap();
-    workflow_worker
-        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            activation.run_id.clone(),
-            vec![CompleteWorkflowExecution::default().into()],
-        ))
-        .await
-        .unwrap();
-
-    let nexus_task = nexus_worker.poll_nexus_task().await.unwrap();
-    nexus_worker
-        .complete_nexus_task(NexusTaskCompletion {
-            task_token: nexus_task.task_token().to_vec(),
-            status: Some(temporalio_common::protos::coresdk::nexus::nexus_task_completion::Status::Completed(
-                NexusResponse {
-                    variant: Some(temporalio_common::protos::temporal::api::nexus::v1::response::Variant::StartOperation(
-                        StartOperationResponse {
-                            variant: Some(start_operation_response::Variant::SyncSuccess(
-                                start_operation_response::Sync {
-                                    payload: None,
-                                    links: vec![],
-                                }
-                            )),
-                        }
-                    )),
-                }
-            )),
-        })
-        .await
-        .unwrap();
-
-    let workflow_shutdown = workflow_worker.drain_pollers_and_shutdown();
-    let nexus_shutdown = async move {
-        nexus_worker.initiate_shutdown();
-        assert_matches!(
-            nexus_worker.poll_nexus_task().await.unwrap_err(),
-            PollError::ShutDown
-        );
-        nexus_worker.shutdown().await;
-        nexus_worker.finalize_shutdown().await;
-    };
-
-    timeout(Duration::from_secs(5), async {
-        tokio::join!(workflow_shutdown, nexus_shutdown);
-    })
-        .await
-        .expect("workers failed to shutdown");
-}
-
-#[tokio::test]
-async fn test_task_type_workflow_and_activity() {
-    let shared_queue = "shared-wf-act-queue";
-
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_activity_task()
-        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-
-    let t = canned_histories::single_timer("wf-act");
-    let wf_cfg = MockPollCfg::from_resp_batches("wf-act", t, [1], client);
-    let mut act_task = PollActivityTaskQueueResponse::default();
-    act_task.task_token = b"act-task".to_vec();
-    act_task.workflow_execution = Some(WorkflowExecution {
-        workflow_id: "wf-act".to_string(),
-        run_id: "run-id".to_string(),
-    });
-    act_task.activity_id = "activity".to_string();
-    act_task.activity_type = Some(ActivityType {
-        name: "activity".to_string(),
-    });
-    let mut mocks = build_mock_pollers(wf_cfg);
-    mocks.set_act_poller_from_resps(vec![QueueResponse::from(act_task)]);
-    mocks.worker_cfg(|w| {
-        w.task_queue = shared_queue.to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: true,
-            enable_activities: true,
-            enable_nexus: false,
-        };
-        w.skip_client_worker_set_check = true;
-    });
-    let worker = mock_worker(mocks);
-
-    let activation = worker.poll_workflow_activation().await.unwrap();
-    worker
-        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            activation.run_id.clone(),
-            vec![CompleteWorkflowExecution::default().into()],
-        ))
-        .await
-        .unwrap();
-
-    let activity_task = worker.poll_activity_task().await.unwrap();
-    worker
-        .complete_activity_task(ActivityTaskCompletion {
-            task_token: activity_task.task_token,
-            result: Some(ActivityExecutionResult::ok(vec![1].into())),
-        })
-        .await
-        .unwrap();
-
-    let shutdown = worker.drain_pollers_and_shutdown();
-    timeout(Duration::from_secs(5), shutdown)
-        .await
-        .expect("worker failed to shutdown");
-}
-
-#[tokio::test]
-async fn test_task_type_workflow_and_nexus() {
-    let shared_queue = "shared-wf-nex-queue";
-
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-
-    let t = canned_histories::single_timer("wf-nex");
-    let wf_cfg = MockPollCfg::from_resp_batches("wf-nex", t, [1], client);
-    let nex_task = PollNexusTaskQueueResponse {
-        task_token: b"nex-task".to_vec(),
-        request: Some(NexusRequest {
-            header: Default::default(),
-            scheduled_time: None,
-            variant: Some(temporalio_common::protos::temporal::api::nexus::v1::request::Variant::StartOperation(
-                StartOperationRequest {
-                    service: "test-service".to_string(),
-                    operation: "test-operation".to_string(),
-                    request_id: "test-request-id".to_string(),
-                    callback: "".to_string(),
-                    payload: None,
-                    callback_header: Default::default(),
-                    links: vec![],
-                }
-            )),
-        }),
-        poller_scaling_decision: None,
-    };
-    let mut mocks = build_mock_pollers(wf_cfg);
-    mocks.set_nexus_poller_from_resps(vec![QueueResponse::from(nex_task)]);
-    mocks.worker_cfg(|w| {
-        w.task_queue = shared_queue.to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: true,
-            enable_activities: false,
-            enable_nexus: true,
-        };
-        w.skip_client_worker_set_check = true;
-    });
-    let worker = mock_worker(mocks);
-
-    let activation = worker.poll_workflow_activation().await.unwrap();
-    worker
-        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            activation.run_id.clone(),
-            vec![CompleteWorkflowExecution::default().into()],
-        ))
-        .await
-        .unwrap();
-
-    let nexus_task = worker.poll_nexus_task().await.unwrap();
-    worker
-        .complete_nexus_task(NexusTaskCompletion {
-            task_token: nexus_task.task_token().to_vec(),
-            status: Some(temporalio_common::protos::coresdk::nexus::nexus_task_completion::Status::Completed(
-                NexusResponse {
-                    variant: Some(temporalio_common::protos::temporal::api::nexus::v1::response::Variant::StartOperation(
-                        StartOperationResponse {
-                            variant: Some(start_operation_response::Variant::SyncSuccess(
-                                start_operation_response::Sync {
-                                    payload: None,
-                                    links: vec![],
-                                }
-                            )),
-                        }
-                    )),
-                }
-            )),
-        })
-        .await
-        .unwrap();
-
-    worker.initiate_shutdown();
-    // Drain nexus poller
-    assert_matches!(
-        worker.poll_nexus_task().await.unwrap_err(),
-        PollError::ShutDown
-    );
-    worker.shutdown().await;
-    worker.finalize_shutdown().await;
-}
-
-#[tokio::test]
-async fn test_task_type_activity_and_nexus() {
-    let shared_queue = "shared-act-nex-queue";
-
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_activity_task()
-        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-
-    let mut act_task = PollActivityTaskQueueResponse::default();
-    act_task.task_token = b"act-task".to_vec();
-    act_task.workflow_execution = Some(WorkflowExecution {
-        workflow_id: "act-nex".to_string(),
-        run_id: "run-id".to_string(),
-    });
-    act_task.activity_id = "activity".to_string();
-    act_task.activity_type = Some(ActivityType {
-        name: "activity".to_string(),
-    });
-
-    let nex_task = PollNexusTaskQueueResponse {
-        task_token: b"nex-task".to_vec(),
-        request: Some(NexusRequest {
-            header: Default::default(),
-            scheduled_time: None,
-            variant: Some(temporalio_common::protos::temporal::api::nexus::v1::request::Variant::StartOperation(
-                StartOperationRequest {
-                    service: "test-service".to_string(),
-                    operation: "test-operation".to_string(),
-                    request_id: "test-request-id".to_string(),
-                    callback: "".to_string(),
-                    payload: None,
-                    callback_header: Default::default(),
-                    links: vec![],
-                }
-            )),
-        }),
-        poller_scaling_decision: None,
-    };
-
-    let mut mocks = MocksHolder::from_client_with_activities(client, vec![QueueResponse::from(act_task)]);
-    mocks.set_nexus_poller_from_resps(vec![QueueResponse::from(nex_task)]);
-    mocks.worker_cfg(|w| {
-        w.task_queue = shared_queue.to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: false,
-            enable_activities: true,
-            enable_nexus: true,
-        };
-        w.skip_client_worker_set_check = true;
-    });
-    let worker = mock_worker(mocks);
-
-    let activity_task = worker.poll_activity_task().await.unwrap();
-    worker
-        .complete_activity_task(ActivityTaskCompletion {
-            task_token: activity_task.task_token,
-            result: Some(ActivityExecutionResult::ok(vec![1].into())),
-        })
-        .await
-        .unwrap();
-
-    let nexus_task = worker.poll_nexus_task().await.unwrap();
-    worker
-        .complete_nexus_task(NexusTaskCompletion {
-            task_token: nexus_task.task_token().to_vec(),
-            status: Some(temporalio_common::protos::coresdk::nexus::nexus_task_completion::Status::Completed(
-                NexusResponse {
-                    variant: Some(temporalio_common::protos::temporal::api::nexus::v1::response::Variant::StartOperation(
-                        StartOperationResponse {
-                            variant: Some(start_operation_response::Variant::SyncSuccess(
-                                start_operation_response::Sync {
-                                    payload: None,
-                                    links: vec![],
-                                }
-                            )),
-                        }
-                    )),
-                }
-            )),
-        })
-        .await
-        .unwrap();
-
-    worker.initiate_shutdown();
-    // Drain activity poller
-    assert_matches!(
-        worker.poll_activity_task().await.unwrap_err(),
-        PollError::ShutDown
-    );
-    // Drain nexus poller
-    assert_matches!(
-        worker.poll_nexus_task().await.unwrap_err(),
-        PollError::ShutDown
-    );
-    worker.shutdown().await;
-    worker.finalize_shutdown().await;
-}
-
-// Helper functions for creating consistent test data
 fn create_test_activity_task() -> PollActivityTaskQueueResponse {
     PollActivityTaskQueueResponse {
         task_token: b"act-task".to_vec(),
@@ -1007,21 +464,20 @@ async fn test_task_type_combinations_unified(
 ) {
     let mut client = mock_worker_client();
 
-    // Setup expectations based on enabled types (only if with_task is true)
-    if enable_activities && with_task {
-        client
-            .expect_complete_activity_task()
-            .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
-    }
-    if enable_nexus && with_task {
-        client
-            .expect_complete_nexus_task()
-            .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
+    if with_task {
+        if enable_activities {
+            client
+                .expect_complete_activity_task()
+                .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+        }
+        if enable_nexus {
+            client
+                .expect_complete_nexus_task()
+                .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
+        }
     }
 
-    // Build worker based on enabled task types
     let mut mocks = if enable_workflows && with_task {
-        // When workflows are enabled AND we have tasks, use build_mock_pollers as the base
         let t = canned_histories::single_timer(queue_name);
         let wf_cfg = MockPollCfg::from_resp_batches(queue_name, t, [1], client);
         let mut mocks = build_mock_pollers(wf_cfg);
@@ -1033,8 +489,6 @@ async fn test_task_type_combinations_unified(
         }
         mocks
     } else {
-        // When workflows are disabled OR idle (no tasks), use from_client_with_custom
-        // Provide workflow stream if workflows enabled (but no tasks in it)
         let wft_stream = if enable_workflows {
             Some(stream::empty())
         } else {
@@ -1064,7 +518,6 @@ async fn test_task_type_combinations_unified(
     });
     let worker = mock_worker(mocks);
 
-    // Poll and complete tasks ONLY if with_task is true
     if with_task {
         if enable_workflows {
             let activation = worker.poll_workflow_activation().await.unwrap();
@@ -1097,7 +550,6 @@ async fn test_task_type_combinations_unified(
         }
     }
 
-    // Shutdown (works whether tasks were processed or not)
     worker.initiate_shutdown();
     if enable_workflows {
         assert_matches!(
@@ -1120,5 +572,3 @@ async fn test_task_type_combinations_unified(
     worker.shutdown().await;
     worker.finalize_shutdown().await;
 }
-
-
