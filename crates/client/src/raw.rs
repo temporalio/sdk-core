@@ -1603,6 +1603,7 @@ mod tests {
     use temporalio_common::protos::temporal::api::{
         operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
     };
+    use temporalio_common::worker::WorkerTaskTypes;
     use tonic::IntoRequest;
     use uuid::Uuid;
 
@@ -1865,6 +1866,13 @@ mod tests {
         mock_provider
             .expect_worker_instance_key()
             .return_const(uuid);
+        mock_provider
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_activities: true,
+                enable_nexus: true,
+            });
 
         let client_worker_set = Arc::new(ClientWorkerSet::new());
         client_worker_set
