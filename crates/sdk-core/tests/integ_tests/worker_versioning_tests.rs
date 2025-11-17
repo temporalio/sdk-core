@@ -18,7 +18,9 @@ use temporalio_common::{
             },
         },
     },
-    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy},
+    worker::{
+        WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes, WorkerVersioningStrategy,
+    },
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::test_help::WorkerTestHelpers;
@@ -44,7 +46,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                 default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
             },
         ))
-        .no_remote_activities(true);
+        .task_types(WorkerTaskTypes::workflow_only());
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 

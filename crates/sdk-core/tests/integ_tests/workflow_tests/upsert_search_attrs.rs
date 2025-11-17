@@ -14,6 +14,7 @@ use temporalio_common::protos::{
         enums::v1::EventType,
     },
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
@@ -44,7 +45,9 @@ async fn sends_upsert() {
     let wf_name = "sends_upsert_search_attrs";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name, search_attr_updater);

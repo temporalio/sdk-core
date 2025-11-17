@@ -19,6 +19,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
@@ -89,6 +90,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "blah".to_owned(),
             })
+            .task_types(WorkerTaskTypes::all())
             .build()
             .unwrap(),
         retrying_client,
@@ -177,7 +179,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
-        .no_remote_activities(true)
+        .task_types(WorkerTaskTypes::workflow_only())
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
     // Set the limits to zero so it's essentially unwilling to hand out slots
@@ -210,7 +212,9 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 async fn oversize_grpc_message() {
     let wf_name = "oversize_grpc_message";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
