@@ -67,6 +67,12 @@ impl WorkerTaskTypes {
             enable_nexus: true,
         }
     }
+
+    pub fn overlaps_with(&self, other: &WorkerTaskTypes) -> bool {
+        (self.enable_workflows && other.enable_workflows)
+            || (self.enable_activities && other.enable_activities)
+            || (self.enable_nexus && other.enable_nexus)
+    }
 }
 
 /// Defines per-worker configuration options
