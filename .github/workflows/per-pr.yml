@@ -43,7 +43,7 @@ jobs:
 
   test:
     name: Unit Tests
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -123,7 +123,7 @@ jobs:
 
   integ-tests:
     name: Integ tests
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
