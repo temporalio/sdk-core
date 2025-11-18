@@ -717,7 +717,7 @@ impl Workflows {
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
         let print_err = match &msg {
-            LocalInputs::GetStateInfo(_) => false,
+            LocalInputs::GetStateInfo(_) | LocalInputs::BumpStream => false,
             LocalInputs::LocalResolution(lr) if lr.res.is_la_cancel_confirmation() => false,
             _ => true,
         };
