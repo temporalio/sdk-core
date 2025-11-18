@@ -317,17 +317,6 @@ impl WorkerConfigBuilder {
             return Err("`max_outstanding_nexus_tasks` must be > 0".to_owned());
         }
 
-        // Validate workflow cache is consistent with task_types
-        if !task_types.enable_workflows
-            && let Some(cache) = self.max_cached_workflows.as_ref()
-            && *cache > 0
-        {
-            return Err(
-                    "Cannot have `max_cached_workflows` > 0 when workflows are not enabled in `task_types`"
-                        .to_owned(),
-                );
-        }
-
         if let Some(cache) = self.max_cached_workflows.as_ref()
             && *cache > 0
         {
