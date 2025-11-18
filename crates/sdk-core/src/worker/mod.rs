@@ -67,6 +67,7 @@ use std::{
 use temporalio_client::{
     ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
     protos::{
@@ -658,6 +659,7 @@ impl Worker {
             heartbeat_manager: worker_heartbeat,
             client: RwLock::new(client.clone()),
             shared_namespace_worker,
+            task_types: config.task_types,
         });
 
         if !shared_namespace_worker {
@@ -1088,6 +1090,7 @@ struct ClientWorkerRegistrator {
     heartbeat_manager: Option<WorkerHeartbeatManager>,
     client: RwLock<Arc<dyn WorkerClient>>,
     shared_namespace_worker: bool,
+    task_types: WorkerTaskTypes,
 }
 
 impl ClientWorker for ClientWorkerRegistrator {
@@ -1135,6 +1138,10 @@ impl ClientWorker for ClientWorkerRegistrator {
         } else {
             bail!("Shared namespace worker creation never be called without a heartbeat manager");
         }
+    }
+
+    fn worker_task_types(&self) -> WorkerTaskTypes {
+        self.task_types
     }
 }
 

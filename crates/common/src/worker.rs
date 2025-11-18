@@ -67,6 +67,12 @@ impl WorkerTaskTypes {
             enable_nexus: true,
         }
     }
+
+    pub fn overlaps_with(&self, other: &WorkerTaskTypes) -> bool {
+        (self.enable_workflows && other.enable_workflows)
+            || (self.enable_activities && other.enable_activities)
+            || (self.enable_nexus && other.enable_nexus)
+    }
 }
 
 /// Defines per-worker configuration options
@@ -309,17 +315,6 @@ impl WorkerConfigBuilder {
         }
         if matches!(self.max_outstanding_nexus_tasks.as_ref(), Some(Some(v)) if *v == 0) {
             return Err("`max_outstanding_nexus_tasks` must be > 0".to_owned());
-        }
-
-        // Validate workflow cache is consistent with task_types
-        if !task_types.enable_workflows
-            && let Some(cache) = self.max_cached_workflows.as_ref()
-            && *cache > 0
-        {
-            return Err(
-                    "Cannot have `max_cached_workflows` > 0 when workflows are not enabled in `task_types`"
-                        .to_owned(),
-                );
         }
 
         if let Some(cache) = self.max_cached_workflows.as_ref()

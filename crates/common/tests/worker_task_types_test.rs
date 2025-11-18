@@ -50,27 +50,6 @@ fn test_empty_task_types_fails_validation() {
 }
 
 #[test]
-fn test_workflow_cache_without_workflows_fails() {
-    let result = WorkerConfigBuilder::default()
-        .namespace("default")
-        .task_queue("test-queue")
-        .versioning_strategy(default_versioning_strategy())
-        .task_types(WorkerTaskTypes::activity_only())
-        .max_cached_workflows(10usize)
-        .build();
-
-    assert!(
-        result.is_err(),
-        "Workflow cache > 0 without workflows should fail"
-    );
-    let err = result.err().unwrap().to_string();
-    assert!(
-        err.contains("max_cached_workflows"),
-        "Error should mention max_cached_workflows: {err}",
-    );
-}
-
-#[test]
 fn test_all_combinations() {
     let combinations = [
         (WorkerTaskTypes::workflow_only(), "workflows only"),
