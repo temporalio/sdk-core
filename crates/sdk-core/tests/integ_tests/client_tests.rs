@@ -18,8 +18,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    HttpConnectProxyOptions, Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait,
-    WorkflowService,
+    Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait, WorkflowService,
+    proxy::HttpConnectProxyOptions,
 };
 use temporalio_common::protos::temporal::api::{
     cloud::cloudservice::v1::GetNamespaceRequest,
