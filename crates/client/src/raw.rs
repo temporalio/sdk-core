@@ -1870,7 +1870,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 

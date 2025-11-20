@@ -22,21 +22,26 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorkerTaskTypes {
     pub enable_workflows: bool,
-    pub enable_activities: bool,
+    pub enable_local_activities: bool,
+    pub enable_remote_activities: bool,
     pub enable_nexus: bool,
 }
 
 impl WorkerTaskTypes {
     /// Check if no task types are enabled
     pub fn is_empty(&self) -> bool {
-        !self.enable_workflows && !self.enable_activities && !self.enable_nexus
+        !self.enable_workflows
+            && !self.enable_local_activities
+            && !self.enable_remote_activities
+            && !self.enable_nexus
     }
 
     /// Create a config with all task types enabled
     pub fn all() -> WorkerTaskTypes {
         WorkerTaskTypes {
             enable_workflows: true,
-            enable_activities: true,
+            enable_local_activities: true,
+            enable_remote_activities: true,
             enable_nexus: true,
         }
     }
@@ -45,7 +50,8 @@ impl WorkerTaskTypes {
     pub fn workflow_only() -> WorkerTaskTypes {
         WorkerTaskTypes {
             enable_workflows: true,
-            enable_activities: false,
+            enable_local_activities: false,
+            enable_remote_activities: false,
             enable_nexus: false,
         }
     }
@@ -54,7 +60,8 @@ impl WorkerTaskTypes {
     pub fn activity_only() -> WorkerTaskTypes {
         WorkerTaskTypes {
             enable_workflows: false,
-            enable_activities: true,
+            enable_local_activities: false,
+            enable_remote_activities: true,
             enable_nexus: false,
         }
     }
@@ -63,14 +70,16 @@ impl WorkerTaskTypes {
     pub fn nexus_only() -> WorkerTaskTypes {
         WorkerTaskTypes {
             enable_workflows: false,
-            enable_activities: false,
+            enable_local_activities: false,
+            enable_remote_activities: false,
             enable_nexus: true,
         }
     }
 
     pub fn overlaps_with(&self, other: &WorkerTaskTypes) -> bool {
         (self.enable_workflows && other.enable_workflows)
-            || (self.enable_activities && other.enable_activities)
+            || (self.enable_local_activities && other.enable_local_activities)
+            || (self.enable_remote_activities && other.enable_remote_activities)
             || (self.enable_nexus && other.enable_nexus)
     }
 }
@@ -284,6 +293,9 @@ impl WorkerConfigBuilder {
             .unwrap_or_else(WorkerTaskTypes::all);
         if task_types.is_empty() {
             return Err("At least one task type must be enabled in `task_types`".to_owned());
+        }
+        if !task_types.enable_workflows && task_types.enable_local_activities {
+            return Err("`task_types` cannot enable local activities without workflows".to_owned());
         }
 
         if let Some(b) = self.workflow_task_poller_behavior.as_ref() {

@@ -186,7 +186,7 @@ pub fn build_fake_worker(
 
 pub fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
-    let act_poller = if mocks.inputs.config.task_types.enable_activities {
+    let act_poller = if mocks.inputs.config.task_types.enable_remote_activities {
         mocks.inputs.act_poller
     } else {
         None

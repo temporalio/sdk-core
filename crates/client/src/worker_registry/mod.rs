@@ -149,11 +149,18 @@ impl ClientWorkerSetImpl {
             .map(|opts| opts.version.build_id);
         let task_types = worker.worker_task_types();
 
-        if !task_types.enable_workflows && !task_types.enable_activities && !task_types.enable_nexus
+        if !task_types.enable_workflows
+            && !task_types.enable_local_activities
+            && !task_types.enable_remote_activities
+            && !task_types.enable_nexus
         {
             bail!(
                 "Worker must have at least one capability enabled (workflows, activities, or nexus)"
             );
+        }
+
+        if !task_types.enable_workflows && task_types.enable_local_activities {
+            bail!("Local activities cannot be enabled without workflows")
         }
 
         if !skip_client_worker_set_check
@@ -442,7 +449,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
         mock_provider
@@ -486,7 +494,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 
@@ -523,7 +532,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 
@@ -584,7 +594,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 
@@ -611,7 +622,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 
@@ -776,7 +788,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: true,
             });
 
@@ -1063,7 +1076,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: false,
+                enable_local_activities: false,
+                enable_remote_activities: false,
                 enable_nexus: true,
             });
 
@@ -1087,7 +1101,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: true,
+                enable_local_activities: false,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
         activity_worker.expect_try_reserve_wft_slot().times(0); // Should not be called for activity-only worker
@@ -1121,7 +1136,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
 
@@ -1138,7 +1154,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
 
@@ -1168,7 +1185,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: true,
+                enable_local_activities: false,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
 
@@ -1208,7 +1226,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: true,
+                enable_local_activities: false,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
 
@@ -1228,7 +1247,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: false,
+                enable_local_activities: false,
+                enable_remote_activities: false,
                 enable_nexus: true,
             });
 
@@ -1266,7 +1286,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: false,
+                enable_local_activities: true,
+                enable_remote_activities: false,
                 enable_nexus: false,
             });
         workflow_worker
@@ -1286,9 +1307,10 @@ mod tests {
     }
 
     #[test]
-    fn worker_with_no_capabilities_rejected() {
+    fn worker_invalid_type_config_rejected() {
         let manager = ClientWorkerSet::new();
 
+        // no types enabled
         let mut worker = MockClientWorker::new();
         worker
             .expect_namespace()
@@ -1305,7 +1327,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: false,
+                enable_local_activities: false,
+                enable_remote_activities: false,
                 enable_nexus: false,
             });
 
@@ -1316,6 +1339,35 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("must have at least one capability enabled")
+        );
+
+        // local activities enabled without workflows
+        let mut worker = MockClientWorker::new();
+        worker
+            .expect_namespace()
+            .return_const("test_namespace".to_string());
+        worker
+            .expect_task_queue()
+            .return_const("test_queue".to_string());
+        worker.expect_deployment_options().return_const(None);
+        worker
+            .expect_worker_instance_key()
+            .return_const(Uuid::new_v4());
+        worker.expect_heartbeat_enabled().return_const(false);
+        worker
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: false,
+                enable_local_activities: true,
+                enable_remote_activities: true,
+                enable_nexus: false,
+            });
+
+        let result = manager.register_worker(Arc::new(worker), false);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "Local activities cannot be enabled without workflows".to_string()
         );
     }
 
@@ -1347,7 +1399,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: true,
-                enable_activities: false,
+                enable_local_activities: true,
+                enable_remote_activities: false,
                 enable_nexus: false,
             });
         workflow_worker
@@ -1376,7 +1429,8 @@ mod tests {
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
                 enable_workflows: false,
-                enable_activities: true,
+                enable_local_activities: false,
+                enable_remote_activities: true,
                 enable_nexus: false,
             });
 
