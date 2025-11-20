@@ -15,9 +15,9 @@ use std::{
 };
 use temporalio_client::{
     ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
-    ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
-    OperatorService, RetryClient, RetryConfig, TemporalServiceClient, TestService, TlsConfig,
-    WorkflowService, callback_based,
+    ClientTlsConfig, CloudService, ConfiguredClient, HealthService, OperatorService, RetryClient,
+    RetryConfig, TemporalServiceClient, TestService, TlsConfig, WorkflowService, callback_based,
+    proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;

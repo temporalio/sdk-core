@@ -18,21 +18,11 @@ mod retry;
 mod worker_registry;
 mod workflow_handle;
 
-pub use crate::{
-    proxy::HttpConnectProxyOptions,
-    retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient},
-};
+pub use crate::proxy::HttpConnectProxyOptions;
+pub use crate::retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient};
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
-pub use temporalio_common::protos::temporal::api::{
-    enums::v1::ArchivalState,
-    filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
-    workflowservice::v1::{
-        list_closed_workflow_executions_request::Filters as ListClosedFilters,
-        list_open_workflow_executions_request::Filters as ListOpenFilters,
-    },
-};
 pub use tonic;
 pub use worker_registry::{
     ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot,
@@ -65,9 +55,14 @@ use temporalio_common::{
         grpc::health::v1::health_client::HealthClient,
         temporal::api::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
-            common,
-            common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-            enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
+            common::{
+                self,
+                v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
+            },
+            enums::v1::{
+                ArchivalState, TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
+            },
+            filter::v1::StartTimeFilter,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
             query::v1::WorkflowQuery,
             replication::v1::ClusterReplicationConfig,
@@ -1170,7 +1165,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListOpenFilters>,
+        filters: Option<list_open_workflow_executions_request::Filters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse>;
 
     /// List closed workflow executions Standard Visibility filtering
@@ -1179,7 +1174,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListClosedFilters>,
+        filters: Option<list_closed_workflow_executions_request::Filters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse>;
 
     /// List workflow executions with Advanced Visibility filtering
@@ -1715,7 +1710,7 @@ where
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListOpenFilters>,
+        filters: Option<list_open_workflow_executions_request::Filters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_open_workflow_executions(
             &mut self.clone(),
@@ -1737,7 +1732,7 @@ where
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListClosedFilters>,
+        filters: Option<list_closed_workflow_executions_request::Filters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_closed_workflow_executions(
             &mut self.clone(),
