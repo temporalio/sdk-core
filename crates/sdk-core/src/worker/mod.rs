@@ -971,10 +971,10 @@ impl Worker {
                 if let Err(ref e) = r {
                     // This is covering the situation where WFT pollers dying is the reason for shutdown
                     self.initiate_shutdown();
-                    if matches!(e, PollError::ShutDown) {
-                        if let Some(la_mgr) = &self.local_act_mgr {
-                            la_mgr.workflows_have_shutdown();
-                        }
+                    if matches!(e, PollError::ShutDown)
+                        && let Some(la_mgr) = &self.local_act_mgr
+                    {
+                        la_mgr.workflows_have_shutdown();
                     }
                 }
                 r

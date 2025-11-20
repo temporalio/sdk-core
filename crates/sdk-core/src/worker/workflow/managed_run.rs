@@ -73,6 +73,8 @@ pub(super) struct ManagedRun {
     /// pushing things out and then directly back in. The downside is this is the only "impure" part
     /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
     /// up, that'd be nice.
+    ///
+    /// This field is `None` when `WorkerTaskTypes.enable_local_activities` is false.
     local_activity_request_sink: Option<Rc<dyn LocalActivityRequestSink>>,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
