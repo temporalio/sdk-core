@@ -1,7 +1,7 @@
 use crate::common::{INTEG_CLIENT_IDENTITY, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, NAMESPACE};
 use futures_util::{TryStreamExt, stream};
 use std::time::{SystemTime, UNIX_EPOCH};
-use temporalio_client::{ClientOptionsBuilder, TestService, WorkflowService};
+use temporalio_client::{ClientOptions, TestService, WorkflowService};
 use temporalio_common::protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
@@ -137,13 +137,12 @@ fn fixed_cached_download(version: &str) -> EphemeralExe {
 
 async fn assert_ephemeral_server(server: &EphemeralServer) {
     // Connect and describe namespace
-    let mut client = ClientOptionsBuilder::default()
+    let mut client = ClientOptions::builder()
         .identity(INTEG_CLIENT_IDENTITY.to_string())
         .target_url(Url::try_from(&*format!("http://{}", server.target)).unwrap())
         .client_name(INTEG_CLIENT_NAME.to_string())
         .client_version(INTEG_CLIENT_VERSION.to_string())
         .build()
-        .unwrap()
         .connect_no_namespace(None)
         .await
         .unwrap();

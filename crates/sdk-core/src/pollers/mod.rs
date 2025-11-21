@@ -4,8 +4,8 @@ pub(crate) use poll_buffer::{
     ActivityTaskOptions, LongPollBuffer, WorkflowTaskOptions, WorkflowTaskPoller,
 };
 pub use temporalio_client::{
-    Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
-    TlsConfig, WorkflowClientTrait,
+    Client, ClientOptions, ClientTlsConfig, RetryClient, RetryConfig, TlsConfig,
+    WorkflowClientTrait,
 };
 
 use crate::{

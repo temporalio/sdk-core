@@ -235,6 +235,7 @@ mod tests {
     use super::*;
     use temporalio_common::protos::temporal::api::workflowservice::v1::get_system_info_response::Capabilities;
 
+    #[allow(clippy::derivable_impls)] // Only want this in test
     impl Default for InternalFlags {
         fn default() -> Self {
             Self::Disabled
