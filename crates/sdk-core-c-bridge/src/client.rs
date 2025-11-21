@@ -290,7 +290,7 @@ unsafe impl Sync for ClientGrpcOverrideRequest {}
 /// inside here must live until that call returns.
 #[repr(C)]
 pub struct ClientGrpcOverrideResponse {
-    /// Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+    /// Numeric gRPC status code, see <https://grpc.io/docs/guides/status-codes/>. 0 is success, non-0
     /// is failure.
     pub status_code: i32,
 

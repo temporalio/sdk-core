@@ -126,18 +126,18 @@ pub struct ClientOptions {
     #[builder(default)]
     pub identity: String,
 
-    /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
+    /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_cfg: Option<TlsOptions>,
 
-    /// Retry configuration for the server client. Default is [RetryConfig::default]
+    /// Retry configuration for the server client. Default is [RetryOptions::default]
     #[builder(default)]
     pub retry_config: RetryOptions,
 
     /// If set, override the origin used when connecting. May be useful in rare situations where tls
     /// verification needs to use a different name from what should be set as the `:authority`
-    /// header. If [TlsConfig::domain] is set, and this is not, this will be set to
+    /// header. If [TlsOptions::domain] is set, and this is not, this will be set to
     /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
     /// override.
     pub override_origin: Option<Uri>,

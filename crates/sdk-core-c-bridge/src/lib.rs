@@ -144,7 +144,7 @@ impl ByteArrayRefArray {
     }
 }
 
-/// Metadata is <key1>\n<value1>\n<key2>\n<value2>. Metadata keys or
+/// Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
 /// values cannot contain a newline within.
 pub type MetadataRef = ByteArrayRef;
 

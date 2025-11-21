@@ -133,7 +133,7 @@ impl WorkerClientBag {
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
-/// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
+/// minimal mocking surface.
 #[cfg_attr(any(feature = "test-utilities", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait WorkerClient: Sync + Send {
