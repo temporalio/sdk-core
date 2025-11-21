@@ -3,7 +3,7 @@
 //! These types can be inserted into tonic request extensions to modify behavior of the
 //! [RetryClient](crate::RetryClient) or other request handling logic.
 
-use crate::RetryConfig;
+use crate::RetryOptions;
 use std::time::Duration;
 
 /// A request extension that, when set, should make the [RetryClient](crate::RetryClient) consider
@@ -23,7 +23,7 @@ pub struct NoRetryOnMatching {
 /// A request extension that forces overriding the current retry policy of the
 /// [RetryClient](crate::RetryClient).
 #[derive(Clone, Debug)]
-pub struct RetryConfigForCall(pub RetryConfig);
+pub struct RetryConfigForCall(pub RetryOptions);
 
 /// Extension trait for tonic requests to set default timeouts
 pub trait RequestExt {

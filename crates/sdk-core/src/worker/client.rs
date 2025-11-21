@@ -10,7 +10,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_client::{
-    Client, Namespace, NamespacedClient, RetryClient, RetryConfig, SharedReplaceableClient,
+    Client, Namespace, NamespacedClient, RetryClient, RetryOptions, SharedReplaceableClient,
     WorkflowService,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
     worker::ClientWorkerSet,
@@ -709,7 +709,7 @@ impl WorkerClient for WorkerClientBag {
         .into_request();
         request
             .extensions_mut()
-            .insert(RetryConfigForCall(RetryConfig::no_retries()));
+            .insert(RetryConfigForCall(RetryOptions::no_retries()));
 
         Ok(
             WorkflowService::shutdown_worker(&mut self.client.clone(), request)

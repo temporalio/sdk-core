@@ -28,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
+    Client, ClientTlsOptions, GetWorkflowResultOptions, NamespacedClient, RetryClient, TlsOptions,
     WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
     WorkflowHandle, WorkflowOptions,
 };
@@ -205,8 +205,8 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
         .identity("sdk-test-client")
-        .tls_cfg(TlsConfig {
-            client_tls_config: Some(ClientTlsConfig {
+        .tls_cfg(TlsOptions {
+            client_tls_options: Some(ClientTlsOptions {
                 client_cert,
                 client_private_key,
             }),
@@ -441,7 +441,7 @@ impl CoreWfStarter {
             .unwrap()
             .client
             .get_untyped_workflow_handle(self.get_wf_id().to_string(), "")
-            .get_workflow_result(GetWorkflowResultOpts { follow_runs: false })
+            .get_workflow_result(GetWorkflowResultOptions { follow_runs: false })
             .await
     }
 
@@ -776,15 +776,15 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
         .build()
 }
 
-pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {
+pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
     if env::var(INTEG_USE_TLS_ENV_VAR).is_ok() {
         let root = std::fs::read("../.cloud_certs/ca.pem").unwrap();
         let client_cert = std::fs::read("../.cloud_certs/client.pem").unwrap();
         let client_private_key = std::fs::read("../.cloud_certs/client.key").unwrap();
-        Some(TlsConfig {
+        Some(TlsOptions {
             server_root_ca_cert: Some(root),
             domain: None,
-            client_tls_config: Some(ClientTlsConfig {
+            client_tls_options: Some(ClientTlsOptions {
                 client_cert,
                 client_private_key,
             }),

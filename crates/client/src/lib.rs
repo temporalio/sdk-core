@@ -26,7 +26,7 @@ pub use raw::{CloudService, HealthService, OperatorService, TestService, Workflo
 pub use replaceable::SharedReplaceableClient;
 pub use tonic;
 pub use workflow_handle::{
-    GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
 
 use crate::worker::ClientWorkerSet;
@@ -129,11 +129,11 @@ pub struct ClientOptions {
     /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
-    pub tls_cfg: Option<TlsConfig>,
+    pub tls_cfg: Option<TlsOptions>,
 
     /// Retry configuration for the server client. Default is [RetryConfig::default]
     #[builder(default)]
-    pub retry_config: RetryConfig,
+    pub retry_config: RetryOptions,
 
     /// If set, override the origin used when connecting. May be useful in rare situations where tls
     /// verification needs to use a different name from what should be set as the `:authority`
@@ -144,8 +144,8 @@ pub struct ClientOptions {
 
     /// If set, HTTP2 gRPC keep alive will be enabled.
     /// To enable with default settings, use `.keep_alive(ClientKeepAliveConfig::default())`.
-    #[builder(required, default = Some(ClientKeepAliveConfig::default()))]
-    pub keep_alive: Option<ClientKeepAliveConfig>,
+    #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
+    pub keep_alive: Option<ClientKeepAliveOptions>,
 
     /// HTTP headers to include on every RPC call.
     ///
@@ -178,7 +178,7 @@ pub struct ClientOptions {
 
 /// Configuration options for TLS
 #[derive(Clone, Debug, Default)]
-pub struct TlsConfig {
+pub struct TlsOptions {
     /// Bytes representing the root CA certificate used by the server. If not set, and the server's
     /// cert is issued by someone the operating system trusts, verification will still work (ex:
     /// Cloud offering).
@@ -187,12 +187,12 @@ pub struct TlsConfig {
     /// the domain name will be extracted from the URL used to connect.
     pub domain: Option<String>,
     /// TLS info for the client. If specified, core will attempt to use mTLS.
-    pub client_tls_config: Option<ClientTlsConfig>,
+    pub client_tls_options: Option<ClientTlsOptions>,
 }
 
 /// If using mTLS, both the client cert and private key must be specified, this contains them.
 #[derive(Clone)]
-pub struct ClientTlsConfig {
+pub struct ClientTlsOptions {
     /// The certificate for this client, encoded as PEM
     pub client_cert: Vec<u8>,
     /// The private key for this client, encoded as PEM
@@ -201,14 +201,14 @@ pub struct ClientTlsConfig {
 
 /// Client keep alive configuration.
 #[derive(Clone, Debug)]
-pub struct ClientKeepAliveConfig {
+pub struct ClientKeepAliveOptions {
     /// Interval to send HTTP2 keep alive pings.
     pub interval: Duration,
     /// Timeout that the keep alive must be responded to within or the connection will be closed.
     pub timeout: Duration,
 }
 
-impl Default for ClientKeepAliveConfig {
+impl Default for ClientKeepAliveOptions {
     fn default() -> Self {
         Self {
             interval: Duration::from_secs(30),
@@ -219,7 +219,7 @@ impl Default for ClientKeepAliveConfig {
 
 /// Configuration for retrying requests to the server
 #[derive(Clone, Debug, PartialEq)]
-pub struct RetryConfig {
+pub struct RetryOptions {
     /// initial wait time before the first retry.
     pub initial_interval: Duration,
     /// randomization jitter that is used as a multiplier for the current retry interval
@@ -236,7 +236,7 @@ pub struct RetryConfig {
     pub max_retries: usize,
 }
 
-impl Default for RetryConfig {
+impl Default for RetryOptions {
     fn default() -> Self {
         Self {
             initial_interval: Duration::from_millis(100), // 100 ms wait by default.
@@ -249,7 +249,7 @@ impl Default for RetryConfig {
     }
 }
 
-impl RetryConfig {
+impl RetryOptions {
     pub(crate) const fn task_poll_retry_policy() -> Self {
         Self {
             initial_interval: Duration::from_millis(200),
@@ -298,16 +298,16 @@ impl RetryConfig {
     }
 }
 
-impl From<RetryConfig> for ExponentialBackoff {
-    fn from(c: RetryConfig) -> Self {
+impl From<RetryOptions> for ExponentialBackoff {
+    fn from(c: RetryOptions) -> Self {
         c.into_exp_backoff(SystemClock::default())
     }
 }
 
-impl Debug for ClientTlsConfig {
+impl Debug for ClientTlsOptions {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClientTlsConfig(..)")
+        write!(f, "ClientTlsOptions(..)")
     }
 }
 
@@ -611,7 +611,7 @@ impl ClientOptions {
                 channel = channel.origin(uri);
             }
 
-            if let Some(client_opts) = &tls_cfg.client_tls_config {
+            if let Some(client_opts) = &tls_cfg.client_tls_options {
                 let client_identity =
                     Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
                 tls = tls.identity(client_identity);
@@ -1965,11 +1965,11 @@ mod tests {
             .build();
         assert_eq!(
             opts.keep_alive.clone().unwrap().interval,
-            ClientKeepAliveConfig::default().interval
+            ClientKeepAliveOptions::default().interval
         );
         assert_eq!(
             opts.keep_alive.clone().unwrap().timeout,
-            ClientKeepAliveConfig::default().timeout
+            ClientKeepAliveOptions::default().timeout
         );
 
         // Can be explicitly set to None
