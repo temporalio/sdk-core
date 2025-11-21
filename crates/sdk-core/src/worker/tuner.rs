@@ -143,7 +143,7 @@ pub enum SlotSupplierOptions<SK: SlotKind> {
         /// The number of slots the fixed supplier will have
         slots: usize,
     },
-    /// Options for a [ResourceBasedSlots]
+    /// Options for resource-based slot suppliers
     ResourceBased(ResourceSlotOptions),
     /// A user-implemented slot supplier
     #[debug("Custom")]
@@ -250,13 +250,13 @@ impl TunerBuilder {
     }
 
     /// Sets a field that implements [SystemResourceInfo]
-    pub fn sys_info(&mut self, sys_info: Arc<dyn SystemResourceInfo + Send + Sync>) -> &mut Self {
+    fn sys_info(&mut self, sys_info: Arc<dyn SystemResourceInfo + Send + Sync>) -> &mut Self {
         self.sys_info = Some(sys_info);
         self
     }
 
     /// Gets the field that implements [SystemResourceInfo]
-    pub fn get_sys_info(&self) -> Option<Arc<dyn SystemResourceInfo + Send + Sync>> {
+    pub(crate) fn get_sys_info(&self) -> Option<Arc<dyn SystemResourceInfo + Send + Sync>> {
         self.sys_info.clone()
     }
 

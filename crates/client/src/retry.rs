@@ -22,8 +22,8 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 ];
 const LONG_POLL_FATAL_GRACE: Duration = Duration::from_secs(60);
 
-/// A wrapper for a [WorkflowClientTrait] or [crate::WorkflowService] implementor which performs
-/// auto-retries
+/// A wrapper for a [crate::WorkflowClientTrait] or [crate::WorkflowService] implementor which
+/// performs auto-retries
 #[derive(Debug, Clone)]
 pub struct RetryClient<SG> {
     client: SG,

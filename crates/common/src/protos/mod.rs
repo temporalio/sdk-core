@@ -1936,6 +1936,7 @@ pub mod temporal {
                 }
             }
         }
+        #[allow(rustdoc::invalid_html_tags)]
         pub mod cloud {
             pub mod account {
                 pub mod v1 {

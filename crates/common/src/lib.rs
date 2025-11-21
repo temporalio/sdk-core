@@ -133,7 +133,7 @@ pub trait Worker: Send + Sync {
     /// workflows & activities until they are done. At that point, the lang SDK can end the process,
     /// or drop the [Worker] instance via [Worker::finalize_shutdown], which will close the
     /// connection and free resources. If you have set [WorkerConfig::task_types] to exclude
-    /// [WorkerTaskTypes::activity_only()], you may skip calling [Worker::poll_activity_task].
+    /// [worker::WorkerTaskTypes::activity_only()], you may skip calling [Worker::poll_activity_task].
     ///
     /// Lang implementations should use [Worker::initiate_shutdown] followed by
     /// [Worker::finalize_shutdown].

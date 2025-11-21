@@ -35,7 +35,7 @@ pub enum CoreInternalFlags {
     /// multiple workflow coroutines generated a terminal command). This has the
     /// consequence that all non-terminal commands are sent to the server, even
     /// if in the sequence delivered by lang they came after a terminal command.
-    /// See https://github.com/temporalio/features/issues/481.
+    /// See <https://github.com/temporalio/features/issues/481>.
     MoveTerminalCommands = 3,
     /// We received a value higher than this code can understand.
     TooHigh = u32::MAX,

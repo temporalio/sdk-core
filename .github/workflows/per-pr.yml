@@ -36,6 +36,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo doc --workspace --all-features --no-deps
+        env:
+          RUSTDOCFLAGS: "-D warnings"
       - run: cargo lint
       - run: cargo test-lint
       - run: cargo check
@@ -47,7 +49,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
         include:
           - os: windows-latest
           - os: ubuntu-latest
@@ -120,14 +122,13 @@ jobs:
           chmod +x ./core-tests
           ./core-tests cgroup_ --nocapture
 
-
   integ-tests:
     name: Integ tests
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        os: [ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest]
         include:
           - os: windows-latest
           - os: ubuntu-latest
