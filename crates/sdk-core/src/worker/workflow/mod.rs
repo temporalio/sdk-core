@@ -202,13 +202,6 @@ impl Workflows {
                     .unwrap();
                 let local = LocalSet::new();
                 local.block_on(&rt, async move {
-                    let mut stream = WFStream::build(
-                        basics,
-                        extracted_wft_stream,
-                        locals_stream,
-                        local_activity_request_sink,
-                    );
-
                     // However, we want to avoid plowing ahead until we've been asked to poll at
                     // least once. This supports activity-only workers.
                     let do_poll = tokio::select! {
@@ -222,6 +215,14 @@ impl Workflows {
                     if !do_poll {
                         return;
                     }
+
+                    let mut stream = WFStream::build(
+                        basics,
+                        extracted_wft_stream,
+                        locals_stream,
+                        local_activity_request_sink,
+                    );
+
                     while let Some(output) = stream.next().await {
                         match output {
                             Ok(o) => {
@@ -625,6 +626,12 @@ impl Workflows {
         rx
     }
 
+    /// Send a `BumpStream` message to the workflow stream. This ensures that any pending
+    /// workflow activation polls will resolve, like during shutdown, even if there are no other inputs.
+    pub(super) fn bump_stream(&self) {
+        self.send_local(LocalInputs::BumpStream);
+    }
+
     /// Query the state of workflow management. Can return `None` if workflow state is shut down.
     pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
         let rx = self.send_get_state_info_msg();
@@ -647,7 +654,7 @@ impl Workflows {
                 let mut interval = tokio::time::interval(Duration::from_millis(10));
                 loop {
                     interval.tick().await;
-                    let _ = self.get_state_info().await;
+                    self.bump_stream();
                 }
             });
             let (_, jh_res) = tokio::join!(
@@ -710,7 +717,7 @@ impl Workflows {
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
         let print_err = match &msg {
-            LocalInputs::GetStateInfo(_) => false,
+            LocalInputs::GetStateInfo(_) | LocalInputs::BumpStream => false,
             LocalInputs::LocalResolution(lr) if lr.res.is_la_cancel_confirmation() => false,
             _ => true,
         };

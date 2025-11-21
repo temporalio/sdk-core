@@ -53,7 +53,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::PollerBehavior,
+    worker::{PollerBehavior, WorkerTaskTypes},
 };
 use tokio::{join, time::sleep};
 use tokio_util::sync::CancellationToken;
@@ -725,7 +725,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_it(
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
         if reason == "no_remote" {
-            wc.no_remote_activities = true;
+            wc.task_types = WorkerTaskTypes::workflow_only();
         } else {
             wc.max_task_queue_activities_per_second = Some(1.0);
         }

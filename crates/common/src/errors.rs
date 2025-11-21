@@ -40,10 +40,14 @@ pub enum CompleteWfError {
         /// The run associated with the completion
         run_id: String,
     },
+    /// Workflows have not been enabled on this worker.
+    #[error("Workflows are not enabled on this worker")]
+    WorkflowNotEnabled,
 }
 
 /// Errors thrown by [crate::Worker::complete_activity_task]
 #[derive(thiserror::Error, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum CompleteActivityError {
     /// Lang SDK sent us a malformed activity completion. This likely means a bug in the lang sdk.
     #[error("Lang SDK sent us a malformed activity completion ({reason}): {completion:?}")]
@@ -53,6 +57,9 @@ pub enum CompleteActivityError {
         /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<ActivityExecutionResult>,
     },
+    /// Activities have not been enabled on this worker.
+    #[error("Activities are not enabled on this worker")]
+    ActivityNotEnabled,
 }
 
 /// Errors thrown by [crate::Worker::complete_nexus_task]

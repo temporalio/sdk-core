@@ -6,6 +6,7 @@ use temporalio_common::protos::temporal::api::{
     enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
     history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::WfContext;
 
 pub(crate) mod priority;
@@ -15,7 +16,9 @@ pub(crate) async fn grpc_message_too_large() {
     let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, "")
         .await
         .unwrap();
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);

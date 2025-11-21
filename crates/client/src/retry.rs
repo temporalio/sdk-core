@@ -1,6 +1,7 @@
 use crate::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
-    NamespacedClient, NoRetryOnMatching, Result, RetryConfig, raw::IsUserLongPoll,
+    NamespacedClient, NoRetryOnMatching, Result, RetryConfig, RetryConfigForCall,
+    raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -60,6 +61,7 @@ impl<SG> RetryClient<SG> {
     ) -> CallInfo {
         let mut call_type = CallType::Normal;
         let mut retry_short_circuit = None;
+        let mut retry_cfg_override = None;
         if let Some(r) = request.as_ref() {
             let ext = r.extensions();
             if ext.get::<IsUserLongPoll>().is_some() {
@@ -69,8 +71,11 @@ impl<SG> RetryClient<SG> {
             }
 
             retry_short_circuit = ext.get::<NoRetryOnMatching>().cloned();
+            retry_cfg_override = ext.get::<RetryConfigForCall>().cloned();
         }
-        let retry_cfg = if call_type == CallType::TaskLongPoll {
+        let retry_cfg = if let Some(ovr) = retry_cfg_override {
+            ovr.0
+        } else if call_type == CallType::TaskLongPoll {
             RetryConfig::task_poll_retry_policy()
         } else {
             (*self.retry_config).clone()

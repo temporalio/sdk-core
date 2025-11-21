@@ -16,6 +16,65 @@ use std::{
     time::Duration,
 };
 
+/// Specifies which task types a worker will poll for.
+///
+/// Workers can be configured to handle any combination of workflows, activities, and nexus operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct WorkerTaskTypes {
+    pub enable_workflows: bool,
+    pub enable_activities: bool,
+    pub enable_nexus: bool,
+}
+
+impl WorkerTaskTypes {
+    /// Check if no task types are enabled
+    pub fn is_empty(&self) -> bool {
+        !self.enable_workflows && !self.enable_activities && !self.enable_nexus
+    }
+
+    /// Create a config with all task types enabled
+    pub fn all() -> WorkerTaskTypes {
+        WorkerTaskTypes {
+            enable_workflows: true,
+            enable_activities: true,
+            enable_nexus: true,
+        }
+    }
+
+    /// Create a config with only workflow tasks enabled
+    pub fn workflow_only() -> WorkerTaskTypes {
+        WorkerTaskTypes {
+            enable_workflows: true,
+            enable_activities: false,
+            enable_nexus: false,
+        }
+    }
+
+    /// Create a config with only activity tasks enabled
+    pub fn activity_only() -> WorkerTaskTypes {
+        WorkerTaskTypes {
+            enable_workflows: false,
+            enable_activities: true,
+            enable_nexus: false,
+        }
+    }
+
+    /// Create a config with only nexus tasks enabled
+    pub fn nexus_only() -> WorkerTaskTypes {
+        WorkerTaskTypes {
+            enable_workflows: false,
+            enable_activities: false,
+            enable_nexus: true,
+        }
+    }
+
+    pub fn overlaps_with(&self, other: &WorkerTaskTypes) -> bool {
+        (self.enable_workflows && other.enable_workflows)
+            || (self.enable_activities && other.enable_activities)
+            || (self.enable_nexus && other.enable_nexus)
+    }
+}
+
 /// Defines per-worker configuration options
 #[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
@@ -64,10 +123,10 @@ pub struct WorkerConfig {
     /// worker's task queue
     #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
     pub nexus_task_poller_behavior: PollerBehavior,
-    /// If set to true this worker will only handle workflow tasks and local activities, it will not
-    /// poll for activity tasks.
-    #[builder(default = "false")]
-    pub no_remote_activities: bool,
+    /// Specifies which task types this worker will poll for.
+    ///
+    /// Note: At least one task type must be specified or the worker will fail validation.
+    pub task_types: WorkerTaskTypes,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.
     #[builder(default = "Duration::from_secs(10)")]
@@ -218,6 +277,15 @@ impl WorkerConfigBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
+        let task_types = self
+            .task_types
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(WorkerTaskTypes::all);
+        if task_types.is_empty() {
+            return Err("At least one task type must be enabled in `task_types`".to_owned());
+        }
+
         if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
             b.validate()?
         }

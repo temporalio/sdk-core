@@ -36,6 +36,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -105,6 +106,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
             build_id: "test_bin_id".to_string(),
         })
         .ignore_evicts_on_shutdown(true)
+        .task_types(WorkerTaskTypes::all())
         // Serial polling since it makes mocking much easier.
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
     wcb
@@ -184,10 +186,15 @@ pub fn build_fake_worker(
 
 pub fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", mocks.inputs.config.max_cached_workflows);
-    let act_poller = if mocks.inputs.config.no_remote_activities {
-        None
-    } else {
+    let act_poller = if mocks.inputs.config.task_types.enable_activities {
         mocks.inputs.act_poller
+    } else {
+        None
+    };
+    let nexus_poller = if mocks.inputs.config.task_types.enable_nexus {
+        mocks.inputs.nexus_poller
+    } else {
+        None
     };
     Worker::new_with_pollers(
         mocks.inputs.config,
@@ -196,10 +203,7 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
         TaskPollers::Mocked {
             wft_stream: mocks.inputs.wft_stream,
             act_poller,
-            nexus_poller: mocks
-                .inputs
-                .nexus_poller
-                .unwrap_or_else(|| mock_poller_from_resps([])),
+            nexus_poller,
         },
         None,
         None,
@@ -230,15 +234,38 @@ impl MocksHolder {
         self.inputs.act_poller = Some(poller);
     }
 
+    /// Helper to create and set an activity poller from responses
+    #[cfg(test)]
+    pub(crate) fn set_act_poller_from_resps<ACT>(&mut self, act_tasks: ACT)
+    where
+        ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
+        <ACT as IntoIterator>::IntoIter: Send + 'static,
+    {
+        let act_poller = mock_poller_from_resps(act_tasks);
+        self.set_act_poller(act_poller);
+    }
+
+    /// Helper to create and set a nexus poller from responses
+    #[cfg(test)]
+    pub(crate) fn set_nexus_poller_from_resps<NEX>(&mut self, nexus_tasks: NEX)
+    where
+        NEX: IntoIterator<Item = QueueResponse<PollNexusTaskQueueResponse>>,
+        <NEX as IntoIterator>::IntoIter: Send + 'static,
+    {
+        let nexus_poller = mock_poller_from_resps(nexus_tasks);
+        self.inputs.nexus_poller = Some(nexus_poller);
+    }
+
     /// Can be used for tests that need to avoid auto-shutdown due to running out of mock responses
     pub fn make_wft_stream_interminable(&mut self) {
-        let old_stream = std::mem::replace(&mut self.inputs.wft_stream, stream::pending().boxed());
-        self.inputs.wft_stream = old_stream.chain(stream::pending()).boxed();
+        if let Some(old_stream) = self.inputs.wft_stream.take() {
+            self.inputs.wft_stream = Some(old_stream.chain(stream::pending()).boxed());
+        }
     }
 }
 
 pub struct MockWorkerInputs {
-    pub(crate) wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
+    pub(crate) wft_stream: Option<BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>>,
     pub(crate) act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
     pub(crate) nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     pub(crate) config: WorkerConfig,
@@ -255,7 +282,7 @@ impl MockWorkerInputs {
         wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
     ) -> Self {
         Self {
-            wft_stream,
+            wft_stream: Some(wft_stream),
             act_poller: None,
             nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
@@ -284,14 +311,73 @@ impl MocksHolder {
         ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
         <ACT as IntoIterator>::IntoIter: Send + 'static,
     {
-        let wft_stream = stream::pending().boxed();
         let mock_act_poller = mock_poller_from_resps(act_tasks);
         let mock_worker = MockWorkerInputs {
-            wft_stream,
+            wft_stream: None,
             act_poller: Some(mock_act_poller),
             nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         };
+        Self {
+            client: Arc::new(client),
+            inputs: mock_worker,
+            outstanding_task_map: None,
+        }
+    }
+
+    /// Uses the provided list of tasks to create a mock poller with a randomly generated task queue
+    pub fn from_client_with_nexus<NEX>(
+        client: impl WorkerClient + 'static,
+        nexus_tasks: NEX,
+    ) -> Self
+    where
+        NEX: IntoIterator<Item = QueueResponse<PollNexusTaskQueueResponse>>,
+        <NEX as IntoIterator>::IntoIter: Send + 'static,
+    {
+        let mock_nexus_poller = mock_poller_from_resps(nexus_tasks);
+        let mock_worker = MockWorkerInputs {
+            wft_stream: None,
+            act_poller: None,
+            nexus_poller: Some(mock_nexus_poller),
+            config: test_worker_cfg().build().unwrap(),
+        };
+        Self {
+            client: Arc::new(client),
+            inputs: mock_worker,
+            outstanding_task_map: None,
+        }
+    }
+
+    /// Create a MocksHolder with custom combination of task pollers.
+    /// Allows any combination of workflow, activity, and nexus tasks.
+    pub fn from_client_with_custom<WFT, ACT, NEX>(
+        client: impl WorkerClient + 'static,
+        wft_stream: Option<WFT>,
+        activity_tasks: Option<ACT>,
+        nexus_tasks: Option<NEX>,
+    ) -> Self
+    where
+        WFT: Stream<Item = PollWorkflowTaskQueueResponse> + Send + 'static,
+        ACT: IntoIterator<Item = QueueResponse<PollActivityTaskQueueResponse>>,
+        <ACT as IntoIterator>::IntoIter: Send + 'static,
+        NEX: IntoIterator<Item = QueueResponse<PollNexusTaskQueueResponse>>,
+        <NEX as IntoIterator>::IntoIter: Send + 'static,
+    {
+        let wft_stream = wft_stream.map(|s| {
+            s.map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
+                .boxed()
+        });
+
+        let act_poller = activity_tasks.map(|tasks| mock_poller_from_resps(tasks));
+        let nexus_poller = nexus_tasks.map(|tasks| mock_poller_from_resps(tasks));
+
+        let mock_worker = MockWorkerInputs {
+            wft_stream,
+            act_poller,
+            nexus_poller,
+            config: test_worker_cfg().build().unwrap(),
+        };
+
         Self {
             client: Arc::new(client),
             inputs: mock_worker,
@@ -306,9 +392,11 @@ impl MocksHolder {
         client: impl WorkerClient + 'static,
         stream: impl Stream<Item = PollWorkflowTaskQueueResponse> + Send + 'static,
     ) -> Self {
-        let wft_stream = stream
-            .map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
-            .boxed();
+        let wft_stream = Some(
+            stream
+                .map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
+                .boxed(),
+        );
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: None,

@@ -1,7 +1,7 @@
 use crate::{
     common::{
-        CoreWfStarter, get_integ_runtime_options, get_integ_server_options,
-        get_integ_telem_options, mock_sdk_cfg,
+        CoreWfStarter, fake_grpc_server::fake_server, get_integ_runtime_options,
+        get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
     shared_tests,
 };
@@ -11,11 +11,15 @@ use std::{
     cell::Cell,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering::Relaxed},
+        atomic::{
+            AtomicBool, AtomicU8,
+            Ordering::{self, Relaxed},
+        },
     },
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
@@ -86,6 +90,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "blah".to_owned(),
             })
+            .task_types(WorkerTaskTypes::all())
             .build()
             .unwrap(),
         retrying_client,
@@ -174,7 +179,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
-        .no_remote_activities(true)
+        .task_types(WorkerTaskTypes::workflow_only())
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
     // Set the limits to zero so it's essentially unwilling to hand out slots
@@ -207,7 +212,9 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 async fn oversize_grpc_message() {
     let wf_name = "oversize_grpc_message";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
@@ -860,4 +867,32 @@ async fn test_custom_slot_supplier_simple() {
         total_reserves, total_releases,
         "Number of reserves should equal number of releases"
     );
+}
+
+#[tokio::test]
+async fn shutdown_worker_not_retried() {
+    let shutdown_call_count = Arc::new(AtomicU8::new(0));
+    let scc = shutdown_call_count.clone();
+    let fs = fake_server(move |req| {
+        if req.uri().to_string().contains("ShutdownWorker") {
+            scc.fetch_add(1, Ordering::Relaxed);
+        }
+        let s = tonic::Status::new(tonic::Code::Unknown, "bla").into_http();
+        async { s }.boxed()
+    })
+    .await;
+
+    let mut opts = get_integ_server_options();
+    let uri = format!("http://localhost:{}", fs.addr.port())
+        .parse()
+        .unwrap();
+    opts.target_url = uri;
+    opts.skip_get_system_info = true;
+    let client = opts.connect("ns", None).await.unwrap();
+
+    let wf_type = "shutdown_worker_not_retried";
+    let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));
+    let worker = starter.get_worker().await;
+    drain_pollers_and_shutdown(&worker).await;
+    assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
 }

@@ -13,8 +13,7 @@
 #   memory = 256m (limit available RAM)
 
 # cross-compiles integration tests with cargo zigbuild, then runs them using docker
-executable_path=$(cargo zigbuild --target x86_64-unknown-linux-musl --tests --features="temporal-sdk-core-protos/serde_serialize test-utilities ephemeral-server" --message-format=json | jq -r 'select(.profile?.test == true and .target?.name == "temporal_sdk_core" and .executable) | .executable')
-
+executable_path=$(cargo zigbuild --target x86_64-unknown-linux-musl --tests --features="test-utilities ephemeral-server" --message-format=json | jq -r 'select(.profile?.test == true and .target?.name == "temporalio_sdk_core" and .executable) | .executable')
 relative_path="target/${executable_path#*target/}"
 
 cpus="${1:-0.1}"

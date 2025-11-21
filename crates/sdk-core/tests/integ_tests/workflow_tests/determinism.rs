@@ -12,6 +12,7 @@ use temporalio_common::protos::{
         failure::v1::Failure,
     },
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{
     ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
     WorkflowResult,
@@ -52,7 +53,9 @@ pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<
 async fn test_determinism_error_then_recovers() {
     let wf_name = "test_determinism_error_then_recovers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);

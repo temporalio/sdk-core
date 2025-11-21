@@ -1,6 +1,7 @@
 //! Common integration testing utilities
 //! These utilities are specific to integration tests and depend on the full temporal-client stack.
 
+pub(crate) mod fake_grpc_server;
 pub(crate) mod http_proxy;
 pub(crate) mod workflows;
 
@@ -31,6 +32,7 @@ use temporalio_client::{
     WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
     WorkflowHandle, WorkflowOptions,
 };
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as CoreWorker,
     protos::{
@@ -58,6 +60,8 @@ use temporalio_sdk::{
         WorkerInterceptor,
     },
 };
+#[cfg(any(feature = "test-utilities", test))]
+pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
     WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
@@ -70,9 +74,6 @@ use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
-
-#[cfg(any(feature = "test-utilities", test))]
-pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -111,6 +112,7 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_build_id".to_owned(),
         })
+        .task_types(WorkerTaskTypes::all())
         .skip_client_worker_set_check(true);
     b
 }
@@ -240,11 +242,11 @@ struct InitializedWorker {
 impl CoreWfStarter {
     pub(crate) fn new(test_name: &str) -> Self {
         init_integ_telem();
-        Self::_new(test_name, None, None)
+        Self::new_with_overrides(test_name, None, None)
     }
 
     pub(crate) fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
-        Self::_new(test_name, Some(runtime), None)
+        Self::new_with_overrides(test_name, Some(runtime), None)
     }
 
     /// Targets cloud if the required env vars are present. Otherwise, local server (but only if
@@ -260,7 +262,7 @@ impl CoreWfStarter {
             check_mlsv = true;
             None
         };
-        let mut s = Self::_new(test_name, None, client);
+        let mut s = Self::new_with_overrides(test_name, None, client);
 
         if check_mlsv && !version_req.is_empty() {
             let clustinfo = (*s.get_client().await)
@@ -291,7 +293,7 @@ impl CoreWfStarter {
         Some(s)
     }
 
-    fn _new(
+    pub(crate) fn new_with_overrides(
         test_name: &str,
         runtime_override: Option<CoreRuntime>,
         client_override: Option<RetryClient<Client>>,
@@ -450,7 +452,7 @@ impl CoreWfStarter {
                 let rt = if let Some(ref rto) = self.runtime_override {
                     rto
                 } else {
-                    INTEG_TESTS_RT.get().unwrap()
+                    init_integ_telem().unwrap()
                 };
                 let cfg = self
                     .worker_config
@@ -796,7 +798,7 @@ pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {
 pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
     let filter_string =
-        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporal_sdk_core=INFO".to_string());
+        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporalio_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
