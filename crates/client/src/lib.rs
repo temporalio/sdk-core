@@ -131,11 +131,11 @@ pub struct ClientOptions {
     /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
-    pub tls_cfg: Option<TlsOptions>,
+    pub tls_options: Option<TlsOptions>,
 
     /// Retry configuration for the server client. Default is [RetryOptions::default]
     #[builder(default)]
-    pub retry_config: RetryOptions,
+    pub retry_options: RetryOptions,
 
     /// If set, override the origin used when connecting. May be useful in rare situations where tls
     /// verification needs to use a different name from what should be set as the `:authority`
@@ -488,7 +488,7 @@ impl ClientOptions {
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
         let client = Client::new(client, namespace.into());
-        let retry_client = RetryClient::new(client, self.retry_config.clone());
+        let retry_client = RetryClient::new(client, self.retry_options.clone());
         Ok(retry_client)
     }
 
@@ -586,13 +586,13 @@ impl ClientOptions {
                 },
             };
         }
-        Ok(RetryClient::new(client, self.retry_config.clone()))
+        Ok(RetryClient::new(client, self.retry_options.clone()))
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
     /// Passes it through if TLS options not set.
     async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
-        if let Some(tls_cfg) = &self.tls_cfg {
+        if let Some(tls_cfg) = &self.tls_options {
             let mut tls = tonic::transport::ClientTlsConfig::new();
 
             if let Some(root_cert) = &tls_cfg.server_root_ca_cert {

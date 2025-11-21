@@ -204,7 +204,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
         .identity("sdk-test-client")
-        .tls_cfg(TlsOptions {
+        .tls_options(TlsOptions {
             client_tls_options: Some(ClientTlsOptions {
                 client_cert,
                 client_private_key,
@@ -771,7 +771,7 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
         .client_name(INTEG_CLIENT_NAME.to_string())
         .client_version(INTEG_CLIENT_VERSION.to_string())
         .maybe_api_key(api_key)
-        .maybe_tls_cfg(tls_cfg)
+        .maybe_tls_options(tls_cfg)
         .build()
 }
 

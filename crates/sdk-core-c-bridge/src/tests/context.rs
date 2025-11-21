@@ -294,7 +294,7 @@ impl Context {
             .as_ref()
             .map(MetadataMap::serialize_from_map);
 
-        let tls_options = options.tls_cfg.as_ref().map(|tls_cfg| {
+        let tls_options = options.tls_options.as_ref().map(|tls_cfg| {
             let client_tls_cfg = tls_cfg.client_tls_options.as_ref();
             Box::new(ClientTlsOptions {
                 server_root_ca_cert: tls_cfg.server_root_ca_cert.as_deref().into(),
@@ -307,17 +307,17 @@ impl Context {
         });
 
         let retry_options = Box::new(ClientRetryOptions {
-            initial_interval_millis: options.retry_config.initial_interval.as_millis() as u64,
-            randomization_factor: options.retry_config.randomization_factor,
-            multiplier: options.retry_config.multiplier,
-            max_interval_millis: options.retry_config.max_interval.as_millis() as u64,
+            initial_interval_millis: options.retry_options.initial_interval.as_millis() as u64,
+            randomization_factor: options.retry_options.randomization_factor,
+            multiplier: options.retry_options.multiplier,
+            max_interval_millis: options.retry_options.max_interval.as_millis() as u64,
             max_elapsed_time_millis: options
-                .retry_config
+                .retry_options
                 .max_elapsed_time
                 .as_ref()
                 .map(Duration::as_millis)
                 .unwrap_or(0) as u64,
-            max_retries: options.retry_config.max_retries,
+            max_retries: options.retry_options.max_retries,
         });
 
         let keep_alive_options = options.keep_alive.as_ref().map(|keep_alive| {

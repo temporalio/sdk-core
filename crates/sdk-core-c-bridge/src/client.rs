@@ -1158,7 +1158,7 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             .client_name(opts.client_name.to_string())
             .client_version(opts.client_version.to_string())
             .identity(opts.identity.to_string())
-            .retry_config(
+            .retry_options(
                 unsafe { opts.retry_options.as_ref() }
                     .map_or(RetryOptions::default(), |c| c.into()),
             )
@@ -1166,7 +1166,7 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             .maybe_headers(headers)
             .maybe_api_key(api_key)
             .maybe_http_connect_proxy(http_connect_proxy)
-            .maybe_tls_cfg(tls_cfg)
+            .maybe_tls_options(tls_cfg)
             .build())
     }
 }

@@ -1619,7 +1619,7 @@ mod tests {
             .client_version("0.0.0")
             .build();
         let raw_client = opts.connect_no_namespace(None).await.unwrap();
-        let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
+        let mut retry_client = RetryClient::new(raw_client, opts.retry_options);
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {

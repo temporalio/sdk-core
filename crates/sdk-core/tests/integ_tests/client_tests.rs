@@ -118,7 +118,7 @@ async fn timeouts_respected_one_call_fake_server() {
         .unwrap();
     opts.target_url = uri;
     opts.skip_get_system_info = true;
-    opts.retry_config = RetryOptions::no_retries();
+    opts.retry_options = RetryOptions::no_retries();
 
     let mut client = opts.connect_no_namespace(None).await.unwrap();
 
@@ -273,7 +273,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     let uri = format!("http://localhost:{}", addr.port()).parse().unwrap();
     opts.target_url = uri;
     opts.skip_get_system_info = true;
-    opts.retry_config = RetryOptions::no_retries();
+    opts.retry_options = RetryOptions::no_retries();
 
     let namespace = "namespace";
     let client = opts.connect(namespace, None).await.unwrap();
@@ -352,7 +352,7 @@ async fn http_proxy() {
 
     // General client options
     let mut opts = get_integ_server_options();
-    opts.retry_config = RetryOptions::no_retries();
+    opts.retry_options = RetryOptions::no_retries();
     opts.skip_get_system_info = true;
 
     // Connect client with no proxy and make call and confirm reached
