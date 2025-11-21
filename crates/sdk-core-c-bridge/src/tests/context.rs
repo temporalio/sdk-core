@@ -295,7 +295,7 @@ impl Context {
             .map(MetadataMap::serialize_from_map);
 
         let tls_options = options.tls_cfg.as_ref().map(|tls_cfg| {
-            let client_tls_cfg = tls_cfg.client_tls_config.as_ref();
+            let client_tls_cfg = tls_cfg.client_tls_options.as_ref();
             Box::new(ClientTlsOptions {
                 server_root_ca_cert: tls_cfg.server_root_ca_cert.as_deref().into(),
                 domain: tls_cfg.domain.as_deref().into(),

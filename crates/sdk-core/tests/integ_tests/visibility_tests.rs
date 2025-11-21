@@ -1,12 +1,15 @@
 use crate::common::{CoreWfStarter, NAMESPACE, eventually, get_integ_server_options};
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{
-    ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, StartTimeFilter,
-    WorkflowClientTrait, WorkflowExecutionFilter,
-};
-use temporalio_common::protos::coresdk::workflow_activation::{
-    WorkflowActivationJob, workflow_activation_job,
+use temporalio_client::{Namespace, RegisterNamespaceOptions, WorkflowClientTrait};
+use temporalio_common::protos::{
+    coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+    temporal::api::{
+        filter::v1::{StartTimeFilter, WorkflowExecutionFilter},
+        workflowservice::v1::{
+            list_closed_workflow_executions_request, list_open_workflow_executions_request,
+        },
+    },
 };
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
@@ -36,10 +39,11 @@ async fn client_list_open_closed_workflow_executions() {
         earliest_time: Some(earliest).map(|t| t.into()),
         latest_time: Some(latest).map(|t| t.into()),
     };
-    let filter = ListOpenFilters::ExecutionFilter(WorkflowExecutionFilter {
-        workflow_id: wf_name.clone(),
-        run_id: "".to_owned(),
-    });
+    let filter =
+        list_open_workflow_executions_request::Filters::ExecutionFilter(WorkflowExecutionFilter {
+            workflow_id: wf_name.clone(),
+            run_id: "".to_owned(),
+        });
     let open_workflows = eventually(
         || async {
             let open_workflows = client
@@ -84,12 +88,14 @@ async fn client_list_open_closed_workflow_executions() {
                     earliest_time: Some(earliest).map(|t| t.into()),
                     latest_time: Some(latest).map(|t| t.into()),
                 }),
-                Some(ListClosedFilters::ExecutionFilter(
-                    WorkflowExecutionFilter {
-                        workflow_id: wf_name.clone(),
-                        run_id: run_id.clone(),
-                    },
-                )),
+                Some(
+                    list_closed_workflow_executions_request::Filters::ExecutionFilter(
+                        WorkflowExecutionFilter {
+                            workflow_id: wf_name.clone(),
+                            run_id: run_id.clone(),
+                        },
+                    ),
+                ),
             )
             .await
             .unwrap();
@@ -117,8 +123,7 @@ async fn client_create_namespace() {
     let register_options = RegisterNamespaceOptions::builder()
         .namespace(uuid::Uuid::new_v4().to_string())
         .description("it's alive")
-        .build()
-        .unwrap();
+        .build();
 
     client
         .register_namespace(register_options.clone())

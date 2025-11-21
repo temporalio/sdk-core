@@ -89,7 +89,7 @@ pub struct OpenTelemetryOptions {
     pub durations_as_seconds: bool,
     pub protocol: OpenTelemetryProtocol,
     /// Histogram bucket overrides in form of
-    /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+    /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
     pub histogram_bucket_overrides: MetadataRef,
 }
 
@@ -112,7 +112,7 @@ pub struct PrometheusOptions {
     pub unit_suffix: bool,
     pub durations_as_seconds: bool,
     /// Histogram bucket overrides in form of
-    /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+    /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
     pub histogram_bucket_overrides: MetadataRef,
 }
 

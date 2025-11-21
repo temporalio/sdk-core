@@ -19,7 +19,6 @@ use std::{
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
@@ -54,7 +53,8 @@ use temporalio_common::{
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, PollerBehavior, SlotInfo, SlotInfoTrait,
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerConfigBuilder, WorkerVersioningStrategy, WorkflowSlotKind,
+        SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy,
+        WorkflowSlotKind,
     },
 };
 use temporalio_sdk::{

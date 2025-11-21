@@ -1,12 +1,14 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
 use temporalio_client::WorkflowClientTrait;
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, canned_histories,
-    coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-    temporal::api::enums::v1::{CommandType, WorkflowExecutionStatus},
+use temporalio_common::{
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, canned_histories,
+        coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+        temporal::api::enums::v1::{CommandType, WorkflowExecutionStatus},
+    },
+    worker::WorkerTaskTypes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 

@@ -93,7 +93,7 @@ typedef struct TemporalCoreByteArrayRef {
 } TemporalCoreByteArrayRef;
 
 /**
- * Metadata is <key1>\n<value1>\n<key2>\n<value2>. Metadata keys or
+ * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
  * values cannot contain a newline within.
  */
 typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
@@ -193,7 +193,7 @@ typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
  */
 typedef struct TemporalCoreClientGrpcOverrideResponse {
   /**
-   * Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+   * Numeric gRPC status code, see <https://grpc.io/docs/guides/status-codes/>. 0 is success, non-0
    * is failure.
    */
   int32_t status_code;
@@ -343,7 +343,7 @@ typedef struct TemporalCoreOpenTelemetryOptions {
   enum TemporalCoreOpenTelemetryProtocol protocol;
   /**
    * Histogram bucket overrides in form of
-   * <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+   * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
   TemporalCoreMetadataRef histogram_bucket_overrides;
 } TemporalCoreOpenTelemetryOptions;
@@ -355,7 +355,7 @@ typedef struct TemporalCorePrometheusOptions {
   bool durations_as_seconds;
   /**
    * Histogram bucket overrides in form of
-   * <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+   * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
   TemporalCoreMetadataRef histogram_bucket_overrides;
 } TemporalCorePrometheusOptions;

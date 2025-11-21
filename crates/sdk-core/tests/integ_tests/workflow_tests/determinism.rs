@@ -4,15 +4,17 @@ use std::{
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
-use temporalio_common::protos::{
-    DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder, canned_histories,
-    coresdk::AsJsonPayloadExt,
-    temporal::api::{
-        enums::v1::{EventType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
+use temporalio_common::{
+    protos::{
+        DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder, canned_histories,
+        coresdk::AsJsonPayloadExt,
+        temporal::api::{
+            enums::v1::{EventType, WorkflowTaskFailedCause},
+            failure::v1::Failure,
+        },
     },
+    worker::WorkerTaskTypes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{
     ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
     WorkflowResult,

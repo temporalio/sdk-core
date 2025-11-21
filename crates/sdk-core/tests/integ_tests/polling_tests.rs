@@ -34,7 +34,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    ClientOptionsBuilder, CoreRuntime, RuntimeOptionsBuilder,
+    ClientOptions, CoreRuntime, RuntimeOptionsBuilder,
     ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
     init_worker,
     telemetry::CoreLogStreamConsumer,
@@ -146,24 +146,21 @@ async fn switching_worker_client_changes_poll() {
     let result = std::panic::AssertUnwindSafe(async {
         // Connect clients to both servers
         info!("Connecting clients");
-        let mut client_common_config = ClientOptionsBuilder::default();
-        client_common_config
+        let client1 = ClientOptions::builder()
             .identity("integ_tester".to_owned())
             .client_name("temporal-core".to_owned())
-            .client_version("0.1.0".to_owned());
-        let client1 = client_common_config
-            .clone()
+            .client_version("0.1.0".to_owned())
             .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
             .build()
-            .unwrap()
             .connect("default", None)
             .await
             .unwrap();
-        let client2 = client_common_config
-            .clone()
+        let client2 = ClientOptions::builder()
+            .identity("integ_tester".to_owned())
+            .client_name("temporal-core".to_owned())
+            .client_version("0.1.0".to_owned())
             .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
             .build()
-            .unwrap()
             .connect("default", None)
             .await
             .unwrap();
@@ -395,13 +392,12 @@ async fn replace_client_works_after_polling_failure() {
                 "http://{}",
                 initial_server.lock().unwrap().as_ref().unwrap().target
             );
-            let client_for_initial_server = ClientOptionsBuilder::default()
+            let client_for_initial_server = ClientOptions::builder()
                 .identity("client_for_initial_server".to_string())
                 .target_url(Url::parse(&initial_server_target).unwrap())
                 .client_name(INTEG_CLIENT_NAME.to_string())
                 .client_version(INTEG_CLIENT_VERSION.to_string())
                 .build()
-                .unwrap()
                 .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
                 .await
                 .unwrap();

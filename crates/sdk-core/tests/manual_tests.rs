@@ -19,11 +19,13 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_client::{
+    GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
-    protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptionsBuilder,
-    worker::PollerBehavior,
+    protos::coresdk::AsJsonPayloadExt,
+    telemetry::PrometheusExporterOptionsBuilder,
+    worker::{PollerBehavior, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
 use temporalio_sdk_core::CoreRuntime;
@@ -122,7 +124,7 @@ async fn poller_load_spiky() {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;
@@ -151,7 +153,7 @@ async fn poller_load_spiky() {
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;
@@ -265,7 +267,7 @@ async fn poller_load_sustained() {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;
@@ -371,7 +373,7 @@ async fn poller_load_spike_then_sustained() {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;
@@ -400,7 +402,7 @@ async fn poller_load_spike_then_sustained() {
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;
