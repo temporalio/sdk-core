@@ -14,8 +14,9 @@ mod metrics;
 pub mod proxy;
 mod raw;
 mod replaceable;
+pub mod request_extensions;
 mod retry;
-mod worker_registry;
+pub mod worker;
 mod workflow_handle;
 
 pub use crate::proxy::HttpConnectProxyOptions;
@@ -24,16 +25,15 @@ pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
 pub use tonic;
-pub use worker_registry::{
-    ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot,
-};
 pub use workflow_handle::{
     GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
 
+use crate::worker::ClientWorkerSet;
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::AttachMetricLabels,
+    request_extensions::RequestExt,
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };
@@ -303,24 +303,6 @@ impl From<RetryConfig> for ExponentialBackoff {
         c.into_exp_backoff(SystemClock::default())
     }
 }
-
-/// A request extension that, when set, should make the [RetryClient] consider this call to be a
-/// [CallType::TaskLongPoll]
-#[derive(Copy, Clone, Debug)]
-pub struct IsWorkerTaskLongPoll;
-
-/// A request extension that, when set, and a call is being processed by a [RetryClient], allows the
-/// caller to request certain matching errors to short-circuit-return immediately and not follow
-/// normal retry logic.
-#[derive(Copy, Clone, Debug)]
-pub struct NoRetryOnMatching {
-    /// Return true if the passed-in gRPC error should be immediately returned to the caller
-    pub predicate: fn(&tonic::Status) -> bool,
-}
-
-/// A request extension that forces overriding the current retry policy of the [RetryClient].
-#[derive(Clone, Debug)]
-pub struct RetryConfigForCall(pub RetryConfig);
 
 impl Debug for ClientTlsConfig {
     // Intentionally omit details here since they could leak a key if ever printed
@@ -906,8 +888,7 @@ impl Namespace {
 }
 
 /// Default workflow execution retention for a Namespace is 3 days
-pub const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration =
-    Duration::from_secs(60 * 60 * 24 * 3);
+const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration = Duration::from_secs(60 * 60 * 24 * 3);
 
 /// Helper struct for `register_namespace`.
 #[derive(Clone, bon::Builder)]
@@ -1825,18 +1806,6 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
 }
 
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
-
-trait RequestExt {
-    /// Set a timeout for a request if one is not already specified in the metadata
-    fn set_default_timeout(&mut self, duration: Duration);
-}
-impl<T> RequestExt for tonic::Request<T> {
-    fn set_default_timeout(&mut self, duration: Duration) {
-        if !self.metadata().contains_key("grpc-timeout") {
-            self.set_timeout(duration)
-        }
-    }
-}
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {

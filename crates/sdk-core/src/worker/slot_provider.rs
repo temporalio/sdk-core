@@ -7,7 +7,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-use temporalio_client::Slot as SlotTrait;
+use temporalio_client::worker::Slot as SlotTrait;
 use temporalio_common::{
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
     worker::{WorkerDeploymentOptions, WorkflowSlotKind},
