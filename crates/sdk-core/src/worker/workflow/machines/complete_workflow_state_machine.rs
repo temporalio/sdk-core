@@ -2,7 +2,10 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::machines::HistEventData;
+use crate::{
+    abstractions::dbg_panic,
+    worker::workflow::{machines::HistEventData, nondeterminism},
+};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,
@@ -41,7 +44,10 @@ pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachin
             .pop()
         {
             Some(CompleteWFCommand::AddCommand(c)) => c,
-            _ => panic!("complete wf machine on_schedule must produce command"),
+            unexpected => {
+                dbg_panic!("complete wf machine on_schedule must produce command: {unexpected:?}");
+                panic!("complete wf machine on_schedule must produce command");
+            }
         };
     NewMachineWithCommand {
         command: add_cmd,
@@ -57,9 +63,9 @@ impl TryFrom<HistEventData> for CompleteWorkflowMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowExecutionCompleted => Self::WorkflowExecutionCompleted,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Complete workflow machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }
