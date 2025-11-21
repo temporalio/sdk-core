@@ -17,7 +17,6 @@ use std::{
 use temporalio_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     errors::PollError,
@@ -58,8 +57,8 @@ use temporalio_common::{
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder, WorkerVersioningStrategy,
-        WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes,
+        WorkerVersioningStrategy, WorkflowSlotKind,
     },
 };
 use temporalio_sdk::{

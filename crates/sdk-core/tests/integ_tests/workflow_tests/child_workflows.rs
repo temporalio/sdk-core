@@ -3,7 +3,6 @@ use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker,
     protos::{
@@ -35,6 +34,7 @@ use temporalio_common::{
             sdk::v1::UserMetadata,
         },
     },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowOptions, Signal, WfContext, WfExitValue, WorkflowResult,

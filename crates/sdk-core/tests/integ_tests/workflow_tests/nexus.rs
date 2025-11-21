@@ -12,7 +12,6 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::PollError,
     protos::{
@@ -34,6 +33,7 @@ use temporalio_common::{
             },
         },
     },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use tokio::{

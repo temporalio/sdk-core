@@ -32,7 +32,6 @@ use temporalio_client::{
     WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
     WorkflowHandle, WorkflowOptions,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as CoreWorker,
     protos::{
@@ -51,7 +50,7 @@ use temporalio_common::{
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
         metrics::CoreMeter,
     },
-    worker::WorkerVersioningStrategy,
+    worker::{WorkerTaskTypes, WorkerVersioningStrategy},
 };
 use temporalio_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,

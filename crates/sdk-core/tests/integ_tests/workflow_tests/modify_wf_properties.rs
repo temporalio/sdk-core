@@ -1,15 +1,17 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::WorkflowClientTrait;
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
-    coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
-    temporal::api::{
-        command::v1::{Command, command},
-        common::v1::Payload,
-        enums::v1::EventType,
+use temporalio_common::{
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+        coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+        temporal::api::{
+            command::v1::{Command, command},
+            common::v1::Payload,
+            enums::v1::EventType,
+        },
     },
+    worker::WorkerTaskTypes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;

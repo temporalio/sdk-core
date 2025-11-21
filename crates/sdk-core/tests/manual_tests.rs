@@ -19,11 +19,13 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use temporalio_client::{GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_client::{
+    GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
-    protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptionsBuilder,
-    worker::PollerBehavior,
+    protos::coresdk::AsJsonPayloadExt,
+    telemetry::PrometheusExporterOptionsBuilder,
+    worker::{PollerBehavior, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
 use temporalio_sdk_core::CoreRuntime;

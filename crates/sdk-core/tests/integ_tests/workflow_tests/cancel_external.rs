@@ -1,11 +1,13 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::{GetWorkflowResultOptions, WfClientExt, WorkflowOptions};
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
-    coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
-    temporal::api::enums::v1::{CommandType, EventType},
+use temporalio_common::{
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+        coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
+        temporal::api::enums::v1::{CommandType, EventType},
+    },
+    worker::WorkerTaskTypes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 

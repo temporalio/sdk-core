@@ -10,12 +10,11 @@ use std::{
     },
     sync::Arc,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::temporal::api::{
         worker::v1::WorkerHeartbeat, workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
-    worker::WorkerDeploymentOptions,
+    worker::{WorkerDeploymentOptions, WorkerTaskTypes},
 };
 use uuid::Uuid;
 

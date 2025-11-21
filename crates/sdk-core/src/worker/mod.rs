@@ -67,7 +67,6 @@ use std::{
 use temporalio_client::worker::{
     ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
     protos::{
@@ -90,7 +89,7 @@ use temporalio_common::{
     telemetry::metrics::{TemporalMeter, WorkerHeartbeatMetrics},
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind,
-        WorkflowSlotKind,
+        WorkerTaskTypes, WorkflowSlotKind,
     },
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};

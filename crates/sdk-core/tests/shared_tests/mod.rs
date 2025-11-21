@@ -2,11 +2,13 @@
 
 use crate::common::CoreWfStarter;
 use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
-use temporalio_common::protos::temporal::api::{
-    enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
-    history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
+use temporalio_common::{
+    protos::temporal::api::{
+        enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
+        history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
+    },
+    worker::WorkerTaskTypes,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::WfContext;
 
 pub(crate) mod priority;

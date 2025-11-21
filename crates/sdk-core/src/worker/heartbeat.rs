@@ -171,9 +171,9 @@ mod tests {
         time::Duration,
     };
     use temporalio_common::{
-        protos::temporal::api::namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
-        protos::temporal::api::workflowservice::v1::{
-            DescribeNamespaceResponse, RecordWorkerHeartbeatResponse,
+        protos::temporal::api::{
+            namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+            workflowservice::v1::{DescribeNamespaceResponse, RecordWorkerHeartbeatResponse},
         },
         worker::PollerBehavior,
     };
