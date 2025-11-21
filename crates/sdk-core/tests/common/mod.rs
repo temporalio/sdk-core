@@ -63,8 +63,8 @@ use temporalio_sdk::{
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
+    ClientOptions, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder, WorkerConfig,
+    WorkerConfigBuilder, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
@@ -200,7 +200,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .replace("\\n", "\n")
         .into_bytes();
     let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-    let sgo = ClientOptionsBuilder::default()
+    let sgo = ClientOptions::builder()
         .target_url(Url::from_str(&cloud_addr).unwrap())
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
@@ -212,8 +212,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
             }),
             ..Default::default()
         })
-        .build()
-        .unwrap();
+        .build();
     sgo.connect(
         env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
         None,
@@ -762,19 +761,19 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
     let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    let mut cb = ClientOptionsBuilder::default();
-    cb.identity(INTEG_CLIENT_IDENTITY.to_string())
+    let api_key = env::var(INTEG_API_KEY)
+        .ok()
+        .map(|key_file| std::fs::read_to_string(key_file).unwrap());
+    let tls_cfg = get_integ_tls_config();
+
+    ClientOptions::builder()
+        .identity(INTEG_CLIENT_IDENTITY.to_string())
         .target_url(url)
         .client_name(INTEG_CLIENT_NAME.to_string())
-        .client_version(INTEG_CLIENT_VERSION.to_string());
-    if let Ok(key_file) = env::var(INTEG_API_KEY) {
-        let content = std::fs::read_to_string(key_file).unwrap();
-        cb.api_key(Some(content));
-    }
-    if let Some(tls) = get_integ_tls_config() {
-        cb.tls_cfg(tls);
-    };
-    cb.build().unwrap()
+        .client_version(INTEG_CLIENT_VERSION.to_string())
+        .maybe_api_key(api_key)
+        .maybe_tls_cfg(tls_cfg)
+        .build()
 }
 
 pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {

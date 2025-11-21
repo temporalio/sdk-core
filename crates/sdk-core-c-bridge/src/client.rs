@@ -14,9 +14,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
-    ClientTlsConfig, CloudService, ConfiguredClient, HealthService, OperatorService, RetryClient,
-    RetryConfig, TemporalServiceClient, TestService, TlsConfig, WorkflowService, callback_based,
+    ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientTlsConfig, CloudService,
+    ConfiguredClient, HealthService, OperatorService, RetryClient, RetryConfig,
+    TemporalServiceClient, TestService, TlsConfig, WorkflowService, callback_based,
     proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
@@ -1133,8 +1133,27 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
     type Error = anyhow::Error;
 
     fn try_from(opts: &ClientOptions) -> anyhow::Result<Self> {
-        let mut opts_builder = ClientOptionsBuilder::default();
-        opts_builder
+        let tls_cfg = unsafe { opts.tls_options.as_ref() }
+            .map(|c| c.try_into())
+            .transpose()?;
+
+        let keep_alive = unsafe { opts.keep_alive_options.as_ref() }.map(|ka| {
+            let config: ClientKeepAliveConfig = ka.into();
+            config
+        });
+
+        let headers = if opts.metadata.size == 0 {
+            None
+        } else {
+            Some(opts.metadata.to_string_map_on_newlines())
+        };
+
+        let api_key = opts.api_key.to_option_string();
+
+        let http_connect_proxy =
+            unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
+
+        Ok(CoreClientOptions::builder()
             .target_url(Url::parse(opts.target_url.to_str())?)
             .client_name(opts.client_name.to_string())
             .client_version(opts.client_version.to_string())
@@ -1142,20 +1161,12 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             .retry_config(
                 unsafe { opts.retry_options.as_ref() }.map_or(RetryConfig::default(), |c| c.into()),
             )
-            .keep_alive(unsafe { opts.keep_alive_options.as_ref() }.map(Into::into))
-            .headers(if opts.metadata.size == 0 {
-                None
-            } else {
-                Some(opts.metadata.to_string_map_on_newlines())
-            })
-            .api_key(opts.api_key.to_option_string())
-            .http_connect_proxy(
-                unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into),
-            );
-        if let Some(tls_config) = unsafe { opts.tls_options.as_ref() } {
-            opts_builder.tls_cfg(tls_config.try_into()?);
-        }
-        Ok(opts_builder.build()?)
+            .maybe_keep_alive(keep_alive.map(Some))
+            .maybe_headers(headers)
+            .maybe_api_key(api_key)
+            .maybe_http_connect_proxy(http_connect_proxy)
+            .maybe_tls_cfg(tls_cfg)
+            .build())
     }
 }
 
