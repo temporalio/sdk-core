@@ -25,13 +25,12 @@ use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     protos::{
         coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
         temporal::api::enums::v1::WorkflowIdReusePolicy,
     },
-    worker::PollerBehavior,
+    worker::{PollerBehavior, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};

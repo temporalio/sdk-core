@@ -19,8 +19,10 @@ mod retry;
 pub mod worker;
 mod workflow_handle;
 
-pub use crate::proxy::HttpConnectProxyOptions;
-pub use crate::retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient};
+pub use crate::{
+    proxy::HttpConnectProxyOptions,
+    retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient},
+};
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
@@ -29,12 +31,12 @@ pub use workflow_handle::{
     GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
 
-use crate::worker::ClientWorkerSet;
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::AttachMetricLabels,
     request_extensions::RequestExt,
     sealed::WfHandleClient,
+    worker::ClientWorkerSet,
     workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{ExponentialBackoff, SystemClock, exponential};

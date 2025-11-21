@@ -1600,10 +1600,12 @@ mod tests {
     use super::*;
     use crate::{ClientOptions, RetryClient};
     use std::collections::HashSet;
-    use temporalio_common::protos::temporal::api::{
-        operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+    use temporalio_common::{
+        protos::temporal::api::{
+            operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+        },
+        worker::WorkerTaskTypes,
     };
-    use temporalio_common::worker::WorkerTaskTypes;
     use tonic::IntoRequest;
     use url::Url;
     use uuid::Uuid;
