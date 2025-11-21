@@ -1,3 +1,6 @@
+//! This crate contains base-level functionality needed by the other crates in the Temporal Core and
+//! Rust SDK.
+
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
 pub mod errors;
