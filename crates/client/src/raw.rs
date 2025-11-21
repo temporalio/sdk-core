@@ -6,7 +6,7 @@ use crate::{
     Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
-    worker_registry::{ClientWorkerSet, Slot},
+    worker::{ClientWorkerSet, Slot},
 };
 use dyn_clone::DynClone;
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
@@ -1801,7 +1801,7 @@ mod tests {
     #[case::without_versioning(false)]
     #[tokio::test]
     async fn eager_reservations_attach_deployment_options(#[case] use_worker_versioning: bool) {
-        use crate::worker_registry::{MockClientWorker, MockSlot};
+        use crate::worker::{MockClientWorker, MockSlot};
         use temporalio_common::{
             protos::temporal::api::enums::v1::WorkerVersioningMode,
             worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},

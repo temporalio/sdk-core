@@ -10,8 +10,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_client::{
-    Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
-    RetryClient, RetryConfig, RetryConfigForCall, SharedReplaceableClient, WorkflowService,
+    Client, Namespace, NamespacedClient, RetryClient, RetryConfig, SharedReplaceableClient,
+    WorkflowService,
+    request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
+    worker::ClientWorkerSet,
 };
 use temporalio_common::{
     protos::{

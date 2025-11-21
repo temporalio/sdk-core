@@ -1,6 +1,4 @@
-//! This module enables the tracking of workers that are associated with a client instance.
-//! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
-//!  after reserving a slot, directly forwards a WFT to a local worker.
+//! Contains types and logic for interactions between clients and Core/SDK workers
 
 use anyhow::bail;
 use parking_lot::RwLock;

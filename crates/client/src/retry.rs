@@ -1,7 +1,8 @@
 use crate::{
-    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
-    NamespacedClient, NoRetryOnMatching, Result, RetryConfig, RetryConfigForCall,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, NamespacedClient, Result,
+    RetryConfig,
     raw::IsUserLongPoll,
+    request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -9,6 +10,7 @@ use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
 use tonic::{Code, Request};
 
 /// List of gRPC error codes that client will retry.
+#[doc(hidden)]
 pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::DataLoss,
     Code::Internal,

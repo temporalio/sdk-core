@@ -64,7 +64,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use temporalio_client::{
+use temporalio_client::worker::{
     ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
 use temporalio_common::worker::WorkerTaskTypes;
