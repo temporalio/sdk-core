@@ -1,3 +1,6 @@
+//! Contains types that are needed by both the client and the sdk when configuring / interacting
+//! with workers.
+
 use crate::{
     errors::WorkflowErrorType,
     protos::{

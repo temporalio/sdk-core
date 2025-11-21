@@ -1,3 +1,5 @@
+//! Contains tracing/logging and metrics related functionality
+
 pub mod metrics;
 
 use crate::telemetry::metrics::CoreMeter;
