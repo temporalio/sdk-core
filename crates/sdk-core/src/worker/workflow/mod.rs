@@ -95,6 +95,7 @@ use tokio::{
     task::{LocalSet, spawn_blocking},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, Subscriber};
 
@@ -130,7 +131,7 @@ pub(crate) struct Workflows {
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
-    local_act_mgr: Arc<LocalActivityManager>,
+    local_act_mgr: Option<Arc<LocalActivityManager>>,
     ever_polled: AtomicBool,
     default_versioning_behavior: Option<VersioningBehavior>,
 }
@@ -165,9 +166,9 @@ impl Workflows {
         client: Arc<dyn WorkerClient>,
         wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
-        local_activity_request_sink: impl LocalActivityRequestSink,
-        local_act_mgr: Arc<LocalActivityManager>,
-        heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
+        local_activity_request_sink: Option<impl LocalActivityRequestSink>,
+        local_act_mgr: Option<Arc<LocalActivityManager>>,
+        heartbeat_timeout_rx: Option<UnboundedReceiver<HeartbeatTimeoutMsg>>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
         tracing_sub: Option<Arc<dyn Subscriber + Send + Sync>>,
     ) -> Self {
@@ -182,10 +183,14 @@ impl Workflows {
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
-        let locals_stream = stream::select(
-            UnboundedReceiverStream::new(local_rx),
-            UnboundedReceiverStream::new(heartbeat_timeout_rx).map(Into::into),
-        );
+        let locals_stream = if let Some(hb_rx) = heartbeat_timeout_rx {
+            Either::Left(stream::select(
+                UnboundedReceiverStream::new(local_rx),
+                UnboundedReceiverStream::new(hb_rx).map(Into::into),
+            ))
+        } else {
+            Either::Right(UnboundedReceiverStream::new(local_rx))
+        };
         let (activation_tx, activation_rx) = unbounded_channel();
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
@@ -355,6 +360,12 @@ impl Workflows {
                 {
                     versioning_behavior = *default_vb;
                 }
+                let nonfirst_local_activity_execution_attempts =
+                    if let Some(ref la_mgr) = self.local_act_mgr {
+                        la_mgr.get_nonfirst_attempt_count(run_id) as u32
+                    } else {
+                        0
+                    };
                 let mut completion = WorkflowTaskCompletion {
                     task_token: task_token.clone(),
                     commands,
@@ -365,10 +376,7 @@ impl Workflows {
                     force_create_new_workflow_task: force_new_wft,
                     sdk_metadata,
                     metering_metadata: MeteringMetadata {
-                        nonfirst_local_activity_execution_attempts: self
-                            .local_act_mgr
-                            .get_nonfirst_attempt_count(run_id)
-                            as u32,
+                        nonfirst_local_activity_execution_attempts,
                     },
                     versioning_behavior,
                 };

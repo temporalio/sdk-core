@@ -64,7 +64,7 @@ impl WFStream {
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
-        local_activity_request_sink: impl LocalActivityRequestSink,
+        local_activity_request_sink: Option<impl LocalActivityRequestSink>,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollError>> {
         let all_inputs = stream::select_with_strategy(
             local_rx.map(Into::into),
@@ -82,7 +82,7 @@ impl WFStream {
     fn build_internal(
         all_inputs: impl Stream<Item = WFStreamInput>,
         basics: WorkflowBasics,
-        local_activity_request_sink: impl LocalActivityRequestSink,
+        local_activity_request_sink: Option<impl LocalActivityRequestSink>,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollError>> {
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),

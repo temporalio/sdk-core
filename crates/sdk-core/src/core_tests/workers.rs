@@ -441,23 +441,40 @@ fn create_test_nexus_completion(task_token: &[u8]) -> NexusTaskCompletion {
 
 #[rstest::rstest]
 // With tasks
-#[case::activity_only_with_task(false, true, false, true, "activity-only")]
-#[case::nexus_only_with_task(false, false, true, true, "nexus-only")]
-#[case::workflow_only_with_task(true, false, false, true, "workflow-only")]
-#[case::workflow_and_activity_with_task(true, true, false, true, "workflow-activity")]
-#[case::workflow_and_nexus_with_task(true, false, true, true, "workflow-nexus")]
-#[case::activity_and_nexus_with_task(false, true, true, true, "activity-nexus")]
+#[case::activity_only_with_task(false, false, true, false, true, "activity-only")]
+#[case::nexus_only_with_task(false, false, false, true, true, "nexus-only")]
+#[case::workflow_only_with_task(true, false, false, false, true, "workflow-only")]
+#[case::workflow_and_activity_with_task(true, true, true, false, true, "workflow-activity")]
+#[case::workflow_and_local_activity_with_task(
+    true,
+    true,
+    false,
+    false,
+    true,
+    "workflow-local-activity"
+)]
+#[case::workflow_and_nexus_with_task(true, false, false, true, true, "workflow-nexus")]
+#[case::activity_and_nexus_with_task(false, false, true, true, true, "activity-nexus")]
 // Without tasks (idle worker shutdown)
-#[case::activity_only_idle(false, true, false, false, "activity-only-idle")]
-#[case::nexus_only_idle(false, false, true, false, "nexus-only-idle")]
-#[case::workflow_only_idle(true, false, false, false, "workflow-only-idle")]
-#[case::workflow_and_activity_idle(true, true, false, false, "workflow-activity-idle")]
-#[case::workflow_and_nexus_idle(true, false, true, false, "workflow-nexus-idle")]
-#[case::activity_and_nexus_idle(false, true, true, false, "activity-nexus-idle")]
+#[case::activity_only_idle(false, false, true, false, false, "activity-only-idle")]
+#[case::nexus_only_idle(false, false, false, true, false, "nexus-only-idle")]
+#[case::workflow_only_idle(true, false, false, false, false, "workflow-only-idle")]
+#[case::workflow_and_activity_idle(true, true, true, false, false, "workflow-activity-idle")]
+#[case::workflow_and_local_activity_idle(
+    true,
+    true,
+    false,
+    false,
+    false,
+    "workflow-local-activity-idle"
+)]
+#[case::workflow_and_nexus_idle(true, false, false, true, false, "workflow-nexus-idle")]
+#[case::activity_and_nexus_idle(false, false, true, true, false, "activity-nexus-idle")]
 #[tokio::test]
 async fn test_task_type_combinations_unified(
     #[case] enable_workflows: bool,
-    #[case] enable_activities: bool,
+    #[case] enable_local_activities: bool,
+    #[case] enable_remote_activities: bool,
     #[case] enable_nexus: bool,
     #[case] with_task: bool,
     #[case] queue_name: &str,
@@ -465,7 +482,7 @@ async fn test_task_type_combinations_unified(
     let mut client = mock_worker_client();
 
     if with_task {
-        if enable_activities {
+        if enable_local_activities || enable_remote_activities {
             client
                 .expect_complete_activity_task()
                 .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
@@ -481,7 +498,7 @@ async fn test_task_type_combinations_unified(
         let t = canned_histories::single_timer(queue_name);
         let wf_cfg = MockPollCfg::from_resp_batches(queue_name, t, [1], client);
         let mut mocks = build_mock_pollers(wf_cfg);
-        if enable_activities {
+        if enable_remote_activities {
             mocks.set_act_poller_from_resps(vec![QueueResponse::from(create_test_activity_task())]);
         }
         if enable_nexus {
@@ -494,7 +511,7 @@ async fn test_task_type_combinations_unified(
         } else {
             None
         };
-        let activity_tasks = if enable_activities && with_task {
+        let activity_tasks = if enable_remote_activities && with_task {
             Some(vec![QueueResponse::from(create_test_activity_task())])
         } else {
             None
@@ -511,7 +528,8 @@ async fn test_task_type_combinations_unified(
         w.task_queue = queue_name.to_string();
         w.task_types = WorkerTaskTypes {
             enable_workflows,
-            enable_activities,
+            enable_local_activities,
+            enable_remote_activities,
             enable_nexus,
         };
         w.skip_client_worker_set_check = true;
@@ -530,7 +548,7 @@ async fn test_task_type_combinations_unified(
                 .unwrap();
         }
 
-        if enable_activities {
+        if enable_remote_activities {
             let activity_task = worker.poll_activity_task().await.unwrap();
             worker
                 .complete_activity_task(ActivityTaskCompletion {
@@ -557,7 +575,7 @@ async fn test_task_type_combinations_unified(
             PollError::ShutDown
         );
     }
-    if enable_activities {
+    if enable_local_activities || enable_remote_activities {
         assert_matches!(
             worker.poll_activity_task().await.unwrap_err(),
             PollError::ShutDown

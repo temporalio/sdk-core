@@ -61,7 +61,8 @@ pub struct WorkerOptions {
 #[repr(C)]
 pub struct WorkerTaskTypes {
     pub enable_workflows: bool,
-    pub enable_activities: bool,
+    pub enable_local_activities: bool,
+    pub enable_remote_activities: bool,
     pub enable_nexus: bool,
 }
 
@@ -69,7 +70,8 @@ impl From<&WorkerTaskTypes> for temporalio_common::worker::WorkerTaskTypes {
     fn from(t: &WorkerTaskTypes) -> Self {
         Self {
             enable_workflows: t.enable_workflows,
-            enable_activities: t.enable_activities,
+            enable_local_activities: t.enable_local_activities,
+            enable_remote_activities: t.enable_remote_activities,
             enable_nexus: t.enable_nexus,
         }
     }
