@@ -21,7 +21,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
 
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
@@ -463,7 +465,7 @@ async fn poller_autoscaling_basic_loadtest() {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;

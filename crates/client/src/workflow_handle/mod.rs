@@ -47,12 +47,12 @@ where
 
 /// Options for fetching workflow results
 #[derive(Debug, Clone, Copy)]
-pub struct GetWorkflowResultOpts {
+pub struct GetWorkflowResultOptions {
     /// If true (the default), follows to the next workflow run in the execution chain while
     /// retrieving results.
     pub follow_runs: bool,
 }
-impl Default for GetWorkflowResultOpts {
+impl Default for GetWorkflowResultOptions {
     fn default() -> Self {
         Self { follow_runs: true }
     }
@@ -118,7 +118,7 @@ where
     /// Await the result of the workflow execution
     pub async fn get_workflow_result(
         &self,
-        opts: GetWorkflowResultOpts,
+        opts: GetWorkflowResultOptions,
     ) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
         let mut next_page_tok = vec![];
         let mut run_id = self.info.run_id.clone().unwrap_or_default();

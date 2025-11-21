@@ -1,5 +1,5 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowOptions};
+use temporalio_client::{GetWorkflowResultOptions, WfClientExt, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
@@ -71,7 +71,7 @@ async fn sends_cancel_to_other_wf() {
         .await
         .get_untyped_workflow_handle(RECEIVER_WFID, receiver_run_id);
     let res = String::from_json_payload(
-        &h.get_workflow_result(GetWorkflowResultOpts::default())
+        &h.get_workflow_result(GetWorkflowResultOptions::default())
             .await
             .unwrap()
             .unwrap_success()[0],

@@ -14,10 +14,10 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientTlsConfig, CloudService,
-    ConfiguredClient, HealthService, OperatorService, RetryClient, RetryConfig,
-    TemporalServiceClient, TestService, TlsConfig, WorkflowService, callback_based,
-    proxy::HttpConnectProxyOptions,
+    ClientKeepAliveOptions as CoreClientKeepAliveOptions, ClientOptions as CoreClientOptions,
+    ClientTlsOptions as CoreClientTlsOptions, CloudService, ConfiguredClient, HealthService,
+    OperatorService, RetryClient, RetryOptions, TemporalServiceClient, TestService,
+    TlsOptions as CoreTlsOptions, WorkflowService, callback_based, proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;
@@ -1138,7 +1138,7 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             .transpose()?;
 
         let keep_alive = unsafe { opts.keep_alive_options.as_ref() }.map(|ka| {
-            let config: ClientKeepAliveConfig = ka.into();
+            let config: CoreClientKeepAliveOptions = ka.into();
             config
         });
 
@@ -1159,7 +1159,8 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             .client_version(opts.client_version.to_string())
             .identity(opts.identity.to_string())
             .retry_config(
-                unsafe { opts.retry_options.as_ref() }.map_or(RetryConfig::default(), |c| c.into()),
+                unsafe { opts.retry_options.as_ref() }
+                    .map_or(RetryOptions::default(), |c| c.into()),
             )
             .maybe_keep_alive(keep_alive.map(Some))
             .maybe_headers(headers)
@@ -1170,19 +1171,19 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
     }
 }
 
-impl TryFrom<&ClientTlsOptions> for TlsConfig {
+impl TryFrom<&ClientTlsOptions> for CoreTlsOptions {
     type Error = anyhow::Error;
 
     fn try_from(opts: &ClientTlsOptions) -> anyhow::Result<Self> {
-        Ok(TlsConfig {
+        Ok(CoreTlsOptions {
             server_root_ca_cert: opts.server_root_ca_cert.to_option_vec(),
             domain: opts.domain.to_option_string(),
-            client_tls_config: match (
+            client_tls_options: match (
                 opts.client_cert.to_option_vec(),
                 opts.client_private_key.to_option_vec(),
             ) {
                 (None, None) => None,
-                (Some(client_cert), Some(client_private_key)) => Some(ClientTlsConfig {
+                (Some(client_cert), Some(client_private_key)) => Some(CoreClientTlsOptions {
                     client_cert,
                     client_private_key,
                 }),
@@ -1196,9 +1197,9 @@ impl TryFrom<&ClientTlsOptions> for TlsConfig {
     }
 }
 
-impl From<&ClientRetryOptions> for RetryConfig {
+impl From<&ClientRetryOptions> for RetryOptions {
     fn from(opts: &ClientRetryOptions) -> Self {
-        RetryConfig {
+        RetryOptions {
             initial_interval: Duration::from_millis(opts.initial_interval_millis),
             randomization_factor: opts.randomization_factor,
             multiplier: opts.multiplier,
@@ -1213,9 +1214,9 @@ impl From<&ClientRetryOptions> for RetryConfig {
     }
 }
 
-impl From<&ClientKeepAliveOptions> for ClientKeepAliveConfig {
+impl From<&ClientKeepAliveOptions> for CoreClientKeepAliveOptions {
     fn from(opts: &ClientKeepAliveOptions) -> Self {
-        ClientKeepAliveConfig {
+        CoreClientKeepAliveOptions {
             interval: Duration::from_millis(opts.interval_millis),
             timeout: Duration::from_millis(opts.timeout_millis),
         }
