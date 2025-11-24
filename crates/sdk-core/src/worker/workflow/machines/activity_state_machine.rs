@@ -7,7 +7,7 @@ use super::{
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    worker::workflow::{InternalFlagsRef, machines::HistEventData},
+    worker::workflow::{InternalFlagsRef, fatal, machines::HistEventData, nondeterminism},
 };
 use std::convert::{TryFrom, TryInto};
 use temporalio_common::protos::{
@@ -173,6 +173,16 @@ impl ActivityMachine {
                 | ActivityMachineState::TimedOut(_)
         ) {
             // Ignore attempted cancels in terminal states
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Activity cancel ignored in terminal state",
+                ::serde_json::json!({
+                    "seq": self.shared_state.attrs.seq,
+                    "state": format!("{}", self.state())
+                })
+            );
+
             debug!(
                 "Attempted to cancel already resolved activity (seq {})",
                 self.shared_state.attrs.seq
@@ -193,7 +203,10 @@ impl ActivityMachine {
                 ActivityMachineCommand::Cancel(details) => {
                     vec![self.create_cancelation_resolve(details).into()]
                 }
-                x => panic!("Invalid cancel event response {x:?}"),
+                x => {
+                    dbg_panic!("Invalid cancel event response {x:?}");
+                    panic!("Invalid cancel event response {x:?}");
+                }
             })
             .collect();
         Ok(res)
@@ -223,9 +236,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                         last_task_in_history,
                     })
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Activity scheduled attributes were unset: {e}"
-                    )));
+                    return Err(fatal!("Activity scheduled attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskStarted => Self::ActivityTaskStarted(e.event_id),
@@ -236,9 +247,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCompleted(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Activity completion attributes were unset: {e}"
-                    )));
+                    return Err(fatal!("Activity completion attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskFailed => {
@@ -247,9 +256,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskFailed(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Activity failure attributes were unset: {e}"
-                    )));
+                    return Err(fatal!("Activity failure attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskTimedOut => {
@@ -258,9 +265,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskTimedOut(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Activity timeout attributes were unset: {e}"
-                    )));
+                    return Err(fatal!("Activity timeout attributes were unset: {e}"));
                 }
             }
             EventType::ActivityTaskCancelRequested => Self::ActivityTaskCancelRequested,
@@ -270,15 +275,13 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskCanceled(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Activity cancellation attributes were unset: {e}"
-                    )));
+                    return Err(fatal!("Activity cancellation attributes were unset: {e}"));
                 }
             }
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Activity machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }
@@ -375,18 +378,20 @@ impl ScheduleCommandCreated {
             sched_dat.last_task_in_history,
         ) {
             if sched_dat.act_id != dat.attrs.activity_id {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Activity id of scheduled event '{}' does not \
                  match activity id of activity command '{}'",
-                    sched_dat.act_id, dat.attrs.activity_id
-                )));
+                    sched_dat.act_id,
+                    dat.attrs.activity_id
+                ));
             }
             if sched_dat.act_type != dat.attrs.activity_type {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                return TransitionResult::Err(nondeterminism!(
                     "Activity type of scheduled event '{}' does not \
                  match activity type of activity command '{}'",
-                    sched_dat.act_type, dat.attrs.activity_type
-                )));
+                    sched_dat.act_type,
+                    dat.attrs.activity_type
+                ));
             }
         }
         dat.scheduled_event_id = sched_dat.event_id;
@@ -427,6 +432,15 @@ impl ScheduledEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity timed out before starting",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "state": "ScheduledEventRecorded"
+            })
+        );
         notify_lang_activity_timed_out(dat, attrs)
     }
 
@@ -434,12 +448,27 @@ impl ScheduledEventRecorded {
         self,
         dat: &mut SharedState,
     ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancelled in scheduled state",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         create_request_cancel_activity_task_command(
             dat,
             ScheduledActivityCancelCommandCreated::default(),
         )
     }
     pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity abandoned",
+            ::serde_json::json!({"mode": "Abandon"})
+        );
         notify_lang_activity_cancelled(None)
     }
 }
@@ -452,6 +481,14 @@ impl Started {
         self,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity completed successfully",
+            ::serde_json::json!({
+                "has_result": attrs.result.is_some()
+            })
+        );
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Complete(attrs.result)],
             Completed::default(),
@@ -462,6 +499,16 @@ impl Started {
         dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity task failed",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "activity_type": dat.attrs.activity_type,
+                "retry_state": attrs.retry_state
+            })
+        );
         ActivityMachineTransition::ok(
             vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))],
             Failed::default(),
@@ -473,6 +520,15 @@ impl Started {
         dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity timed out after starting",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "state": "Started"
+            })
+        );
         notify_lang_activity_timed_out(dat, attrs)
     }
 
@@ -480,12 +536,27 @@ impl Started {
         self,
         dat: &mut SharedState,
     ) -> ActivityMachineTransition<StartedActivityCancelCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancelled after started",
+            ::serde_json::json!({
+                "activity_id": dat.attrs.activity_id,
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         create_request_cancel_activity_task_command(
             dat,
             StartedActivityCancelCommandCreated::default(),
         )
     }
     pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity abandoned in started state",
+            ::serde_json::json!({"state": "Started"})
+        );
         notify_lang_activity_cancelled(None)
     }
 }
@@ -502,6 +573,14 @@ impl ScheduledActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity cancellation completed",
+            ::serde_json::json!({
+                "has_details": attrs.details.is_some()
+            })
+        );
         notify_if_not_already_cancelled(dat, |_| notify_lang_activity_cancelled(Some(attrs)))
     }
 
@@ -532,6 +611,14 @@ impl StartedActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity completed despite cancel request",
+            ::serde_json::json!({
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         notify_if_not_already_cancelled(dat, |_| {
             TransitionResult::commands(vec![ActivityMachineCommand::Complete(attrs.result)])
         })
@@ -541,6 +628,14 @@ impl StartedActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Activity failed despite cancel request",
+            ::serde_json::json!({
+                "cancellation_type": format!("{:?}", dat.cancellation_type)
+            })
+        );
         notify_if_not_already_cancelled(dat, |dat| {
             TransitionResult::commands(vec![ActivityMachineCommand::Fail(new_failure(dat, attrs))])
         })
@@ -647,12 +742,21 @@ impl Canceled {
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might start anyway. Ignore the result.
         if dat.cancellation_type == ActivityCancellationType::Abandon {
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Abandoned activity can start after cancellation",
+                ::serde_json::json!({
+                    "seq_num": seq_num,
+                    "cancellation_type": "Abandon"
+                })
+            );
             TransitionResult::default()
         } else {
-            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            TransitionResult::Err(nondeterminism!(
                 "Non-Abandon cancel mode activities cannot be started after being cancelled. \
                  Seq: {seq_num:?}"
-            )))
+            ))
         }
     }
     pub(super) fn on_activity_task_completed(
@@ -662,11 +766,19 @@ impl Canceled {
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might complete anyway. Ignore the result.
         if dat.cancellation_type == ActivityCancellationType::Abandon {
+            #[cfg(feature = "antithesis_assertions")]
+            crate::antithesis::assert_always!(
+                true,
+                "Abandoned activity can complete after cancellation",
+                ::serde_json::json!({
+                    "activity_id": dat.attrs.activity_id
+                })
+            );
             TransitionResult::default()
         } else {
-            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            TransitionResult::Err(nondeterminism!(
                 "Non-Abandon cancel mode activities cannot be completed after being cancelled: {attrs:?}"
-            )))
+            ))
         }
     }
 }
@@ -792,9 +904,7 @@ fn convert_payloads(
     result: Option<Payloads>,
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
-        WFMachinesError::Fatal(format!(
-            "Not exactly one payload in activity result ({pe}) for event: {event_info:?}"
-        ))
+        fatal!("Not exactly one payload in activity result ({pe}) for event: {event_info:?}")
     })
 }
 

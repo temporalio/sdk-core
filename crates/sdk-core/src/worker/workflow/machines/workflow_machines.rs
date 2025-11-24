@@ -25,7 +25,7 @@ use crate::{
         workflow::{
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
             OutgoingJob, RunBasics, WFCommand, WFCommandVariant, WFMachinesError,
-            WorkflowStartedInfo,
+            WorkflowStartedInfo, fatal,
             history_update::NextWFT,
             machines::{
                 HistEventData, activity_state_machine::ActivityMachine,
@@ -35,6 +35,7 @@ use crate::{
                 update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
             },
+            nondeterminism,
         },
     },
 };
@@ -246,11 +247,11 @@ macro_rules! cancel_machine {
         let machine = if let Machines::$machine_variant(m) = $self.machine_mut(m_key) {
             m
         } else {
-            return Err(WFMachinesError::Nondeterminism(format!(
+            return Err(nondeterminism!(
                 "Machine was not a {} when it should have been during cancellation: {:?}",
                 stringify!($machine_variant),
                 $cmd_id
-            )));
+            ));
         };
         let machine_resps = machine.$cancel_method($($args),*)?;
         $self.process_machine_responses(m_key, machine_resps)?
@@ -366,10 +367,10 @@ impl WorkflowMachines {
                     }
                     self.process_machine_responses(mk, resps)?;
                 } else {
-                    return Err(WFMachinesError::Nondeterminism(format!(
+                    return Err(nondeterminism!(
                         "Command matching activity with seq num {seq} existed but was not a \
                         local activity!"
-                    )));
+                    ));
                 }
                 self.local_activity_data.done_executing(seq);
             }
@@ -573,10 +574,9 @@ impl WorkflowMachines {
                 (evts, has_final_event)
             }
             NextWFT::NeedFetch => {
-                return Err(WFMachinesError::Fatal(
+                return Err(fatal!(
                     "Need to fetch history events to continue applying workflow task, but this \
                      should be prevented ahead of time! This is a Core SDK bug."
-                        .to_string(),
                 ));
             }
         };
@@ -649,10 +649,11 @@ impl WorkflowMachines {
         while let Some(event) = history.next() {
             let eid = event.event_id;
             if eid != self.last_processed_event + 1 {
-                return Err(WFMachinesError::Fatal(format!(
+                return Err(fatal!(
                     "History is out of order. Last processed event: {}, event id: {}",
-                    self.last_processed_event, eid
-                )));
+                    self.last_processed_event,
+                    eid
+                ));
             }
             let next_event = history.peek();
 
@@ -782,9 +783,7 @@ impl WorkflowMachines {
                         self.local_activity_data.insert_peeked_marker(la_dat);
                     }
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Local activity marker was unparsable: {e:?}"
-                    )));
+                    return Err(fatal!("Local activity marker was unparsable: {e:?}"));
                 }
             } else if let Some(
                 history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref atts),
@@ -856,10 +855,9 @@ impl WorkflowMachines {
             let are_more_events =
                 next_event.is_some() || !event_dat.current_task_is_last_in_history;
             return if are_more_events {
-                Err(WFMachinesError::Fatal(
+                Err(fatal!(
                     "Machines were fed a history which has an event after workflow execution was \
                      terminated!"
-                        .to_string(),
                 ))
             } else {
                 Ok(EventHandlingOutcome::Normal)
@@ -867,9 +865,9 @@ impl WorkflowMachines {
         }
         if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
             return if !event.worker_may_ignore {
-                Err(WFMachinesError::Fatal(format!(
+                Err(fatal!(
                     "Event type is unspecified! This history is invalid. Event detail: {event:?}"
-                )))
+                ))
             } else {
                 debug!("Event is ignorable");
                 Ok(EventHandlingOutcome::SkipEvent {
@@ -894,10 +892,10 @@ impl WorkflowMachines {
                 .machines_by_event_id
                 .get(&initial_cmd_id)
                 .ok_or_else(|| {
-                    WFMachinesError::Nondeterminism(format!(
+                    nondeterminism!(
                         "During event handling, this event had an initial command ID but we \
                          could not find a matching command for it: {event:?}"
-                    ))
+                    )
                 })?;
             self.submachine_handle_event(*mkey, event_dat)?;
         } else {
@@ -924,9 +922,9 @@ impl WorkflowMachines {
         let event = &event_dat.event;
 
         if event.is_local_activity_marker() {
-            let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
-                WFMachinesError::Fatal(format!("Local activity marker was unparsable: {event:?}"))
-            })?;
+            let deets = event
+                .extract_local_activity_marker_data()
+                .ok_or_else(|| fatal!("Local activity marker was unparsable: {event:?}"))?;
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
@@ -935,10 +933,10 @@ impl WorkflowMachines {
                     return Ok(EventHandlingOutcome::Normal);
                 }
             } else {
-                return Err(WFMachinesError::Fatal(format!(
+                return Err(fatal!(
                     "Encountered local activity marker but the associated machine was of the \
                      wrong type! {event:?}"
-                )));
+                ));
             }
         }
 
@@ -959,9 +957,7 @@ impl WorkflowMachines {
             let command = if let Some(c) = maybe_command {
                 c
             } else {
-                return Err(WFMachinesError::Nondeterminism(format!(
-                    "No command scheduled for event {event}"
-                )));
+                return Err(nondeterminism!("No command scheduled for event {event}"));
             };
 
             let canceled_before_sent = self
@@ -1008,9 +1004,9 @@ impl WorkflowMachines {
                         attrs,
                     );
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "WorkflowExecutionStarted event did not have appropriate attributes: {event_dat}"
-                    )));
+                    ));
                 }
             }
             Ok(EventType::WorkflowTaskScheduled) => {
@@ -1044,9 +1040,9 @@ impl WorkflowMachines {
                 }
             }
             _ => {
-                return Err(WFMachinesError::Fatal(format!(
+                return Err(fatal!(
                     "The event is not a non-stateful event, but we tried to handle it as one: {event_dat}"
-                )));
+                ));
             }
         }
         Ok(())
@@ -1082,13 +1078,12 @@ impl WorkflowMachines {
 
         match message.body {
             IncomingProtocolMessageBody::UpdateRequest(ur) => {
-                let seq_id = if let SequencingId::EventId(eid) = message
-                    .sequencing_id
-                    .ok_or_else(|| WFMachinesError::Fatal(SEQIDERR.to_string()))?
+                let seq_id = if let SequencingId::EventId(eid) =
+                    message.sequencing_id.ok_or_else(|| fatal!("{SEQIDERR}"))?
                 {
                     eid
                 } else {
-                    return Err(WFMachinesError::Fatal(SEQIDERR.to_string()));
+                    return Err(fatal!("{SEQIDERR}"));
                 };
                 let um = UpdateMachine::init(
                     message.id,
@@ -1213,9 +1208,9 @@ impl WorkflowMachines {
                         );
                     }
                     c => {
-                        return Err(WFMachinesError::Fatal(format!(
+                        return Err(fatal!(
                             "A machine requested to create a new command of an unsupported type: {c:?}"
-                        )));
+                        ));
                     }
                 },
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
@@ -1360,9 +1355,7 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA =
                         ValidScheduleLA::from_schedule_la(attrs, cmd.metadata).map_err(|e| {
-                            WFMachinesError::Fatal(format!(
-                                "Invalid schedule local activity request (seq {seq}): {e}"
-                            ))
+                            fatal!("Invalid schedule local activity request (seq {seq}): {e}")
                         })?;
                     let (la, mach_resp) = new_local_activity(
                         attrs,
@@ -1470,10 +1463,7 @@ impl WorkflowMachines {
                 }
                 WFCommandVariant::RequestCancelExternalWorkflow(attrs) => {
                     let we = attrs.workflow_execution.ok_or_else(|| {
-                        WFMachinesError::Fatal(
-                            "Cancel external workflow command had no workflow_execution field"
-                                .to_string(),
-                        )
+                        fatal!("Cancel external workflow command had no workflow_execution field")
                     })?;
                     self.add_cmd_to_wf_task(
                         new_external_cancel(
@@ -1521,11 +1511,11 @@ impl WorkflowMachines {
                     let m = if let Machines::UpdateMachine(m) = self.machine_mut(m_key) {
                         m
                     } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
+                        return Err(nondeterminism!(
                             "Tried to handle an update response for \
                              update with instance id {} but it was not found!",
                             &ur.protocol_instance_id
-                        )));
+                        ));
                     };
                     let resps = m.handle_response(ur)?;
                     self.process_machine_responses(m_key, resps)?;
@@ -1553,9 +1543,10 @@ impl WorkflowMachines {
     }
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
-        Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
-            WFMachinesError::Nondeterminism(format!("Missing associated machine for {id:?}"))
-        })?)
+        Ok(*self
+            .id_to_machine
+            .get(&id)
+            .ok_or_else(|| nondeterminism!("Missing associated machine for {id:?}"))?)
     }
 
     fn get_machine_by_msg(&self, protocol_instance_id: &str) -> Result<MachineKey> {
@@ -1563,9 +1554,7 @@ impl WorkflowMachines {
             .machines_by_protocol_instance_id
             .get(protocol_instance_id)
             .ok_or_else(|| {
-                WFMachinesError::Fatal(format!(
-                    "Missing associated machine for protocol message {protocol_instance_id}"
-                ))
+                fatal!("Missing associated machine for protocol message {protocol_instance_id}")
             })?)
     }
 
@@ -1758,10 +1747,10 @@ fn patch_marker_handling(
                 debug!("Deprecated patch marker tried against non-patch machine, skipping.");
                 skip_one_or_two_events(next_event)
             } else {
-                Err(WFMachinesError::Nondeterminism(format!(
+                Err(nondeterminism!(
                     "Non-deprecated patch marker encountered for change {patch_name}, but there is \
                      no corresponding change command!"
-                )))
+                ))
             }
         }
     } else if patch_machine.is_some() {

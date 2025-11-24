@@ -4,7 +4,7 @@ use super::{
     EventInfo, MachineError, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{WFMachinesError, machines::HistEventData};
+use crate::worker::workflow::{WFMachinesError, fatal, machines::HistEventData, nondeterminism};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{
@@ -120,15 +120,13 @@ impl TryFrom<HistEventData> for TimerMachineEvents {
                 {
                     Self::TimerFired(attrs)
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Timer fired attribs were unset: {e}"
-                    )));
+                    return Err(fatal!("Timer fired attribs were unset: {e}"));
                 }
             }
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Timer machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }
@@ -192,6 +190,14 @@ impl StartCommandCreated {
 
     pub(super) fn on_cancel(self, dat: &mut SharedState) -> TimerMachineTransition<Canceled> {
         dat.cancelled_before_sent = true;
+
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Timer cancelled before sent to server",
+            ::serde_json::json!({"timer_seq": dat.attrs.seq})
+        );
+
         TransitionResult::default()
     }
 }
@@ -208,10 +214,11 @@ impl StartCommandRecorded {
         if dat.attrs.seq.to_string() == attrs.timer_id {
             TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
         } else {
-            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+            TransitionResult::Err(nondeterminism!(
                 "Timer fired event did not have expected timer id {}, it was {}!",
-                dat.attrs.seq, attrs.timer_id
-            )))
+                dat.attrs.seq,
+                attrs.timer_id
+            ))
         }
     }
 
@@ -219,6 +226,13 @@ impl StartCommandRecorded {
         self,
         dat: &mut SharedState,
     ) -> TimerMachineTransition<CancelTimerCommandCreated> {
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_sometimes!(
+            true,
+            "Timer cancelled after started",
+            ::serde_json::json!({"timer_seq": dat.attrs.seq})
+        );
+
         TransitionResult::ok(
             vec![TimerMachineCommand::IssueCancelCmd(
                 CancelTimer { seq: dat.attrs.seq }.into(),

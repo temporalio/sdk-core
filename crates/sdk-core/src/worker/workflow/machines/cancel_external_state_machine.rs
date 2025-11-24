@@ -2,7 +2,7 @@ use super::{
     EventInfo, NewMachineWithCommand, OnEventWrapper, StateMachine, TransitionResult,
     WFMachinesAdapter, WFMachinesError, fsm, workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::machines::HistEventData;
+use crate::worker::workflow::{fatal, machines::HistEventData, nondeterminism};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::{
@@ -153,15 +153,15 @@ impl TryFrom<HistEventData> for CancelExternalMachineEvents {
                 if let Some(history_event::Attributes::RequestCancelExternalWorkflowExecutionFailedEventAttributes(attrs)) = e.attributes {
                     Self::RequestCancelExternalWorkflowExecutionFailed(attrs.cause())
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
+                    return Err(fatal!(
                         "Cancelworkflow failed attributes were unset: {e}"
-                    )));
+                    ));
                 }
             }
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Cancel external WF machine does not handle this event: {e}"
-                )))
+                ))
             }
         })
     }
