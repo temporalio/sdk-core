@@ -60,7 +60,8 @@ async fn nexus_basic(
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     let mut worker = starter.worker().await;
@@ -209,7 +210,8 @@ async fn nexus_async(
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     let mut worker = starter.worker().await;
@@ -440,7 +442,8 @@ async fn nexus_cancel_before_start() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     let mut worker = starter.worker().await;
@@ -486,7 +489,8 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     if use_grace_period {
@@ -590,7 +594,8 @@ async fn nexus_cancellation_types(
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     let mut worker = starter.worker().await;

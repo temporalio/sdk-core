@@ -923,7 +923,8 @@ async fn nexus_metrics() {
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.task_types(WorkerTaskTypes {
         enable_workflows: true,
-        enable_activities: false,
+        enable_local_activities: false,
+        enable_remote_activities: false,
         enable_nexus: true,
     });
     let task_queue = starter.get_task_queue().to_owned();

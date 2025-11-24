@@ -479,7 +479,7 @@ impl Worker {
                     None
                 };
 
-                let act_poll_buffer = if config.task_types.enable_activities {
+                let act_poll_buffer = if config.task_types.enable_remote_activities {
                     let act_metrics = metrics.with_new_attrs([activity_poller()]);
                     let ap = LongPollBuffer::new_activity_task(
                         client.clone(),
@@ -532,7 +532,7 @@ impl Worker {
                     .flatten();
                 let act_poller = config
                     .task_types
-                    .enable_activities
+                    .enable_remote_activities
                     .then_some(act_poller)
                     .flatten();
                 let nexus_poller = config
@@ -573,7 +573,7 @@ impl Worker {
         );
         let la_permits = la_permit_dealer.get_extant_count_rcv();
 
-        let (local_act_mgr, la_sink, hb_rx) = if config.task_types.enable_workflows {
+        let (local_act_mgr, la_sink, hb_rx) = if config.task_types.enable_local_activities {
             let (hb_tx, hb_rx) = unbounded_channel();
             let local_act_mgr = Arc::new(LocalActivityManager::new(
                 config.namespace.clone(),
@@ -701,11 +701,9 @@ impl Worker {
                     client,
                     wft_slots,
                     stream,
-                    la_sink.expect("LA sink must exist when workflows enabled"),
-                    local_act_mgr
-                        .clone()
-                        .expect("LA manager must exist when workflows enabled"),
-                    hb_rx.expect("Heartbeat channel must exist when workflows enabled"),
+                    la_sink,
+                    local_act_mgr.clone(),
+                    hb_rx,
                     at_task_mgr.as_ref().and_then(|mgr| {
                         match config.max_task_queue_activities_per_second {
                             Some(persec) if persec > 0.0 => None,
@@ -859,21 +857,27 @@ impl Worker {
                 future::pending::<()>().await;
                 unreachable!()
             }
-            if let Some(ref act_mgr) = self.at_task_mgr {
-                let res = act_mgr.poll().await;
-                if let Err(err) = res.as_ref()
-                    && matches!(err, PollError::ShutDown)
-                {
-                    self.non_local_activities_complete
-                        .store(true, Ordering::Relaxed);
-                    return Ok(None);
-                };
-                res.map(Some)
+            if self.config.task_types.enable_remote_activities {
+                if let Some(ref act_mgr) = self.at_task_mgr {
+                    let res = act_mgr.poll().await;
+                    if let Err(err) = res.as_ref()
+                        && matches!(err, PollError::ShutDown)
+                    {
+                        self.non_local_activities_complete
+                            .store(true, Ordering::Relaxed);
+                        return Ok(None);
+                    };
+                    res.map(Some)
+                } else {
+                    // We expect the local activity branch below to produce shutdown when appropriate if
+                    // there are no activity pollers.
+                    future::pending::<()>().await;
+                    unreachable!()
+                }
             } else {
-                // We expect the local activity branch below to produce shutdown when appropriate if
-                // there are no activity pollers.
-                future::pending::<()>().await;
-                unreachable!()
+                self.non_local_activities_complete
+                    .store(true, Ordering::Relaxed);
+                Ok(None)
             }
         };
         let local_activities_poll = async {
@@ -881,25 +885,31 @@ impl Worker {
                 future::pending::<()>().await;
                 unreachable!()
             }
-            match &self.local_act_mgr {
-                Some(la_mgr) => match la_mgr.next_pending().await {
-                    Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),
-                    Some(NextPendingLAAction::Autocomplete(action)) => {
-                        Ok(self.handle_la_complete_action(action))
-                    }
-                    None => {
-                        if self.shutdown_token.is_cancelled() {
-                            self.local_activities_complete
-                                .store(true, Ordering::Relaxed);
+            if self.config.task_types.enable_local_activities {
+                match &self.local_act_mgr {
+                    Some(la_mgr) => match la_mgr.next_pending().await {
+                        Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),
+                        Some(NextPendingLAAction::Autocomplete(action)) => {
+                            Ok(self.handle_la_complete_action(action))
                         }
+                        None => {
+                            if self.shutdown_token.is_cancelled() {
+                                self.local_activities_complete
+                                    .store(true, Ordering::Relaxed);
+                            }
+                            Ok(None)
+                        }
+                    },
+                    None => {
+                        self.local_activities_complete
+                            .store(true, Ordering::Relaxed);
                         Ok(None)
                     }
-                },
-                None => {
-                    self.local_activities_complete
-                        .store(true, Ordering::Relaxed);
-                    Ok(None)
                 }
+            } else {
+                self.local_activities_complete
+                    .store(true, Ordering::Relaxed);
+                Ok(None)
             }
         };
 
@@ -961,12 +971,10 @@ impl Worker {
                 if let Err(ref e) = r {
                     // This is covering the situation where WFT pollers dying is the reason for shutdown
                     self.initiate_shutdown();
-                    if matches!(e, PollError::ShutDown) {
-                        if let Some(la_mgr) = &self.local_act_mgr {
-                            la_mgr.workflows_have_shutdown();
-                        } else {
-                            dbg_panic!("la_mgr should be set if worker supports workflows");
-                        }
+                    if matches!(e, PollError::ShutDown)
+                        && let Some(la_mgr) = &self.local_act_mgr
+                    {
+                        la_mgr.workflows_have_shutdown();
                     }
                 }
                 r

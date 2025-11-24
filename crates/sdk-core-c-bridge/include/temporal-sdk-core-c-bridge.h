@@ -740,7 +740,8 @@ typedef struct TemporalCoreTunerHolder {
 
 typedef struct TemporalCoreWorkerTaskTypes {
   bool enable_workflows;
-  bool enable_activities;
+  bool enable_local_activities;
+  bool enable_remote_activities;
   bool enable_nexus;
 } TemporalCoreWorkerTaskTypes;
 
