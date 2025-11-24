@@ -853,11 +853,11 @@ impl Worker {
             return Err(PollError::ShutDown);
         }
         let act_mgr_poll = async {
+            if non_local_activities_complete {
+                future::pending::<()>().await;
+                unreachable!()
+            }
             if self.config.task_types.enable_remote_activities {
-                if non_local_activities_complete {
-                    future::pending::<()>().await;
-                    unreachable!()
-                }
                 if let Some(ref act_mgr) = self.at_task_mgr {
                     let res = act_mgr.poll().await;
                     if let Err(err) = res.as_ref()
@@ -881,11 +881,11 @@ impl Worker {
             }
         };
         let local_activities_poll = async {
+            if local_activities_complete {
+                future::pending::<()>().await;
+                unreachable!()
+            }
             if self.config.task_types.enable_local_activities {
-                if local_activities_complete {
-                    future::pending::<()>().await;
-                    unreachable!()
-                }
                 match &self.local_act_mgr {
                     Some(la_mgr) => match la_mgr.next_pending().await {
                         Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),

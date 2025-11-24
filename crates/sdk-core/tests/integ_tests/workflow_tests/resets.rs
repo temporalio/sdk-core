@@ -117,9 +117,12 @@ async fn reset_workflow() {
 async fn reset_randomseed() {
     let wf_name = "reset_randomseed";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_local_activities: true,
+        enable_remote_activities: false,
+        enable_nexus: true,
+    });
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
     let notify = Arc::new(Notify::new());
