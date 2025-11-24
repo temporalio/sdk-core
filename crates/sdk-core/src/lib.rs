@@ -258,13 +258,14 @@ pub struct RuntimeOptions {
 
 impl RuntimeOptionsBuilder {
     fn validate(&self) -> Result<(), String> {
-        if let Some(Some(interval)) = self.heartbeat_interval {
-            if interval < Duration::from_secs(1) || interval > Duration::from_secs(60) {
-                return Err(format!(
-                    "heartbeat_interval ({interval:?}) must be between 1s and 60s",
-                ));
-            }
+        if let Some(Some(interval)) = self.heartbeat_interval
+            && (interval < Duration::from_secs(1) || interval > Duration::from_secs(60))
+        {
+            return Err(format!(
+                "heartbeat_interval ({interval:?}) must be between 1s and 60s",
+            ));
         }
+
         Ok(())
     }
 }
