@@ -503,33 +503,28 @@ impl RealSysInfoInner {
         if let Some(cgroup_limits) = lock.cgroup_limits() {
             self.total_mem
                 .store(cgroup_limits.total_memory, Ordering::Release);
-            let mem_usage = cgroup_limits.total_memory - cgroup_limits.free_memory;
-            self.cur_mem_usage.store(mem_usage, Ordering::Release);
+            self.cur_mem_usage.store(
+                cgroup_limits.total_memory - cgroup_limits.free_memory,
+                Ordering::Release,
+            );
 
             let cpu = self.cgroup_cpu_info.calc_cpu_percent().unwrap_or_else(|| {
                 // There won't be a cgroup cpu usage if there is no limit applied to the cgroup
                 // or if an error is encountered when reading cpu.stat or cpu.max.
                 // In these cases, fallback to global cpu usage.
                 lock.refresh_cpu_usage();
-                let global_cpu = lock.global_cpu_usage() as f64 / 100.;
-                eprintln!(
-                    "DEBUG refresh [cgroup path]: cgroup cpu returned None, using global_cpu={}, mem_usage={}, total_mem={}",
-                    global_cpu, mem_usage, cgroup_limits.total_memory
-                );
-                global_cpu
+                lock.global_cpu_usage() as f64 / 100.
             });
             self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         } else {
             // Always update the total_mem b/c we could transiently fall to host if
             // lock.cgroup_limits() returns None.
-            let total = lock.total_memory();
-            let used = lock.used_memory();
-            self.total_mem.store(total, Ordering::Release);
-            self.cur_mem_usage.store(used, Ordering::Release);
+            self.total_mem.store(lock.total_memory(), Ordering::Release);
+            self.cur_mem_usage
+                .store(lock.used_memory(), Ordering::Release);
 
             lock.refresh_cpu_usage();
             let cpu = lock.global_cpu_usage() as f64 / 100.;
-            eprintln!("DEBUG refresh [host path]: cpu={cpu}, mem_usage={used}, total_mem={total}");
             self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         }
     }
