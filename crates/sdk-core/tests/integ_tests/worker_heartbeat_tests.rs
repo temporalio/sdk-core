@@ -454,6 +454,10 @@ fn after_shutdown_checks(
     assert!(!host_info.host_name.is_empty());
     assert!(!host_info.process_key.is_empty());
     assert!(!host_info.process_id.is_empty());
+    eprintln!(
+        "DEBUG after_shutdown_checks: cpu_usage={}, mem_usage={}, host_name={}",
+        host_info.current_host_cpu_usage, host_info.current_host_mem_usage, host_info.host_name
+    );
     assert_ne!(host_info.current_host_cpu_usage, 0.0);
     assert_ne!(host_info.current_host_mem_usage, 0.0);
 
