@@ -249,7 +249,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     ))
 }
 
-/// WARNING: Calling can cause panics because of https://github.com/tokio-rs/tracing/issues/1656
+/// WARNING: Calling can cause panics because of <https://github.com/tokio-rs/tracing/issues/1656>
 /// Lang must not start using until resolved
 ///
 /// Initialize telemetry/tracing globally. Useful for testing. Only takes affect when called
@@ -268,7 +268,7 @@ pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error
     Ok(())
 }
 
-/// WARNING: Calling can cause panics because of https://github.com/tokio-rs/tracing/issues/1656
+/// WARNING: Calling can cause panics because of <https://github.com/tokio-rs/tracing/issues/1656>
 /// Lang must not start using until resolved
 ///
 /// Initialize the fallback global handler. All lang SDKs should call this somewhere, once, at

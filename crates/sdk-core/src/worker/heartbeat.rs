@@ -4,7 +4,7 @@ use crate::{
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporalio_client::SharedNamespaceWorkerTrait;
+use temporalio_client::worker::SharedNamespaceWorkerTrait;
 use temporalio_common::{
     protos::temporal::api::worker::v1::WorkerHeartbeat,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy},
@@ -171,9 +171,9 @@ mod tests {
         time::Duration,
     };
     use temporalio_common::{
-        protos::temporal::api::namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
-        protos::temporal::api::workflowservice::v1::{
-            DescribeNamespaceResponse, RecordWorkerHeartbeatResponse,
+        protos::temporal::api::{
+            namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+            workflowservice::v1::{DescribeNamespaceResponse, RecordWorkerHeartbeatResponse},
         },
         worker::PollerBehavior,
     };

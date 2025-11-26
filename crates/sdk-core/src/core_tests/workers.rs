@@ -1,9 +1,8 @@
-use crate::test_help::QueueResponse;
 use crate::{
     PollError, prost_dur,
     test_help::{
-        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, WorkerTestHelpers,
-        build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
+        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
+        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
     },
     worker::{
         self,
@@ -15,30 +14,30 @@ use crate::{
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
-use temporalio_common::protos::coresdk::ActivityTaskCompletion;
-use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
-use temporalio_common::protos::coresdk::nexus::NexusTaskCompletion;
-use temporalio_common::protos::temporal::api::nexus::v1::{
-    Request as NexusRequest, Response as NexusResponse, StartOperationRequest,
-    StartOperationResponse, start_operation_response,
-};
-use temporalio_common::protos::temporal::api::workflowservice::v1::RespondNexusTaskCompletedResponse;
-use temporalio_common::protos::temporal::api::workflowservice::v1::{
-    PollActivityTaskQueueResponse, RespondActivityTaskCompletedResponse,
-};
 use temporalio_common::{
     Worker,
     protos::{
         canned_histories,
         coresdk::{
+            ActivityTaskCompletion,
+            activity_result::ActivityExecutionResult,
+            nexus::NexusTaskCompletion,
             workflow_activation::workflow_activation_job,
             workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
             workflow_completion::WorkflowActivationCompletion,
         },
-        temporal::api::common::v1::{ActivityType, WorkflowExecution},
-        temporal::api::workflowservice::v1::{
-            PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
-            RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
+        temporal::api::{
+            common::v1::{ActivityType, WorkflowExecution},
+            nexus::v1::{
+                Request as NexusRequest, Response as NexusResponse, StartOperationRequest,
+                StartOperationResponse, start_operation_response,
+            },
+            workflowservice::v1::{
+                PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+                PollWorkflowTaskQueueResponse, RespondActivityTaskCompletedResponse,
+                RespondNexusTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
+                ShutdownWorkerResponse,
+            },
         },
         test_utils::start_timer_cmd,
     },

@@ -1,6 +1,5 @@
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
 use std::time::Duration;
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -15,6 +14,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{CancellableFuture, WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};

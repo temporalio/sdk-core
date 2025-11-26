@@ -134,10 +134,9 @@ async fn sends_signal_with_create_wf() {
         .workflow_id("sends_signal_with_create_wf")
         .workflow_type("receiver_signal")
         .signal_name(SIGNAME)
-        .signal_input(vec![b"tada".into()].into_payloads())
-        .signal_header(header.into())
-        .build()
-        .unwrap();
+        .maybe_signal_input(vec![b"tada".into()].into_payloads())
+        .maybe_signal_header(Some(header.into()))
+        .build();
     let res = client
         .signal_with_start_workflow_execution(options, WorkflowOptions::default())
         .await

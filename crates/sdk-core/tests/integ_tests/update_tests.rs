@@ -14,7 +14,6 @@ use std::{
 use temporalio_client::{
     Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker, prost_dur,
     protos::{
@@ -37,6 +36,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporalio_sdk_core::{

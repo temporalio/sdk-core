@@ -35,8 +35,8 @@ pub mod test_help;
 pub(crate) use temporalio_common::errors;
 
 pub use pollers::{
-    Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
-    TlsConfig, WorkflowClientTrait,
+    Client, ClientOptions, ClientTlsOptions, RetryClient, RetryOptions, TlsOptions,
+    WorkflowClientTrait,
 };
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
@@ -99,7 +99,7 @@ where
             worker_config.client_identity_override.clone(),
             client,
         )),
-        RetryConfig::default(),
+        RetryOptions::default(),
     );
     let client_ident = client.identity();
     let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);

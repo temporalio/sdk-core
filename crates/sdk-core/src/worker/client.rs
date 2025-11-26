@@ -10,8 +10,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_client::{
-    Client, ClientWorkerSet, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching,
-    RetryClient, RetryConfig, RetryConfigForCall, SharedReplaceableClient, WorkflowService,
+    Client, Namespace, NamespacedClient, RetryClient, RetryOptions, SharedReplaceableClient,
+    WorkflowService,
+    request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
+    worker::ClientWorkerSet,
 };
 use temporalio_common::{
     protos::{
@@ -131,7 +133,7 @@ impl WorkerClientBag {
 }
 
 /// This trait contains everything workers need to interact with Temporal, and hence provides a
-/// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
+/// minimal mocking surface.
 #[cfg_attr(any(feature = "test-utilities", test), mockall::automock)]
 #[async_trait::async_trait]
 pub trait WorkerClient: Sync + Send {
@@ -707,7 +709,7 @@ impl WorkerClient for WorkerClientBag {
         .into_request();
         request
             .extensions_mut()
-            .insert(RetryConfigForCall(RetryConfig::no_retries()));
+            .insert(RetryConfigForCall(RetryOptions::no_retries()));
 
         Ok(
             WorkflowService::shutdown_worker(&mut self.client.clone(), request)

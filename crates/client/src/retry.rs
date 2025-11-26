@@ -1,7 +1,8 @@
 use crate::{
-    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY,
-    NamespacedClient, NoRetryOnMatching, Result, RetryConfig, RetryConfigForCall,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, NamespacedClient, Result,
+    RetryOptions,
     raw::IsUserLongPoll,
+    request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -9,6 +10,7 @@ use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
 use tonic::{Code, Request};
 
 /// List of gRPC error codes that client will retry.
+#[doc(hidden)]
 pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::DataLoss,
     Code::Internal,
@@ -20,17 +22,17 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 ];
 const LONG_POLL_FATAL_GRACE: Duration = Duration::from_secs(60);
 
-/// A wrapper for a [WorkflowClientTrait] or [crate::WorkflowService] implementor which performs
-/// auto-retries
+/// A wrapper for a [crate::WorkflowClientTrait] or [crate::WorkflowService] implementor which
+/// performs auto-retries
 #[derive(Debug, Clone)]
 pub struct RetryClient<SG> {
     client: SG,
-    retry_config: Arc<RetryConfig>,
+    retry_config: Arc<RetryOptions>,
 }
 
 impl<SG> RetryClient<SG> {
     /// Use the provided retry config with the provided client
-    pub fn new(client: SG, retry_config: RetryConfig) -> Self {
+    pub fn new(client: SG, retry_config: RetryOptions) -> Self {
         Self {
             client,
             retry_config: Arc::new(retry_config),
@@ -76,7 +78,7 @@ impl<SG> RetryClient<SG> {
         let retry_cfg = if let Some(ovr) = retry_cfg_override {
             ovr.0
         } else if call_type == CallType::TaskLongPoll {
-            RetryConfig::task_poll_retry_policy()
+            RetryOptions::task_poll_retry_policy()
         } else {
             (*self.retry_config).clone()
         };
@@ -98,7 +100,7 @@ impl<SG> RetryClient<SG> {
     {
         FutureRetry::new(
             factory,
-            TonicErrorHandler::new(info, RetryConfig::throttle_retry_policy()),
+            TonicErrorHandler::new(info, RetryOptions::throttle_retry_policy()),
         )
     }
 }
@@ -127,7 +129,7 @@ pub(crate) struct TonicErrorHandler<C: Clock> {
     retry_short_circuit: Option<NoRetryOnMatching>,
 }
 impl TonicErrorHandler<SystemClock> {
-    fn new(call_info: CallInfo, throttle_cfg: RetryConfig) -> Self {
+    fn new(call_info: CallInfo, throttle_cfg: RetryOptions) -> Self {
         Self::new_with_clock(
             call_info,
             throttle_cfg,
@@ -142,7 +144,7 @@ where
 {
     fn new_with_clock(
         call_info: CallInfo,
-        throttle_cfg: RetryConfig,
+        throttle_cfg: RetryOptions,
         clock: C,
         throttle_clock: C,
     ) -> Self {
@@ -183,7 +185,7 @@ where
 pub(crate) struct CallInfo {
     pub call_type: CallType,
     call_name: &'static str,
-    retry_cfg: RetryConfig,
+    retry_cfg: RetryOptions,
     retry_short_circuit: Option<NoRetryOnMatching>,
 }
 
@@ -315,7 +317,7 @@ mod tests {
     use tonic::{IntoRequest, Status};
 
     /// Predefined retry configs with low durations to make unit tests faster
-    const TEST_RETRY_CONFIG: RetryConfig = RetryConfig {
+    const TEST_RETRY_CONFIG: RetryOptions = RetryOptions {
         initial_interval: Duration::from_millis(1),
         randomization_factor: 0.0,
         multiplier: 1.1,
@@ -408,7 +410,7 @@ mod tests {
                 retry_cfg: TEST_RETRY_CONFIG,
                 retry_short_circuit: None,
             },
-            RetryConfig {
+            RetryOptions {
                 initial_interval: Duration::from_millis(2),
                 randomization_factor: 0.0,
                 multiplier: 4.0,
@@ -529,7 +531,7 @@ mod tests {
         for i in 1..=50 {
             let mut err_handler = TonicErrorHandler::new(
                 fake_retry.get_call_info::<R>(call_name, Some(&req)),
-                RetryConfig::throttle_retry_policy(),
+                RetryOptions::throttle_retry_policy(),
             );
             let result = err_handler.handle(i, Status::new(Code::Unknown, "Ahh"));
             assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -562,7 +564,7 @@ mod tests {
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
             let mut err_handler = TonicErrorHandler::new(
                 fake_retry.get_call_info::<R>(call_name, Some(&req)),
-                RetryConfig::throttle_retry_policy(),
+                RetryOptions::throttle_retry_policy(),
             );
             for i in 1..=5 {
                 let result = err_handler.handle(i, Status::new(code, "retryable failure"));

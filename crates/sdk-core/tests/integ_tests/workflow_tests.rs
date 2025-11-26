@@ -33,7 +33,6 @@ use std::{
 use temporalio_client::{
     WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::{PollError, WorkflowErrorType},
     prost_dur,
@@ -59,7 +58,8 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
     worker::{
-        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
+        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes,
+        WorkerVersioningStrategy,
     },
 };
 use temporalio_sdk::{
