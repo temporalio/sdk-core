@@ -130,13 +130,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// for the Rust SDK.
 pub fn sdk_client_options(
     url: impl Into<Url>,
-) -> ClientOptionsBuilder<
-    client_options_builder::SetClientVersion<
-        client_options_builder::SetClientName<
-            client_options_builder::SetTargetUrl<client_options_builder::Empty>,
-        >,
-    >,
-> {
+) -> ClientOptionsBuilder<impl client_options_builder::IsComplete> {
     ClientOptions::builder()
         .target_url(url)
         .client_name("temporal-rust".to_string())
