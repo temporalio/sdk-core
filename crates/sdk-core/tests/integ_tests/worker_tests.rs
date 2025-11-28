@@ -210,8 +210,12 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 
 #[tokio::test]
 async fn oversize_grpc_message() {
+    use crate::common::{prom_metrics, ANY_PORT, NAMESPACE};
     let wf_name = "oversize_grpc_message";
-    let mut starter = CoreWfStarter::new(wf_name);
+    // Enable Prometheus metrics for this test and capture the address
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let runtime = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, runtime);
     starter
         .worker_config
         .task_types(WorkerTaskTypes::workflow_only());
@@ -238,7 +242,25 @@ async fn oversize_grpc_message() {
             } else {
                 false
             }
-    }))
+    }));
+
+    // Verify the workflow task failure metric includes the GrpcMessageTooLarge reason
+    let tq = starter.get_task_queue();
+    crate::common::eventually(
+        || async {
+            let body = crate::integ_tests::metrics_tests::get_text(format!("http://{addr}/metrics")).await;
+            if body.contains(&format!(
+                "temporal_workflow_task_execution_failed{{failure_reason=\"GrpcMessageTooLarge\",namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",task_queue=\"{tq}\"}} 1"
+            )) {
+                Ok(())
+            } else {
+                Err(())
+            }
+        },
+        Duration::from_secs(2),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
