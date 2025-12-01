@@ -15,10 +15,20 @@ pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
-    MetricsContext, abstractions::{
+    MetricsContext,
+    abstractions::{
         MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic,
         take_cell::TakeCell,
-    }, internal_flags::InternalFlags, pollers::TrackedPermittedTqResp, protosext::{ValidPollWFTQResponse, protocol_messages::IncomingProtocolMessage}, telemetry::{VecDisplayer, metrics::{self, FailureReason}, set_trace_subscriber_for_current_thread}, worker::{
+    },
+    internal_flags::InternalFlags,
+    pollers::TrackedPermittedTqResp,
+    protosext::{ValidPollWFTQResponse, protocol_messages::IncomingProtocolMessage},
+    telemetry::{
+        VecDisplayer,
+        metrics::{self, FailureReason},
+        set_trace_subscriber_for_current_thread,
+    },
+    worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
         PostActivateHookData,
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
@@ -31,7 +41,7 @@ use crate::{
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
-    }
+    },
 };
 use anyhow::anyhow;
 use futures_util::{Stream, StreamExt, future::abortable, stream, stream::BoxStream};
@@ -51,7 +61,8 @@ use std::{
 };
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
-    errors::{CompleteWfError, PollError}, protos::{
+    errors::{CompleteWfError, PollError},
+    protos::{
         TaskToken,
         coresdk::{
             workflow_activation::{
@@ -59,7 +70,9 @@ use temporalio_common::{
                 remove_from_cache::EvictionReason, workflow_activation_job,
             },
             workflow_commands::*,
-            workflow_completion::{self, Failure, WorkflowActivationCompletion, workflow_activation_completion},
+            workflow_completion::{
+                self, Failure, WorkflowActivationCompletion, workflow_activation_completion,
+            },
         },
         temporal::api::{
             command::v1::{Command as ProtoCommand, Command, command::Attributes},
@@ -74,7 +87,8 @@ use temporalio_common::{
             taskqueue::v1::StickyExecutionAttributes,
             workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
         },
-    }, worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind}
+    },
+    worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use tokio::{
     sync::{
@@ -423,10 +437,11 @@ impl Workflows {
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
                                 .await;
-                            self.metrics.with_new_attrs([metrics::failure_reason(
-                                        FailureReason::GrpcMessageTooLarge
-                                    )])
-                                    .wf_task_failed();
+                            self.metrics
+                                .with_new_attrs([metrics::failure_reason(
+                                    FailureReason::GrpcMessageTooLarge,
+                                )])
+                                .wf_task_failed();
                             return Err(e);
                         }
                         e => {

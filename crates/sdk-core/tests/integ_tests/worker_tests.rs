@@ -210,7 +210,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 
 #[tokio::test]
 async fn oversize_grpc_message() {
-    use crate::common::{prom_metrics, ANY_PORT, NAMESPACE};
+    use crate::common::{ANY_PORT, NAMESPACE, prom_metrics};
     let wf_name = "oversize_grpc_message";
     // Enable Prometheus metrics for this test and capture the address
     let (telemopts, addr, _aborter) = prom_metrics(None);
