@@ -446,7 +446,7 @@ typedef struct TemporalCoreTelemetryOptions {
 
 typedef struct TemporalCoreRuntimeOptions {
   const struct TemporalCoreTelemetryOptions *telemetry;
-  uint64_t worker_heartbeat_duration_millis;
+  uint64_t worker_heartbeat_interval_millis;
 } TemporalCoreRuntimeOptions;
 
 typedef struct TemporalCoreTestServerOptions {
