@@ -446,7 +446,7 @@ typedef struct TemporalCoreTelemetryOptions {
 
 typedef struct TemporalCoreRuntimeOptions {
   const struct TemporalCoreTelemetryOptions *telemetry;
-  uint64_t worker_heartbeat_duration_millis;
+  uint64_t worker_heartbeat_interval_millis;
 } TemporalCoreRuntimeOptions;
 
 typedef struct TemporalCoreTestServerOptions {
@@ -785,6 +785,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCorePollerBehavior nexus_task_poller_behavior;
   bool nondeterminism_as_workflow_fail;
   struct TemporalCoreByteArrayRefArray nondeterminism_as_workflow_fail_for_types;
+  struct TemporalCoreByteArrayRefArray plugins;
 } TemporalCoreWorkerOptions;
 
 /**

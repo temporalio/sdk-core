@@ -56,6 +56,7 @@ pub struct WorkerOptions {
     pub nexus_task_poller_behavior: PollerBehavior,
     pub nondeterminism_as_workflow_fail: bool,
     pub nondeterminism_as_workflow_fail_for_types: ByteArrayRefArray,
+    pub plugins: ByteArrayRefArray,
 }
 
 #[repr(C)]
@@ -1256,6 +1257,18 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                         )
                     })
                     .collect::<HashMap<String, HashSet<WorkflowErrorType>>>(),
+            )
+            .plugins(
+                opt.plugins
+                    .to_str_vec()
+                    .into_iter()
+                    .map(
+                        |name| temporalio_common::protos::temporal::api::worker::v1::PluginInfo {
+                            name: name.to_owned(),
+                            version: String::new(),
+                        },
+                    )
+                    .collect::<Vec<_>>(),
             )
             .build()
             .map_err(|err| anyhow::anyhow!(err))
