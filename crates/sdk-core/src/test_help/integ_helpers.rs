@@ -36,7 +36,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -59,7 +58,7 @@ use temporalio_common::{
         },
         utilities::pack_any,
     },
-    worker::{PollerBehavior, WorkerVersioningStrategy},
+    worker::{PollerBehavior, WorkerTaskTypes, WorkerVersioningStrategy},
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;

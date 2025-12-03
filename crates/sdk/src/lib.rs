@@ -18,7 +18,7 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
+//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build();
 //!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
 //!     let runtime_options = RuntimeOptionsBuilder::default().telemetry_options(telemetry_options).build().unwrap();
@@ -82,7 +82,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporalio_client::ClientOptionsBuilder;
+use temporalio_client::{ClientOptions, ClientOptionsBuilder, client_options_builder};
 use temporalio_common::{
     Worker as CoreWorker,
     errors::PollError,
@@ -128,14 +128,13 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
 /// for the Rust SDK.
-pub fn sdk_client_options(url: impl Into<Url>) -> ClientOptionsBuilder {
-    let mut builder = ClientOptionsBuilder::default();
-    builder
+pub fn sdk_client_options(
+    url: impl Into<Url>,
+) -> ClientOptionsBuilder<impl client_options_builder::IsComplete> {
+    ClientOptions::builder()
         .target_url(url)
         .client_name("temporal-rust".to_string())
-        .client_version(VERSION.to_string());
-
-    builder
+        .client_version(VERSION.to_string())
 }
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,

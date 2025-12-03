@@ -14,10 +14,10 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ClientKeepAliveConfig, ClientOptions as CoreClientOptions, ClientOptionsBuilder,
-    ClientTlsConfig, CloudService, ConfiguredClient, HealthService, HttpConnectProxyOptions,
-    OperatorService, RetryClient, RetryConfig, TemporalServiceClient, TestService, TlsConfig,
-    WorkflowService, callback_based,
+    ClientKeepAliveOptions as CoreClientKeepAliveOptions, ClientOptions as CoreClientOptions,
+    ClientTlsOptions as CoreClientTlsOptions, CloudService, ConfiguredClient, HealthService,
+    OperatorService, RetryClient, RetryOptions, TemporalServiceClient, TestService,
+    TlsOptions as CoreTlsOptions, WorkflowService, callback_based, proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;
@@ -290,7 +290,7 @@ unsafe impl Sync for ClientGrpcOverrideRequest {}
 /// inside here must live until that call returns.
 #[repr(C)]
 pub struct ClientGrpcOverrideResponse {
-    /// Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+    /// Numeric gRPC status code, see <https://grpc.io/docs/guides/status-codes/>. 0 is success, non-0
     /// is failure.
     pub status_code: i32,
 
@@ -1133,45 +1133,57 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
     type Error = anyhow::Error;
 
     fn try_from(opts: &ClientOptions) -> anyhow::Result<Self> {
-        let mut opts_builder = ClientOptionsBuilder::default();
-        opts_builder
+        let tls_cfg = unsafe { opts.tls_options.as_ref() }
+            .map(|c| c.try_into())
+            .transpose()?;
+
+        let keep_alive = unsafe { opts.keep_alive_options.as_ref() }.map(|ka| {
+            let config: CoreClientKeepAliveOptions = ka.into();
+            config
+        });
+
+        let headers = if opts.metadata.size == 0 {
+            None
+        } else {
+            Some(opts.metadata.to_string_map_on_newlines())
+        };
+
+        let api_key = opts.api_key.to_option_string();
+
+        let http_connect_proxy =
+            unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
+
+        Ok(CoreClientOptions::builder()
             .target_url(Url::parse(opts.target_url.to_str())?)
             .client_name(opts.client_name.to_string())
             .client_version(opts.client_version.to_string())
             .identity(opts.identity.to_string())
-            .retry_config(
-                unsafe { opts.retry_options.as_ref() }.map_or(RetryConfig::default(), |c| c.into()),
+            .retry_options(
+                unsafe { opts.retry_options.as_ref() }
+                    .map_or(RetryOptions::default(), |c| c.into()),
             )
-            .keep_alive(unsafe { opts.keep_alive_options.as_ref() }.map(Into::into))
-            .headers(if opts.metadata.size == 0 {
-                None
-            } else {
-                Some(opts.metadata.to_string_map_on_newlines())
-            })
-            .api_key(opts.api_key.to_option_string())
-            .http_connect_proxy(
-                unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into),
-            );
-        if let Some(tls_config) = unsafe { opts.tls_options.as_ref() } {
-            opts_builder.tls_cfg(tls_config.try_into()?);
-        }
-        Ok(opts_builder.build()?)
+            .maybe_keep_alive(keep_alive.map(Some))
+            .maybe_headers(headers)
+            .maybe_api_key(api_key)
+            .maybe_http_connect_proxy(http_connect_proxy)
+            .maybe_tls_options(tls_cfg)
+            .build())
     }
 }
 
-impl TryFrom<&ClientTlsOptions> for TlsConfig {
+impl TryFrom<&ClientTlsOptions> for CoreTlsOptions {
     type Error = anyhow::Error;
 
     fn try_from(opts: &ClientTlsOptions) -> anyhow::Result<Self> {
-        Ok(TlsConfig {
+        Ok(CoreTlsOptions {
             server_root_ca_cert: opts.server_root_ca_cert.to_option_vec(),
             domain: opts.domain.to_option_string(),
-            client_tls_config: match (
+            client_tls_options: match (
                 opts.client_cert.to_option_vec(),
                 opts.client_private_key.to_option_vec(),
             ) {
                 (None, None) => None,
-                (Some(client_cert), Some(client_private_key)) => Some(ClientTlsConfig {
+                (Some(client_cert), Some(client_private_key)) => Some(CoreClientTlsOptions {
                     client_cert,
                     client_private_key,
                 }),
@@ -1185,9 +1197,9 @@ impl TryFrom<&ClientTlsOptions> for TlsConfig {
     }
 }
 
-impl From<&ClientRetryOptions> for RetryConfig {
+impl From<&ClientRetryOptions> for RetryOptions {
     fn from(opts: &ClientRetryOptions) -> Self {
-        RetryConfig {
+        RetryOptions {
             initial_interval: Duration::from_millis(opts.initial_interval_millis),
             randomization_factor: opts.randomization_factor,
             multiplier: opts.multiplier,
@@ -1202,9 +1214,9 @@ impl From<&ClientRetryOptions> for RetryConfig {
     }
 }
 
-impl From<&ClientKeepAliveOptions> for ClientKeepAliveConfig {
+impl From<&ClientKeepAliveOptions> for CoreClientKeepAliveOptions {
     fn from(opts: &ClientKeepAliveOptions) -> Self {
-        ClientKeepAliveConfig {
+        CoreClientKeepAliveOptions {
             interval: Duration::from_millis(opts.interval_millis),
             timeout: Duration::from_millis(opts.timeout_millis),
         }

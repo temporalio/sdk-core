@@ -23,7 +23,11 @@ use crate::{
     internal_flags::InternalFlags,
     pollers::TrackedPermittedTqResp,
     protosext::{ValidPollWFTQResponse, protocol_messages::IncomingProtocolMessage},
-    telemetry::{VecDisplayer, set_trace_subscriber_for_current_thread},
+    telemetry::{
+        VecDisplayer,
+        metrics::{self, FailureReason},
+        set_trace_subscriber_for_current_thread,
+    },
     worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
         PostActivateHookData,
@@ -66,9 +70,8 @@ use temporalio_common::{
                 remove_from_cache::EvictionReason, workflow_activation_job,
             },
             workflow_commands::*,
-            workflow_completion,
             workflow_completion::{
-                Failure, WorkflowActivationCompletion, workflow_activation_completion,
+                self, Failure, WorkflowActivationCompletion, workflow_activation_completion,
             },
         },
         temporal::api::{
@@ -134,6 +137,7 @@ pub(crate) struct Workflows {
     local_act_mgr: Option<Arc<LocalActivityManager>>,
     ever_polled: AtomicBool,
     default_versioning_behavior: Option<VersioningBehavior>,
+    metrics: MetricsContext,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -176,6 +180,7 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.worker_config.task_queue.clone();
+        let metrics = basics.metrics.clone();
         let default_versioning_behavior = basics.default_versioning_behavior;
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
@@ -267,6 +272,7 @@ impl Workflows {
             local_act_mgr,
             ever_polled: AtomicBool::new(false),
             default_versioning_behavior,
+            metrics,
         }
     }
 
@@ -431,6 +437,11 @@ impl Workflows {
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
                                 .await;
+                            self.metrics
+                                .with_new_attrs([metrics::failure_reason(
+                                    FailureReason::GrpcMessageTooLarge,
+                                )])
+                                .wf_task_failed();
                             return Err(e);
                         }
                         e => {

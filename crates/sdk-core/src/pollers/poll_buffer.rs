@@ -19,7 +19,9 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use temporalio_client::{ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, NoRetryOnMatching};
+use temporalio_client::{
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, request_extensions::NoRetryOnMatching,
+};
 use temporalio_common::{
     protos::temporal::api::{
         taskqueue::v1::PollerScalingDecision,

@@ -64,10 +64,9 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use temporalio_client::{
+use temporalio_client::worker::{
     ClientWorker, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot as SlotTrait,
 };
-use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_common::{
     errors::{CompleteNexusError, WorkerValidationError},
     protos::{
@@ -90,7 +89,7 @@ use temporalio_common::{
     telemetry::metrics::{TemporalMeter, WorkerHeartbeatMetrics},
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind,
-        WorkflowSlotKind,
+        WorkerTaskTypes, WorkflowSlotKind,
     },
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};
@@ -308,10 +307,8 @@ impl WorkerTrait for Worker {
 }
 
 impl Worker {
-    /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional telemetry.
-    ///
-    /// This is a convenience constructor that logs initialization and delegates to
-    /// [Worker::new_with_pollers()] using [TaskPollers::Real].
+    /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional
+    /// telemetry.
     pub fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,

@@ -8,7 +8,7 @@
 //!
 //! The following environment variables are supported:
 //! - `TEMPORAL_CONFIG_FILE`: Path to the TOML configuration file
-//! - `TEMPORAL_PROFILE`: Profile name to use from the configuration file  
+//! - `TEMPORAL_PROFILE`: Profile name to use from the configuration file
 //! - `TEMPORAL_ADDRESS`: Temporal server address
 //! - `TEMPORAL_NAMESPACE`: Temporal namespace
 //! - `TEMPORAL_API_KEY`: API key for authentication
@@ -131,7 +131,7 @@ pub struct ClientConfigProfile {
 
     /// Client gRPC metadata (aka headers). When loading from TOML and env var, or writing to TOML, the keys are
     /// lowercased and underscores are replaced with hyphens. This is used for deduplicating/overriding too, so manually
-    /// set values that are not normalized may not get overridden with [ClientConfigProfile::apply_env_vars].
+    /// set values that are not normalized may not get overridden when applying environment variables.
     pub grpc_meta: HashMap<String, String>,
 }
 

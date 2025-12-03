@@ -35,8 +35,8 @@ pub mod test_help;
 pub(crate) use temporalio_common::errors;
 
 pub use pollers::{
-    Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
-    TlsConfig, WorkflowClientTrait,
+    Client, ClientOptions, ClientTlsOptions, RetryClient, RetryOptions, TlsOptions,
+    WorkflowClientTrait,
 };
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
@@ -99,7 +99,7 @@ where
             worker_config.client_identity_override.clone(),
             client,
         )),
-        RetryConfig::default(),
+        RetryOptions::default(),
     );
     let client_ident = client.identity();
     let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
@@ -241,17 +241,33 @@ pub struct CoreRuntime {
 }
 
 /// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptionsBuilder]
-#[derive(derive_builder::Builder)]
+#[derive(Default, derive_builder::Builder)]
+#[builder(build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
-#[derive(Default)]
 pub struct RuntimeOptions {
     /// Telemetry configuration options.
     #[builder(default)]
     telemetry_options: TelemetryOptions,
     /// Optional worker heartbeat interval - This configures the heartbeat setting of all
     /// workers created using this runtime.
+    ///
+    /// Interval must be between 1s and 60s, inclusive.
     #[builder(default = "Some(Duration::from_secs(60))")]
     heartbeat_interval: Option<Duration>,
+}
+
+impl RuntimeOptionsBuilder {
+    fn validate(&self) -> Result<(), String> {
+        if let Some(Some(interval)) = self.heartbeat_interval
+            && (interval < Duration::from_secs(1) || interval > Duration::from_secs(60))
+        {
+            return Err(format!(
+                "heartbeat_interval ({interval:?}) must be between 1s and 60s",
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions

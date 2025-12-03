@@ -1,7 +1,7 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
 use temporalio_client::{
-    GetWorkflowResultOpts, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+    GetWorkflowResultOptions, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::protos::{
     coresdk::AsJsonPayloadExt,
@@ -93,7 +93,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     let client = starter.get_client().await;
     let handle = client.get_untyped_workflow_handle(starter.get_task_queue(), "");
     let res = handle
-        .get_workflow_result(GetWorkflowResultOpts::default())
+        .get_workflow_result(GetWorkflowResultOptions::default())
         .await
         .unwrap();
     // Expect workflow success
