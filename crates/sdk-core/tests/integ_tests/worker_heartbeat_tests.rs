@@ -136,16 +136,20 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         .max_outstanding_workflow_tasks(5_usize)
         .max_cached_workflows(5_usize)
         .max_outstanding_activities(5_usize)
-        .plugins(vec![
-            PluginInfo {
-                name: "plugin1".to_string(),
-                version: "1".to_string(),
-            },
-            PluginInfo {
-                name: "plugin2".to_string(),
-                version: "2".to_string(),
-            },
-        ]);
+        .plugins(
+            [
+                PluginInfo {
+                    name: "plugin1".to_string(),
+                    version: "1".to_string(),
+                },
+                PluginInfo {
+                    name: "plugin2".to_string(),
+                    version: "2".to_string(),
+                },
+            ]
+            .into_iter()
+            .collect::<HashSet<_>>(),
+        );
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 

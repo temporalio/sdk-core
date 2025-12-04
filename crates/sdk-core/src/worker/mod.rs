@@ -1208,7 +1208,7 @@ impl WorkerHeartbeatManager {
 
                 status: (*heartbeat_manager_metrics.status.read()) as i32,
                 start_time,
-                plugins: config.plugins.clone(),
+                plugins: config.plugins.clone().into_iter().collect(),
 
                 // Some Metrics dependent fields are set below, and
                 // some fields like sdk_name, sdk_version, and worker_identity, must be set by

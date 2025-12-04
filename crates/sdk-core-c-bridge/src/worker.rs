@@ -1262,13 +1262,15 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                 opt.plugins
                     .to_str_vec()
                     .into_iter()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
                     .map(
                         |name| temporalio_common::protos::temporal::api::worker::v1::PluginInfo {
                             name: name.to_owned(),
                             version: String::new(),
                         },
                     )
-                    .collect::<Vec<_>>(),
+                    .collect::<HashSet<_>>(),
             )
             .build()
             .map_err(|err| anyhow::anyhow!(err))

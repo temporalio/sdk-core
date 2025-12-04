@@ -238,7 +238,7 @@ pub struct WorkerConfig {
 
     /// List of plugins used by lang.
     #[builder(default)]
-    pub plugins: Vec<PluginInfo>,
+    pub plugins: HashSet<PluginInfo>,
 
     /// Skips the single worker+client+namespace+task_queue check
     #[builder(default = "false")]
