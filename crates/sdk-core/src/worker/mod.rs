@@ -1190,6 +1190,9 @@ impl WorkerHeartbeatManager {
                 }
             });
 
+            let mut plugins: Vec<_> = config.plugins.clone().into_iter().collect();
+            plugins.sort_by(|a, b| a.name.cmp(&b.name));
+
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
@@ -1208,7 +1211,7 @@ impl WorkerHeartbeatManager {
 
                 status: (*heartbeat_manager_metrics.status.read()) as i32,
                 start_time,
-                plugins: config.plugins.clone(),
+                plugins,
 
                 // Some Metrics dependent fields are set below, and
                 // some fields like sdk_name, sdk_version, and worker_identity, must be set by
