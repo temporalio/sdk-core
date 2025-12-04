@@ -3074,6 +3074,74 @@ async fn las_separated_by_timer(#[case] replay: bool) {
     worker.run().await.unwrap();
 }
 
+#[workflow]
+#[derive(Default)]
+struct ParallelLasJobOrderWf;
+
+#[workflow_methods]
+impl ParallelLasJobOrderWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let _ = temporalio_sdk::workflows::join!(
+            ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default()),
+            ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
+        );
+        Ok(())
+    }
+}
+
+#[rstest]
+#[tokio::test]
+async fn parallel_las_job_order(#[values(true, false)] replay: bool) {
+    let t = canned_histories::parallel_las_job_order_hist();
+    let mut mock_cfg = if replay {
+        MockPollCfg::from_resps(t, [ResponseType::AllHistory])
+    } else {
+        MockPollCfg::from_hist_builder(t)
+    };
+
+    let mut aai = ActivationAssertionsInterceptor::default();
+    // Verify ResolveActivity jobs are received in completion order (seq 2 first, then seq 1)
+    // This catches the bug where they might be sent in request order instead
+    aai.skip_one().then(move |a| {
+        assert_matches!(
+            a.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra1))
+            }, WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra2))
+            }] => {assert_eq!(ra1.seq, 2); assert_eq!(ra2.seq, 1)}
+        );
+    });
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(move |wft| {
+            let commands = &wft.commands;
+            if !replay {
+                assert_eq!(commands.len(), 3);
+                assert_eq!(commands[0].command_type(), CommandType::RecordMarker);
+                assert_eq!(commands[1].command_type(), CommandType::RecordMarker);
+                assert_matches!(
+                    commands[2].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            } else {
+                assert_eq!(commands.len(), 1);
+                assert_matches!(
+                    commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            }
+        });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.set_worker_interceptor(aai);
+    worker.register_workflow::<ParallelLasJobOrderWf>();
+    worker.register_activities(ResolvedActivity);
+    worker.run().await.unwrap();
+}
+
 #[tokio::test]
 async fn one_la_heartbeating_wft_failure_still_executes() {
     let mut t = TestHistoryBuilder::default();
