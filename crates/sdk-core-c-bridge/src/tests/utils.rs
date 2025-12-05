@@ -6,7 +6,7 @@ use crate::{
 use std::{collections::HashMap, ops::Deref};
 use temporalio_client::ClientOptions;
 use temporalio_sdk_core::ephemeral_server::{
-    TemporalDevServerConfig, TemporalDevServerConfigBuilder, default_cached_download,
+    TemporalDevServerConfig, default_cached_download,
 };
 use url::Url;
 
@@ -31,10 +31,9 @@ pub fn pointer_or_null<T>(x: Option<impl Deref<Target = T>>) -> *const T {
 }
 
 pub fn default_server_config() -> TemporalDevServerConfig {
-    TemporalDevServerConfigBuilder::default()
+    TemporalDevServerConfig::builder()
         .exe(default_cached_download())
         .build()
-        .unwrap()
 }
 
 pub fn default_client_options(target: &str) -> ClientOptions {

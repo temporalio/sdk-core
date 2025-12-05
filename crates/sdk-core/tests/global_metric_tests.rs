@@ -66,13 +66,13 @@ async fn otel_errors_logged_as_errors() {
 
     // Global initialization is needed to capture (some) otel logging.
     telemetry_init_global(
-        TelemetryOptionsBuilder::default()
+        TelemetryOptions::builder()
             .subscriber_override(subscriber)
             .build()
             .unwrap(),
     )
     .unwrap();
-    let telemopts = TelemetryOptionsBuilder::default()
+    let telemopts = TelemetryOptions::builder()
         .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
         // Importantly, _not_ using subscriber override, is using console.
         .logging(Logger::Console {

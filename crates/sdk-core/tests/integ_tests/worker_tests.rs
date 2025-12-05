@@ -84,7 +84,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
 
     let worker = init_worker(
         &runtime,
-        WorkerConfigBuilder::default()
+        WorkerConfig::builder()
             .namespace("i_dont_exist")
             .task_queue("Wheee!")
             .versioning_strategy(WorkerVersioningStrategy::None {

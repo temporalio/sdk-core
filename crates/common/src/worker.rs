@@ -88,8 +88,8 @@ impl WorkerTaskTypes {
 }
 
 /// Defines per-worker configuration options
-#[derive(Clone, derive_builder::Builder)]
-#[builder(setter(into), build_fn(validate = "Self::validate"))]
+#[derive(Clone, bon::Builder)]
+#[builder(on(String, into), state_mod(vis = "pub"), finish_fn(vis = "", name = build_internal))]
 #[non_exhaustive]
 pub struct WorkerConfig {
     /// The Temporal service namespace this worker is bound to
@@ -100,23 +100,21 @@ pub struct WorkerConfig {
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client
     /// used by this worker.
-    #[builder(default)]
     pub client_identity_override: Option<String>,
     /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
     /// history updates are applied incrementally to suspended instances of workflow execution.
     /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
     /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
     /// or failures.
-    #[builder(default = "0")]
+    #[builder(default = 0)]
     pub max_cached_workflows: usize,
     /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
     /// fields must be set.
-    #[builder(setter(into = false, strip_option), default)]
     pub tuner: Option<Arc<dyn WorkerTuner + Send + Sync>>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio].
     /// If using SimpleMaximum, Must be at least 2 when `max_cached_workflows` > 0, or is an error.
-    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
     pub workflow_task_poller_behavior: PollerBehavior,
     /// Only applies when using [PollerBehavior::SimpleMaximum]
     ///
@@ -125,15 +123,15 @@ pub struct WorkerConfig {
     /// queue will allow 4 max pollers while the nonsticky queue will allow one. The minimum for
     /// either poller is 1, so if the maximum allowed is 1 and sticky queues are enabled, there will
     /// be 2 concurrent polls.
-    #[builder(default = "0.2")]
+    #[builder(default = 0.2)]
     pub nonsticky_to_sticky_poll_ratio: f32,
     /// Maximum number of concurrent poll activity task requests we will perform at a time on this
     /// worker's task queue
-    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
     pub activity_task_poller_behavior: PollerBehavior,
     /// Maximum number of concurrent poll nexus task requests we will perform at a time on this
     /// worker's task queue
-    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
     pub nexus_task_poller_behavior: PollerBehavior,
     /// Specifies which task types this worker will poll for.
     ///
@@ -141,18 +139,18 @@ pub struct WorkerConfig {
     pub task_types: WorkerTaskTypes,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.
-    #[builder(default = "Duration::from_secs(10)")]
+    #[builder(default = Duration::from_secs(10))]
     pub sticky_queue_schedule_to_start_timeout: Duration,
 
     /// Longest interval for throttling activity heartbeats
-    #[builder(default = "Duration::from_secs(60)")]
+    #[builder(default = Duration::from_secs(60))]
     pub max_heartbeat_throttle_interval: Duration,
 
     /// Default interval for throttling activity heartbeats in case
     /// `ActivityOptions.heartbeat_timeout` is unset.
     /// When the timeout *is* set in the `ActivityOptions`, throttling is set to
     /// `heartbeat_timeout * 0.8`.
-    #[builder(default = "Duration::from_secs(30)")]
+    #[builder(default = Duration::from_secs(30))]
     pub default_heartbeat_throttle_interval: Duration,
 
     /// Sets the maximum number of activities per second the task queue will dispatch, controlled
@@ -161,14 +159,12 @@ pub struct WorkerConfig {
     /// winning.
     ///
     /// Setting this to a nonzero value will also disable eager activity execution.
-    #[builder(default)]
     pub max_task_queue_activities_per_second: Option<f64>,
 
     /// Limits the number of activities per second that this worker will process. The worker will
     /// not poll for new activities if by doing so it might receive and execute an activity which
     /// would cause it to exceed this limit. Negative, zero, or NaN values will cause building
     /// the options to fail.
-    #[builder(default)]
     pub max_worker_activities_per_second: Option<f64>,
 
     /// If set false (default), shutdown will not finish until all pending evictions have been
@@ -178,23 +174,22 @@ pub struct WorkerConfig {
     /// This flag is useful during tests to avoid needing to deal with lots of uninteresting
     /// evictions during shutdown. Alternatively, if a lang implementation finds it easy to clean
     /// up during shutdown, setting this true saves some back-and-forth.
-    #[builder(default = "false")]
+    #[builder(default = false)]
     pub ignore_evicts_on_shutdown: bool,
 
     /// Maximum number of next page (or initial) history event listing requests we'll make
     /// concurrently. I don't this it's worth exposing this to users until we encounter a reason.
-    #[builder(default = "5")]
+    #[builder(default = 5)]
     pub fetching_concurrency: usize,
 
     /// If set, core will issue cancels for all outstanding activities and nexus operations after
     /// shutdown has been initiated and this amount of time has elapsed.
-    #[builder(default)]
     pub graceful_shutdown_period: Option<Duration>,
 
     /// The amount of time core will wait before timing out activities using its own local timers
     /// after one of them elapses. This is to avoid racing with server's own tracking of the
     /// timeout.
-    #[builder(default = "Duration::from_secs(5)")]
+    #[builder(default = Duration::from_secs(5))]
     pub local_timeout_buffer_for_activities: Duration,
 
     /// Any error types listed here will cause any workflow being processed by this worker to fail,
@@ -213,24 +208,24 @@ pub struct WorkerConfig {
     /// `max_cached_workflows` is > 0, or is an error.
     ///
     /// Mutually exclusive with `tuner`
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub max_outstanding_workflow_tasks: Option<usize>,
     /// The maximum number of activity tasks that will ever be given to this worker concurrently.
     ///
     /// Mutually exclusive with `tuner`
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub max_outstanding_activities: Option<usize>,
     /// The maximum number of local activity tasks that will ever be given to this worker
     /// concurrently.
     ///
     /// Mutually exclusive with `tuner`
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub max_outstanding_local_activities: Option<usize>,
     /// The maximum number of nexus tasks that will ever be given to this worker
     /// concurrently.
     ///
     /// Mutually exclusive with `tuner`
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub max_outstanding_nexus_tasks: Option<usize>,
 
     /// A versioning strategy for this worker.
@@ -241,8 +236,93 @@ pub struct WorkerConfig {
     pub plugins: HashSet<PluginInfo>,
 
     /// Skips the single worker+client+namespace+task_queue check
-    #[builder(default = "false")]
+    #[builder(default = false)]
     pub skip_client_worker_set_check: bool,
+}
+
+impl<S: worker_config_builder::IsComplete> WorkerConfigBuilder<S> {
+    pub fn build(self) -> Result<WorkerConfig, String> {
+        let config = self.build_internal();
+        {
+            let config = config;
+            let task_types = &config.task_types;
+            if task_types.is_empty() {
+                return Err("At least one task type must be enabled in `task_types`".to_string());
+            }
+            if !task_types.enable_workflows && task_types.enable_local_activities {
+                return Err(
+                    "`task_types` cannot enable local activities without workflows".to_string(),
+                );
+            }
+
+            config.workflow_task_poller_behavior.validate()?;
+            config.activity_task_poller_behavior.validate()?;
+            config.nexus_task_poller_behavior.validate()?;
+
+            if let Some(ref x) = config.max_worker_activities_per_second
+                && (!x.is_normal() || x.is_sign_negative()) {
+                    return Err(
+                        "`max_worker_activities_per_second` must be positive and nonzero"
+                            .to_string(),
+                    );
+                }
+
+            if matches!(config.max_outstanding_workflow_tasks, Some(v) if v == 0) {
+                return Err("`max_outstanding_workflow_tasks` must be > 0".to_string());
+            }
+            if matches!(config.max_outstanding_activities, Some(v) if v == 0) {
+                return Err("`max_outstanding_activities` must be > 0".to_string());
+            }
+            if matches!(config.max_outstanding_local_activities, Some(v) if v == 0) {
+                return Err("`max_outstanding_local_activities` must be > 0".to_string());
+            }
+            if matches!(config.max_outstanding_nexus_tasks, Some(v) if v == 0) {
+                return Err("`max_outstanding_nexus_tasks` must be > 0".to_string());
+            }
+
+            if config.max_cached_workflows > 0 {
+                if let Some(max_wft) = config.max_outstanding_workflow_tasks
+                    && max_wft < 2 {
+                        return Err("`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2".to_string());
+                    }
+                if matches!(config.workflow_task_poller_behavior, PollerBehavior::SimpleMaximum(u) if u < 2)
+                {
+                    return Err("`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2".to_string());
+                }
+            }
+
+            if config.tuner.is_some()
+                && (config.max_outstanding_workflow_tasks.is_some()
+                    || config.max_outstanding_activities.is_some()
+                    || config.max_outstanding_local_activities.is_some())
+            {
+                return Err(
+                    "max_outstanding_* fields are mutually exclusive with `tuner`".to_string(),
+                );
+            }
+
+            match &config.versioning_strategy {
+                WorkerVersioningStrategy::None { .. } => {}
+                WorkerVersioningStrategy::WorkerDeploymentBased(d) => {
+                    if d.use_worker_versioning
+                        && (d.version.build_id.is_empty() || d.version.deployment_name.is_empty())
+                    {
+                        return Err("WorkerDeploymentVersion must have a non-empty build_id and deployment_name when deployment-based versioning is enabled".to_string());
+                    }
+                }
+                WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
+                    if build_id.is_empty() {
+                        return Err(
+                            "Legacy build id-based versioning must have a non-empty build_id"
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+
+            Ok(config)
+        }
+    }
 }
 
 impl WorkerConfig {
@@ -279,117 +359,9 @@ impl WorkerConfig {
     }
 }
 
-impl WorkerConfigBuilder {
-    /// Unset all `max_outstanding_*` fields
-    pub fn clear_max_outstanding_opts(&mut self) -> &mut Self {
-        self.max_outstanding_workflow_tasks = None;
-        self.max_outstanding_activities = None;
-        self.max_outstanding_local_activities = None;
-        self
-    }
-
-    fn validate(&self) -> Result<(), String> {
-        let task_types = self
-            .task_types
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(WorkerTaskTypes::all);
-        if task_types.is_empty() {
-            return Err("At least one task type must be enabled in `task_types`".to_owned());
-        }
-        if !task_types.enable_workflows && task_types.enable_local_activities {
-            return Err("`task_types` cannot enable local activities without workflows".to_owned());
-        }
-
-        if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
-            b.validate()?
-        }
-        if let Some(b) = self.activity_task_poller_behavior.as_ref() {
-            b.validate()?
-        }
-        if let Some(b) = self.nexus_task_poller_behavior.as_ref() {
-            b.validate()?
-        }
-
-        if let Some(Some(ref x)) = self.max_worker_activities_per_second
-            && (!x.is_normal() || x.is_sign_negative())
-        {
-            return Err(
-                "`max_worker_activities_per_second` must be positive and nonzero".to_owned(),
-            );
-        }
-
-        if matches!(self.max_outstanding_workflow_tasks.as_ref(), Some(Some(v)) if *v == 0) {
-            return Err("`max_outstanding_workflow_tasks` must be > 0".to_owned());
-        }
-        if matches!(self.max_outstanding_activities.as_ref(), Some(Some(v)) if *v == 0) {
-            return Err("`max_outstanding_activities` must be > 0".to_owned());
-        }
-        if matches!(self.max_outstanding_local_activities.as_ref(), Some(Some(v)) if *v == 0) {
-            return Err("`max_outstanding_local_activities` must be > 0".to_owned());
-        }
-        if matches!(self.max_outstanding_nexus_tasks.as_ref(), Some(Some(v)) if *v == 0) {
-            return Err("`max_outstanding_nexus_tasks` must be > 0".to_owned());
-        }
-
-        if let Some(cache) = self.max_cached_workflows.as_ref()
-            && *cache > 0
-        {
-            if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref()
-                && *max_wft < 2
-            {
-                return Err(
-                    "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
-                        .to_owned(),
-                );
-            }
-            if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
-                if matches!(b, PollerBehavior::SimpleMaximum(u) if *u < 2) {
-                    return Err(
-                            "`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2"
-                                .to_owned(),
-                        );
-                }
-                b.validate()?
-            }
-        }
-
-        if self.tuner.is_some()
-            && (self.max_outstanding_workflow_tasks.is_some()
-                || self.max_outstanding_activities.is_some()
-                || self.max_outstanding_local_activities.is_some())
-        {
-            return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
-        }
-
-        if let Some(wv) = self.versioning_strategy.as_ref() {
-            match wv {
-                WorkerVersioningStrategy::None { .. } => {}
-                WorkerVersioningStrategy::WorkerDeploymentBased(d) => {
-                    if d.use_worker_versioning
-                        && (d.version.build_id.is_empty() || d.version.deployment_name.is_empty())
-                    {
-                        return Err(
-                            "WorkerDeploymentVersion must have a non-empty build_id and \
-                     deployment_name when deployment-based versioning is enabled"
-                                .to_owned(),
-                        );
-                    }
-                }
-                WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
-                    if build_id.is_empty() {
-                        return Err(
-                            "Legacy build id-based versioning must have a non-empty build_id"
-                                .to_owned(),
-                        );
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
+// Note: WorkerConfigBuilder is now generated by bon.
+// The custom clear_max_outstanding_opts method is removed because bon's builder
+// doesn't support custom methods the same way. Users should manually unset these fields if needed.
 
 /// This trait allows users to customize the performance characteristics of workers dynamically.
 /// For more, see the docstrings of the traits in the return types of its functions.

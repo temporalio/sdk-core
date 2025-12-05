@@ -17,12 +17,12 @@ use std::{
 };
 use temporalio_common::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
-    OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
-    TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,
+    OtelCollectorOptions, PrometheusExporterOptions,
+    TelemetryOptions as CoreTelemetryOptions, metrics::CoreMeter,
 };
 use temporalio_sdk_core::{
     CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
-    RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder, TokioRuntimeBuilder,
+    TokioRuntimeBuilder as TokioRuntime,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;
@@ -145,7 +145,7 @@ pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> R
                 core: Arc::new(
                     CoreRuntime::new(
                         CoreRuntimeOptions::default(),
-                        TokioRuntimeBuilder::default(),
+                        TokioRuntime::default(),
                     )
                     .unwrap(),
                 ),
@@ -207,19 +207,14 @@ impl Runtime {
         // Build telemetry options
         let mut log_forwarder = None;
         let telemetry_options = if let Some(v) = unsafe { options.telemetry.as_ref() } {
-            let mut build = TelemetryOptionsBuilder::default();
+            // Prepare values
+            let (attach_service_name, metric_prefix) = if let Some(v) = unsafe { v.metrics.as_ref() } {
+                (v.attach_service_name, v.metric_prefix.to_option_string())
+            } else {
+                (true, None)
+            };
 
-            // Metrics options (note, metrics meter is late-bound later)
-            if let Some(v) = unsafe { v.metrics.as_ref() } {
-                build.attach_service_name(v.attach_service_name);
-                if let Some(metric_prefix) = v.metric_prefix.to_option_string() {
-                    build.metric_prefix(metric_prefix);
-                }
-            }
-
-            // Logging options
-            if let Some(v) = unsafe { v.logging.as_ref() } {
-                build.logging(if let Some(callback) = v.forward_to {
+            let logging = unsafe { v.logging.as_ref() }.map(|v| if let Some(callback) = v.forward_to {
                     let consumer = Arc::new(LogForwarder {
                         callback,
                         active: AtomicBool::new(false),
@@ -234,8 +229,13 @@ impl Runtime {
                         filter: v.filter.to_string(),
                     }
                 });
-            }
-            build.build()?
+
+            // Build with all values
+            CoreTelemetryOptions::builder()
+                .attach_service_name(attach_service_name)
+                .maybe_metric_prefix(metric_prefix)
+                .maybe_logging(logging)
+                .build()
         } else {
             CoreTelemetryOptions::default()
         };
@@ -248,13 +248,14 @@ impl Runtime {
             ))
         };
 
-        let core_runtime_options = CoreRuntimeOptionsBuilder::default()
+        let core_runtime_options = CoreRuntimeOptions::builder()
             .telemetry_options(telemetry_options)
-            .heartbeat_interval(heartbeat_interval)
-            .build()?;
+            .maybe_heartbeat_interval(heartbeat_interval)
+            .build()
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         // Build core runtime
-        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;
+        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntime::default())?;
 
         // We late-bind the metrics after core runtime is created since it needs
         // the Tokio handle
@@ -392,8 +393,14 @@ fn create_meter(
             ));
         }
         // Build OTel exporter
-        let mut build = OtelCollectorOptionsBuilder::default();
-        build
+        let metric_periodicity = if otel_options.metric_periodicity_millis > 0 {
+            Some(Duration::from_millis(
+                otel_options.metric_periodicity_millis.into(),
+            ))
+        } else {
+            None
+        };
+        let build = OtelCollectorOptions::builder()
             .url(Url::parse(otel_options.url.to_str())?)
             .headers(otel_options.headers.to_string_map_on_newlines())
             .metric_temporality(match otel_options.metric_temporality {
@@ -406,13 +413,9 @@ fn create_meter(
                 overrides: parse_histogram_bucket_overrides(
                     &otel_options.histogram_bucket_overrides,
                 )?,
-            });
-        if otel_options.metric_periodicity_millis > 0 {
-            build.metric_periodicity(Duration::from_millis(
-                otel_options.metric_periodicity_millis.into(),
-            ));
-        }
-        Ok(Arc::new(build_otlp_metric_exporter(build.build()?)?))
+            })
+            .maybe_metric_periodicity(metric_periodicity);
+        Ok(Arc::new(build_otlp_metric_exporter(build.build())?))
     } else if let Some(prom_options) = unsafe { options.prometheus.as_ref() } {
         if custom_meter.is_some() {
             return Err(anyhow::anyhow!(
@@ -420,8 +423,7 @@ fn create_meter(
             ));
         }
         // Start prom exporter
-        let mut build = PrometheusExporterOptionsBuilder::default();
-        build
+        let build = PrometheusExporterOptions::builder()
             .socket_addr(SocketAddr::from_str(prom_options.bind_address.to_str())?)
             .global_tags(options.global_tags.to_string_map_on_newlines())
             .counters_total_suffix(prom_options.counters_total_suffix)
@@ -432,7 +434,7 @@ fn create_meter(
                     &prom_options.histogram_bucket_overrides,
                 )?,
             });
-        Ok(start_prometheus_metric_exporter(build.build()?)?.meter)
+        Ok(start_prometheus_metric_exporter(build.build())?.meter)
     } else if let Some(custom_meter) = custom_meter {
         Ok(Arc::new(custom_meter))
     } else {

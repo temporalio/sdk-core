@@ -330,7 +330,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
 #[tokio::test]
 async fn replace_client_works_after_polling_failure() {
     let (log_consumer, mut log_rx) = CoreLogStreamConsumer::new(100);
-    let telem_opts = TelemetryOptionsBuilder::default()
+    let telem_opts = TelemetryOptions::builder()
         .logging(Logger::Push {
             filter: "OFF,temporalio_client=DEBUG".into(),
             consumer: Arc::new(log_consumer),
@@ -376,7 +376,7 @@ async fn replace_client_works_after_polling_failure() {
 
     // Starting a second dev server for the worker to connect to initially. Later this server will be shut down
     // and the worker client replaced with a client connected to the main integration test server.
-    let initial_server_config = integ_dev_server_config(vec![]).build().unwrap();
+    let initial_server_config = integ_dev_server_config(vec![]).build();
     let initial_server = Arc::new(Mutex::new(Some(
         initial_server_config
             .start_server_with_output(Stdio::null(), Stdio::null())

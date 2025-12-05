@@ -85,12 +85,13 @@ async fn shutdown_interrupts_both_polls() {
         });
 
     let worker = Worker::new_test(
-        test_worker_cfg()
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
             // Need only 1 concurrent pollers for mock expectations to work here
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-            .build()
-            .unwrap(),
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
+            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
+            cfg
+        },
         mock_client,
     );
     tokio::join! {

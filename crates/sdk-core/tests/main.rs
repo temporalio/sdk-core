@@ -59,7 +59,7 @@ mod integ_tests {
 
         let _worker = init_worker(
             &runtime,
-            WorkerConfigBuilder::default()
+            WorkerConfig::builder()
                 .namespace("default")
                 .task_queue("Wheee!")
                 .build()

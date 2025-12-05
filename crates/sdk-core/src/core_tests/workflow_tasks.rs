@@ -2022,12 +2022,13 @@ async fn no_race_acquiring_permits() {
         .returning(|_| async move { Ok(Default::default()) }.boxed());
 
     let worker = Worker::new_test(
-        test_worker_cfg()
-            .max_outstanding_workflow_tasks(2_usize)
-            .max_cached_workflows(0_usize)
-            .ignore_evicts_on_shutdown(false)
-            .build()
-            .unwrap(),
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.max_outstanding_workflow_tasks = Some(2_usize);
+            cfg.max_cached_workflows = 0_usize;
+            cfg.ignore_evicts_on_shutdown = false;
+            cfg
+        },
         mock_client,
     );
 
@@ -2667,13 +2668,14 @@ async fn poller_wont_run_ahead_of_task_slots() {
         .returning(|_| Ok(Default::default()));
 
     let worker = Worker::new_test(
-        test_worker_cfg()
-            .max_cached_workflows(10_usize)
-            .max_outstanding_workflow_tasks(10_usize)
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
-            .task_types(WorkerTaskTypes::workflow_only())
-            .build()
-            .unwrap(),
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.max_cached_workflows = 10_usize;
+            cfg.max_outstanding_workflow_tasks = Some(10_usize);
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
+            cfg.task_types = WorkerTaskTypes::workflow_only();
+            cfg
+        },
         mock_client,
     );
 
@@ -2730,10 +2732,11 @@ async fn poller_wont_poll_until_lang_polls() {
         });
 
     let worker = Worker::new_test(
-        test_worker_cfg()
-            .task_types(WorkerTaskTypes::workflow_only())
-            .build()
-            .unwrap(),
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.task_types = WorkerTaskTypes::workflow_only();
+            cfg
+        },
         mock_client,
     );
 
@@ -2868,17 +2871,18 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     }
 
     let worker = Worker::new_test(
-        test_worker_cfg()
-            .max_cached_workflows(10_usize)
-            .tuner(Arc::new(
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.max_cached_workflows = 10_usize;
+            cfg.tuner = Some(Arc::new(
                 TunerBuilder::default()
                     .workflow_slot_supplier(Arc::new(EndlessSupplier {}))
                     .build(),
-            ))
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
-            .task_types(WorkerTaskTypes::workflow_only())
-            .build()
-            .unwrap(),
+            ));
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
+            cfg.task_types = WorkerTaskTypes::workflow_only();
+            cfg
+        },
         mock_client,
     );
 
@@ -3019,14 +3023,15 @@ async fn both_normal_and_sticky_pollers_poll_concurrently() {
         });
 
     let worker = Worker::new(
-        test_worker_cfg()
-            .max_cached_workflows(500_usize) // We need cache, but don't want to deal with evictions
-            .max_outstanding_workflow_tasks(2_usize)
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
-            .nonsticky_to_sticky_poll_ratio(0.2)
-            .task_types(WorkerTaskTypes::workflow_only())
-            .build()
-            .unwrap(),
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.max_cached_workflows = 500_usize; // We need cache, but don't want to deal with evictions
+            cfg.max_outstanding_workflow_tasks = Some(2_usize);
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(2_usize);
+            cfg.nonsticky_to_sticky_poll_ratio = 0.2;
+            cfg.task_types = WorkerTaskTypes::workflow_only();
+            cfg
+        },
         Some("stickytq".to_string()),
         Arc::new(mock_client),
         None,

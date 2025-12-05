@@ -102,7 +102,7 @@ pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
 }
 
 pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
-    let mut b = WorkerConfigBuilder::default();
+    let mut b = WorkerConfig::builder();
     b.namespace(NAMESPACE)
         .task_queue(tq)
         .max_outstanding_activities(100_usize)
@@ -794,7 +794,7 @@ pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
 }
 
 pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
-    let mut ob = TelemetryOptionsBuilder::default();
+    let mut ob = TelemetryOptions::builder();
     let filter_string =
         env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporalio_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)

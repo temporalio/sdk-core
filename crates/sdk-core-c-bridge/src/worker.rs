@@ -26,7 +26,7 @@ use temporalio_common::{
     },
 };
 use temporalio_sdk_core::{
-    WorkerConfigBuilder,
+    WorkerConfig,
     replay::{HistoryForReplay, ReplayWorkerInput},
 };
 use tokio::sync::{
@@ -1164,7 +1164,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
 
     fn try_from(opt: &WorkerOptions) -> anyhow::Result<Self> {
         let converted_tuner: temporalio_sdk_core::TunerHolder = (&opt.tuner).try_into()?;
-        WorkerConfigBuilder::default()
+        let config = WorkerConfig::builder()
             .namespace(opt.namespace.to_str())
             .task_queue(opt.task_queue.to_str())
             .versioning_strategy({
@@ -1201,7 +1201,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                     }
                 }
             })
-            .client_identity_override(opt.identity_override.to_option_string())
+            .maybe_client_identity_override(opt.identity_override.to_option_string())
             .max_cached_workflows(opt.max_cached_workflows as usize)
             .tuner(Arc::new(converted_tuner))
             .task_types(temporalio_common::worker::WorkerTaskTypes::from(
@@ -1216,12 +1216,12 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .default_heartbeat_throttle_interval(Duration::from_millis(
                 opt.default_heartbeat_throttle_interval_millis,
             ))
-            .max_worker_activities_per_second(if opt.max_activities_per_second == 0.0 {
+            .maybe_max_worker_activities_per_second(if opt.max_activities_per_second == 0.0 {
                 None
             } else {
                 Some(opt.max_activities_per_second)
             })
-            .max_task_queue_activities_per_second(
+            .maybe_max_task_queue_activities_per_second(
                 if opt.max_task_queue_activities_per_second == 0.0 {
                     None
                 } else {
@@ -1274,7 +1274,8 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                     .collect::<HashSet<_>>(),
             )
             .build()
-            .map_err(|err| anyhow::anyhow!(err))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        Ok(config)
     }
 }
 
@@ -1324,23 +1325,26 @@ impl TryFrom<&TunerHolder> for temporalio_sdk_core::TunerHolder {
             bail!("All resource-based slot suppliers must have the same ResourceBasedTunerOptions",);
         }
 
-        let mut options = temporalio_sdk_core::TunerHolderOptionsBuilder::default();
-        if let Some(first) = first {
-            options.resource_based_options(
-                temporalio_sdk_core::ResourceBasedSlotsOptionsBuilder::default()
-                    .target_mem_usage(first.target_memory_usage)
-                    .target_cpu_usage(first.target_cpu_usage)
-                    .build()
-                    .expect("Building ResourceBasedSlotsOptions is infallible"),
-            );
-        };
-        options
+        let resource_based = first.map(|f| {
+            temporalio_sdk_core::ResourceBasedSlotsOptionsBuilder::default()
+                .target_mem_usage(f.target_memory_usage)
+                .target_cpu_usage(f.target_cpu_usage)
+                .build()
+                .expect("Failed to build ResourceBasedSlotsOptions")
+        });
+
+        let mut builder = temporalio_sdk_core::TunerHolderOptionsBuilder::default();
+        builder
             .workflow_slot_options(holder.workflow_slot_supplier.try_into()?)
             .activity_slot_options(holder.activity_slot_supplier.try_into()?)
             .local_activity_slot_options(holder.local_activity_slot_supplier.try_into()?)
-            .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?)
+            .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?);
+        if let Some(rb) = resource_based {
+            builder.resource_based_options(rb);
+        }
+        builder
             .build()
-            .context("Invalid tuner holder options")?
+            .context("Failed building tuner holder options")?
             .build_tuner_holder()
             .context("Failed building tuner holder")
     }

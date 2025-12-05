@@ -289,10 +289,11 @@ async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_
             .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
     }
     let core = worker::Worker::new_test(
-        test_worker_cfg()
-            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-            .build()
-            .unwrap(),
+        {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
+            cfg
+        },
         mock,
     );
 

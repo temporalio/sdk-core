@@ -55,7 +55,7 @@ fn within_duration(dur: PbDuration, threshold: Duration) -> bool {
 
 fn new_no_metrics_starter(wf_name: &str) -> CoreWfStarter {
     let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(TelemetryOptionsBuilder::default().build().unwrap())
+        .telemetry_options(TelemetryOptions::builder().build())
         .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
@@ -99,7 +99,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         return;
     }
     let telemopts = if backing == "no_metrics" {
-        TelemetryOptionsBuilder::default().build().unwrap()
+        TelemetryOptions::builder().build()
     } else {
         get_integ_telem_options()
     };
@@ -115,14 +115,14 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                 .map(|x| x.parse::<Url>().unwrap())
                 .unwrap();
             let mut opts_build = OtelCollectorOptionsBuilder::default();
-            let opts = opts_build.url(url).build().unwrap();
+            let opts = opts_build.url(url).build();
             rt.telemetry_mut()
                 .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
         }
         "prom" => {
             let mut opts_build = PrometheusExporterOptionsBuilder::default();
             opts_build.socket_addr(ANY_PORT.parse().unwrap());
-            let opts = opts_build.build().unwrap();
+            let opts = opts_build.build();
             rt.telemetry_mut()
                 .attach_late_init_metrics(start_prometheus_metric_exporter(opts).unwrap().meter);
         }
@@ -280,7 +280,7 @@ async fn docker_worker_heartbeat_tuner() {
         .map(|x| x.parse::<Url>().unwrap())
         .unwrap();
     let mut opts_build = OtelCollectorOptionsBuilder::default();
-    let opts = opts_build.url(url).build().unwrap();
+    let opts = opts_build.url(url).build();
 
     rt.telemetry_mut()
         .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));

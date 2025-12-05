@@ -97,7 +97,7 @@ async fn prometheus_metrics_exported(
             },
         });
     }
-    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build()));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
@@ -151,7 +151,7 @@ async fn one_slot_worker_reports_available_slot() {
     let tq = "one_slot_worker_tq";
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
 
-    let worker_cfg = WorkerConfigBuilder::default()
+    let worker_cfg = WorkerConfig::builder()
         .namespace(NAMESPACE)
         .task_queue(tq)
         .versioning_strategy(WorkerVersioningStrategy::None {
@@ -672,10 +672,10 @@ async fn request_fail_codes_otel() {
         // skip
         return;
     };
-    let mut telemopts = TelemetryOptionsBuilder::default();
+    let mut telemopts = TelemetryOptions::builder();
     let exporter = Arc::new(exporter);
     telemopts.metrics(exporter as Arc<dyn CoreMeter>);
-    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build().unwrap()))
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build()))
         .unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
@@ -724,7 +724,7 @@ async fn docker_metrics_with_prometheus(
         .build()
         .unwrap();
     let exporter = Arc::new(build_otlp_metric_exporter(opts).unwrap());
-    let telemopts = TelemetryOptionsBuilder::default()
+    let telemopts = TelemetryOptions::builder()
         .metrics(exporter as Arc<dyn CoreMeter>)
         .metric_prefix(test_uid.clone())
         .build()
@@ -1316,7 +1316,7 @@ async fn test_prometheus_metric_format_consistency() {
 async fn prometheus_label_nonsense() {
     let mut opts_builder = PrometheusExporterOptionsBuilder::default();
     opts_builder.socket_addr(ANY_PORT.parse().unwrap());
-    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build()));
     let meter = telemopts.metrics.clone().unwrap();
 
     let ctr = meter.counter(

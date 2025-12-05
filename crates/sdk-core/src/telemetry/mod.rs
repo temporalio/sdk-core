@@ -41,7 +41,6 @@ use std::{
 };
 use temporalio_common::telemetry::{
     CoreLog, CoreTelemetry, Logger, TaskQueueLabelStrategy, TelemetryOptions,
-    TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };
 use tracing::{Level, Subscriber};
@@ -277,11 +276,11 @@ pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error
 /// that uses the default console logger.
 pub fn telemetry_init_fallback() -> Result<(), anyhow::Error> {
     telemetry_init_global(
-        TelemetryOptionsBuilder::default()
+        TelemetryOptions::builder()
             .logging(Logger::Console {
                 filter: construct_filter_string(Level::DEBUG, Level::WARN),
             })
-            .build()?,
+            .build(),
     )?;
     Ok(())
 }

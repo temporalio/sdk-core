@@ -97,7 +97,7 @@ async fn main() -> Result<(), anyhow::Error> {
             let config =
                 integ_dev_server_config(vec!["--http-port".to_string(), "7243".to_string()])
                     .ui(true)
-                    .build()?;
+                    .build();
             println!("Using temporal CLI: {config:?}");
             (
                 Some(
@@ -111,7 +111,7 @@ async fn main() -> Result<(), anyhow::Error> {
         ServerKind::TestServer => {
             let config = TestServerConfigBuilder::default()
                 .exe(default_cached_download())
-                .build()?;
+                .build();
             println!("Using java test server");
             (
                 Some(
