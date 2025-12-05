@@ -28,31 +28,30 @@ pub trait CoreTelemetry {
     fn fetch_buffered_logs(&self) -> Vec<CoreLog>;
 }
 
-/// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
-#[derive(Clone, derive_builder::Builder)]
+/// Telemetry configuration options. Construct with [TelemetryOptions::builder]
+#[derive(Clone, bon::Builder)]
 #[non_exhaustive]
 pub struct TelemetryOptions {
     /// Optional logger - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub logging: Option<Logger>,
     /// Optional metrics exporter - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
+    #[builder(into)]
     pub metrics: Option<Arc<dyn CoreMeter>>,
     /// If set true (the default) explicitly attach a `service_name` label to all metrics. Turn this
     /// off if your collection system supports the `target_info` metric from the OpenMetrics spec.
     /// For more, see
     /// [here](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#supporting-target-metadata-in-both-push-based-and-pull-based-systems)
-    #[builder(default = "true")]
+    #[builder(default = true)]
     pub attach_service_name: bool,
     /// A prefix to be applied to all core-created metrics. Defaults to "temporal_".
-    #[builder(default = "METRIC_PREFIX.to_string()")]
+    #[builder(default = METRIC_PREFIX.to_string())]
     pub metric_prefix: String,
     /// If provided, logging config will be ignored and this explicit subscriber will be used for
     /// all logging and traces.
-    #[builder(setter(strip_option), default)]
     pub subscriber_override: Option<Arc<dyn Subscriber + Send + Sync>>,
     /// See [TaskQueueLabelStrategy].
-    #[builder(default = "TaskQueueLabelStrategy::UseNormal")]
+    #[builder(default = TaskQueueLabelStrategy::UseNormal)]
     pub task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 impl Debug for TelemetryOptions {
@@ -96,19 +95,19 @@ pub enum TaskQueueLabelStrategy {
 }
 
 /// Options for exporting to an OpenTelemetry Collector
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct OtelCollectorOptions {
     /// The url of the OTel collector to export telemetry and metrics to. Lang SDK should also
     /// export to this same collector.
     pub url: Url,
     /// Optional set of HTTP headers to send to the Collector, e.g for authentication.
-    #[builder(default = "HashMap::new()")]
+    #[builder(default = HashMap::new())]
     pub headers: HashMap<String, String>,
     /// Optionally specify how frequently metrics should be exported. Defaults to 1 second.
-    #[builder(default = "Duration::from_secs(1)")]
+    #[builder(default = Duration::from_secs(1))]
     pub metric_periodicity: Duration,
     /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
-    #[builder(default = "MetricTemporality::Cumulative")]
+    #[builder(default = MetricTemporality::Cumulative)]
     pub metric_temporality: MetricTemporality,
     /// A map of tags to be applied to all metrics
     #[builder(default)]
@@ -120,12 +119,12 @@ pub struct OtelCollectorOptions {
     #[builder(default)]
     pub histogram_bucket_overrides: HistogramBucketOverrides,
     /// Protocol to use for communication with the collector
-    #[builder(default = "OtlpProtocol::Grpc")]
+    #[builder(default = OtlpProtocol::Grpc)]
     pub protocol: OtlpProtocol,
 }
 
 /// Options for exporting metrics to Prometheus
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct PrometheusExporterOptions {
     pub socket_addr: SocketAddr,
     // A map of tags to be applied to all metrics
@@ -205,7 +204,7 @@ pub enum OtlpProtocol {
 
 impl Default for TelemetryOptions {
     fn default() -> Self {
-        TelemetryOptionsBuilder::default().build().unwrap()
+        TelemetryOptions::builder().build()
     }
 }
 

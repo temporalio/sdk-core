@@ -240,9 +240,9 @@ pub struct CoreRuntime {
     heartbeat_interval: Option<Duration>,
 }
 
-/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptionsBuilder]
-#[derive(Default, derive_builder::Builder)]
-#[builder(build_fn(validate = "Self::validate"))]
+/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptions::builder]
+#[derive(Default, bon::Builder)]
+#[builder(finish_fn(vis = "", name = build_internal))]
 #[non_exhaustive]
 pub struct RuntimeOptions {
     /// Telemetry configuration options.
@@ -252,21 +252,28 @@ pub struct RuntimeOptions {
     /// workers created using this runtime.
     ///
     /// Interval must be between 1s and 60s, inclusive.
-    #[builder(default = "Some(Duration::from_secs(60))")]
+    #[builder(required, default = Some(Duration::from_secs(60)))]
     heartbeat_interval: Option<Duration>,
 }
 
-impl RuntimeOptionsBuilder {
-    fn validate(&self) -> Result<(), String> {
-        if let Some(Some(interval)) = self.heartbeat_interval
-            && (interval < Duration::from_secs(1) || interval > Duration::from_secs(60))
+impl<S: runtime_options_builder::State> RuntimeOptionsBuilder<S> {
+    /// Builds the RuntimeOptions
+    ///
+    /// # Errors
+    /// Returns an error if heartbeat_interval is set but not between 1s and 60s inclusive.
+    pub fn build(self) -> Result<RuntimeOptions, String> {
+        let options = self.build_internal();
         {
-            return Err(format!(
-                "heartbeat_interval ({interval:?}) must be between 1s and 60s",
-            ));
-        }
+            if let Some(interval) = options.heartbeat_interval
+                && (interval < Duration::from_secs(1) || interval > Duration::from_secs(60))
+            {
+                return Err(format!(
+                    "heartbeat_interval ({interval:?}) must be between 1s and 60s",
+                ));
+            }
 
-        Ok(())
+            Ok(options)
+        }
     }
 }
 

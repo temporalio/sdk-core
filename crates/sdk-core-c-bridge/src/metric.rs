@@ -231,12 +231,11 @@ pub extern "C" fn temporal_core_metric_record_duration(
 
 impl From<&MetricOptions> for metrics::MetricParameters {
     fn from(options: &MetricOptions) -> Self {
-        metrics::MetricParametersBuilder::default()
+        metrics::MetricParameters::builder()
             .name(options.name.to_string())
             .description(options.description.to_string())
             .unit(options.unit.to_string())
             .build()
-            .unwrap()
     }
 }
 

@@ -225,7 +225,7 @@ mod tests {
         sync::{Arc, Mutex},
     };
     use temporalio_common::telemetry::{
-        CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptionsBuilder,
+        CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptions,
     };
     use tracing::Level;
 
@@ -260,12 +260,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_forwarding_output() {
-        let opts = TelemetryOptionsBuilder::default()
+        let opts = TelemetryOptions::builder()
             .logging(Logger::Forward {
                 filter: construct_filter_string(Level::INFO, Level::WARN),
             })
-            .build()
-            .unwrap();
+            .build();
         let instance = telemetry_init(opts).unwrap();
         let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
 
@@ -290,13 +289,12 @@ mod tests {
     #[tokio::test]
     async fn test_push_output() {
         let consumer = Arc::new(CaptureConsumer(Mutex::new(Vec::new())));
-        let opts = TelemetryOptionsBuilder::default()
+        let opts = TelemetryOptions::builder()
             .logging(Logger::Push {
                 filter: construct_filter_string(Level::INFO, Level::WARN),
                 consumer: consumer.clone(),
             })
-            .build()
-            .unwrap();
+            .build();
         let instance = telemetry_init(opts).unwrap();
         let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
 
@@ -308,13 +306,12 @@ mod tests {
     async fn test_push_stream_output() {
         let (consumer, stream) = CoreLogStreamConsumer::new(100);
         let consumer = Arc::new(consumer);
-        let opts = TelemetryOptionsBuilder::default()
+        let opts = TelemetryOptions::builder()
             .logging(Logger::Push {
                 filter: construct_filter_string(Level::INFO, Level::WARN),
                 consumer: consumer.clone(),
             })
-            .build()
-            .unwrap();
+            .build();
         let instance = telemetry_init(opts).unwrap();
         let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
 

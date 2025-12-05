@@ -1,4 +1,4 @@
-use temporalio_common::worker::{WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy};
+use temporalio_common::worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy};
 
 fn default_versioning_strategy() -> WorkerVersioningStrategy {
     WorkerVersioningStrategy::None {
@@ -8,13 +8,13 @@ fn default_versioning_strategy() -> WorkerVersioningStrategy {
 
 #[test]
 fn test_default_configuration_polls_all_types() {
-    let config = WorkerConfigBuilder::default()
+    let config = WorkerConfig::builder()
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
         .task_types(WorkerTaskTypes::all())
         .build()
-        .expect("Failed to build default config");
+        .unwrap();
 
     let effective = &config.task_types;
     assert!(
@@ -35,7 +35,7 @@ fn test_default_configuration_polls_all_types() {
 #[test]
 fn test_invalid_task_types_fails_validation() {
     // empty task types
-    let result = WorkerConfigBuilder::default()
+    let result = WorkerConfig::builder()
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
@@ -48,14 +48,14 @@ fn test_invalid_task_types_fails_validation() {
         .build();
 
     assert!(result.is_err(), "Empty task_types should fail validation");
-    let err = result.err().unwrap().to_string();
+    let err = result.err().unwrap();
     assert!(
         err.contains("At least one task type"),
         "Error should mention task types: {err}",
     );
 
     // local activities with no workflows
-    let result = WorkerConfigBuilder::default()
+    let result = WorkerConfig::builder()
         .namespace("default")
         .task_queue("test-queue")
         .versioning_strategy(default_versioning_strategy())
@@ -68,7 +68,7 @@ fn test_invalid_task_types_fails_validation() {
         .build();
 
     assert!(result.is_err(), "Empty task_types should fail validation");
-    let err = result.err().unwrap().to_string();
+    let err = result.err().unwrap();
     assert!(
         err.contains("cannot enable local activities without workflows"),
         "Error should mention task types: {err}",
@@ -112,13 +112,13 @@ fn test_all_combinations() {
     ];
 
     for (task_types, description) in combinations {
-        let config = WorkerConfigBuilder::default()
+        let config = WorkerConfig::builder()
             .namespace("default")
             .task_queue("test-queue")
             .versioning_strategy(default_versioning_strategy())
             .task_types(task_types)
             .build()
-            .unwrap_or_else(|e| panic!("Failed to build config for {description}: {e:?}"));
+            .unwrap();
 
         let effective = config.task_types;
         assert_eq!(

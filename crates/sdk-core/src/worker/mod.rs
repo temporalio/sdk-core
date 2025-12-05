@@ -10,8 +10,10 @@ pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
     ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
-    TunerHolderOptions, TunerHolderOptionsBuilder,
+    TunerHolderOptions,
 };
+// Re-export the generated builder (it's in the tuner module)
+pub use tuner::TunerHolderOptionsBuilder;
 pub(crate) use tuner::{RealSysInfo, SystemResourceInfo};
 
 pub(crate) use activities::{
@@ -1436,10 +1438,11 @@ mod tests {
 
     #[test]
     fn max_polls_calculated_properly() {
-        let cfg = test_worker_cfg()
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(5_usize))
-            .build()
-            .unwrap();
+        let cfg = {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(5_usize);
+            cfg
+        };
         assert_eq!(
             wft_poller_behavior(&cfg, false),
             PollerBehavior::SimpleMaximum(1)
@@ -1452,8 +1455,15 @@ mod tests {
 
     #[test]
     fn max_polls_zero_is_err() {
+        use temporalio_common::worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy};
         assert!(
-            test_worker_cfg()
+            WorkerConfig::builder()
+                .namespace("test")
+                .task_queue("test")
+                .versioning_strategy(WorkerVersioningStrategy::None {
+                    build_id: "test".to_string(),
+                })
+                .task_types(WorkerTaskTypes::all())
                 .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(0_usize))
                 .build()
                 .is_err()

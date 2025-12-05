@@ -23,8 +23,8 @@ test-utilities = ["history_builders"]
 anyhow = "1.0"
 async-trait = "0.1"
 base64 = "0.22"
+bon = { workspace = true }
 dirs = { version = "6.0", optional = true }
-derive_builder = { workspace = true }
 derive_more = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 prost = { workspace = true }

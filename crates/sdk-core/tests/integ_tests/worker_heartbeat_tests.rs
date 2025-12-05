@@ -26,14 +26,12 @@ use temporalio_common::{
             workflowservice::v1::{DescribeWorkerRequest, ListWorkersRequest},
         },
     },
-    telemetry::{
-        OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
-    },
+    telemetry::{OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions},
     worker::PollerBehavior,
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptionsBuilder,
+    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tokio::{sync::Notify, time::sleep};
@@ -54,8 +52,8 @@ fn within_duration(dur: PbDuration, threshold: Duration) -> bool {
 }
 
 fn new_no_metrics_starter(wf_name: &str) -> CoreWfStarter {
-    let runtimeopts = RuntimeOptionsBuilder::default()
-        .telemetry_options(TelemetryOptionsBuilder::default().build().unwrap())
+    let runtimeopts = RuntimeOptions::builder()
+        .telemetry_options(TelemetryOptions::builder().build())
         .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
@@ -99,11 +97,11 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         return;
     }
     let telemopts = if backing == "no_metrics" {
-        TelemetryOptionsBuilder::default().build().unwrap()
+        TelemetryOptions::builder().build()
     } else {
         get_integ_telem_options()
     };
-    let runtimeopts = RuntimeOptionsBuilder::default()
+    let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(telemopts)
         .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
@@ -114,15 +112,15 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             let url = Some("grpc://localhost:4317")
                 .map(|x| x.parse::<Url>().unwrap())
                 .unwrap();
-            let mut opts_build = OtelCollectorOptionsBuilder::default();
-            let opts = opts_build.url(url).build().unwrap();
+            let opts_build = OtelCollectorOptions::builder();
+            let opts = opts_build.url(url).build();
             rt.telemetry_mut()
                 .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
         }
         "prom" => {
-            let mut opts_build = PrometheusExporterOptionsBuilder::default();
-            opts_build.socket_addr(ANY_PORT.parse().unwrap());
-            let opts = opts_build.build().unwrap();
+            let opts_build =
+                PrometheusExporterOptions::builder().socket_addr(ANY_PORT.parse().unwrap());
+            let opts = opts_build.build();
             rt.telemetry_mut()
                 .attach_late_init_metrics(start_prometheus_metric_exporter(opts).unwrap().meter);
         }
@@ -131,25 +129,21 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     }
     let wf_name = format!("worker_heartbeat_basic_{backing}");
     let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
-    starter
-        .worker_config
-        .max_outstanding_workflow_tasks(5_usize)
-        .max_cached_workflows(5_usize)
-        .max_outstanding_activities(5_usize)
-        .plugins(
-            [
-                PluginInfo {
-                    name: "plugin1".to_string(),
-                    version: "1".to_string(),
-                },
-                PluginInfo {
-                    name: "plugin2".to_string(),
-                    version: "2".to_string(),
-                },
-            ]
-            .into_iter()
-            .collect::<HashSet<_>>(),
-        );
+    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
+    starter.worker_config.max_cached_workflows = 5_usize;
+    starter.worker_config.max_outstanding_activities = Some(5_usize);
+    starter.worker_config.plugins = vec![
+        PluginInfo {
+            name: "plugin1".to_string(),
+            version: "1".to_string(),
+        },
+        PluginInfo {
+            name: "plugin2".to_string(),
+            version: "2".to_string(),
+        },
+    ]
+    .into_iter()
+    .collect();
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
@@ -269,7 +263,7 @@ async fn docker_worker_heartbeat_tuner() {
     if env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
         return;
     }
-    let runtimeopts = RuntimeOptionsBuilder::default()
+    let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
         .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
@@ -279,8 +273,8 @@ async fn docker_worker_heartbeat_tuner() {
     let url = Some("grpc://localhost:4317")
         .map(|x| x.parse::<Url>().unwrap())
         .unwrap();
-    let mut opts_build = OtelCollectorOptionsBuilder::default();
-    let opts = opts_build.url(url).build().unwrap();
+    let opts_build = OtelCollectorOptions::builder();
+    let opts = opts_build.url(url).build();
 
     rt.telemetry_mut()
         .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
@@ -290,20 +284,21 @@ async fn docker_worker_heartbeat_tuner() {
     tuner
         .with_workflow_slots_options(ResourceSlotOptions::new(2, 10, Duration::from_millis(0)))
         .with_activity_slots_options(ResourceSlotOptions::new(5, 10, Duration::from_millis(50)));
-    starter
-        .worker_config
-        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        })
-        .nexus_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        })
-        .clear_max_outstanding_opts()
-        .tuner(Arc::new(tuner));
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
+    starter.worker_config.nexus_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
+    starter.worker_config.max_outstanding_workflow_tasks = None;
+    starter.worker_config.max_outstanding_local_activities = None;
+    starter.worker_config.max_outstanding_activities = None;
+    starter.worker_config.max_outstanding_nexus_tasks = None;
+    starter.worker_config.tuner = Some(Arc::new(tuner));
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
@@ -545,10 +540,8 @@ fn after_shutdown_checks(
 async fn worker_heartbeat_sticky_cache_miss() {
     let wf_name = "worker_heartbeat_cache_miss";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter
-        .worker_config
-        .max_cached_workflows(1_usize)
-        .max_outstanding_workflow_tasks(2_usize);
+    starter.worker_config.max_cached_workflows = 1_usize;
+    starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
 
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
@@ -665,10 +658,8 @@ async fn worker_heartbeat_sticky_cache_miss() {
 async fn worker_heartbeat_multiple_workers() {
     let wf_name = "worker_heartbeat_multi_workers";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter
-        .worker_config
-        .max_outstanding_workflow_tasks(5_usize)
-        .max_cached_workflows(5_usize);
+    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
+    starter.worker_config.max_cached_workflows = 5_usize;
 
     let client = starter.get_client().await;
     let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
@@ -767,7 +758,7 @@ async fn worker_heartbeat_failure_metrics() {
 
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter.worker_config.max_outstanding_activities(5_usize);
+    starter.worker_config.max_outstanding_activities = Some(5_usize);
 
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
@@ -942,9 +933,9 @@ async fn worker_heartbeat_failure_metrics() {
 #[tokio::test]
 async fn worker_heartbeat_no_runtime_heartbeat() {
     let wf_name = "worker_heartbeat_no_runtime_heartbeat";
-    let runtimeopts = RuntimeOptionsBuilder::default()
+    let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
-        .heartbeat_interval(None) // Turn heartbeating off
+        .heartbeat_interval(None)
         .build()
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
@@ -1002,14 +993,14 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
 #[tokio::test]
 async fn worker_heartbeat_skip_client_worker_set_check() {
     let wf_name = "worker_heartbeat_skip_client_worker_set_check";
-    let runtimeopts = RuntimeOptionsBuilder::default()
+    let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
         .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.skip_client_worker_set_check(true);
+    starter.worker_config.skip_client_worker_set_check = true;
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 

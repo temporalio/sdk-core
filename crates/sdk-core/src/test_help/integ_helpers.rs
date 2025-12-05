@@ -58,7 +58,7 @@ use temporalio_common::{
         },
         utilities::pack_any,
     },
-    worker::{PollerBehavior, WorkerTaskTypes, WorkerVersioningStrategy},
+    worker::{PollerBehavior, WorkerTaskTypes, WorkerVersioningStrategy, worker_config_builder},
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -97,9 +97,20 @@ pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
     worker.shutdown().await;
 }
 
-pub fn test_worker_cfg() -> WorkerConfigBuilder {
-    let mut wcb = WorkerConfigBuilder::default();
-    wcb.namespace(NAMESPACE)
+#[allow(clippy::type_complexity)]
+pub fn test_worker_cfg() -> WorkerConfigBuilder<
+    worker_config_builder::SetWorkflowTaskPollerBehavior<
+        worker_config_builder::SetTaskTypes<
+            worker_config_builder::SetIgnoreEvictsOnShutdown<
+                worker_config_builder::SetVersioningStrategy<
+                    worker_config_builder::SetTaskQueue<worker_config_builder::SetNamespace>,
+                >,
+            >,
+        >,
+    >,
+> {
+    WorkerConfig::builder()
+        .namespace(NAMESPACE)
         .task_queue(Uuid::new_v4().to_string())
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_bin_id".to_string(),
@@ -107,8 +118,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
         .ignore_evicts_on_shutdown(true)
         .task_types(WorkerTaskTypes::all())
         // Serial polling since it makes mocking much easier.
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
-    wcb
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
 }
 
 /// When constructing responses for mocks, indicates how a given response should be built

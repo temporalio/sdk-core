@@ -177,9 +177,7 @@ pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn local_act_fanout() {
     let wf_name = "local_act_fanout";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .max_outstanding_local_activities(1_usize);
+    starter.worker_config.max_outstanding_local_activities = Some(1_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo_activity", echo);
@@ -468,7 +466,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     );
     let mut starter = CoreWfStarter::new(&wf_name);
     if !cached {
-        starter.worker_config.max_cached_workflows(0_usize);
+        starter.worker_config.max_cached_workflows = 0_usize;
     }
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -509,7 +507,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
 async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
     let wf_name = format!("eviction_wont_make_local_act_get_dropped_{short_wft_timeout}");
     let mut starter = CoreWfStarter::new(&wf_name);
-    starter.worker_config.max_cached_workflows(0_usize);
+    starter.worker_config.max_cached_workflows = 0_usize;
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
@@ -722,9 +720,7 @@ async fn la_resolve_same_time_as_other_cancel() {
     let wf_name = "la_resolve_same_time_as_other_cancel";
     let mut starter = CoreWfStarter::new(wf_name);
     // The activity won't get a chance to receive the cancel so make sure we still exit fast
-    starter
-        .worker_config
-        .graceful_shutdown_period(Duration::from_millis(100));
+    starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(100));
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {

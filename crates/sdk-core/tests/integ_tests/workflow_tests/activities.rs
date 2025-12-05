@@ -1057,9 +1057,7 @@ async fn it_can_complete_async() {
 async fn graceful_shutdown() {
     let wf_name = "graceful_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .graceful_shutdown_period(Some(Duration::from_millis(500)));
+    starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(500));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -1122,9 +1120,7 @@ async fn graceful_shutdown() {
 async fn activity_can_be_cancelled_by_local_timeout() {
     let wf_name = "activity_can_be_cancelled_by_local_timeout";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .local_timeout_buffer_for_activities(Duration::from_secs(0));
+    starter.worker_config.local_timeout_buffer_for_activities = Duration::from_secs(0);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
@@ -1165,19 +1161,17 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 async fn long_activity_timeout_repro() {
     let wf_name = "long_activity_timeout_repro";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 10,
-            initial: 5,
-        })
-        .activity_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 10,
-            initial: 5,
-        })
-        .local_timeout_buffer_for_activities(Duration::from_secs(0));
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 10,
+        initial: 5,
+    };
+    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 10,
+        initial: 5,
+    };
+    starter.worker_config.local_timeout_buffer_for_activities = Duration::from_secs(0);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let mut iter = 1;

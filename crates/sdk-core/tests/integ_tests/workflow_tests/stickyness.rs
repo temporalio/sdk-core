@@ -12,10 +12,8 @@ use tokio::sync::Barrier;
 async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only())
-        .max_cached_workflows(0_usize);
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.worker_config.max_cached_workflows = 0_usize;
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
@@ -42,9 +40,7 @@ async fn timer_workflow_timeout_on_sticky() {
     // on a not-sticky queue
     let wf_name = "timer_workflow_timeout_on_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     starter.workflow_options.task_timeout = Some(Duration::from_secs(2));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_timeout_wf);
@@ -59,12 +55,10 @@ async fn timer_workflow_timeout_on_sticky() {
 async fn cache_miss_ok() {
     let wf_name = "cache_miss_ok";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only())
-        .max_outstanding_workflow_tasks(2_usize)
-        .max_cached_workflows(0_usize)
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
+    starter.worker_config.max_cached_workflows = 0_usize;
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
     let mut worker = starter.worker().await;
 
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));

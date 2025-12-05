@@ -58,12 +58,12 @@ async fn nexus_basic(
 ) {
     let wf_name = "nexus_basic";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
@@ -208,12 +208,12 @@ async fn nexus_async(
 ) {
     let wf_name = "nexus_async";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
@@ -440,12 +440,12 @@ async fn nexus_async(
 async fn nexus_cancel_before_start() {
     let wf_name = "nexus_cancel_before_start";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     let mut worker = starter.worker().await;
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
@@ -487,16 +487,14 @@ async fn nexus_cancel_before_start() {
 async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_period: bool) {
     let wf_name = "nexus_must_complete_task_to_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     if use_grace_period {
-        starter
-            .worker_config
-            .graceful_shutdown_period(Duration::from_millis(500));
+        starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(500));
     }
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
@@ -592,12 +590,12 @@ async fn nexus_cancellation_types(
 ) {
     let wf_name = "nexus_cancellation_types";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
