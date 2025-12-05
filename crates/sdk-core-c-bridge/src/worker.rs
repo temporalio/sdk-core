@@ -649,6 +649,7 @@ pub extern "C" fn temporal_core_worker_replace_client(
     new_client: *mut Client,
 ) -> *const ByteArray {
     let worker = unsafe { &*worker };
+    enter_sync!(worker.runtime);
     let core_worker = worker.worker.as_ref().expect("missing worker").clone();
     let client = unsafe { &*new_client };
 
