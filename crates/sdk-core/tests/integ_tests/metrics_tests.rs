@@ -48,16 +48,16 @@ use temporalio_common::{
         },
     },
     telemetry::{
-        HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
-        PrometheusExporterOptionsBuilder, TaskQueueLabelStrategy, TelemetryOptionsBuilder,
+        HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol,
+        PrometheusExporterOptions, TaskQueueLabelStrategy, TelemetryOptions,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
-            MetricParameters, MetricParametersBuilder, NewAttributes,
+            MetricParameters, NewAttributes,
         },
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes,
+        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes,
         WorkerVersioningStrategy, WorkflowSlotKind,
     },
 };
@@ -83,21 +83,27 @@ async fn prometheus_metrics_exported(
     #[values(true, false)] use_seconds_latency: bool,
     #[values(true, false)] custom_buckets: bool,
 ) {
-    let mut opts_builder = PrometheusExporterOptionsBuilder::default();
-    opts_builder
-        .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
-        .socket_addr(ANY_PORT.parse().unwrap())
-        .use_seconds_for_durations(use_seconds_latency);
-    if custom_buckets {
-        opts_builder.histogram_bucket_overrides(HistogramBucketOverrides {
-            overrides: {
-                let mut hm = HashMap::new();
-                hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME.to_string(), vec![1337.0]);
-                hm
-            },
-        });
-    }
-    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build()));
+    let opts = if custom_buckets {
+        PrometheusExporterOptions::builder()
+            .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .use_seconds_for_durations(use_seconds_latency)
+            .histogram_bucket_overrides(HistogramBucketOverrides {
+                overrides: {
+                    let mut hm = HashMap::new();
+                    hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME.to_string(), vec![1337.0]);
+                    hm
+                },
+            })
+            .build()
+    } else {
+        PrometheusExporterOptions::builder()
+            .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .use_seconds_for_durations(use_seconds_latency)
+            .build()
+    };
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
@@ -407,7 +413,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
     // Disable cache to ensure replay happens completely
-    starter.worker_config.max_cached_workflows(0_usize);
+    starter.worker_config.max_cached_workflows = 0_usize;
     let worker = starter.get_worker().await;
     let run_id = starter.start_wf().await;
     let task = worker.poll_workflow_activation().await.unwrap();
@@ -558,7 +564,7 @@ async fn latency_metrics(
     #[values(true, false)] show_units: bool,
 ) {
     let (telemopts, addr, _aborter) = prom_metrics(Some(
-        PrometheusExporterOptionsBuilder::default()
+        PrometheusExporterOptions::builder()
             .socket_addr(ANY_PORT.parse().unwrap())
             .use_seconds_for_durations(use_seconds_latency)
             .unit_suffix(show_units)
@@ -572,8 +578,7 @@ async fn latency_metrics(
                     hm
                 },
             })
-            .build()
-            .unwrap(),
+            .build(),
     ));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("latency_metrics", rt);
@@ -663,18 +668,17 @@ async fn request_fail_codes_otel() {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        let opts = OtelCollectorOptionsBuilder::default()
+        let opts = OtelCollectorOptions::builder()
             .url(url)
-            .build()
-            .unwrap();
+            .build();
         build_otlp_metric_exporter(opts).unwrap()
     } else {
         // skip
         return;
     };
-    let mut telemopts = TelemetryOptions::builder();
     let exporter = Arc::new(exporter);
-    telemopts.metrics(exporter as Arc<dyn CoreMeter>);
+    let telemopts = TelemetryOptions::builder()
+        .metrics(exporter as Arc<dyn CoreMeter>);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build()))
         .unwrap();
     let opts = get_integ_server_options();
@@ -717,18 +721,16 @@ async fn docker_metrics_with_prometheus(
     );
 
     // Configure the OTLP exporter with HTTP
-    let opts = OtelCollectorOptionsBuilder::default()
+    let opts = OtelCollectorOptions::builder()
         .url(otel_collector_addr.parse().unwrap())
         .protocol(otel_protocol)
         .global_tags(HashMap::from([("test_id".to_string(), test_uid.clone())]))
-        .build()
-        .unwrap();
+        .build();
     let exporter = Arc::new(build_otlp_metric_exporter(opts).unwrap());
     let telemopts = TelemetryOptions::builder()
         .metrics(exporter as Arc<dyn CoreMeter>)
         .metric_prefix(test_uid.clone())
-        .build()
-        .unwrap();
+        .build();
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let test_name = "docker_metrics_with_prometheus";
     let mut starter = CoreWfStarter::new_with_runtime(test_name, rt);
@@ -786,9 +788,7 @@ async fn activity_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter
-        .worker_config
-        .graceful_shutdown_period(Duration::from_secs(1));
+    starter.worker_config.graceful_shutdown_period = Some(Duration::from_secs(1));
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
@@ -920,12 +920,12 @@ async fn nexus_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nexus_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types(WorkerTaskTypes {
+    starter.worker_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
-    });
+    };
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
@@ -1102,9 +1102,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
     worker.register_wf(
@@ -1187,16 +1185,17 @@ async fn metrics_available_from_custom_slot_supplier() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("metrics_available_from_custom_slot_supplier", rt);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
-    starter.worker_config.clear_max_outstanding_opts();
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.worker_config.max_outstanding_workflow_tasks = None;
+    starter.worker_config.max_outstanding_local_activities = None;
+    starter.worker_config.max_outstanding_activities = None;
+    starter.worker_config.max_outstanding_nexus_tasks = None;
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
         inner: FixedSizeSlotSupplier::new(5),
         metrics: OnceLock::new(),
     }));
-    starter.worker_config.tuner(Arc::new(tb.build()));
+    starter.worker_config.tuner = Some(Arc::new(tb.build()));
     let mut worker = starter.worker().await;
 
     worker.register_wf(
@@ -1314,16 +1313,15 @@ async fn test_prometheus_metric_format_consistency() {
 
 #[tokio::test]
 async fn prometheus_label_nonsense() {
-    let mut opts_builder = PrometheusExporterOptionsBuilder::default();
-    opts_builder.socket_addr(ANY_PORT.parse().unwrap());
+    let opts_builder = PrometheusExporterOptions::builder()
+        .socket_addr(ANY_PORT.parse().unwrap());
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build()));
     let meter = telemopts.metrics.clone().unwrap();
 
     let ctr = meter.counter(
-        MetricParametersBuilder::default()
+        MetricParameters::builder()
             .name("some_counter")
-            .build()
-            .unwrap(),
+            .build(),
     );
     let a1 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("thing", "foo")]));
     let a2 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("blerp", "baz")]));
@@ -1347,20 +1345,17 @@ async fn sticky_queue_label_strategy(
     strategy: TaskQueueLabelStrategy,
 ) {
     let (mut telemopts, addr, _aborter) = prom_metrics(Some(
-        PrometheusExporterOptionsBuilder::default()
+        PrometheusExporterOptions::builder()
             .socket_addr(ANY_PORT.parse().unwrap())
-            .build()
-            .unwrap(),
+            .build(),
     ));
     telemopts.task_queue_label_strategy = strategy;
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = format!("sticky_queue_label_strategy_{strategy:?}");
     let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
     // Enable sticky queues by setting a reasonable cache size
-    starter.worker_config.max_cached_workflows(10_usize);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.max_cached_workflows = 10_usize;
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
@@ -1436,14 +1431,15 @@ async fn resource_based_tuner_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "resource_based_tuner_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
-    starter.worker_config.clear_max_outstanding_opts();
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.worker_config.max_outstanding_workflow_tasks = None;
+    starter.worker_config.max_outstanding_local_activities = None;
+    starter.worker_config.max_outstanding_activities = None;
+    starter.worker_config.max_outstanding_nexus_tasks = None;
 
     // Create a resource-based tuner with reasonable thresholds
     let tuner = ResourceBasedTuner::new(0.8, 0.8);
-    starter.worker_config.tuner(Arc::new(tuner));
+    starter.worker_config.tuner = Some(Arc::new(tuner));
 
     let mut worker = starter.worker().await;
 

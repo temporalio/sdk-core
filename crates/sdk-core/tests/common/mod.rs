@@ -46,8 +46,8 @@ use temporalio_common::{
         },
     },
     telemetry::{
-        Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
-        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+        Logger, OtelCollectorOptions, PrometheusExporterOptions,
+        TelemetryOptions,
         metrics::CoreMeter,
     },
     worker::{WorkerTaskTypes, WorkerVersioningStrategy},
@@ -62,8 +62,8 @@ use temporalio_sdk::{
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder, WorkerConfig,
-    WorkerConfigBuilder, init_replay_worker, init_worker,
+    ClientOptions, CoreRuntime, RuntimeOptions, WorkerConfig,
+    init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
@@ -101,9 +101,9 @@ pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
-pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
-    let mut b = WorkerConfig::builder();
-    b.namespace(NAMESPACE)
+pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
+    WorkerConfig::builder()
+        .namespace(NAMESPACE)
         .task_queue(tq)
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
@@ -112,8 +112,9 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
             build_id: "test_build_id".to_owned(),
         })
         .task_types(WorkerTaskTypes::all())
-        .skip_client_worker_set_check(true);
-    b
+        .skip_client_worker_set_check(true)
+        .build()
+        .expect("Configuration options construct properly")
 }
 
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
@@ -129,9 +130,7 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     init_integ_telem();
-    let worker_cfg = integ_worker_config(test_name)
-        .build()
-        .expect("Configuration options construct properly");
+    let worker_cfg = integ_worker_config(test_name);
     let worker = init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
         .expect("Replay worker must init properly");
     Arc::new(worker)
@@ -177,7 +176,7 @@ pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }
     Some(INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
-        let runtime_options = RuntimeOptionsBuilder::default()
+        let runtime_options = RuntimeOptions::builder()
             .telemetry_options(telemetry_options)
             .build()
             .expect("Runtime options build cleanly");
@@ -224,7 +223,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
 pub(crate) struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    pub worker_config: WorkerConfigBuilder,
+    pub worker_config: WorkerConfig,
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
@@ -298,10 +297,20 @@ impl CoreWfStarter {
     ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
-        let mut worker_config = integ_worker_config(&task_queue);
-        worker_config
+        let worker_config = WorkerConfig::builder()
             .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
-            .max_cached_workflows(1000_usize);
+            .task_queue(&task_queue)
+            .max_outstanding_activities(100_usize)
+            .max_outstanding_local_activities(100_usize)
+            .max_outstanding_workflow_tasks(100_usize)
+            .versioning_strategy(WorkerVersioningStrategy::None {
+                build_id: "test_build_id".to_owned(),
+            })
+            .task_types(WorkerTaskTypes::all())
+            .skip_client_worker_set_check(true)
+            .max_cached_workflows(1000_usize)
+            .build()
+            .expect("Configuration options construct properly");
         Self {
             task_queue_name: task_queue,
             worker_config,
@@ -452,10 +461,7 @@ impl CoreWfStarter {
                 } else {
                     init_integ_telem().unwrap()
                 };
-                let cfg = self
-                    .worker_config
-                    .build()
-                    .expect("Worker config must be valid");
+                let cfg = self.worker_config.clone();
                 let client = if let Some(client) = self.client_override.take() {
                     client
                 } else {
@@ -794,41 +800,49 @@ pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
 }
 
 pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
-    let mut ob = TelemetryOptions::builder();
     let filter_string =
         env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporalio_sdk_core=INFO".to_string());
+
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        let opts = OtelCollectorOptionsBuilder::default()
+        let opts = OtelCollectorOptions::builder()
             .url(url)
+            .build();
+        TelemetryOptions::builder()
+            .metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()) as Arc<dyn CoreMeter>)
+            .logging(Logger::Console {
+                filter: filter_string,
+            })
             .build()
-            .unwrap();
-        ob.metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()) as Arc<dyn CoreMeter>);
-    }
-    if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
+    } else if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()
         .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()))
     {
         let prom_info = start_prometheus_metric_exporter(
-            PrometheusExporterOptionsBuilder::default()
+            PrometheusExporterOptions::builder()
                 .socket_addr(addr)
-                .build()
-                .unwrap(),
+                .build(),
         )
         .unwrap();
-        ob.metrics(prom_info.meter as Arc<dyn CoreMeter>);
+        TelemetryOptions::builder()
+            .metrics(prom_info.meter as Arc<dyn CoreMeter>)
+            .logging(Logger::Console {
+                filter: filter_string,
+            })
+            .build()
+    } else {
+        TelemetryOptions::builder()
+            .logging(Logger::Console {
+                filter: filter_string,
+            })
+            .build()
     }
-    ob.logging(Logger::Console {
-        filter: filter_string,
-    })
-    .build()
-    .unwrap()
 }
 
 pub(crate) fn get_integ_runtime_options(telemopts: TelemetryOptions) -> RuntimeOptions {
-    RuntimeOptionsBuilder::default()
+    RuntimeOptions::builder()
         .telemetry_options(telemopts)
         .build()
         .unwrap()
@@ -886,10 +900,9 @@ pub(crate) fn prom_metrics(
     options_override: Option<PrometheusExporterOptions>,
 ) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
     let prom_exp_opts = options_override.unwrap_or_else(|| {
-        PrometheusExporterOptionsBuilder::default()
+        PrometheusExporterOptions::builder()
             .socket_addr(ANY_PORT.parse().unwrap())
             .build()
-            .unwrap()
     });
     let mut telemopts = get_integ_telem_options();
     let prom_info = start_prometheus_metric_exporter(prom_exp_opts).unwrap();
@@ -998,13 +1011,14 @@ impl Drop for ActivationAssertionsInterceptor {
 
 #[cfg(feature = "ephemeral-server")]
 use temporalio_sdk_core::ephemeral_server::{
-    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, default_cached_download,
+    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfig, default_cached_download,
 };
 
 #[cfg(feature = "ephemeral-server")]
 pub(crate) fn integ_dev_server_config(
     mut extra_args: Vec<String>,
-) -> TemporalDevServerConfigBuilder {
+    ui: bool,
+) -> TemporalDevServerConfig {
     let cli_version = if let Ok(ver_override) = env::var(CLI_VERSION_OVERRIDE_ENV_VAR) {
         EphemeralExe::CachedDownload {
             version: EphemeralExeVersion::Fixed(ver_override.to_owned()),
@@ -1041,7 +1055,9 @@ pub(crate) fn integ_dev_server_config(
         .map(Into::into),
     );
 
-    let mut config = TemporalDevServerConfigBuilder::default();
-    config.exe(cli_version).extra_args(extra_args);
-    config
+    TemporalDevServerConfig::builder()
+        .exe(cli_version)
+        .extra_args(extra_args)
+        .ui(ui)
+        .build()
 }

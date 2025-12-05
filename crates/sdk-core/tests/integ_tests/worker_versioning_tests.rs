@@ -37,16 +37,14 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         deployment_name: deploy_name.clone(),
         build_id: "1.0".to_string(),
     };
-    starter
-        .worker_config
-        .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
-            WorkerDeploymentOptions {
-                version: version.clone(),
-                use_worker_versioning: true,
-                default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
-            },
-        ))
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.versioning_strategy = WorkerVersioningStrategy::WorkerDeploymentBased(
+        WorkerDeploymentOptions {
+            version: version.clone(),
+            use_worker_versioning: true,
+            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+        },
+    );
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 
@@ -153,18 +151,16 @@ async fn activity_has_deployment_stamp() {
     let wf_name = "activity_has_deployment_stamp";
     let mut starter = CoreWfStarter::new(wf_name);
     let deploy_name = format!("deployment-{}", starter.get_task_queue());
-    starter
-        .worker_config
-        .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
-            WorkerDeploymentOptions {
-                version: WorkerDeploymentVersion {
-                    deployment_name: deploy_name.clone(),
-                    build_id: "1.0".to_string(),
-                },
-                use_worker_versioning: true,
-                default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+    starter.worker_config.versioning_strategy = WorkerVersioningStrategy::WorkerDeploymentBased(
+        WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: deploy_name.clone(),
+                build_id: "1.0".to_string(),
             },
-        ));
+            use_worker_versioning: true,
+            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+        },
+    );
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {

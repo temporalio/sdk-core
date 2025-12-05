@@ -39,7 +39,7 @@ mod integ_tests {
             operatorservice::v1::CreateNexusEndpointRequest,
             workflowservice::v1::ListNamespacesRequest,
         },
-        worker::WorkerConfigBuilder,
+        worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
     };
     use temporalio_sdk_core::{CoreRuntime, init_worker};
     use tonic::IntoRequest;
@@ -62,6 +62,10 @@ mod integ_tests {
             WorkerConfig::builder()
                 .namespace("default")
                 .task_queue("Wheee!")
+                .task_types(WorkerTaskTypes::all())
+                .versioning_strategy(WorkerVersioningStrategy::None {
+                    build_id: "test".to_owned(),
+                })
                 .build()
                 .unwrap(),
             // clone the client if you intend to use it later. Strip off the retry wrapper since

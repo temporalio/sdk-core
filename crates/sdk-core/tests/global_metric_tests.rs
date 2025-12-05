@@ -7,7 +7,7 @@ use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 use temporalio_common::telemetry::{
-    Logger, OtelCollectorOptionsBuilder, TelemetryOptionsBuilder, metrics::CoreMeter,
+    Logger, OtelCollectorOptions, TelemetryOptions, metrics::CoreMeter,
 };
 use temporalio_sdk_core::{
     CoreRuntime,
@@ -58,18 +58,16 @@ async fn otel_errors_logged_as_errors() {
             .with_env_filter("debug")
             .finish(),
     );
-    let opts = OtelCollectorOptionsBuilder::default()
+    let opts = OtelCollectorOptions::builder()
         .url("https://localhost:12345/v1/metrics".parse().unwrap()) // Nothing bound on that port
-        .build()
-        .unwrap();
+        .build();
     let exporter = build_otlp_metric_exporter(opts).unwrap();
 
     // Global initialization is needed to capture (some) otel logging.
     telemetry_init_global(
         TelemetryOptions::builder()
             .subscriber_override(subscriber)
-            .build()
-            .unwrap(),
+            .build(),
     )
     .unwrap();
     let telemopts = TelemetryOptions::builder()
@@ -78,8 +76,7 @@ async fn otel_errors_logged_as_errors() {
         .logging(Logger::Console {
             filter: construct_filter_string(Level::INFO, Level::WARN),
         })
-        .build()
-        .unwrap();
+        .build();
 
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);

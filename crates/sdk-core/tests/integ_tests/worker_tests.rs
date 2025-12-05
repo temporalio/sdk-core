@@ -53,7 +53,7 @@ use temporalio_common::{
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, PollerBehavior, SlotInfo, SlotInfoTrait,
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy,
+        SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
         WorkflowSlotKind,
     },
 };
@@ -176,16 +176,17 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
 async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     let wf_name = "resource_based_few_pollers_guarantees_non_sticky_poll";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .clear_max_outstanding_opts()
-        .task_types(WorkerTaskTypes::workflow_only())
-        // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
+    starter.worker_config.max_outstanding_workflow_tasks = None;
+    starter.worker_config.max_outstanding_local_activities = None;
+    starter.worker_config.max_outstanding_activities = None;
+    starter.worker_config.max_outstanding_nexus_tasks = None;
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(3_usize);
     // Set the limits to zero so it's essentially unwilling to hand out slots
     let mut tuner = ResourceBasedTuner::new(0.0, 0.0);
     tuner.with_workflow_slots_options(ResourceSlotOptions::new(2, 10, Duration::from_millis(0)));
-    starter.worker_config.tuner(Arc::new(tuner));
+    starter.worker_config.tuner = Some(Arc::new(tuner));
     let mut worker = starter.worker().await;
 
     // Workflow doesn't actually need to do anything. We just need to see that we don't get stuck
@@ -216,9 +217,7 @@ async fn oversize_grpc_message() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let runtime = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, runtime);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
@@ -712,13 +711,16 @@ async fn test_custom_slot_supplier_simple() {
     ));
 
     let mut starter = CoreWfStarter::new("test_custom_slot_supplier_simple");
-    starter.worker_config.clear_max_outstanding_opts();
+    starter.worker_config.max_outstanding_workflow_tasks = None;
+    starter.worker_config.max_outstanding_local_activities = None;
+    starter.worker_config.max_outstanding_activities = None;
+    starter.worker_config.max_outstanding_nexus_tasks = None;
 
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(wf_supplier.clone());
     tb.activity_slot_supplier(activity_supplier.clone());
     tb.local_activity_slot_supplier(local_activity_supplier.clone());
-    starter.worker_config.tuner(Arc::new(tb.build()));
+    starter.worker_config.tuner = Some(Arc::new(tb.build()));
 
     let mut worker = starter.worker().await;
 

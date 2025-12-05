@@ -29,13 +29,13 @@ use temporalio_common::{
         temporal::api::enums::v1::EventType,
         test_utils::schedule_activity_cmd,
     },
-    telemetry::{Logger, TelemetryOptionsBuilder},
+    telemetry::{Logger, TelemetryOptions},
     worker::PollerBehavior,
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptionsBuilder,
-    ephemeral_server::{TemporalDevServerConfigBuilder, default_cached_download},
+    ClientOptions, CoreRuntime, RuntimeOptions,
+    ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker,
     telemetry::CoreLogStreamConsumer,
     test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
@@ -125,15 +125,14 @@ async fn out_of_order_completion_doesnt_hang() {
 async fn switching_worker_client_changes_poll() {
     // Start two servers
     info!("Starting servers");
-    let server_config = TemporalDevServerConfigBuilder::default()
+    let server_config = TemporalDevServerConfig::builder()
         .exe(default_cached_download())
         // We need to lower the poll timeout so the poll call rolls over
         .extra_args(vec![
             "--dynamic-config-value".to_string(),
             "matching.longPollExpirationInterval=\"1s\"".to_string(),
         ])
-        .build()
-        .unwrap();
+        .build();
     let mut server1 = server_config
         .start_server_with_output(Stdio::null(), Stdio::null())
         .await
@@ -191,13 +190,12 @@ async fn switching_worker_client_changes_poll() {
             .unwrap();
 
         // Create a worker only on the first server
+        let mut config = integ_worker_config("my-task-queue");
+        // We want a cache so we don't get extra remove-job activations
+        config.max_cached_workflows = 100_usize;
         let worker = init_worker(
             init_integ_telem().unwrap(),
-            integ_worker_config("my-task-queue")
-                // We want a cache so we don't get extra remove-job activations
-                .max_cached_workflows(100_usize)
-                .build()
-                .unwrap(),
+            config,
             client1.clone(),
         )
         .unwrap();
@@ -252,24 +250,18 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     let wf_name = "only_one_workflow_slot_and_two_pollers";
     let mut starter = CoreWfStarter::new(wf_name);
     if use_autoscaling {
-        starter
-            .worker_config
-            .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-                minimum: 1,
-                maximum: 5,
-                initial: 1,
-            });
+        starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+            minimum: 1,
+            maximum: 5,
+            initial: 1,
+        };
     } else {
-        starter
-            .worker_config
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2));
+        starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(2);
     }
-    starter
-        .worker_config
-        .max_outstanding_workflow_tasks(2_usize)
-        .max_outstanding_local_activities(1_usize)
-        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1))
-        .max_outstanding_activities(1_usize);
+    starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
+    starter.worker_config.max_outstanding_local_activities = Some(1_usize);
+    starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
+    starter.worker_config.max_outstanding_activities = Some(1_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
@@ -335,9 +327,8 @@ async fn replace_client_works_after_polling_failure() {
             filter: "OFF,temporalio_client=DEBUG".into(),
             consumer: Arc::new(log_consumer),
         })
-        .build()
-        .unwrap();
-    let runtime_opts = RuntimeOptionsBuilder::default()
+        .build();
+    let runtime_opts = RuntimeOptions::builder()
         .telemetry_options(telem_opts)
         .build()
         .unwrap();
@@ -376,7 +367,7 @@ async fn replace_client_works_after_polling_failure() {
 
     // Starting a second dev server for the worker to connect to initially. Later this server will be shut down
     // and the worker client replaced with a client connected to the main integration test server.
-    let initial_server_config = integ_dev_server_config(vec![]).build();
+    let initial_server_config = integ_dev_server_config(vec![], false);
     let initial_server = Arc::new(Mutex::new(Some(
         initial_server_config
             .start_server_with_output(Stdio::null(), Stdio::null())
@@ -405,13 +396,12 @@ async fn replace_client_works_after_polling_failure() {
             let wf_name = "replace_client_works_after_polling_failure";
             let task_queue = format!("{wf_name}_tq");
 
+            let mut config = integ_worker_config(&task_queue);
+            config.max_cached_workflows = 100_usize;
             let worker = Arc::new(
                 init_worker(
                     &rt,
-                    integ_worker_config(&task_queue)
-                        .max_cached_workflows(100_usize)
-                        .build()
-                        .unwrap(),
+                    config,
                     client_for_initial_server.clone(),
                 )
                 .unwrap(),

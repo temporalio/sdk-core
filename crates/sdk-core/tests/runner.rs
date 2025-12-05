@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporalio_sdk_core::ephemeral_server::{TestServerConfigBuilder, default_cached_download};
+use temporalio_sdk_core::ephemeral_server::{TestServerConfig, default_cached_download};
 use tokio::{self, process::Command};
 
 /// This env var is set (to any value) if temporal CLI dev server is in use
@@ -95,9 +95,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let (server, envs) = match server_kind {
         ServerKind::TemporalCLI => {
             let config =
-                integ_dev_server_config(vec!["--http-port".to_string(), "7243".to_string()])
-                    .ui(true)
-                    .build();
+                integ_dev_server_config(vec!["--http-port".to_string(), "7243".to_string()], true);
             println!("Using temporal CLI: {config:?}");
             (
                 Some(
@@ -109,7 +107,7 @@ async fn main() -> Result<(), anyhow::Error> {
             )
         }
         ServerKind::TestServer => {
-            let config = TestServerConfigBuilder::default()
+            let config = TestServerConfig::builder()
                 .exe(default_cached_download())
                 .build();
             println!("Using java test server");
