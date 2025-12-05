@@ -63,9 +63,11 @@ async fn temporal_cli_shutdown_port_reuse() {
 #[ignore]
 async fn temporal_cli_concurrent_starts() -> Result<(), Box<dyn std::error::Error>> {
     stream::iter((0..80).map(|_| {
-        Ok::<TemporalDevServerConfig, Box<dyn std::error::Error>>(TemporalDevServerConfig::builder()
-            .exe(default_cached_download())
-            .build())
+        Ok::<TemporalDevServerConfig, Box<dyn std::error::Error>>(
+            TemporalDevServerConfig::builder()
+                .exe(default_cached_download())
+                .build(),
+        )
     }))
     .try_for_each_concurrent(8, |config| async move {
         let mut server = config.start_server().await?;

@@ -193,12 +193,7 @@ async fn switching_worker_client_changes_poll() {
         let mut config = integ_worker_config("my-task-queue");
         // We want a cache so we don't get extra remove-job activations
         config.max_cached_workflows = 100_usize;
-        let worker = init_worker(
-            init_integ_telem().unwrap(),
-            config,
-            client1.clone(),
-        )
-        .unwrap();
+        let worker = init_worker(init_integ_telem().unwrap(), config, client1.clone()).unwrap();
 
         // Poll for first task, confirm it's first wf, complete, and wait for complete
         info!("Doing initial poll");
@@ -398,14 +393,8 @@ async fn replace_client_works_after_polling_failure() {
 
             let mut config = integ_worker_config(&task_queue);
             config.max_cached_workflows = 100_usize;
-            let worker = Arc::new(
-                init_worker(
-                    &rt,
-                    config,
-                    client_for_initial_server.clone(),
-                )
-                .unwrap(),
-            );
+            let worker =
+                Arc::new(init_worker(&rt, config, client_for_initial_server.clone()).unwrap());
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server

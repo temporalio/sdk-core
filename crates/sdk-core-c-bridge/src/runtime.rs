@@ -17,12 +17,11 @@ use std::{
 };
 use temporalio_common::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
-    OtelCollectorOptions, PrometheusExporterOptions,
-    TelemetryOptions as CoreTelemetryOptions, metrics::CoreMeter,
+    OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions as CoreTelemetryOptions,
+    metrics::CoreMeter,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
-    TokioRuntimeBuilder as TokioRuntime,
+    CoreRuntime, RuntimeOptions as CoreRuntimeOptions, TokioRuntimeBuilder as TokioRuntime,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;
@@ -143,11 +142,8 @@ pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> R
             // freeable
             let mut runtime = Runtime {
                 core: Arc::new(
-                    CoreRuntime::new(
-                        CoreRuntimeOptions::default(),
-                        TokioRuntime::default(),
-                    )
-                    .unwrap(),
+                    CoreRuntime::new(CoreRuntimeOptions::default(), TokioRuntime::default())
+                        .unwrap(),
                 ),
                 log_forwarder: None,
             };
@@ -208,13 +204,15 @@ impl Runtime {
         let mut log_forwarder = None;
         let telemetry_options = if let Some(v) = unsafe { options.telemetry.as_ref() } {
             // Prepare values
-            let (attach_service_name, metric_prefix) = if let Some(v) = unsafe { v.metrics.as_ref() } {
-                (v.attach_service_name, v.metric_prefix.to_option_string())
-            } else {
-                (true, None)
-            };
+            let (attach_service_name, metric_prefix) =
+                if let Some(v) = unsafe { v.metrics.as_ref() } {
+                    (v.attach_service_name, v.metric_prefix.to_option_string())
+                } else {
+                    (true, None)
+                };
 
-            let logging = unsafe { v.logging.as_ref() }.map(|v| if let Some(callback) = v.forward_to {
+            let logging = unsafe { v.logging.as_ref() }.map(|v| {
+                if let Some(callback) = v.forward_to {
                     let consumer = Arc::new(LogForwarder {
                         callback,
                         active: AtomicBool::new(false),
@@ -228,7 +226,8 @@ impl Runtime {
                     Logger::Console {
                         filter: v.filter.to_string(),
                     }
-                });
+                }
+            });
 
             // Build with all values
             CoreTelemetryOptions::builder()

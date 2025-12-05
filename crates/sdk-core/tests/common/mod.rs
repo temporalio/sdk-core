@@ -46,8 +46,7 @@ use temporalio_common::{
         },
     },
     telemetry::{
-        Logger, OtelCollectorOptions, PrometheusExporterOptions,
-        TelemetryOptions,
+        Logger, OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
         metrics::CoreMeter,
     },
     worker::{WorkerTaskTypes, WorkerVersioningStrategy},
@@ -62,8 +61,7 @@ use temporalio_sdk::{
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptions, WorkerConfig,
-    init_replay_worker, init_worker,
+    ClientOptions, CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
@@ -807,9 +805,7 @@ pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        let opts = OtelCollectorOptions::builder()
-            .url(url)
-            .build();
+        let opts = OtelCollectorOptions::builder().url(url).build();
         TelemetryOptions::builder()
             .metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()) as Arc<dyn CoreMeter>)
             .logging(Logger::Console {

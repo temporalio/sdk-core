@@ -98,8 +98,7 @@ use tokio::{
     task::{LocalSet, spawn_blocking},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tokio_util::either::Either;
-use tokio_util::sync::CancellationToken;
+use tokio_util::{either::Either, sync::CancellationToken};
 use tracing::{Span, Subscriber};
 
 /// Id used by server for "legacy" queries. IE: Queries that come in the `query` rather than

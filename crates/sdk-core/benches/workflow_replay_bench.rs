@@ -86,21 +86,9 @@ pub fn bench_metrics(c: &mut Criterion) {
     c.bench_function("Record with new attributes on each call", move |b| {
         b.iter_batched(
             || {
-                let c = meter.counter(
-                    MetricParameters::builder()
-                        .name("c")
-                        .build(),
-                );
-                let h = meter.histogram(
-                    MetricParameters::builder()
-                        .name("h")
-                        .build(),
-                );
-                let g = meter.gauge(
-                    MetricParameters::builder()
-                        .name("g")
-                        .build(),
-                );
+                let c = meter.counter(MetricParameters::builder().name("c").build());
+                let h = meter.histogram(MetricParameters::builder().name("h").build());
+                let g = meter.gauge(MetricParameters::builder().name("g").build());
 
                 let vals = [1, 2, 3, 4, 5];
                 let labels = ["l1", "l2"];

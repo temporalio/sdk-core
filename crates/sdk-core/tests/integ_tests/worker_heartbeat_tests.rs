@@ -26,9 +26,7 @@ use temporalio_common::{
             workflowservice::v1::{DescribeWorkerRequest, ListWorkersRequest},
         },
     },
-    telemetry::{
-        OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
-    },
+    telemetry::{OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions},
     worker::PollerBehavior,
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
@@ -120,8 +118,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                 .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
         }
         "prom" => {
-            let opts_build = PrometheusExporterOptions::builder()
-                .socket_addr(ANY_PORT.parse().unwrap());
+            let opts_build =
+                PrometheusExporterOptions::builder().socket_addr(ANY_PORT.parse().unwrap());
             let opts = opts_build.build();
             rt.telemetry_mut()
                 .attach_late_init_metrics(start_prometheus_metric_exporter(opts).unwrap().meter);

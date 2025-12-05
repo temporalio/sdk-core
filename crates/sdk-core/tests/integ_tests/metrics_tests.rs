@@ -48,8 +48,8 @@ use temporalio_common::{
         },
     },
     telemetry::{
-        HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol,
-        PrometheusExporterOptions, TaskQueueLabelStrategy, TelemetryOptions,
+        HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
+        TaskQueueLabelStrategy, TelemetryOptions,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
             MetricParameters, NewAttributes,
@@ -57,8 +57,8 @@ use temporalio_common::{
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes,
-        WorkerVersioningStrategy, WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
+        WorkflowSlotKind,
     },
 };
 use temporalio_sdk::{
@@ -668,19 +668,15 @@ async fn request_fail_codes_otel() {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        let opts = OtelCollectorOptions::builder()
-            .url(url)
-            .build();
+        let opts = OtelCollectorOptions::builder().url(url).build();
         build_otlp_metric_exporter(opts).unwrap()
     } else {
         // skip
         return;
     };
     let exporter = Arc::new(exporter);
-    let telemopts = TelemetryOptions::builder()
-        .metrics(exporter as Arc<dyn CoreMeter>);
-    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build()))
-        .unwrap();
+    let telemopts = TelemetryOptions::builder().metrics(exporter as Arc<dyn CoreMeter>);
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build())).unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
         .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
@@ -1313,16 +1309,11 @@ async fn test_prometheus_metric_format_consistency() {
 
 #[tokio::test]
 async fn prometheus_label_nonsense() {
-    let opts_builder = PrometheusExporterOptions::builder()
-        .socket_addr(ANY_PORT.parse().unwrap());
+    let opts_builder = PrometheusExporterOptions::builder().socket_addr(ANY_PORT.parse().unwrap());
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build()));
     let meter = telemopts.metrics.clone().unwrap();
 
-    let ctr = meter.counter(
-        MetricParameters::builder()
-            .name("some_counter")
-            .build(),
-    );
+    let ctr = meter.counter(MetricParameters::builder().name("some_counter").build());
     let a1 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("thing", "foo")]));
     let a2 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("blerp", "baz")]));
     ctr.add(1, &a1);

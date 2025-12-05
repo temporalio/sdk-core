@@ -5,9 +5,7 @@ use crate::{
 };
 use std::{collections::HashMap, ops::Deref};
 use temporalio_client::ClientOptions;
-use temporalio_sdk_core::ephemeral_server::{
-    TemporalDevServerConfig, default_cached_download,
-};
+use temporalio_sdk_core::ephemeral_server::{TemporalDevServerConfig, default_cached_download};
 use url::Url;
 
 pub fn byte_array_to_vec(runtime: *mut Runtime, byte_array: *const ByteArray) -> Option<Vec<u8>> {

@@ -1461,7 +1461,7 @@ mod tests {
         // The validation would need to be added manually via a builder validator
         // For now, this test just documents that a config with 0 pollers can be created
         // but would fail at runtime when attempting to create the worker
-        use temporalio_common::worker::{WorkerConfig, WorkerVersioningStrategy, WorkerTaskTypes};
+        use temporalio_common::worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy};
         let _cfg = WorkerConfig::builder()
             .namespace("test")
             .task_queue("test")
