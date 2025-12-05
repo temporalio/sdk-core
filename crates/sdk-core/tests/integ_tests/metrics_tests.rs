@@ -83,26 +83,22 @@ async fn prometheus_metrics_exported(
     #[values(true, false)] use_seconds_latency: bool,
     #[values(true, false)] custom_buckets: bool,
 ) {
-    let opts = if custom_buckets {
-        PrometheusExporterOptions::builder()
-            .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
-            .socket_addr(ANY_PORT.parse().unwrap())
-            .use_seconds_for_durations(use_seconds_latency)
-            .histogram_bucket_overrides(HistogramBucketOverrides {
+    let opts = PrometheusExporterOptions::builder()
+        .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
+        .socket_addr(ANY_PORT.parse().unwrap())
+        .use_seconds_for_durations(use_seconds_latency)
+        .histogram_bucket_overrides(if custom_buckets {
+            HistogramBucketOverrides {
                 overrides: {
                     let mut hm = HashMap::new();
                     hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME.to_string(), vec![1337.0]);
                     hm
                 },
-            })
-            .build()
-    } else {
-        PrometheusExporterOptions::builder()
-            .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
-            .socket_addr(ANY_PORT.parse().unwrap())
-            .use_seconds_for_durations(use_seconds_latency)
-            .build()
-    };
+            }
+        } else {
+            Default::default()
+        })
+        .build();
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let opts = get_integ_server_options();

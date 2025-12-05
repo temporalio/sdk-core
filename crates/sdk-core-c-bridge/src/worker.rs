@@ -1164,7 +1164,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
 
     fn try_from(opt: &WorkerOptions) -> anyhow::Result<Self> {
         let converted_tuner: temporalio_sdk_core::TunerHolder = (&opt.tuner).try_into()?;
-        let config = WorkerConfig::builder()
+        WorkerConfig::builder()
             .namespace(opt.namespace.to_str())
             .task_queue(opt.task_queue.to_str())
             .versioning_strategy({
@@ -1274,8 +1274,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                     .collect::<HashSet<_>>(),
             )
             .build()
-            .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(config)
+            .map_err(|err| anyhow::anyhow!(err))
     }
 }
 
@@ -1325,21 +1324,17 @@ impl TryFrom<&TunerHolder> for temporalio_sdk_core::TunerHolder {
             bail!("All resource-based slot suppliers must have the same ResourceBasedTunerOptions",);
         }
 
-        let resource_based = first.map(|f| {
-            temporalio_sdk_core::ResourceBasedSlotsOptions::builder()
-                .target_mem_usage(f.target_memory_usage)
-                .target_cpu_usage(f.target_cpu_usage)
-                .build()
-        });
-
-        let builder = temporalio_sdk_core::TunerHolderOptions::builder()
+        temporalio_sdk_core::TunerHolderOptions::builder()
             .workflow_slot_options(holder.workflow_slot_supplier.try_into()?)
             .activity_slot_options(holder.activity_slot_supplier.try_into()?)
             .local_activity_slot_options(holder.local_activity_slot_supplier.try_into()?)
             .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?)
-            .maybe_resource_based_options(resource_based);
-
-        builder
+            .maybe_resource_based_options(first.map(|f| {
+                temporalio_sdk_core::ResourceBasedSlotsOptions::builder()
+                    .target_mem_usage(f.target_memory_usage)
+                    .target_cpu_usage(f.target_cpu_usage)
+                    .build()
+            }))
             .build()
             .map_err(|e| anyhow::anyhow!("Failed building tuner holder options: {}", e))?
             .build_tuner_holder()

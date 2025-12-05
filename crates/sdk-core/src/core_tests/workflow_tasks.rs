@@ -2023,9 +2023,11 @@ async fn no_race_acquiring_permits() {
 
     let worker = Worker::new_test(
         {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.max_outstanding_workflow_tasks = Some(2_usize);
-            cfg.max_cached_workflows = 0_usize;
+            let mut cfg = test_worker_cfg()
+                .max_outstanding_workflow_tasks(2_usize)
+                .max_cached_workflows(0_usize)
+                .build()
+                .unwrap();
             cfg.ignore_evicts_on_shutdown = false;
             cfg
         },

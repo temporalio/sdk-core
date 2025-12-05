@@ -203,7 +203,6 @@ impl Runtime {
         // Build telemetry options
         let mut log_forwarder = None;
         let telemetry_options = if let Some(v) = unsafe { options.telemetry.as_ref() } {
-            // Prepare values
             let (attach_service_name, metric_prefix) =
                 if let Some(v) = unsafe { v.metrics.as_ref() } {
                     (v.attach_service_name, v.metric_prefix.to_option_string())
@@ -229,7 +228,6 @@ impl Runtime {
                 }
             });
 
-            // Build with all values
             CoreTelemetryOptions::builder()
                 .attach_service_name(attach_service_name)
                 .maybe_metric_prefix(metric_prefix)
@@ -239,17 +237,15 @@ impl Runtime {
             CoreTelemetryOptions::default()
         };
 
-        let heartbeat_interval = if options.worker_heartbeat_interval_millis == 0 {
-            None
-        } else {
-            Some(Duration::from_millis(
-                options.worker_heartbeat_interval_millis,
-            ))
-        };
-
         let core_runtime_options = CoreRuntimeOptions::builder()
             .telemetry_options(telemetry_options)
-            .maybe_heartbeat_interval(heartbeat_interval)
+            .maybe_heartbeat_interval(if options.worker_heartbeat_interval_millis == 0 {
+                None
+            } else {
+                Some(Duration::from_millis(
+                    options.worker_heartbeat_interval_millis,
+                ))
+            })
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -392,29 +388,30 @@ fn create_meter(
             ));
         }
         // Build OTel exporter
-        let metric_periodicity = if otel_options.metric_periodicity_millis > 0 {
-            Some(Duration::from_millis(
-                otel_options.metric_periodicity_millis.into(),
-            ))
-        } else {
-            None
-        };
-        let build = OtelCollectorOptions::builder()
-            .url(Url::parse(otel_options.url.to_str())?)
-            .headers(otel_options.headers.to_string_map_on_newlines())
-            .metric_temporality(match otel_options.metric_temporality {
-                OpenTelemetryMetricTemporality::Cumulative => MetricTemporality::Cumulative,
-                OpenTelemetryMetricTemporality::Delta => MetricTemporality::Delta,
-            })
-            .global_tags(options.global_tags.to_string_map_on_newlines())
-            .use_seconds_for_durations(otel_options.durations_as_seconds)
-            .histogram_bucket_overrides(HistogramBucketOverrides {
-                overrides: parse_histogram_bucket_overrides(
-                    &otel_options.histogram_bucket_overrides,
-                )?,
-            })
-            .maybe_metric_periodicity(metric_periodicity);
-        Ok(Arc::new(build_otlp_metric_exporter(build.build())?))
+        Ok(Arc::new(build_otlp_metric_exporter(
+            OtelCollectorOptions::builder()
+                .url(Url::parse(otel_options.url.to_str())?)
+                .headers(otel_options.headers.to_string_map_on_newlines())
+                .metric_temporality(match otel_options.metric_temporality {
+                    OpenTelemetryMetricTemporality::Cumulative => MetricTemporality::Cumulative,
+                    OpenTelemetryMetricTemporality::Delta => MetricTemporality::Delta,
+                })
+                .global_tags(options.global_tags.to_string_map_on_newlines())
+                .use_seconds_for_durations(otel_options.durations_as_seconds)
+                .histogram_bucket_overrides(HistogramBucketOverrides {
+                    overrides: parse_histogram_bucket_overrides(
+                        &otel_options.histogram_bucket_overrides,
+                    )?,
+                })
+                .maybe_metric_periodicity(if otel_options.metric_periodicity_millis > 0 {
+                    Some(Duration::from_millis(
+                        otel_options.metric_periodicity_millis.into(),
+                    ))
+                } else {
+                    None
+                })
+                .build(),
+        )?))
     } else if let Some(prom_options) = unsafe { options.prometheus.as_ref() } {
         if custom_meter.is_some() {
             return Err(anyhow::anyhow!(

@@ -222,12 +222,11 @@ mod tests {
             })
         });
 
-        let config = {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
-            cfg.max_outstanding_activities = Some(1_usize);
-            cfg
-        };
+        let config = test_worker_cfg()
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .max_outstanding_activities(1_usize)
+            .build()
+            .unwrap();
 
         let client = Arc::new(mock);
         let worker = worker::Worker::new(

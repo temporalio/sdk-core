@@ -203,24 +203,23 @@ impl TryFrom<&DevServerOptions> for ephemeral_server::TemporalDevServerConfig {
 
     fn try_from(options: &DevServerOptions) -> anyhow::Result<Self> {
         let test_server_options = unsafe { &*options.test_server };
-        let ui_port = if options.ui_port != 0 && options.ui {
-            Some(options.ui_port)
-        } else {
-            None
-        };
         Ok(ephemeral_server::TemporalDevServerConfig::builder()
             .exe(test_server_options.exe())
             .namespace(options.namespace.to_string())
             .ip(options.ip.to_string())
+            .maybe_port(test_server_options.port())
+            .maybe_db_filename(options.database_filename.to_option_string())
             .ui(options.ui)
+            .maybe_ui_port(if options.ui_port != 0 && options.ui {
+                Some(options.ui_port)
+            } else {
+                None
+            })
             .log((
                 options.log_format.to_string(),
                 options.log_level.to_string(),
             ))
             .extra_args(test_server_options.extra_args())
-            .maybe_port(test_server_options.port())
-            .maybe_db_filename(options.database_filename.to_option_string())
-            .maybe_ui_port(ui_port)
             .build())
     }
 }
@@ -231,8 +230,8 @@ impl TryFrom<&TestServerOptions> for ephemeral_server::TestServerConfig {
     fn try_from(options: &TestServerOptions) -> anyhow::Result<Self> {
         Ok(ephemeral_server::TestServerConfig::builder()
             .exe(options.exe())
-            .extra_args(options.extra_args())
             .maybe_port(options.port())
+            .extra_args(options.extra_args())
             .build())
     }
 }

@@ -252,11 +252,12 @@ pub struct RuntimeOptions {
     /// workers created using this runtime.
     ///
     /// Interval must be between 1s and 60s, inclusive.
+    #[builder(required, default = Some(Duration::from_secs(60)))]
     heartbeat_interval: Option<Duration>,
 }
 
 impl<S: runtime_options_builder::State> RuntimeOptionsBuilder<S> {
-    /// Builds the RuntimeOptions, validating that all parameters are within acceptable ranges.
+    /// Builds the RuntimeOptions
     ///
     /// # Errors
     /// Returns an error if heartbeat_interval is set but not between 1s and 60s inclusive.

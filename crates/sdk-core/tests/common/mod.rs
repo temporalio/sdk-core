@@ -101,7 +101,7 @@ pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
 
 pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
     WorkerConfig::builder()
-        .namespace(NAMESPACE)
+        .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
         .task_queue(tq)
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
@@ -295,20 +295,8 @@ impl CoreWfStarter {
     ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
-        let worker_config = WorkerConfig::builder()
-            .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
-            .task_queue(&task_queue)
-            .max_outstanding_activities(100_usize)
-            .max_outstanding_local_activities(100_usize)
-            .max_outstanding_workflow_tasks(100_usize)
-            .versioning_strategy(WorkerVersioningStrategy::None {
-                build_id: "test_build_id".to_owned(),
-            })
-            .task_types(WorkerTaskTypes::all())
-            .skip_client_worker_set_check(true)
-            .max_cached_workflows(1000_usize)
-            .build()
-            .expect("Configuration options construct properly");
+        let mut worker_config = integ_worker_config(&task_queue);
+        worker_config.max_cached_workflows = 1000_usize;
         Self {
             task_queue_name: task_queue,
             worker_config,

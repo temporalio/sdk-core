@@ -277,89 +277,84 @@ impl WorkerConfig {
 impl<S: worker_config_builder::IsComplete> WorkerConfigBuilder<S> {
     pub fn build(self) -> Result<WorkerConfig, String> {
         let config = self.build_internal();
+        let task_types = &config.task_types;
+        if task_types.is_empty() {
+            return Err("At least one task type must be enabled in `task_types`".to_string());
+        }
+        if !task_types.enable_workflows && task_types.enable_local_activities {
+            return Err(
+                "`task_types` cannot enable local activities without workflows".to_string(),
+            );
+        }
+
+        config.workflow_task_poller_behavior.validate()?;
+        config.activity_task_poller_behavior.validate()?;
+        config.nexus_task_poller_behavior.validate()?;
+
+        if let Some(ref x) = config.max_worker_activities_per_second
+            && (!x.is_normal() || x.is_sign_negative())
         {
-            let config = config;
-            let task_types = &config.task_types;
-            if task_types.is_empty() {
-                return Err("At least one task type must be enabled in `task_types`".to_string());
-            }
-            if !task_types.enable_workflows && task_types.enable_local_activities {
-                return Err(
-                    "`task_types` cannot enable local activities without workflows".to_string(),
-                );
-            }
+            return Err(
+                "`max_worker_activities_per_second` must be positive and nonzero".to_string(),
+            );
+        }
 
-            config.workflow_task_poller_behavior.validate()?;
-            config.activity_task_poller_behavior.validate()?;
-            config.nexus_task_poller_behavior.validate()?;
+        if matches!(config.max_outstanding_workflow_tasks, Some(v) if v == 0) {
+            return Err("`max_outstanding_workflow_tasks` must be > 0".to_string());
+        }
+        if matches!(config.max_outstanding_activities, Some(v) if v == 0) {
+            return Err("`max_outstanding_activities` must be > 0".to_string());
+        }
+        if matches!(config.max_outstanding_local_activities, Some(v) if v == 0) {
+            return Err("`max_outstanding_local_activities` must be > 0".to_string());
+        }
+        if matches!(config.max_outstanding_nexus_tasks, Some(v) if v == 0) {
+            return Err("`max_outstanding_nexus_tasks` must be > 0".to_string());
+        }
 
-            if let Some(ref x) = config.max_worker_activities_per_second
-                && (!x.is_normal() || x.is_sign_negative())
+        if config.max_cached_workflows > 0 {
+            if let Some(max_wft) = config.max_outstanding_workflow_tasks
+                && max_wft < 2
             {
                 return Err(
-                    "`max_worker_activities_per_second` must be positive and nonzero".to_string(),
+                    "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
+                        .to_string(),
                 );
             }
+            if matches!(config.workflow_task_poller_behavior, PollerBehavior::SimpleMaximum(u) if u < 2)
+            {
+                return Err("`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2".to_string());
+            }
+        }
 
-            if matches!(config.max_outstanding_workflow_tasks, Some(v) if v == 0) {
-                return Err("`max_outstanding_workflow_tasks` must be > 0".to_string());
-            }
-            if matches!(config.max_outstanding_activities, Some(v) if v == 0) {
-                return Err("`max_outstanding_activities` must be > 0".to_string());
-            }
-            if matches!(config.max_outstanding_local_activities, Some(v) if v == 0) {
-                return Err("`max_outstanding_local_activities` must be > 0".to_string());
-            }
-            if matches!(config.max_outstanding_nexus_tasks, Some(v) if v == 0) {
-                return Err("`max_outstanding_nexus_tasks` must be > 0".to_string());
-            }
+        if config.tuner.is_some()
+            && (config.max_outstanding_workflow_tasks.is_some()
+                || config.max_outstanding_activities.is_some()
+                || config.max_outstanding_local_activities.is_some())
+        {
+            return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_string());
+        }
 
-            if config.max_cached_workflows > 0 {
-                if let Some(max_wft) = config.max_outstanding_workflow_tasks
-                    && max_wft < 2
+        match &config.versioning_strategy {
+            WorkerVersioningStrategy::None { .. } => {}
+            WorkerVersioningStrategy::WorkerDeploymentBased(d) => {
+                if d.use_worker_versioning
+                    && (d.version.build_id.is_empty() || d.version.deployment_name.is_empty())
                 {
+                    return Err("WorkerDeploymentVersion must have a non-empty build_id and deployment_name when deployment-based versioning is enabled".to_string());
+                }
+            }
+            WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
+                if build_id.is_empty() {
                     return Err(
-                        "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
+                        "Legacy build id-based versioning must have a non-empty build_id"
                             .to_string(),
                     );
                 }
-                if matches!(config.workflow_task_poller_behavior, PollerBehavior::SimpleMaximum(u) if u < 2)
-                {
-                    return Err("`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2".to_string());
-                }
             }
-
-            if config.tuner.is_some()
-                && (config.max_outstanding_workflow_tasks.is_some()
-                    || config.max_outstanding_activities.is_some()
-                    || config.max_outstanding_local_activities.is_some())
-            {
-                return Err(
-                    "max_outstanding_* fields are mutually exclusive with `tuner`".to_string(),
-                );
-            }
-
-            match &config.versioning_strategy {
-                WorkerVersioningStrategy::None { .. } => {}
-                WorkerVersioningStrategy::WorkerDeploymentBased(d) => {
-                    if d.use_worker_versioning
-                        && (d.version.build_id.is_empty() || d.version.deployment_name.is_empty())
-                    {
-                        return Err("WorkerDeploymentVersion must have a non-empty build_id and deployment_name when deployment-based versioning is enabled".to_string());
-                    }
-                }
-                WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
-                    if build_id.is_empty() {
-                        return Err(
-                            "Legacy build id-based versioning must have a non-empty build_id"
-                                .to_string(),
-                        );
-                    }
-                }
-            }
-
-            Ok(config)
         }
+
+        Ok(config)
     }
 }
 

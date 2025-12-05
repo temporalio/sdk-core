@@ -54,7 +54,7 @@ fn within_duration(dur: PbDuration, threshold: Duration) -> bool {
 fn new_no_metrics_starter(wf_name: &str) -> CoreWfStarter {
     let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(TelemetryOptions::builder().build())
-        .heartbeat_interval(Duration::from_secs(1))
+        .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
     CoreWfStarter::new_with_runtime(wf_name, CoreRuntime::new_assume_tokio(runtimeopts).unwrap())
@@ -103,7 +103,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     };
     let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(telemopts)
-        .heartbeat_interval(Duration::from_secs(1))
+        .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
     let mut rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
@@ -141,7 +141,9 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             name: "plugin2".to_string(),
             version: "2".to_string(),
         },
-    ];
+    ]
+    .into_iter()
+    .collect();
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
@@ -263,7 +265,7 @@ async fn docker_worker_heartbeat_tuner() {
     }
     let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
-        .heartbeat_interval(Duration::from_secs(1))
+        .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
     let mut rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
@@ -933,7 +935,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     let wf_name = "worker_heartbeat_no_runtime_heartbeat";
     let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
-        // Heartbeating is off by default
+        .heartbeat_interval(None)
         .build()
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
@@ -993,7 +995,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let wf_name = "worker_heartbeat_skip_client_worker_set_check";
     let runtimeopts = RuntimeOptions::builder()
         .telemetry_options(get_integ_telem_options())
-        .heartbeat_interval(Duration::from_secs(1))
+        .heartbeat_interval(Some(Duration::from_secs(1)))
         .build()
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();

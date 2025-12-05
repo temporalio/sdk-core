@@ -92,11 +92,10 @@ async fn max_activities_respected() {
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
     let worker = Worker::new_test(
-        {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.max_outstanding_activities = Some(2_usize);
-            cfg
-        },
+        test_worker_cfg()
+            .max_outstanding_activities(2_usize)
+            .build()
+            .unwrap(),
         mock_client,
     );
 
@@ -407,13 +406,12 @@ async fn many_concurrent_heartbeat_cancels() {
         });
 
     let worker = &Worker::new_test(
-        {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.max_outstanding_activities = Some(CONCURRENCY_NUM);
+        test_worker_cfg()
+            .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
-            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
-            cfg
-        },
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .build()
+            .unwrap(),
         mock_client,
     );
 
@@ -631,12 +629,11 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
             })
         });
 
-    let cfg = {
-        let mut cfg = test_worker_cfg().build().unwrap();
-        cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
-        cfg.max_task_queue_activities_per_second = Some(rate);
-        cfg
-    };
+    let cfg = test_worker_cfg()
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+        .max_task_queue_activities_per_second(rate)
+        .build()
+        .unwrap();
     let worker = Worker::new_test(cfg, mock_client);
     worker.poll_activity_task().await.unwrap();
 }
@@ -657,13 +654,12 @@ async fn max_worker_acts_per_second_respected() {
         .expect_complete_activity_task()
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    let cfg = {
-        let mut cfg = test_worker_cfg().build().unwrap();
-        cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
-        cfg.max_outstanding_activities = Some(10_usize);
-        cfg.max_worker_activities_per_second = Some(1.0);
-        cfg
-    };
+    let cfg = test_worker_cfg()
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+        .max_outstanding_activities(10_usize)
+        .max_worker_activities_per_second(1.0)
+        .build()
+        .unwrap();
     let worker = Worker::new_test(cfg, mock_client);
     let start = Instant::now();
     let mut received = 0;
@@ -975,13 +971,12 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
     let max_outstanding = if at_max_outstanding { 3_usize } else { 100 };
     let mw = MockWorkerInputs {
         act_poller: Some(Box::from(mock_act_poller)),
-        config: {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.graceful_shutdown_period = Some(grace_period);
-            cfg.max_outstanding_activities = Some(max_outstanding);
-            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize); // Makes test logic simple
-            cfg
-        },
+        config: test_worker_cfg()
+            .graceful_shutdown_period(grace_period)
+            .max_outstanding_activities(max_outstanding)
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize)) // Makes test logic simple
+            .build()
+            .unwrap(),
         ..Default::default()
     };
     let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
@@ -1062,12 +1057,11 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
 
     let mw = MockWorkerInputs {
         act_poller: Some(Box::from(mock_act_poller)),
-        config: {
-            let mut cfg = test_worker_cfg().build().unwrap();
-            cfg.graceful_shutdown_period = Some(grace_period);
-            cfg.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize); // Makes test logic simple
-            cfg
-        },
+        config: test_worker_cfg()
+            .graceful_shutdown_period(grace_period)
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize)) // Makes test logic simple
+            .build()
+            .unwrap(),
         ..Default::default()
     };
     let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));

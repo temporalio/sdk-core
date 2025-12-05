@@ -348,7 +348,7 @@ impl Worker {
             wf_completion_processor,
         )?;
 
-        info!("Polling loops exited");
+        debug!("Polling loops exited");
         if let Some(i) = self.common.worker_interceptor.as_ref() {
             i.on_shutdown(self);
         }
