@@ -15,7 +15,7 @@ use std::{
 };
 use temporalio_common::{
     protos::{DEFAULT_WORKFLOW_TYPE, canned_histories},
-    telemetry::metrics::{MetricKeyValue, MetricParametersBuilder, NewAttributes},
+    telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes},
 };
 use temporalio_sdk::{WfContext, WorkflowFunction};
 use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
@@ -87,22 +87,19 @@ pub fn bench_metrics(c: &mut Criterion) {
         b.iter_batched(
             || {
                 let c = meter.counter(
-                    MetricParametersBuilder::default()
+                    MetricParameters::builder()
                         .name("c")
-                        .build()
-                        .unwrap(),
+                        .build(),
                 );
                 let h = meter.histogram(
-                    MetricParametersBuilder::default()
+                    MetricParameters::builder()
                         .name("h")
-                        .build()
-                        .unwrap(),
+                        .build(),
                 );
                 let g = meter.gauge(
-                    MetricParametersBuilder::default()
+                    MetricParameters::builder()
                         .name("g")
-                        .build()
-                        .unwrap(),
+                        .build(),
                 );
 
                 let vals = [1, 2, 3, 4, 5];

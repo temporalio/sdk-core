@@ -15,7 +15,6 @@ license-file = "LICENSE.txt"
 
 [workspace.dependencies]
 bon = "3"
-derive_builder = "0.20"
 derive_more = { version = "2.0", features = [
     "constructor",
     "display",

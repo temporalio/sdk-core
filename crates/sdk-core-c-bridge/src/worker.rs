@@ -1326,25 +1326,22 @@ impl TryFrom<&TunerHolder> for temporalio_sdk_core::TunerHolder {
         }
 
         let resource_based = first.map(|f| {
-            temporalio_sdk_core::ResourceBasedSlotsOptionsBuilder::default()
+            temporalio_sdk_core::ResourceBasedSlotsOptions::builder()
                 .target_mem_usage(f.target_memory_usage)
                 .target_cpu_usage(f.target_cpu_usage)
                 .build()
-                .expect("Failed to build ResourceBasedSlotsOptions")
         });
 
-        let mut builder = temporalio_sdk_core::TunerHolderOptionsBuilder::default();
-        builder
+        let builder = temporalio_sdk_core::TunerHolderOptions::builder()
             .workflow_slot_options(holder.workflow_slot_supplier.try_into()?)
             .activity_slot_options(holder.activity_slot_supplier.try_into()?)
             .local_activity_slot_options(holder.local_activity_slot_supplier.try_into()?)
-            .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?);
-        if let Some(rb) = resource_based {
-            builder.resource_based_options(rb);
-        }
+            .nexus_slot_options(holder.nexus_task_slot_supplier.try_into()?)
+            .maybe_resource_based_options(resource_based);
+
         builder
             .build()
-            .context("Failed building tuner holder options")?
+            .map_err(|e| anyhow::anyhow!("Failed building tuner holder options: {}", e))?
             .build_tuner_holder()
             .context("Failed building tuner holder")
     }
