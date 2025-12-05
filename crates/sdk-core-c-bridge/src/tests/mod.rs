@@ -1,5 +1,5 @@
 use crate::{
-    ByteArrayRef,
+    ByteArrayRef, ByteArrayRefArray,
     client::{
         ClientGrpcOverrideRequest, ClientGrpcOverrideResponse, RpcService,
         temporal_core_client_grpc_override_request_headers,
@@ -12,9 +12,13 @@ use crate::{
         OwnedRpcCallOptions, RpcCallError, default_client_options, default_server_config,
     },
 };
+use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
 use context::Context;
 use prost::Message;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 use temporalio_common::protos::temporal::api::{
     failure::v1::Failure,
     workflowservice::v1::{
@@ -46,6 +50,7 @@ fn test_get_system_info() {
                     req: GetSystemInfoRequest {}.encode_to_vec(),
                     retry: false,
                     metadata: None,
+                    binary_metadata: None,
                     timeout_millis: 0,
                     cancellation_token: None,
                 }))
@@ -62,6 +67,7 @@ fn rpc_call_exists(context: &Arc<Context>, service: RpcService, rpc: &str) -> bo
         req: Vec::new(),
         retry: false,
         metadata: None,
+        binary_metadata: None,
         timeout_millis: 0,
         cancellation_token: None,
     }));
@@ -215,9 +221,11 @@ unsafe extern "C" fn callback_override(
     let mut calls = CALLBACK_OVERRIDE_CALLS.lock().unwrap();
 
     // Simple header check to confirm headers are working
-    let headers =
-        temporal_core_client_grpc_override_request_headers(req).to_string_map_on_newlines();
-    assert!(headers.get("content-type").unwrap().as_str() == "application/grpc");
+    let headers = temporal_core_client_grpc_override_request_headers(req).to_vec_map_on_newlines();
+    assert_eq!(
+        String::from_utf8(headers.get("content-type").unwrap().to_vec()).unwrap(),
+        "application/grpc"
+    );
 
     // Confirm user data is as we expect
     let user_data: &String = unsafe { &*(user_data as *const String) };
@@ -265,14 +273,14 @@ unsafe extern "C" fn callback_override(
     let resp = match &resp_raw {
         Ok(bytes) => ClientGrpcOverrideResponse {
             status_code: 0,
-            headers: ByteArrayRef::empty(),
+            headers: ByteArrayRefArray::empty(),
             success_proto: bytes.as_slice().into(),
             fail_message: ByteArrayRef::empty(),
             fail_details: ByteArrayRef::empty(),
         },
         Err(err) => ClientGrpcOverrideResponse {
             status_code: tonic::Code::Internal.into(),
-            headers: ByteArrayRef::empty(),
+            headers: ByteArrayRefArray::empty(),
             success_proto: ByteArrayRef::empty(),
             fail_message: err.message.as_str().into(),
             fail_details: if let Some(details) = &err.details {
@@ -312,6 +320,7 @@ fn test_simple_callback_override() {
                 .encode_to_vec(),
                 retry: false,
                 metadata: None,
+                binary_metadata: None,
                 timeout_millis: 0,
                 cancellation_token: None,
             }))
@@ -330,6 +339,7 @@ fn test_simple_callback_override() {
                 req: QueryWorkflowRequest::default().encode_to_vec(),
                 retry: false,
                 metadata: None,
+                binary_metadata: None,
                 timeout_millis: 0,
                 cancellation_token: None,
             }))
@@ -355,4 +365,93 @@ fn test_simple_callback_override() {
             ]
         );
     });
+}
+
+unsafe extern "C" fn headers_callback_override(
+    req: *mut ClientGrpcOverrideRequest,
+    _user_data: *mut libc::c_void,
+) {
+    // Check headers
+    let headers = temporal_core_client_grpc_override_request_headers(req).to_vec_map_on_newlines();
+    assert_ascii_header_value(&headers, "content-type", "application/grpc");
+    assert_ascii_header_value(&headers, "x-test", "client-ascii");
+    assert_binary_header_value(&headers, "x-test-bin", b"client-binary");
+
+    // Return minimal response
+    let resp_raw: Vec<u8> = GetSystemInfoResponse::default().encode_to_vec();
+    let resp = ClientGrpcOverrideResponse {
+        status_code: 0,
+        headers: ByteArrayRefArray::empty(),
+        success_proto: resp_raw.as_slice().into(),
+        fail_message: ByteArrayRef::empty(),
+        fail_details: ByteArrayRef::empty(),
+    };
+    temporal_core_client_grpc_override_request_respond(req, resp);
+}
+
+#[test]
+fn test_callback_override_with_headers() {
+    Context::with(|context| {
+        context.runtime_new().unwrap();
+
+        // Prepare client options with headers
+        let mut client_options = default_client_options("127.0.0.1:4567");
+        client_options.headers = Some(HashMap::from([(
+            "x-test".to_owned(),
+            "client-ascii".to_owned(),
+        )]));
+        client_options.binary_headers = Some(HashMap::from([(
+            "x-test-bin".to_owned(),
+            b"client-binary".to_vec(),
+        )]));
+
+        // Create client which will invoke GetSystemInfo
+        context
+            .client_connect_with_override(
+                Box::new(client_options),
+                Some(headers_callback_override),
+                std::ptr::null_mut(),
+            )
+            .unwrap();
+
+        // Invoke start workflow
+        let _ = context
+            .rpc_call(Box::new(OwnedRpcCallOptions {
+                service: RpcService::Workflow,
+                rpc: "StartWorkflowExecution".into(),
+                req: StartWorkflowExecutionRequest {
+                    workflow_id: "my-workflow-id".into(),
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+                retry: false,
+                metadata: None,
+                binary_metadata: None,
+                timeout_millis: 0,
+                cancellation_token: None,
+            }))
+            .unwrap();
+    });
+}
+
+fn assert_ascii_header_value(headers: &HashMap<String, Vec<u8>>, key: &str, expected_value: &str) {
+    let value = headers.get(key);
+    assert!(value.is_some());
+    assert_eq!(
+        expected_value,
+        String::from_utf8(value.unwrap().to_vec()).unwrap(),
+    );
+}
+
+fn assert_binary_header_value(
+    headers: &HashMap<String, Vec<u8>>,
+    key: &str,
+    expected_value: &[u8],
+) {
+    let value = headers.get(key);
+    assert!(value.is_some());
+    let decode_result = STANDARD_NO_PAD.decode(value.unwrap());
+    assert!(decode_result.is_ok());
+    let decoded = decode_result.ok().unwrap();
+    assert_eq!(expected_value, decoded);
 }

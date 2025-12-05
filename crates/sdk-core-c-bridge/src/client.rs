@@ -1,11 +1,12 @@
 use crate::{
-    ByteArray, ByteArrayRef, CancellationToken, MetadataRef, UserDataHandle, runtime::Runtime,
+    ByteArray, ByteArrayRef, CancellationToken, GrpcMetadataRef, UserDataHandle, runtime::Runtime,
 };
 
 use futures_util::FutureExt;
 use prost::bytes::Bytes;
 use std::{
     cell::OnceCell,
+    collections::HashMap,
     str::FromStr,
     sync::{
         Arc,
@@ -20,7 +21,7 @@ use temporalio_client::{
     TlsOptions as CoreTlsOptions, WorkflowService, callback_based, proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
-use tonic::metadata::MetadataKey;
+use tonic::metadata::{MetadataKey, MetadataValue};
 use url::Url;
 
 #[repr(C)]
@@ -28,7 +29,8 @@ pub struct ClientOptions {
     pub target_url: ByteArrayRef,
     pub client_name: ByteArrayRef,
     pub client_version: ByteArrayRef,
-    pub metadata: MetadataRef,
+    pub metadata: GrpcMetadataRef,
+    pub binary_metadata: GrpcMetadataRef,
     pub api_key: ByteArrayRef,
     pub identity: ByteArrayRef,
     pub tls_options: *const ClientTlsOptions,
@@ -189,6 +191,7 @@ fn create_callback_based_grpc_service(
                 let req_ptr = Box::into_raw(Box::new(ClientGrpcOverrideRequest {
                     core: req,
                     built_headers: OnceCell::new(),
+                    holder: OnceCell::new(),
                     response_sender: sender,
                 })) as usize;
 
@@ -240,13 +243,25 @@ pub extern "C" fn temporal_core_client_free(client: *mut Client) {
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_update_metadata(
     client: *mut Client,
-    metadata: ByteArrayRef,
+    metadata: GrpcMetadataRef,
 ) {
     let client = unsafe { &*client };
     let _result = client
         .core
         .get_client()
         .set_headers(metadata.to_string_map_on_newlines());
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_update_binary_metadata(
+    client: *mut Client,
+    metadata: GrpcMetadataRef,
+) {
+    let client = unsafe { &*client };
+    let _result = client
+        .core
+        .get_client()
+        .set_binary_headers(metadata.to_vec_map_on_newlines());
 }
 
 #[unsafe(no_mangle)]
@@ -271,6 +286,11 @@ pub type ClientGrpcOverrideCallback = Option<
     unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest, user_data: *mut libc::c_void),
 >;
 
+pub struct GrpcMetadataHolder {
+    pub data: Vec<ByteArrayRef>,
+    _allocations: Vec<Vec<u8>>,
+}
+
 /// Representation of gRPC request for the callback.
 ///
 /// Note, temporal_core_client_grpc_override_request_respond is effectively the "free" call for
@@ -278,7 +298,8 @@ pub type ClientGrpcOverrideCallback = Option<
 /// call.
 pub struct ClientGrpcOverrideRequest {
     core: callback_based::GrpcRequest,
-    built_headers: OnceCell<String>,
+    built_headers: OnceCell<HashMap<String, Vec<u8>>>,
+    holder: OnceCell<GrpcMetadataHolder>,
     response_sender: oneshot::Sender<Result<callback_based::GrpcSuccessResponse, tonic::Status>>,
 }
 
@@ -296,7 +317,7 @@ pub struct ClientGrpcOverrideResponse {
 
     /// Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
     /// not the gRPC system headers (like :status or content-type).
-    pub headers: MetadataRef,
+    pub headers: GrpcMetadataRef,
 
     /// Protobuf bytes for a successful response. Ignored if status_code is non-0.
     pub success_proto: ByteArrayRef,
@@ -337,19 +358,24 @@ pub extern "C" fn temporal_core_client_grpc_override_request_rpc(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_grpc_override_request_headers(
     req: *const ClientGrpcOverrideRequest,
-) -> MetadataRef {
+) -> GrpcMetadataRef {
     let req = unsafe { &*req };
     // Lazily create the headers on first access
     let headers = req.built_headers.get_or_init(|| {
+        // CONSIDER: Should binary headers be decoded here before they are returned?
         req.core
             .headers
             .iter()
-            .filter_map(|(name, value)| value.to_str().ok().map(|val| (name.as_str(), val)))
-            .flat_map(|(k, v)| [k, v])
-            .collect::<Vec<_>>()
-            .join("\n")
+            .filter_map(|(name, value)| {
+                value
+                    .to_str()
+                    .ok()
+                    .map(|val| (name.to_string(), val.as_bytes().to_vec()))
+            })
+            .collect::<HashMap<String, Vec<u8>>>()
     });
-    headers.as_str().into()
+    let holder = req.holder.get_or_init(|| headers.into());
+    holder.into()
 }
 
 /// Get a reference to the request protobuf bytes.
@@ -402,14 +428,16 @@ impl ClientGrpcOverrideResponse {
         }
     }
 
-    fn client_headers_from_metadata_ref(headers: MetadataRef) -> Result<http::HeaderMap, String> {
-        let key_values = headers.to_str_map_on_newlines();
+    fn client_headers_from_metadata_ref(
+        headers: GrpcMetadataRef,
+    ) -> Result<http::HeaderMap, String> {
+        let key_values = headers.to_vec_map_on_newlines();
         let mut header_map = http::HeaderMap::with_capacity(key_values.len());
         for (k, v) in key_values.into_iter() {
-            let name = http::HeaderName::try_from(k)
+            let name = http::HeaderName::try_from(&k)
                 .map_err(|e| format!("Invalid header name '{k}': {e}"))?;
-            let value = http::HeaderValue::from_str(v)
-                .map_err(|e| format!("Invalid header value '{v}': {e}"))?;
+            let value = http::HeaderValue::from_bytes(v.as_slice())
+                .map_err(|e| format!("Invalid header value '{v:?}': {e}"))?;
             header_map.insert(name, value);
         }
         Ok(header_map)
@@ -422,7 +450,8 @@ pub struct RpcCallOptions {
     pub rpc: ByteArrayRef,
     pub req: ByteArrayRef,
     pub retry: bool,
-    pub metadata: MetadataRef,
+    pub metadata: GrpcMetadataRef,
+    pub binary_metadata: GrpcMetadataRef,
     /// 0 means no timeout
     pub timeout_millis: u32,
     pub cancellation_token: *const CancellationToken,
@@ -1110,9 +1139,17 @@ fn rpc_req<P: prost::Message + Default>(
     let proto = P::decode(call.req.to_slice())?;
     let mut req = tonic::Request::new(proto);
     if call.metadata.size > 0 {
-        for (k, v) in call.metadata.to_str_map_on_newlines() {
+        for (k, v) in call.metadata.to_string_map_on_newlines() {
             req.metadata_mut()
-                .insert(MetadataKey::from_str(k)?, v.parse()?);
+                .insert(MetadataKey::from_str(k.as_str())?, v.parse()?);
+        }
+    }
+    if call.binary_metadata.size > 0 {
+        for (k, v) in call.binary_metadata.to_vec_map_on_newlines() {
+            req.metadata_mut().insert_bin(
+                MetadataKey::from_str(k.as_str())?,
+                MetadataValue::from_bytes(v.as_slice()),
+            );
         }
     }
     if call.timeout_millis > 0 {
@@ -1148,6 +1185,12 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             Some(opts.metadata.to_string_map_on_newlines())
         };
 
+        let binary_headers = if opts.binary_metadata.size == 0 {
+            None
+        } else {
+            Some(opts.binary_metadata.to_vec_map_on_newlines())
+        };
+
         let api_key = opts.api_key.to_option_string();
 
         let http_connect_proxy =
@@ -1164,6 +1207,7 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             )
             .maybe_keep_alive(keep_alive.map(Some))
             .maybe_headers(headers)
+            .maybe_binary_headers(binary_headers)
             .maybe_api_key(api_key)
             .maybe_http_connect_proxy(http_connect_proxy)
             .maybe_tls_options(tls_cfg)
@@ -1232,6 +1276,47 @@ impl From<&ClientHttpConnectProxyOptions> for HttpConnectProxyOptions {
             } else {
                 None
             },
+        }
+    }
+}
+
+impl From<&HashMap<String, String>> for GrpcMetadataHolder {
+    fn from(value: &HashMap<String, String>) -> GrpcMetadataHolder {
+        let refs: Vec<Vec<u8>> = value
+            .iter()
+            .map(|(k, v)| format!("{k}\n{v}").into_bytes())
+            .collect();
+
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
+    }
+}
+
+impl From<&HashMap<String, Vec<u8>>> for GrpcMetadataHolder {
+    fn from(value: &HashMap<String, Vec<u8>>) -> GrpcMetadataHolder {
+        let refs: Vec<Vec<u8>> = value
+            .iter()
+            .map(|(k, v)| {
+                let mut nv = format!("{k}\n").into_bytes();
+                nv.extend(v);
+                nv
+            })
+            .collect();
+
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
+    }
+}
+
+impl From<&GrpcMetadataHolder> for GrpcMetadataRef {
+    fn from(value: &GrpcMetadataHolder) -> Self {
+        GrpcMetadataRef {
+            data: value.data.as_ptr(),
+            size: value.data.len(),
         }
     }
 }

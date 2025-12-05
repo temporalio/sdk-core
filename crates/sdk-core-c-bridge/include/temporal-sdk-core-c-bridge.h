@@ -92,11 +92,16 @@ typedef struct TemporalCoreByteArrayRef {
   size_t size;
 } TemporalCoreByteArrayRef;
 
+typedef struct TemporalCoreByteArrayRefArray {
+  const struct TemporalCoreByteArrayRef *data;
+  size_t size;
+} TemporalCoreByteArrayRefArray;
+
 /**
- * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
- * values cannot contain a newline within.
+ * Each ByteArrayRef is `<key>\n<value>`.
+ * Metadata keys cannot contain a newline.
  */
-typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
+typedef struct TemporalCoreByteArrayRefArray TemporalCoreGrpcMetadataRef;
 
 typedef struct TemporalCoreClientTlsOptions {
   struct TemporalCoreByteArrayRef server_root_ca_cert;
@@ -143,7 +148,8 @@ typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
   struct TemporalCoreByteArrayRef client_version;
-  TemporalCoreMetadataRef metadata;
+  TemporalCoreGrpcMetadataRef metadata;
+  TemporalCoreGrpcMetadataRef binary_metadata;
   struct TemporalCoreByteArrayRef api_key;
   struct TemporalCoreByteArrayRef identity;
   const struct TemporalCoreClientTlsOptions *tls_options;
@@ -201,7 +207,7 @@ typedef struct TemporalCoreClientGrpcOverrideResponse {
    * Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
    * not the gRPC system headers (like :status or content-type).
    */
-  TemporalCoreMetadataRef headers;
+  TemporalCoreGrpcMetadataRef headers;
   /**
    * Protobuf bytes for a successful response. Ignored if status_code is non-0.
    */
@@ -222,7 +228,8 @@ typedef struct TemporalCoreRpcCallOptions {
   struct TemporalCoreByteArrayRef rpc;
   struct TemporalCoreByteArrayRef req;
   bool retry;
-  TemporalCoreMetadataRef metadata;
+  TemporalCoreGrpcMetadataRef metadata;
+  TemporalCoreGrpcMetadataRef binary_metadata;
   /**
    * 0 means no timeout
    */
@@ -333,6 +340,12 @@ typedef struct TemporalCoreLoggingOptions {
    */
   TemporalCoreForwardedLogCallback forward_to;
 } TemporalCoreLoggingOptions;
+
+/**
+ * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
+ * values cannot contain a newline within.
+ */
+typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
 
 typedef struct TemporalCoreOpenTelemetryOptions {
   struct TemporalCoreByteArrayRef url;
@@ -760,11 +773,6 @@ typedef struct TemporalCorePollerBehavior {
   const struct TemporalCorePollerBehaviorAutoscaling *autoscaling;
 } TemporalCorePollerBehavior;
 
-typedef struct TemporalCoreByteArrayRefArray {
-  const struct TemporalCoreByteArrayRef *data;
-  size_t size;
-} TemporalCoreByteArrayRefArray;
-
 typedef struct TemporalCoreWorkerOptions {
   struct TemporalCoreByteArrayRef namespace_;
   struct TemporalCoreByteArrayRef task_queue;
@@ -833,7 +841,10 @@ void temporal_core_client_connect(struct TemporalCoreRuntime *runtime,
 void temporal_core_client_free(struct TemporalCoreClient *client);
 
 void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
-                                          struct TemporalCoreByteArrayRef metadata);
+                                          TemporalCoreGrpcMetadataRef metadata);
+
+void temporal_core_client_update_binary_metadata(struct TemporalCoreClient *client,
+                                                 TemporalCoreGrpcMetadataRef metadata);
 
 void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
                                          struct TemporalCoreByteArrayRef api_key);
@@ -857,7 +868,7 @@ struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_rpc(c
  *
  * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
  */
-TemporalCoreMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
+TemporalCoreGrpcMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
 
 /**
  * Get a reference to the request protobuf bytes.

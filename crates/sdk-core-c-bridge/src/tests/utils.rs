@@ -1,9 +1,9 @@
 use crate::{
     ByteArray, CancellationToken,
-    client::RpcService,
+    client::{GrpcMetadataHolder, RpcService},
     runtime::{Runtime, temporal_core_byte_array_free},
 };
-use std::{collections::HashMap, ops::Deref};
+use std::ops::Deref;
 use temporalio_client::ClientOptions;
 use temporalio_sdk_core::ephemeral_server::{
     TemporalDevServerConfig, TemporalDevServerConfigBuilder, default_cached_download,
@@ -50,53 +50,14 @@ pub struct OwnedRpcCallOptions {
     pub rpc: String,
     pub req: Vec<u8>,
     pub retry: bool,
-    pub metadata: Option<MetadataMap>,
+    pub metadata: Option<GrpcMetadataHolder>,
+    pub binary_metadata: Option<GrpcMetadataHolder>,
     pub timeout_millis: u32,
     pub cancellation_token: Option<*mut CancellationToken>,
 }
 
 unsafe impl Send for OwnedRpcCallOptions {}
 unsafe impl Sync for OwnedRpcCallOptions {}
-
-#[derive(Clone, Debug)]
-pub enum MetadataMap {
-    Deserialized(HashMap<String, String>),
-    Serialized(String),
-}
-
-impl From<HashMap<String, String>> for MetadataMap {
-    fn from(value: HashMap<String, String>) -> Self {
-        Self::Deserialized(value)
-    }
-}
-
-#[allow(dead_code)]
-impl MetadataMap {
-    pub fn serialize_from_map(map: &HashMap<String, String>) -> String {
-        map.iter().map(|(k, v)| format!("{k}\n{v}\n")).collect()
-    }
-
-    pub fn serialize(&self) -> String {
-        match self {
-            Self::Deserialized(map) => Self::serialize_from_map(map),
-            Self::Serialized(s) => s.clone(),
-        }
-    }
-
-    pub fn serialize_in_place(&mut self) {
-        if let Self::Deserialized(map) = self {
-            *self = Self::Serialized(Self::serialize_from_map(map));
-        }
-    }
-
-    pub fn as_str(&mut self) -> &str {
-        self.serialize_in_place();
-        let Self::Serialized(s) = self else {
-            unreachable!();
-        };
-        s
-    }
-}
 
 #[derive(thiserror::Error, Debug)]
 #[error("{message} (status code {status_code})")]
