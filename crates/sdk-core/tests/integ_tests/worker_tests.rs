@@ -53,7 +53,8 @@ use temporalio_common::{
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, PollerBehavior, SlotInfo, SlotInfoTrait,
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerConfigBuilder, WorkerVersioningStrategy, WorkflowSlotKind,
+        SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy,
+        WorkflowSlotKind,
     },
 };
 use temporalio_sdk::{
@@ -89,6 +90,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
             .versioning_strategy(WorkerVersioningStrategy::None {
                 build_id: "blah".to_owned(),
             })
+            .task_types(WorkerTaskTypes::all())
             .build()
             .unwrap(),
         retrying_client,
@@ -177,7 +179,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
-        .no_remote_activities(true)
+        .task_types(WorkerTaskTypes::workflow_only())
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
     // Set the limits to zero so it's essentially unwilling to hand out slots
@@ -208,9 +210,15 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 
 #[tokio::test]
 async fn oversize_grpc_message() {
+    use crate::common::{NAMESPACE, prom_metrics};
     let wf_name = "oversize_grpc_message";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    // Enable Prometheus metrics for this test and capture the address
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let runtime = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, runtime);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
@@ -234,7 +242,25 @@ async fn oversize_grpc_message() {
             } else {
                 false
             }
-    }))
+    }));
+
+    // Verify the workflow task failure metric includes the GrpcMessageTooLarge reason
+    let tq = starter.get_task_queue();
+    crate::common::eventually(
+        || async {
+            let body = crate::integ_tests::metrics_tests::get_text(format!("http://{addr}/metrics")).await;
+            if body.contains(&format!(
+                "temporal_workflow_task_execution_failed{{failure_reason=\"GrpcMessageTooLarge\",namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",task_queue=\"{tq}\"}} 1"
+            )) {
+                Ok(())
+            } else {
+                Err(())
+            }
+        },
+        Duration::from_secs(2),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

@@ -21,13 +21,16 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporalio_client::{GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
+
 use temporalio_common::{
     protos::{
         coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
         temporal::api::enums::v1::WorkflowIdReusePolicy,
     },
-    worker::PollerBehavior,
+    worker::{PollerBehavior, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
@@ -349,7 +352,7 @@ async fn can_paginate_long_history() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .worker_config
-        .no_remote_activities(true)
+        .task_types(WorkerTaskTypes::workflow_only())
         // Do not use sticky queues so we are forced to paginate once history gets long
         .max_cached_workflows(0_usize);
 
@@ -461,7 +464,7 @@ async fn poller_autoscaling_basic_loadtest() {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
                 let _ = handle
-                    .get_workflow_result(GetWorkflowResultOpts::default())
+                    .get_workflow_result(GetWorkflowResultOptions::default())
                     .await;
             })
             .await;

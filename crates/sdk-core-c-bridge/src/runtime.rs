@@ -31,7 +31,7 @@ use url::Url;
 #[repr(C)]
 pub struct RuntimeOptions {
     pub telemetry: *const TelemetryOptions,
-    pub worker_heartbeat_duration_millis: u64,
+    pub worker_heartbeat_interval_millis: u64,
 }
 
 #[repr(C)]
@@ -89,7 +89,7 @@ pub struct OpenTelemetryOptions {
     pub durations_as_seconds: bool,
     pub protocol: OpenTelemetryProtocol,
     /// Histogram bucket overrides in form of
-    /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+    /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
     pub histogram_bucket_overrides: MetadataRef,
 }
 
@@ -112,7 +112,7 @@ pub struct PrometheusOptions {
     pub unit_suffix: bool,
     pub durations_as_seconds: bool,
     /// Histogram bucket overrides in form of
-    /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+    /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
     pub histogram_bucket_overrides: MetadataRef,
 }
 
@@ -240,11 +240,11 @@ impl Runtime {
             CoreTelemetryOptions::default()
         };
 
-        let heartbeat_interval = if options.worker_heartbeat_duration_millis == 0 {
+        let heartbeat_interval = if options.worker_heartbeat_interval_millis == 0 {
             None
         } else {
             Some(Duration::from_millis(
-                options.worker_heartbeat_duration_millis,
+                options.worker_heartbeat_interval_millis,
             ))
         };
 

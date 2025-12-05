@@ -28,7 +28,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
+    Client, ClientTlsOptions, GetWorkflowResultOptions, NamespacedClient, RetryClient, TlsOptions,
     WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
     WorkflowHandle, WorkflowOptions,
 };
@@ -50,7 +50,7 @@ use temporalio_common::{
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
         metrics::CoreMeter,
     },
-    worker::WorkerVersioningStrategy,
+    worker::{WorkerTaskTypes, WorkerVersioningStrategy},
 };
 use temporalio_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,
@@ -59,9 +59,11 @@ use temporalio_sdk::{
         WorkerInterceptor,
     },
 };
+#[cfg(any(feature = "test-utilities", test))]
+pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder,
-    WorkerConfig, WorkerConfigBuilder, init_replay_worker, init_worker,
+    ClientOptions, CoreRuntime, RuntimeOptions, RuntimeOptionsBuilder, WorkerConfig,
+    WorkerConfigBuilder, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
@@ -71,9 +73,6 @@ use tonic::IntoRequest;
 use tracing::{debug, warn};
 use url::Url;
 use uuid::Uuid;
-
-#[cfg(any(feature = "test-utilities", test))]
-pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 /// The env var used to specify where the integ tests should point
 pub(crate) const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub(crate) const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
@@ -112,6 +111,7 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .versioning_strategy(WorkerVersioningStrategy::None {
             build_id: "test_build_id".to_owned(),
         })
+        .task_types(WorkerTaskTypes::all())
         .skip_client_worker_set_check(true);
     b
 }
@@ -199,20 +199,19 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .replace("\\n", "\n")
         .into_bytes();
     let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-    let sgo = ClientOptionsBuilder::default()
+    let sgo = ClientOptions::builder()
         .target_url(Url::from_str(&cloud_addr).unwrap())
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
         .identity("sdk-test-client")
-        .tls_cfg(TlsConfig {
-            client_tls_config: Some(ClientTlsConfig {
+        .tls_options(TlsOptions {
+            client_tls_options: Some(ClientTlsOptions {
                 client_cert,
                 client_private_key,
             }),
             ..Default::default()
         })
-        .build()
-        .unwrap();
+        .build();
     sgo.connect(
         env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
         None,
@@ -441,7 +440,7 @@ impl CoreWfStarter {
             .unwrap()
             .client
             .get_untyped_workflow_handle(self.get_wf_id().to_string(), "")
-            .get_workflow_result(GetWorkflowResultOpts { follow_runs: false })
+            .get_workflow_result(GetWorkflowResultOptions { follow_runs: false })
             .await
     }
 
@@ -761,30 +760,30 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
     let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    let mut cb = ClientOptionsBuilder::default();
-    cb.identity(INTEG_CLIENT_IDENTITY.to_string())
+    let api_key = env::var(INTEG_API_KEY)
+        .ok()
+        .map(|key_file| std::fs::read_to_string(key_file).unwrap());
+    let tls_cfg = get_integ_tls_config();
+
+    ClientOptions::builder()
+        .identity(INTEG_CLIENT_IDENTITY.to_string())
         .target_url(url)
         .client_name(INTEG_CLIENT_NAME.to_string())
-        .client_version(INTEG_CLIENT_VERSION.to_string());
-    if let Ok(key_file) = env::var(INTEG_API_KEY) {
-        let content = std::fs::read_to_string(key_file).unwrap();
-        cb.api_key(Some(content));
-    }
-    if let Some(tls) = get_integ_tls_config() {
-        cb.tls_cfg(tls);
-    };
-    cb.build().unwrap()
+        .client_version(INTEG_CLIENT_VERSION.to_string())
+        .maybe_api_key(api_key)
+        .maybe_tls_options(tls_cfg)
+        .build()
 }
 
-pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {
+pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
     if env::var(INTEG_USE_TLS_ENV_VAR).is_ok() {
         let root = std::fs::read("../.cloud_certs/ca.pem").unwrap();
         let client_cert = std::fs::read("../.cloud_certs/client.pem").unwrap();
         let client_private_key = std::fs::read("../.cloud_certs/client.key").unwrap();
-        Some(TlsConfig {
+        Some(TlsOptions {
             server_root_ca_cert: Some(root),
             domain: None,
-            client_tls_config: Some(ClientTlsConfig {
+            client_tls_options: Some(ClientTlsOptions {
                 client_cert,
                 client_private_key,
             }),
@@ -797,7 +796,7 @@ pub(crate) fn get_integ_tls_config() -> Option<TlsConfig> {
 pub(crate) fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
     let filter_string =
-        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporal_sdk_core=INFO".to_string());
+        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporalio_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())

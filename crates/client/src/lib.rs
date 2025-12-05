@@ -14,8 +14,9 @@ mod metrics;
 pub mod proxy;
 mod raw;
 mod replaceable;
+pub mod request_extensions;
 mod retry;
-mod worker_registry;
+pub mod worker;
 mod workflow_handle;
 
 pub use crate::{
@@ -25,26 +26,17 @@ pub use crate::{
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
-pub use temporalio_common::protos::temporal::api::{
-    enums::v1::ArchivalState,
-    filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
-    workflowservice::v1::{
-        list_closed_workflow_executions_request::Filters as ListClosedFilters,
-        list_open_workflow_executions_request::Filters as ListOpenFilters,
-    },
-};
 pub use tonic;
-pub use worker_registry::{
-    ClientWorker, ClientWorkerSet, HeartbeatCallback, SharedNamespaceWorkerTrait, Slot,
-};
 pub use workflow_handle::{
-    GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
 };
 
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::AttachMetricLabels,
+    request_extensions::RequestExt,
     sealed::WfHandleClient,
+    worker::ClientWorkerSet,
     workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{ExponentialBackoff, SystemClock, exponential};
@@ -65,9 +57,14 @@ use temporalio_common::{
         grpc::health::v1::health_client::HealthClient,
         temporal::api::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
-            common,
-            common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-            enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
+            common::{
+                self,
+                v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
+            },
+            enums::v1::{
+                ArchivalState, TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
+            },
+            filter::v1::StartTimeFilter,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
             query::v1::WorkflowQuery,
             replication::v1::ClusterReplicationConfig,
@@ -110,72 +107,66 @@ const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
-/// Options for the connection to the temporal server. Construct with [ClientOptionsBuilder]
-#[derive(Clone, Debug, derive_builder::Builder)]
+/// Options for the connection to the temporal server. Construct with [ClientOptions::builder]
+#[derive(Clone, Debug, bon::Builder)]
 #[non_exhaustive]
+#[builder(on(String, into), state_mod(vis = "pub"))]
 pub struct ClientOptions {
     /// The URL of the Temporal server to connect to
-    #[builder(setter(into))]
+    #[builder(into)]
     pub target_url: Url,
 
     /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
     /// all RPC calls
-    #[builder(setter(into))]
     pub client_name: String,
 
     /// The version of the SDK being implemented on top of core. Is set as `client-version` header
     /// in all RPC calls. The server decides if the client is supported based on this.
-    #[builder(setter(into))]
     pub client_version: String,
 
     /// A human-readable string that can identify this process. Defaults to empty string.
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub identity: String,
 
-    /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
+    /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
-    #[builder(setter(strip_option), default)]
-    pub tls_cfg: Option<TlsConfig>,
+    pub tls_options: Option<TlsOptions>,
 
-    /// Retry configuration for the server client. Default is [RetryConfig::default]
+    /// Retry configuration for the server client. Default is [RetryOptions::default]
     #[builder(default)]
-    pub retry_config: RetryConfig,
+    pub retry_options: RetryOptions,
 
     /// If set, override the origin used when connecting. May be useful in rare situations where tls
     /// verification needs to use a different name from what should be set as the `:authority`
-    /// header. If [TlsConfig::domain] is set, and this is not, this will be set to
+    /// header. If [TlsOptions::domain] is set, and this is not, this will be set to
     /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
     /// override.
-    #[builder(default)]
     pub override_origin: Option<Uri>,
 
-    /// If set (which it is by default), HTTP2 gRPC keep alive will be enabled.
-    #[builder(default = "Some(ClientKeepAliveConfig::default())")]
-    pub keep_alive: Option<ClientKeepAliveConfig>,
+    /// If set, HTTP2 gRPC keep alive will be enabled.
+    /// To enable with default settings, use `.keep_alive(ClientKeepAliveConfig::default())`.
+    #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
+    pub keep_alive: Option<ClientKeepAliveOptions>,
 
     /// HTTP headers to include on every RPC call.
     ///
     /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
     /// `-bin). To set binary headers, use [ClientOptions::binary_headers]. Invalid header keys or
     /// values will cause an error to be returned when connecting.
-    #[builder(default)]
     pub headers: Option<HashMap<String, String>>,
 
     /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
     ///
     /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix). Invalid
     /// header keys will cause an error to be returned when connecting.
-    #[builder(default)]
     pub binary_headers: Option<HashMap<String, Vec<u8>>>,
 
     /// API key which is set as the "Authorization" header with "Bearer " prepended. This will only
     /// be applied if the headers don't already have an "Authorization" header.
-    #[builder(default)]
     pub api_key: Option<String>,
 
     /// HTTP CONNECT proxy to use for this client.
-    #[builder(default)]
     pub http_connect_proxy: Option<HttpConnectProxyOptions>,
 
     /// If set true, error code labels will not be included on request failure metrics.
@@ -189,7 +180,7 @@ pub struct ClientOptions {
 
 /// Configuration options for TLS
 #[derive(Clone, Debug, Default)]
-pub struct TlsConfig {
+pub struct TlsOptions {
     /// Bytes representing the root CA certificate used by the server. If not set, and the server's
     /// cert is issued by someone the operating system trusts, verification will still work (ex:
     /// Cloud offering).
@@ -198,12 +189,12 @@ pub struct TlsConfig {
     /// the domain name will be extracted from the URL used to connect.
     pub domain: Option<String>,
     /// TLS info for the client. If specified, core will attempt to use mTLS.
-    pub client_tls_config: Option<ClientTlsConfig>,
+    pub client_tls_options: Option<ClientTlsOptions>,
 }
 
 /// If using mTLS, both the client cert and private key must be specified, this contains them.
 #[derive(Clone)]
-pub struct ClientTlsConfig {
+pub struct ClientTlsOptions {
     /// The certificate for this client, encoded as PEM
     pub client_cert: Vec<u8>,
     /// The private key for this client, encoded as PEM
@@ -212,14 +203,14 @@ pub struct ClientTlsConfig {
 
 /// Client keep alive configuration.
 #[derive(Clone, Debug)]
-pub struct ClientKeepAliveConfig {
+pub struct ClientKeepAliveOptions {
     /// Interval to send HTTP2 keep alive pings.
     pub interval: Duration,
     /// Timeout that the keep alive must be responded to within or the connection will be closed.
     pub timeout: Duration,
 }
 
-impl Default for ClientKeepAliveConfig {
+impl Default for ClientKeepAliveOptions {
     fn default() -> Self {
         Self {
             interval: Duration::from_secs(30),
@@ -230,7 +221,7 @@ impl Default for ClientKeepAliveConfig {
 
 /// Configuration for retrying requests to the server
 #[derive(Clone, Debug, PartialEq)]
-pub struct RetryConfig {
+pub struct RetryOptions {
     /// initial wait time before the first retry.
     pub initial_interval: Duration,
     /// randomization jitter that is used as a multiplier for the current retry interval
@@ -247,7 +238,7 @@ pub struct RetryConfig {
     pub max_retries: usize,
 }
 
-impl Default for RetryConfig {
+impl Default for RetryOptions {
     fn default() -> Self {
         Self {
             initial_interval: Duration::from_millis(100), // 100 ms wait by default.
@@ -260,7 +251,7 @@ impl Default for RetryConfig {
     }
 }
 
-impl RetryConfig {
+impl RetryOptions {
     pub(crate) const fn task_poll_retry_policy() -> Self {
         Self {
             initial_interval: Duration::from_millis(200),
@@ -309,34 +300,16 @@ impl RetryConfig {
     }
 }
 
-impl From<RetryConfig> for ExponentialBackoff {
-    fn from(c: RetryConfig) -> Self {
+impl From<RetryOptions> for ExponentialBackoff {
+    fn from(c: RetryOptions) -> Self {
         c.into_exp_backoff(SystemClock::default())
     }
 }
 
-/// A request extension that, when set, should make the [RetryClient] consider this call to be a
-/// [CallType::TaskLongPoll]
-#[derive(Copy, Clone, Debug)]
-pub struct IsWorkerTaskLongPoll;
-
-/// A request extension that, when set, and a call is being processed by a [RetryClient], allows the
-/// caller to request certain matching errors to short-circuit-return immediately and not follow
-/// normal retry logic.
-#[derive(Copy, Clone, Debug)]
-pub struct NoRetryOnMatching {
-    /// Return true if the passed-in gRPC error should be immediately returned to the caller
-    pub predicate: fn(&tonic::Status) -> bool,
-}
-
-/// A request extension that forces overriding the current retry policy of the [RetryClient].
-#[derive(Clone, Debug)]
-pub struct RetryConfigForCall(pub RetryConfig);
-
-impl Debug for ClientTlsConfig {
+impl Debug for ClientTlsOptions {
     // Intentionally omit details here since they could leak a key if ever printed
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClientTlsConfig(..)")
+        write!(f, "ClientTlsOptions(..)")
     }
 }
 
@@ -515,7 +488,7 @@ impl ClientOptions {
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
         let client = Client::new(client, namespace.into());
-        let retry_client = RetryClient::new(client, self.retry_config.clone());
+        let retry_client = RetryClient::new(client, self.retry_options.clone());
         Ok(retry_client)
     }
 
@@ -613,13 +586,13 @@ impl ClientOptions {
                 },
             };
         }
-        Ok(RetryClient::new(client, self.retry_config.clone()))
+        Ok(RetryClient::new(client, self.retry_options.clone()))
     }
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
     /// Passes it through if TLS options not set.
     async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
-        if let Some(tls_cfg) = &self.tls_cfg {
+        if let Some(tls_cfg) = &self.tls_options {
             let mut tls = tonic::transport::ClientTlsConfig::new();
 
             if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
@@ -640,7 +613,7 @@ impl ClientOptions {
                 channel = channel.origin(uri);
             }
 
-            if let Some(client_opts) = &tls_cfg.client_tls_config {
+            if let Some(client_opts) = &tls_cfg.client_tls_options {
                 let client_identity =
                     Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
                 tls = tls.identity(client_identity);
@@ -917,58 +890,49 @@ impl Namespace {
 }
 
 /// Default workflow execution retention for a Namespace is 3 days
-pub const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration =
-    Duration::from_secs(60 * 60 * 24 * 3);
+const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration = Duration::from_secs(60 * 60 * 24 * 3);
 
 /// Helper struct for `register_namespace`.
-#[derive(Clone, derive_builder::Builder)]
+#[derive(Clone, bon::Builder)]
+#[builder(on(String, into))]
 pub struct RegisterNamespaceOptions {
     /// Name (required)
-    #[builder(setter(into))]
     pub namespace: String,
     /// Description (required)
-    #[builder(setter(into))]
     pub description: String,
     /// Owner's email
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub owner_email: String,
     /// Workflow execution retention period
-    #[builder(default = "DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD")]
+    #[builder(default = DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD)]
     pub workflow_execution_retention_period: Duration,
     /// Cluster settings
-    #[builder(setter(strip_option, custom), default)]
+    #[builder(default)]
     pub clusters: Vec<ClusterReplicationConfig>,
     /// Active cluster name
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub active_cluster_name: String,
     /// Custom Data
     #[builder(default)]
     pub data: HashMap<String, String>,
     /// Security Token
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub security_token: String,
     /// Global namespace
     #[builder(default)]
     pub is_global_namespace: bool,
     /// History Archival setting
-    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    #[builder(default = ArchivalState::Unspecified)]
     pub history_archival_state: ArchivalState,
     /// History Archival uri
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub history_archival_uri: String,
     /// Visibility Archival setting
-    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    #[builder(default = ArchivalState::Unspecified)]
     pub visibility_archival_state: ArchivalState,
     /// Visibility Archival uri
-    #[builder(setter(into), default)]
+    #[builder(default)]
     pub visibility_archival_uri: String,
-}
-
-impl RegisterNamespaceOptions {
-    /// Builder convenience.  Less `use` imports
-    pub fn builder() -> RegisterNamespaceOptionsBuilder {
-        Default::default()
-    }
 }
 
 impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
@@ -994,53 +958,29 @@ impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
     }
 }
 
-impl RegisterNamespaceOptionsBuilder {
-    /// Custum builder function for convenience
-    /// Warning: setting cluster_names could blow away any previously set cluster configs
-    pub fn cluster_names(&mut self, clusters: Vec<String>) {
-        self.clusters = Some(
-            clusters
-                .into_iter()
-                .map(|s| ClusterReplicationConfig { cluster_name: s })
-                .collect(),
-        );
-    }
-}
+// Note: The cluster_names custom setter from derive_builder is not supported in bon.
+// Users should manually construct the clusters vector if needed.
 
 /// Helper struct for `signal_with_start_workflow_execution`.
-#[derive(Clone, derive_builder::Builder)]
+#[derive(Clone, bon::Builder)]
+#[builder(on(String, into))]
 pub struct SignalWithStartOptions {
     /// Input payload for the workflow run
-    #[builder(setter(strip_option), default)]
     pub input: Option<Payloads>,
     /// Task Queue to target (required)
-    #[builder(setter(into))]
     pub task_queue: String,
     /// Workflow id for the workflow run
-    #[builder(setter(into))]
     pub workflow_id: String,
     /// Workflow type for the workflow run
-    #[builder(setter(into))]
     pub workflow_type: String,
-    #[builder(setter(strip_option), default)]
     /// Request id for idempotency/deduplication
     pub request_id: Option<String>,
     /// The signal name to send (required)
-    #[builder(setter(into))]
     pub signal_name: String,
     /// Payloads for the signal
-    #[builder(default)]
     pub signal_input: Option<Payloads>,
-    #[builder(setter(strip_option), default)]
     /// Headers for the signal
     pub signal_header: Option<Header>,
-}
-
-impl SignalWithStartOptions {
-    /// Builder convenience.  Less `use` imports
-    pub fn builder() -> SignalWithStartOptionsBuilder {
-        Default::default()
-    }
 }
 
 /// This trait provides higher-level friendlier interaction with the server.
@@ -1170,7 +1110,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListOpenFilters>,
+        filters: Option<list_open_workflow_executions_request::Filters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse>;
 
     /// List closed workflow executions Standard Visibility filtering
@@ -1179,7 +1119,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListClosedFilters>,
+        filters: Option<list_closed_workflow_executions_request::Filters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse>;
 
     /// List workflow executions with Advanced Visibility filtering
@@ -1715,7 +1655,7 @@ where
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListOpenFilters>,
+        filters: Option<list_open_workflow_executions_request::Filters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_open_workflow_executions(
             &mut self.clone(),
@@ -1737,7 +1677,7 @@ where
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
-        filters: Option<ListClosedFilters>,
+        filters: Option<list_closed_workflow_executions_request::Filters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
         Ok(WorkflowService::list_closed_workflow_executions(
             &mut self.clone(),
@@ -1869,18 +1809,6 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
 
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
 
-trait RequestExt {
-    /// Set a timeout for a request if one is not already specified in the metadata
-    fn set_default_timeout(&mut self, duration: Duration);
-}
-impl<T> RequestExt for tonic::Request<T> {
-    fn set_default_timeout(&mut self, duration: Duration) {
-        if !self.metadata().contains_key("grpc-timeout") {
-            self.set_timeout(duration)
-        }
-    }
-}
-
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
       use tracing::error;
@@ -1897,13 +1825,12 @@ mod tests {
 
     #[test]
     fn applies_headers() {
-        let opts = ClientOptionsBuilder::default()
+        let opts = ClientOptions::builder()
             .identity("enchicat".to_string())
             .target_url(Url::parse("https://smolkitty").unwrap())
             .client_name("cute-kitty".to_string())
             .client_version("0.1.0".to_string())
-            .build()
-            .unwrap();
+            .build();
 
         // Initial header set
         let headers = Arc::new(RwLock::new(ClientHeaders {
@@ -2032,24 +1959,30 @@ mod tests {
 
     #[test]
     fn keep_alive_defaults() {
-        let mut builder = ClientOptionsBuilder::default();
-        builder
+        let opts = ClientOptions::builder()
             .identity("enchicat".to_string())
             .target_url(Url::parse("https://smolkitty").unwrap())
             .client_name("cute-kitty".to_string())
-            .client_version("0.1.0".to_string());
-        // If unset, defaults to Some
-        let opts = builder.build().unwrap();
+            .client_version("0.1.0".to_string())
+            .build();
         assert_eq!(
             opts.keep_alive.clone().unwrap().interval,
-            ClientKeepAliveConfig::default().interval
+            ClientKeepAliveOptions::default().interval
         );
         assert_eq!(
             opts.keep_alive.clone().unwrap().timeout,
-            ClientKeepAliveConfig::default().timeout
+            ClientKeepAliveOptions::default().timeout
         );
-        // But can be set to none
-        let opts = builder.keep_alive(None).build().unwrap();
+
+        // Can be explicitly set to None
+        let opts = ClientOptions::builder()
+            .identity("enchicat".to_string())
+            .target_url(Url::parse("https://smolkitty").unwrap())
+            .client_name("cute-kitty".to_string())
+            .client_version("0.1.0".to_string())
+            .keep_alive(None)
+            .build();
+        dbg!(&opts.keep_alive);
         assert!(opts.keep_alive.is_none());
     }
 }

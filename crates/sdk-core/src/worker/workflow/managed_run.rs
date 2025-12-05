@@ -73,7 +73,9 @@ pub(super) struct ManagedRun {
     /// pushing things out and then directly back in. The downside is this is the only "impure" part
     /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
     /// up, that'd be nice.
-    local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
+    ///
+    /// This field is `None` when `WorkerTaskTypes.enable_local_activities` is false.
+    local_activity_request_sink: Option<Rc<dyn LocalActivityRequestSink>>,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
     /// Is set to true if the machines encounter an error and the only subsequent thing we should
@@ -108,7 +110,7 @@ impl ManagedRun {
     pub(super) fn new(
         basics: RunBasics,
         wft: PermittedWFT,
-        local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
+        local_activity_request_sink: Option<Rc<dyn LocalActivityRequestSink>>,
     ) -> (Self, RunUpdateAct) {
         let metrics = basics.metrics.clone();
         let config = basics.worker_config.clone();
@@ -243,10 +245,10 @@ impl ManagedRun {
             let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
                 return Err(RunUpdateErr {
-                    source: WFMachinesError::Fatal(format!(
+                    source: crate::worker::workflow::fatal!(
                         "Machines created for {} with no jobs",
                         self.wfm.machines.run_id
-                    )),
+                    ),
                     complete_resp_chan: None,
                 });
             }
@@ -264,7 +266,7 @@ impl ManagedRun {
                     lawait.hb_timeout_handle.abort();
                     lawait.hb_timeout_handle = sink_heartbeat_timeout_start(
                         self.wfm.machines.run_id.clone(),
-                        self.local_activity_request_sink.as_ref(),
+                        self.local_activity_request_sink.as_deref(),
                         start_time,
                         lawait.wft_timeout,
                     );
@@ -310,9 +312,13 @@ impl ManagedRun {
                 self.wfm.machines.reset_last_started_id(id);
             }
             // Tell the LA manager that we're done with the WFT
-            self.local_activity_request_sink.sink_reqs(vec![
-                LocalActRequest::IndicateWorkflowTaskCompleted(self.wfm.machines.run_id.clone()),
-            ]);
+            if let Some(ref local_act_request_sink) = self.local_activity_request_sink {
+                local_act_request_sink.sink_reqs(vec![
+                    LocalActRequest::IndicateWorkflowTaskCompleted(
+                        self.wfm.machines.run_id.clone(),
+                    ),
+                ]);
+            }
         }
 
         retme
@@ -762,7 +768,7 @@ impl ManagedRun {
                     completion_dat: Some((data, completion.resp_chan)),
                     hb_timeout_handle: sink_heartbeat_timeout_start(
                         self.run_id().to_string(),
-                        self.local_activity_request_sink.as_ref(),
+                        self.local_activity_request_sink.as_deref(),
                         start_t,
                         wft_timeout,
                     ),
@@ -1173,7 +1179,12 @@ impl ManagedRun {
         &mut self,
         new_local_acts: Vec<LocalActRequest>,
     ) -> Result<(), WFMachinesError> {
-        let immediate_resolutions = self.local_activity_request_sink.sink_reqs(new_local_acts);
+        let immediate_resolutions =
+            if let Some(ref local_act_request_sink) = self.local_activity_request_sink {
+                local_act_request_sink.sink_reqs(new_local_acts)
+            } else {
+                Vec::new()
+            };
         for resolution in immediate_resolutions {
             self.wfm
                 .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
@@ -1311,21 +1322,23 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
 }
 fn sink_heartbeat_timeout_start(
     run_id: String,
-    sink: &dyn LocalActivityRequestSink,
+    sink: Option<&dyn LocalActivityRequestSink>,
     wft_start_time: Instant,
     wft_timeout: Duration,
 ) -> AbortHandle {
     // The heartbeat deadline is 80% of the WFT timeout
     let deadline = wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
     let (abort_handle, abort_reg) = AbortHandle::new_pair();
-    sink.sink_reqs(vec![LocalActRequest::StartHeartbeatTimeout {
-        send_on_elapse: HeartbeatTimeoutMsg {
-            run_id,
-            span: Span::current(),
-        },
-        deadline,
-        abort_reg,
-    }]);
+    if let Some(la_sink) = sink {
+        la_sink.sink_reqs(vec![LocalActRequest::StartHeartbeatTimeout {
+            send_on_elapse: HeartbeatTimeoutMsg {
+                run_id,
+                span: Span::current(),
+            },
+            deadline,
+            abort_reg,
+        }]);
+    }
     abort_handle
 }
 

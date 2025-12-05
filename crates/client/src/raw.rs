@@ -6,7 +6,7 @@ use crate::{
     Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
-    worker_registry::{ClientWorkerSet, Slot},
+    worker::{ClientWorkerSet, Slot},
 };
 use dyn_clone::DynClone;
 use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
@@ -1598,20 +1598,28 @@ proxier! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptionsBuilder, RetryClient};
+    use crate::{ClientOptions, RetryClient};
     use std::collections::HashSet;
-    use temporalio_common::protos::temporal::api::{
-        operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+    use temporalio_common::{
+        protos::temporal::api::{
+            operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+        },
+        worker::WorkerTaskTypes,
     };
     use tonic::IntoRequest;
+    use url::Url;
     use uuid::Uuid;
 
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
-        let opts = ClientOptionsBuilder::default().build().unwrap();
+        let opts = ClientOptions::builder()
+            .target_url(Url::parse("http://localhost:7233").unwrap())
+            .client_name("test")
+            .client_version("0.0.0")
+            .build();
         let raw_client = opts.connect_no_namespace(None).await.unwrap();
-        let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
+        let mut retry_client = RetryClient::new(raw_client, opts.retry_options);
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
@@ -1795,7 +1803,7 @@ mod tests {
     #[case::without_versioning(false)]
     #[tokio::test]
     async fn eager_reservations_attach_deployment_options(#[case] use_worker_versioning: bool) {
-        use crate::worker_registry::{MockClientWorker, MockSlot};
+        use crate::worker::{MockClientWorker, MockSlot};
         use temporalio_common::{
             protos::temporal::api::enums::v1::WorkerVersioningMode,
             worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
@@ -1865,6 +1873,14 @@ mod tests {
         mock_provider
             .expect_worker_instance_key()
             .return_const(uuid);
+        mock_provider
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
+                enable_nexus: true,
+            });
 
         let client_worker_set = Arc::new(ClientWorkerSet::new());
         client_worker_set

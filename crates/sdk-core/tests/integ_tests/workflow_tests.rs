@@ -58,7 +58,8 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
     worker::{
-        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
+        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes,
+        WorkerVersioningStrategy,
     },
 };
 use temporalio_sdk::{
@@ -77,7 +78,9 @@ use tokio::{join, sync::Notify, time::sleep};
 async fn parallel_workflows_same_queue() {
     let wf_name = "parallel_workflows_same_queue";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     core.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -544,7 +547,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     starter
         .worker_config
         .versioning_strategy(version_strat)
-        .no_remote_activities(true);
+        .task_types(WorkerTaskTypes::workflow_only());
     let core = starter.get_worker().await;
     starter.start_wf().await;
     let client = starter.get_client().await;
@@ -767,7 +770,9 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
         starter.worker_config.workflow_failure_errors(typeset);

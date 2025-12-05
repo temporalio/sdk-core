@@ -57,8 +57,8 @@ use temporalio_common::{
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder, WorkerVersioningStrategy,
-        WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder, WorkerTaskTypes,
+        WorkerVersioningStrategy, WorkflowSlotKind,
     },
 };
 use temporalio_sdk::{
@@ -164,6 +164,7 @@ async fn one_slot_worker_reports_available_slot() {
         .max_outstanding_workflow_tasks(2_usize)
         .max_outstanding_nexus_tasks(1_usize)
         .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
+        .task_types(WorkerTaskTypes::all())
         .build()
         .unwrap();
 
@@ -919,7 +920,12 @@ async fn nexus_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nexus_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.no_remote_activities(true);
+    starter.worker_config.task_types(WorkerTaskTypes {
+        enable_workflows: true,
+        enable_local_activities: false,
+        enable_remote_activities: false,
+        enable_nexus: true,
+    });
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
@@ -1096,7 +1102,9 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(
@@ -1179,7 +1187,9 @@ async fn metrics_available_from_custom_slot_supplier() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("metrics_available_from_custom_slot_supplier", rt);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     starter.worker_config.clear_max_outstanding_opts();
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
@@ -1348,7 +1358,9 @@ async fn sticky_queue_label_strategy(
     let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
     // Enable sticky queues by setting a reasonable cache size
     starter.worker_config.max_cached_workflows(10_usize);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
@@ -1424,7 +1436,9 @@ async fn resource_based_tuner_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "resource_based_tuner_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     starter.worker_config.clear_max_outstanding_opts();
 
     // Create a resource-based tuner with reasonable thresholds

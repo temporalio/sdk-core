@@ -8,7 +8,10 @@ use tokio::{
     sync::{mpsc::UnboundedSender, oneshot},
 };
 use tonic::{
-    body::Body, codegen::Service, codegen::http::Response, server::NamedService, transport::Server,
+    body::Body,
+    codegen::{Service, http::Response},
+    server::NamedService,
+    transport::Server,
 };
 
 #[derive(Clone)]

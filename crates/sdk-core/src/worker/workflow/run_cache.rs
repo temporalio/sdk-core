@@ -22,7 +22,7 @@ pub(super) struct RunCache {
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
-    local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
+    local_activity_request_sink: Option<Rc<dyn LocalActivityRequestSink>>,
 
     metrics: MetricsContext,
 }
@@ -32,7 +32,7 @@ impl RunCache {
         worker_config: Arc<WorkerConfig>,
         sdk_name_and_version: (String, String),
         server_capabilities: get_system_info_response::Capabilities,
-        local_activity_request_sink: impl LocalActivityRequestSink,
+        local_activity_request_sink: Option<impl LocalActivityRequestSink>,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
@@ -49,7 +49,8 @@ impl RunCache {
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
             ),
-            local_activity_request_sink: Rc::new(local_activity_request_sink),
+            local_activity_request_sink: local_activity_request_sink
+                .map(|s| Rc::new(s) as Rc<dyn LocalActivityRequestSink>),
             metrics,
         }
     }

@@ -42,5 +42,9 @@ version = "0.1"
 path = "../client"
 version = "0.1"
 
+[features]
+default = []
+antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
+
 [lints]
 workspace = true

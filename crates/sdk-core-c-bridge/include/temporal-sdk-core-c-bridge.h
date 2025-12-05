@@ -93,7 +93,7 @@ typedef struct TemporalCoreByteArrayRef {
 } TemporalCoreByteArrayRef;
 
 /**
- * Metadata is <key1>\n<value1>\n<key2>\n<value2>. Metadata keys or
+ * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
  * values cannot contain a newline within.
  */
 typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
@@ -193,7 +193,7 @@ typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
  */
 typedef struct TemporalCoreClientGrpcOverrideResponse {
   /**
-   * Numeric gRPC status code, see https://grpc.io/docs/guides/status-codes/. 0 is success, non-0
+   * Numeric gRPC status code, see <https://grpc.io/docs/guides/status-codes/>. 0 is success, non-0
    * is failure.
    */
   int32_t status_code;
@@ -343,7 +343,7 @@ typedef struct TemporalCoreOpenTelemetryOptions {
   enum TemporalCoreOpenTelemetryProtocol protocol;
   /**
    * Histogram bucket overrides in form of
-   * <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+   * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
   TemporalCoreMetadataRef histogram_bucket_overrides;
 } TemporalCoreOpenTelemetryOptions;
@@ -355,7 +355,7 @@ typedef struct TemporalCorePrometheusOptions {
   bool durations_as_seconds;
   /**
    * Histogram bucket overrides in form of
-   * <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
+   * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
   TemporalCoreMetadataRef histogram_bucket_overrides;
 } TemporalCorePrometheusOptions;
@@ -446,7 +446,7 @@ typedef struct TemporalCoreTelemetryOptions {
 
 typedef struct TemporalCoreRuntimeOptions {
   const struct TemporalCoreTelemetryOptions *telemetry;
-  uint64_t worker_heartbeat_duration_millis;
+  uint64_t worker_heartbeat_interval_millis;
 } TemporalCoreRuntimeOptions;
 
 typedef struct TemporalCoreTestServerOptions {
@@ -738,6 +738,13 @@ typedef struct TemporalCoreTunerHolder {
   struct TemporalCoreSlotSupplier nexus_task_slot_supplier;
 } TemporalCoreTunerHolder;
 
+typedef struct TemporalCoreWorkerTaskTypes {
+  bool enable_workflows;
+  bool enable_local_activities;
+  bool enable_remote_activities;
+  bool enable_nexus;
+} TemporalCoreWorkerTaskTypes;
+
 typedef struct TemporalCorePollerBehaviorSimpleMaximum {
   uintptr_t simple_maximum;
 } TemporalCorePollerBehaviorSimpleMaximum;
@@ -765,7 +772,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCoreByteArrayRef identity_override;
   uint32_t max_cached_workflows;
   struct TemporalCoreTunerHolder tuner;
-  bool no_remote_activities;
+  struct TemporalCoreWorkerTaskTypes task_types;
   uint64_t sticky_queue_schedule_to_start_timeout_millis;
   uint64_t max_heartbeat_throttle_interval_millis;
   uint64_t default_heartbeat_throttle_interval_millis;
@@ -778,6 +785,7 @@ typedef struct TemporalCoreWorkerOptions {
   struct TemporalCorePollerBehavior nexus_task_poller_behavior;
   bool nondeterminism_as_workflow_fail;
   struct TemporalCoreByteArrayRefArray nondeterminism_as_workflow_fail_for_types;
+  struct TemporalCoreByteArrayRefArray plugins;
 } TemporalCoreWorkerOptions;
 
 /**

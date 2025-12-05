@@ -23,7 +23,11 @@ use crate::{
     internal_flags::InternalFlags,
     pollers::TrackedPermittedTqResp,
     protosext::{ValidPollWFTQResponse, protocol_messages::IncomingProtocolMessage},
-    telemetry::{VecDisplayer, set_trace_subscriber_for_current_thread},
+    telemetry::{
+        VecDisplayer,
+        metrics::{self, FailureReason},
+        set_trace_subscriber_for_current_thread,
+    },
     worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
         PostActivateHookData,
@@ -66,9 +70,8 @@ use temporalio_common::{
                 remove_from_cache::EvictionReason, workflow_activation_job,
             },
             workflow_commands::*,
-            workflow_completion,
             workflow_completion::{
-                Failure, WorkflowActivationCompletion, workflow_activation_completion,
+                self, Failure, WorkflowActivationCompletion, workflow_activation_completion,
             },
         },
         temporal::api::{
@@ -95,6 +98,7 @@ use tokio::{
     task::{LocalSet, spawn_blocking},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::either::Either;
 use tokio_util::sync::CancellationToken;
 use tracing::{Span, Subscriber};
 
@@ -130,9 +134,10 @@ pub(crate) struct Workflows {
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
-    local_act_mgr: Arc<LocalActivityManager>,
+    local_act_mgr: Option<Arc<LocalActivityManager>>,
     ever_polled: AtomicBool,
     default_versioning_behavior: Option<VersioningBehavior>,
+    metrics: MetricsContext,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -165,9 +170,9 @@ impl Workflows {
         client: Arc<dyn WorkerClient>,
         wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
-        local_activity_request_sink: impl LocalActivityRequestSink,
-        local_act_mgr: Arc<LocalActivityManager>,
-        heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
+        local_activity_request_sink: Option<impl LocalActivityRequestSink>,
+        local_act_mgr: Option<Arc<LocalActivityManager>>,
+        heartbeat_timeout_rx: Option<UnboundedReceiver<HeartbeatTimeoutMsg>>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
         tracing_sub: Option<Arc<dyn Subscriber + Send + Sync>>,
     ) -> Self {
@@ -175,6 +180,7 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.worker_config.task_queue.clone();
+        let metrics = basics.metrics.clone();
         let default_versioning_behavior = basics.default_versioning_behavior;
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
@@ -182,10 +188,14 @@ impl Workflows {
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
-        let locals_stream = stream::select(
-            UnboundedReceiverStream::new(local_rx),
-            UnboundedReceiverStream::new(heartbeat_timeout_rx).map(Into::into),
-        );
+        let locals_stream = if let Some(hb_rx) = heartbeat_timeout_rx {
+            Either::Left(stream::select(
+                UnboundedReceiverStream::new(local_rx),
+                UnboundedReceiverStream::new(hb_rx).map(Into::into),
+            ))
+        } else {
+            Either::Right(UnboundedReceiverStream::new(local_rx))
+        };
         let (activation_tx, activation_rx) = unbounded_channel();
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
@@ -262,6 +272,7 @@ impl Workflows {
             local_act_mgr,
             ever_polled: AtomicBool::new(false),
             default_versioning_behavior,
+            metrics,
         }
     }
 
@@ -355,6 +366,12 @@ impl Workflows {
                 {
                     versioning_behavior = *default_vb;
                 }
+                let nonfirst_local_activity_execution_attempts =
+                    if let Some(ref la_mgr) = self.local_act_mgr {
+                        la_mgr.get_nonfirst_attempt_count(run_id) as u32
+                    } else {
+                        0
+                    };
                 let mut completion = WorkflowTaskCompletion {
                     task_token: task_token.clone(),
                     commands,
@@ -365,10 +382,7 @@ impl Workflows {
                     force_create_new_workflow_task: force_new_wft,
                     sdk_metadata,
                     metering_metadata: MeteringMetadata {
-                        nonfirst_local_activity_execution_attempts: self
-                            .local_act_mgr
-                            .get_nonfirst_attempt_count(run_id)
-                            as u32,
+                        nonfirst_local_activity_execution_attempts,
                     },
                     versioning_behavior,
                 };
@@ -423,6 +437,11 @@ impl Workflows {
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
                                 .await;
+                            self.metrics
+                                .with_new_attrs([metrics::failure_reason(
+                                    FailureReason::GrpcMessageTooLarge,
+                                )])
+                                .wf_task_failed();
                             return Err(e);
                         }
                         e => {
@@ -717,7 +736,7 @@ impl Workflows {
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
         let print_err = match &msg {
-            LocalInputs::GetStateInfo(_) => false,
+            LocalInputs::GetStateInfo(_) | LocalInputs::BumpStream => false,
             LocalInputs::LocalResolution(lr) if lr.res.is_la_cancel_confirmation() => false,
             _ => true,
         };
@@ -1433,7 +1452,79 @@ pub(crate) enum WFMachinesError {
     Fatal(String),
 }
 
+/// Helper macro to create Nondeterminism errors with automatic assertion
+///
+/// Usage: `nondeterminism!("Activity id mismatch: {} vs {}", id1, id2)`
+macro_rules! nondeterminism {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        #[cfg(feature = "antithesis_assertions")]
+        $crate::antithesis::assert_unreachable!(
+            "Nondeterminism error detected",
+            ::serde_json::json!({
+                "error_message": &msg,
+                "error_type": "Nondeterminism",
+                "location": format!("{}:{}", file!(), line!())
+            })
+        );
+        WFMachinesError::Nondeterminism(msg)
+    }};
+}
+pub(crate) use nondeterminism;
+
+/// Helper macro to create Fatal errors with automatic assertion
+///
+/// Usage: `fatal!("Invalid state transition: {:?}", state)`
+macro_rules! fatal {
+    ($($arg:tt)*) => {{
+        let msg = format!($($arg)*);
+        #[cfg(feature = "antithesis_assertions")]
+        $crate::antithesis::assert_unreachable!(
+            "Fatal error detected",
+            ::serde_json::json!({
+                "error_message": &msg,
+                "error_type": "Fatal",
+                "location": format!("{}:{}", file!(), line!())
+            })
+        );
+        WFMachinesError::Fatal(msg)
+    }};
+}
+pub(crate) use fatal;
+
 impl WFMachinesError {
+    /// Create a new Nondeterminism error with assertion instrumentation
+    pub(crate) fn nondeterminism(message: impl Into<String>) -> Self {
+        let msg = message.into();
+
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_unreachable!(
+            "Nondeterminism error detected",
+            ::serde_json::json!({
+                "error_message": msg,
+                "error_type": "Nondeterminism"
+            })
+        );
+
+        WFMachinesError::Nondeterminism(msg)
+    }
+
+    /// Create a new Fatal error with assertion instrumentation
+    pub(crate) fn fatal(message: impl Into<String>) -> Self {
+        let msg = message.into();
+
+        #[cfg(feature = "antithesis_assertions")]
+        crate::antithesis::assert_unreachable!(
+            "Fatal error detected",
+            ::serde_json::json!({
+                "error_message": msg,
+                "error_type": "Fatal"
+            })
+        );
+
+        WFMachinesError::Fatal(msg)
+    }
+
     fn evict_reason(&self) -> EvictionReason {
         match self {
             WFMachinesError::Nondeterminism(_) => EvictionReason::Nondeterminism,
@@ -1459,7 +1550,7 @@ impl From<MachineError<WFMachinesError>> for WFMachinesError {
         match v {
             MachineError::InvalidTransition => {
                 // TODO: Get states back
-                WFMachinesError::Nondeterminism("Invalid transition in state machine".to_string())
+                WFMachinesError::nondeterminism("Invalid transition in state machine")
             }
             MachineError::Underlying(e) => e,
         }
@@ -1468,13 +1559,13 @@ impl From<MachineError<WFMachinesError>> for WFMachinesError {
 
 impl From<TimestampError> for WFMachinesError {
     fn from(_: TimestampError) -> Self {
-        Self::Fatal("Could not decode timestamp".to_string())
+        Self::fatal("Could not decode timestamp")
     }
 }
 
 impl From<anyhow::Error> for WFMachinesError {
     fn from(value: anyhow::Error) -> Self {
-        WFMachinesError::Fatal(value.to_string())
+        WFMachinesError::fatal(value.to_string())
     }
 }
 

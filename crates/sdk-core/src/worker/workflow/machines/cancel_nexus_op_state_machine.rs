@@ -3,7 +3,7 @@ use super::{
     workflow_machines::MachineResponse,
 };
 use super::{StateMachine, TransitionResult, fsm};
-use crate::worker::workflow::machines::HistEventData;
+use crate::worker::workflow::{machines::HistEventData, nondeterminism, fatal};
 use std::convert::TryFrom;
 use temporalio_common::protos::{
     coresdk::workflow_activation::ResolveCancelNexusOperation,
@@ -76,9 +76,9 @@ impl TryFrom<HistEventData> for CancelNexusOpMachineEvents {
         Ok(match e.event_type() {
             EventType::NexusOperationCancelRequested => Self::NexusOpCancelRequested,
             _ => {
-                return Err(WFMachinesError::Nondeterminism(format!(
+                return Err(nondeterminism!(
                     "Cancel external WF machine does not handle this event: {e}"
-                )));
+                ));
             }
         })
     }

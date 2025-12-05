@@ -1,13 +1,16 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::WorkflowClientTrait;
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
-    coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
-    temporal::api::{
-        command::v1::{Command, command},
-        common::v1::Payload,
-        enums::v1::EventType,
+use temporalio_common::{
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
+        coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+        temporal::api::{
+            command::v1::{Command, command},
+            common::v1::Payload,
+            enums::v1::EventType,
+        },
     },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{WfContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
@@ -29,7 +32,9 @@ async fn sends_modify_wf_props() {
     let wf_name = "can_upsert_memo";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.no_remote_activities(true);
+    starter
+        .worker_config
+        .task_types(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name, memo_upserter);

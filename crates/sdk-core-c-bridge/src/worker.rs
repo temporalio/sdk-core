@@ -43,7 +43,7 @@ pub struct WorkerOptions {
     pub identity_override: ByteArrayRef,
     pub max_cached_workflows: u32,
     pub tuner: TunerHolder,
-    pub no_remote_activities: bool,
+    pub task_types: WorkerTaskTypes,
     pub sticky_queue_schedule_to_start_timeout_millis: u64,
     pub max_heartbeat_throttle_interval_millis: u64,
     pub default_heartbeat_throttle_interval_millis: u64,
@@ -56,6 +56,26 @@ pub struct WorkerOptions {
     pub nexus_task_poller_behavior: PollerBehavior,
     pub nondeterminism_as_workflow_fail: bool,
     pub nondeterminism_as_workflow_fail_for_types: ByteArrayRefArray,
+    pub plugins: ByteArrayRefArray,
+}
+
+#[repr(C)]
+pub struct WorkerTaskTypes {
+    pub enable_workflows: bool,
+    pub enable_local_activities: bool,
+    pub enable_remote_activities: bool,
+    pub enable_nexus: bool,
+}
+
+impl From<&WorkerTaskTypes> for temporalio_common::worker::WorkerTaskTypes {
+    fn from(t: &WorkerTaskTypes) -> Self {
+        Self {
+            enable_workflows: t.enable_workflows,
+            enable_local_activities: t.enable_local_activities,
+            enable_remote_activities: t.enable_remote_activities,
+            enable_nexus: t.enable_nexus,
+        }
+    }
 }
 
 #[repr(C)]
@@ -1184,7 +1204,9 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .client_identity_override(opt.identity_override.to_option_string())
             .max_cached_workflows(opt.max_cached_workflows as usize)
             .tuner(Arc::new(converted_tuner))
-            .no_remote_activities(opt.no_remote_activities)
+            .task_types(temporalio_common::worker::WorkerTaskTypes::from(
+                &opt.task_types,
+            ))
             .sticky_queue_schedule_to_start_timeout(Duration::from_millis(
                 opt.sticky_queue_schedule_to_start_timeout_millis,
             ))
@@ -1236,6 +1258,20 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                         )
                     })
                     .collect::<HashMap<String, HashSet<WorkflowErrorType>>>(),
+            )
+            .plugins(
+                opt.plugins
+                    .to_str_vec()
+                    .into_iter()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .map(
+                        |name| temporalio_common::protos::temporal::api::worker::v1::PluginInfo {
+                            name: name.to_owned(),
+                            version: String::new(),
+                        },
+                    )
+                    .collect::<HashSet<_>>(),
             )
             .build()
             .map_err(|err| anyhow::anyhow!(err))
