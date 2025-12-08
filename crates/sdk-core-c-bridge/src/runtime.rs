@@ -239,13 +239,11 @@ impl Runtime {
 
         let core_runtime_options = CoreRuntimeOptions::builder()
             .telemetry_options(telemetry_options)
-            .maybe_heartbeat_interval(if options.worker_heartbeat_interval_millis == 0 {
-                None
-            } else {
+            .maybe_heartbeat_interval((options.worker_heartbeat_interval_millis != 0).then(|| {
                 Some(Duration::from_millis(
                     options.worker_heartbeat_interval_millis,
                 ))
-            })
+            }))
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
 
@@ -403,13 +401,11 @@ fn create_meter(
                         &otel_options.histogram_bucket_overrides,
                     )?,
                 })
-                .maybe_metric_periodicity(if otel_options.metric_periodicity_millis > 0 {
-                    Some(Duration::from_millis(
-                        otel_options.metric_periodicity_millis.into(),
-                    ))
-                } else {
-                    None
-                })
+                .maybe_metric_periodicity(
+                    (otel_options.metric_periodicity_millis > 0).then(|| {
+                        Duration::from_millis(otel_options.metric_periodicity_millis.into())
+                    }),
+                )
                 .build(),
         )?))
     } else if let Some(prom_options) = unsafe { options.prometheus.as_ref() } {

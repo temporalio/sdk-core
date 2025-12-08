@@ -45,7 +45,7 @@ impl SharedNamespaceWorker {
             })
             .nexus_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .build()
-            .map_err(|e| anyhow::anyhow!(e))?;
+            .expect("internal shared namespace worker options are valid");
         let worker = crate::worker::Worker::new_with_pollers(
             config,
             None,
