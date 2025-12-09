@@ -827,12 +827,16 @@ impl WorkflowMachines {
                 DelayedAction::WakeLa(mk, la_dat) => {
                     let mach = self.machine_mut(mk);
                     if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                        // self.local_activity_data.insert_peeked_marker(*la_dat);
                         if lam.will_accept_resolve_marker() {
                             let resps = lam.try_resolve_with_dat((*la_dat).into())?;
                             self.process_machine_responses(mk, resps)?;
                         } else {
-                            self.local_activity_data.insert_peeked_marker(*la_dat);
+                            // Since the LA machine exists, we have encountered the LA WF command.
+                            // But since it will not accept a resolve marker, we have no use saving
+                            // this marker.
+                            // Previously, peeked markers were stored in a map, but since we are
+                            // now storing in an ordered collection we no longer can store this
+                            // unnecessary data as `apply_local_action_peeked_resolutions` will attempt to apply it.
                         }
                     }
                 }

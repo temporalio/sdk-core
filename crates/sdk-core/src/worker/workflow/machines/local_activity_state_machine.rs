@@ -97,7 +97,6 @@ fsm! {
     // LAs reporting status after they've handled their result can simply be ignored. We could
     // optimize this away higher up but that feels very overkill.
     MarkerCommandCreated --(HandleResult(ResolveDat)) --> MarkerCommandCreated;
-    MarkerCommandCreated --(HandleKnownResult(ResolveDat)) --> MarkerCommandCreated;
     ResultNotified --(HandleResult(ResolveDat)) --> ResultNotified;
     MarkerCommandRecorded --(HandleResult(ResolveDat)) --> MarkerCommandRecorded;
 }
