@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
 use temporalio_common::{
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
-        history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
+        history::v1::history_event::Attributes::{
+            WorkflowExecutionTerminatedEventAttributes, WorkflowTaskFailedEventAttributes,
+        },
     },
     worker::WorkerTaskTypes,
 };
@@ -34,13 +36,29 @@ pub(crate) async fn grpc_message_too_large() {
     starter.start_with_worker(wf_name, &mut core).await;
     core.run_until_done().await.unwrap();
 
-    assert!(starter.get_history().await.events.iter().any(|e| {
-        e.event_type == EventType::WorkflowTaskFailed as i32
-            && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                attr.cause == GrpcMessageTooLarge as i32
-                    && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
-            } else {
-                false
-            }
-    }))
+    let events = starter.get_history().await.events;
+    // Depending on the version of server, it may terminate the workflow, or simply be a task
+    // failure
+    assert!(
+        events.iter().any(|e| {
+            // Task failure
+            e.event_type == EventType::WorkflowTaskFailed as i32
+                && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
+                    attr.cause == GrpcMessageTooLarge as i32
+                        && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
+                } else {
+                    false
+                }
+            // Workflow terminated
+            ||
+            e.event_type == EventType::WorkflowExecutionTerminated as i32
+                && if let WorkflowExecutionTerminatedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
+                    attr.reason == "GrpcMessageTooLarge"
+                } else {
+                    false
+                }
+        }),
+        "Expected workflow task failure or termination b/c grpc message too large: {:?}",
+        events
+    );
 }
