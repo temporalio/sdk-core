@@ -25,25 +25,20 @@ pub struct TunerHolder {
 
 /// Can be used to construct a [TunerHolder] without needing to manually construct each
 /// [SlotSupplier]. Useful for lang bridges to allow more easily passing through user options.
-#[derive(Clone, Debug, derive_builder::Builder)]
-#[builder(build_fn(validate = "Self::validate"))]
+#[derive(Clone, Debug, bon::Builder)]
+#[builder(finish_fn(vis = "", name = build_internal))]
 #[non_exhaustive]
 pub struct TunerHolderOptions {
     /// Options for workflow slots
-    #[builder(default, setter(strip_option))]
     pub workflow_slot_options: Option<SlotSupplierOptions<WorkflowSlotKind>>,
     /// Options for activity slots
-    #[builder(default, setter(strip_option))]
     pub activity_slot_options: Option<SlotSupplierOptions<ActivitySlotKind>>,
     /// Options for local activity slots
-    #[builder(default, setter(strip_option))]
     pub local_activity_slot_options: Option<SlotSupplierOptions<LocalActivitySlotKind>>,
     /// Options for nexus slots
-    #[builder(default, setter(strip_option))]
     pub nexus_slot_options: Option<SlotSupplierOptions<NexusSlotKind>>,
     /// Options that will apply to all resource based slot suppliers. Must be set if any slot
     /// options are [SlotSupplierOptions::ResourceBased]
-    #[builder(default, setter(strip_option))]
     pub resource_based_options: Option<ResourceBasedSlotsOptions>,
 }
 
@@ -150,35 +145,42 @@ pub enum SlotSupplierOptions<SK: SlotKind> {
     Custom(Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>),
 }
 
-impl TunerHolderOptionsBuilder {
-    /// Create a [TunerHolder] from this builder
-    pub fn build_tuner_holder(self) -> Result<TunerHolder, anyhow::Error> {
-        let s = self.build()?;
-        s.build_tuner_holder()
+impl<State: tuner_holder_options_builder::IsComplete> TunerHolderOptionsBuilder<State> {
+    /// Build the [TunerHolderOptions] with validation
+    pub fn build(self) -> Result<TunerHolderOptions, String> {
+        let options = self.build_internal();
+        validate_tuner_holder_options(&options)?;
+        Ok(options)
     }
 
-    fn validate(&self) -> Result<(), String> {
-        let any_is_resource_based = matches!(
-            self.workflow_slot_options,
-            Some(Some(SlotSupplierOptions::ResourceBased(_)))
-        ) || matches!(
-            self.activity_slot_options,
-            Some(Some(SlotSupplierOptions::ResourceBased(_)))
-        ) || matches!(
-            self.local_activity_slot_options,
-            Some(Some(SlotSupplierOptions::ResourceBased(_)))
-        ) || matches!(
-            self.nexus_slot_options,
-            Some(Some(SlotSupplierOptions::ResourceBased(_)))
-        );
-        if any_is_resource_based && matches!(self.resource_based_options, None | Some(None)) {
-            return Err(
-                "`resource_based_options` must be set if any slot options are ResourceBased"
-                    .to_string(),
-            );
-        }
-        Ok(())
+    /// Create a [TunerHolder] from this builder
+    pub fn build_tuner_holder(self) -> Result<TunerHolder, anyhow::Error> {
+        let s = self.build().map_err(|e: String| anyhow::anyhow!(e))?;
+        s.build_tuner_holder()
     }
+}
+
+fn validate_tuner_holder_options(options: &TunerHolderOptions) -> Result<(), String> {
+    let any_is_resource_based = matches!(
+        options.workflow_slot_options,
+        Some(SlotSupplierOptions::ResourceBased(_))
+    ) || matches!(
+        options.activity_slot_options,
+        Some(SlotSupplierOptions::ResourceBased(_))
+    ) || matches!(
+        options.local_activity_slot_options,
+        Some(SlotSupplierOptions::ResourceBased(_))
+    ) || matches!(
+        options.nexus_slot_options,
+        Some(SlotSupplierOptions::ResourceBased(_))
+    );
+    if any_is_resource_based && options.resource_based_options.is_none() {
+        return Err(
+            "`resource_based_options` must be set if any slot options are ResourceBased"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 /// Can be used to construct a `TunerHolder` from individual slot suppliers. Any supplier which is
@@ -348,11 +350,10 @@ mod tests {
 
     #[test]
     fn tuner_holder_options_nexus_resource_based() {
-        let resource_opts = ResourceBasedSlotsOptionsBuilder::default()
+        let resource_opts = ResourceBasedSlotsOptions::builder()
             .target_mem_usage(0.8)
             .target_cpu_usage(0.9)
-            .build()
-            .unwrap();
+            .build();
 
         let options = TunerHolderOptions {
             workflow_slot_options: None,
@@ -403,7 +404,7 @@ mod tests {
     #[test]
     fn tuner_holder_options_builder_validates_resource_based_requirements() {
         // Should fail when nexus uses ResourceBased but resource_based_options is not set
-        let result = TunerHolderOptionsBuilder::default()
+        let result = TunerHolderOptions::builder()
             .nexus_slot_options(SlotSupplierOptions::ResourceBased(
                 ResourceSlotOptions::new(5, 100, Duration::from_millis(100)),
             ))
@@ -420,11 +421,10 @@ mod tests {
 
     #[test]
     fn tuner_holder_options_all_slot_types() {
-        let resource_opts = ResourceBasedSlotsOptionsBuilder::default()
+        let resource_opts = ResourceBasedSlotsOptions::builder()
             .target_mem_usage(0.8)
             .target_cpu_usage(0.9)
-            .build()
-            .unwrap();
+            .build();
 
         let options = TunerHolderOptions {
             workflow_slot_options: Some(SlotSupplierOptions::FixedSize { slots: 10 }),

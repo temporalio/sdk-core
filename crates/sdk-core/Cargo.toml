@@ -35,12 +35,12 @@ antithesis_sdk = { version = "0.2.1", optional = true, default-features = false,
 assert_matches = { version = "1.5", optional = true }
 bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
+bon = { workspace = true }
 console-subscriber = { version = "0.4", optional = true }
 crossbeam-channel = "0.5"
 crossbeam-queue = "0.3"
 crossbeam-utils = "0.8"
 dashmap = "6.1"
-derive_builder = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = "0.3"
 enum-iterator = "2"

@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporalio_client::worker::SharedNamespaceWorkerTrait;
 use temporalio_common::{
     protos::temporal::api::worker::v1::WorkerHeartbeat,
-    worker::{PollerBehavior, WorkerConfigBuilder, WorkerTaskTypes, WorkerVersioningStrategy},
+    worker::{PollerBehavior, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -32,7 +32,7 @@ impl SharedNamespaceWorker {
         heartbeat_interval: Duration,
         telemetry: Option<WorkerTelemetry>,
     ) -> Result<Self, anyhow::Error> {
-        let config = WorkerConfigBuilder::default()
+        let config = WorkerConfig::builder()
             .namespace(namespace.clone())
             .task_queue(format!(
                 "temporal-sys/worker-commands/{namespace}/{}",
@@ -45,7 +45,7 @@ impl SharedNamespaceWorker {
             })
             .nexus_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .build()
-            .expect("all required fields should be implemented");
+            .expect("internal shared namespace worker options are valid");
         let worker = crate::worker::Worker::new_with_pollers(
             config,
             None,

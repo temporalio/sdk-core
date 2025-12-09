@@ -43,11 +43,10 @@ impl ResourceBasedTuner<RealSysInfo> {
     /// Create an instance attempting to target the provided memory and cpu thresholds as values
     /// between 0 and 1.
     pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
-        let opts = ResourceBasedSlotsOptionsBuilder::default()
+        let opts = ResourceBasedSlotsOptions::builder()
             .target_mem_usage(target_mem_usage)
             .target_cpu_usage(target_cpu_usage)
-            .build()
-            .expect("default resource based slot options can't fail to build");
+            .build();
         let controller = ResourceController::new_with_sysinfo(opts, Arc::new(RealSysInfo::new()));
         Self::new_from_controller(controller)
     }
@@ -163,7 +162,7 @@ pub(crate) struct ResourceBasedSlotsForType<MI, SK> {
     _slot_kind: PhantomData<SK>,
 }
 /// Allows for the full customization of the PID options for a resource based tuner
-#[derive(Clone, Debug, derive_builder::Builder)]
+#[derive(Clone, Debug, bon::Builder)]
 #[non_exhaustive]
 pub struct ResourceBasedSlotsOptions {
     /// A value in the range [0.0, 1.0] representing the target memory usage.
@@ -172,30 +171,30 @@ pub struct ResourceBasedSlotsOptions {
     pub target_cpu_usage: f64,
 
     /// See [pid::Pid::p]
-    #[builder(default = "5.0")]
+    #[builder(default = 5.0)]
     pub mem_p_gain: f64,
     /// See [pid::Pid::i]
-    #[builder(default = "0.0")]
+    #[builder(default = 0.0)]
     pub mem_i_gain: f64,
     /// See [pid::Pid::d]
-    #[builder(default = "1.0")]
+    #[builder(default = 1.0)]
     pub mem_d_gain: f64,
     /// If the mem PID controller outputs a value higher than this, we say the mem half of things
     /// will allow a slot
-    #[builder(default = "0.25")]
+    #[builder(default = 0.25)]
     pub mem_output_threshold: f64,
     /// See [pid::Pid::d]
-    #[builder(default = "5.0")]
+    #[builder(default = 5.0)]
     pub cpu_p_gain: f64,
     /// See [pid::Pid::i]
-    #[builder(default = "0.0")]
+    #[builder(default = 0.0)]
     pub cpu_i_gain: f64,
     /// See [pid::Pid::d]
-    #[builder(default = "1.0")]
+    #[builder(default = 1.0)]
     pub cpu_d_gain: f64,
     /// If the CPU PID controller outputs a value higher than this, we say the CPU half of things
     /// will allow a slot
-    #[builder(default = "0.05")]
+    #[builder(default = 0.05)]
     pub cpu_output_threshold: f64,
 }
 struct PidControllers {
@@ -765,11 +764,10 @@ mod tests {
     }
 
     fn test_options() -> ResourceBasedSlotsOptions {
-        ResourceBasedSlotsOptionsBuilder::default()
+        ResourceBasedSlotsOptions::builder()
             .target_mem_usage(0.8)
             .target_cpu_usage(1.0)
             .build()
-            .expect("default resource based slot options can't fail to build")
     }
 
     #[test]
