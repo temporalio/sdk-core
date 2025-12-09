@@ -727,8 +727,6 @@ impl ManagedRun {
             if let Some(update) = update_from_new_page {
                 self.wfm.feed_history_from_new_page(update)?;
             }
-            // here the las will be in `WaitingResolveFromMarkerLookAhead` on replay and no
-            // presolutions.
             // Don't bother applying the next task if we're evicting at the end of this activation
             // or are otherwise broken.
             if !completion.activation_was_eviction && !self.am_broken {
@@ -1447,13 +1445,7 @@ impl WorkflowManager {
             return Ok(());
         }
         loop {
-            // On first WFT, this will look forward and peek the results from next WFT
-            // On the
             let consumed_events = self.machines.apply_next_wft_from_history()?;
-            // Now we have presolutions
-            // previously, this las would be in the
-            //
-            // Maybe we apply presolutions here?
 
             if consumed_events == 0 || !self.machines.replaying || self.machines.has_pending_jobs()
             {

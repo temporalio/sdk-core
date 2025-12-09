@@ -1373,10 +1373,6 @@ impl WorkflowMachines {
                     let machkey = self.all_machines.insert(la.into());
                     self.id_to_machine
                         .insert(CommandID::LocalActivity(seq), machkey);
-                    // This now only does additional things on execute
-                    // Previously on resolved replay it would be processing
-                    // [LocalActivityCommand::FakeMarker, LocalActivityCommand::Resolved(self.dat)]
-                    // replay will alway exit in `WaitingResolveFromMarkerLookAhead` state
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommandVariant::RequestCancelActivity(attrs) => {

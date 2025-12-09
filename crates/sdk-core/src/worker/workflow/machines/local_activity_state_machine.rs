@@ -215,17 +215,6 @@ impl LocalActivityMachine {
     pub(super) fn encountered_non_replay_wft(
         &mut self,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        if matches!(
-            self.state(),
-            LocalActivityMachineState::ResolvedFromMarkerLookAheadWaitingMarkerEvent(_)
-        ) {
-            panic!(
-                "Invalid transition while notifying local activity (seq {}) of non-replay-wft-started in {}",
-                self.shared_state.attrs.seq,
-                self.state(),
-            );
-        }
-
         // This only applies to the waiting-for-marker state. It can safely be ignored in the others
         if !matches!(
             self.state(),
@@ -577,7 +566,7 @@ impl ResolvedFromMarkerLookAheadWaitingMarkerEvent {
         shared: &mut SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        verify_marker_dat!(shared, &dat, TransitionResult::commands(vec![]))
+        verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
 
     fn on_cancel_requested(
