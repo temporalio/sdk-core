@@ -7,7 +7,7 @@ use temporalio_common::protos::{
     coresdk::AsJsonPayloadExt,
     temporal::api::{common, history::v1::history_event::Attributes},
 };
-use temporalio_sdk::{ActContext, ActivityOptions, ChildWorkflowOptions, WfContext};
+use temporalio_sdk::{ActivityContext, ActivityOptions, ChildWorkflowOptions, WfContext};
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =
@@ -73,7 +73,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         );
         Ok(().into())
     });
-    worker.register_activity("echo", |ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("echo", |ctx: ActivityContext, echo_me: String| async move {
         assert_eq!(
             ctx.get_info().priority,
             Priority {

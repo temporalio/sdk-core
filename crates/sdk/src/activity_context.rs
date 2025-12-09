@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Used within activities to get info, heartbeat management etc.
 #[derive(Clone)]
-pub struct ActContext {
+pub struct ActivityContext {
     worker: Arc<dyn Worker>,
     app_data: Arc<AppData>,
     cancellation_token: CancellationToken,
@@ -55,7 +55,7 @@ pub struct ActivityInfo {
     pub priority: Priority,
 }
 
-impl ActContext {
+impl ActivityContext {
     /// Construct new Activity Context, returning the context and the first argument to the activity
     /// (which may be a default [Payload]).
     pub fn new(
@@ -95,7 +95,7 @@ impl ActContext {
         let first_arg = input.pop().unwrap_or_default();
 
         (
-            ActContext {
+            ActivityContext {
                 worker,
                 app_data,
                 cancellation_token,

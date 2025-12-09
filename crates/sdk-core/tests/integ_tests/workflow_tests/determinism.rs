@@ -16,7 +16,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
+    ActivityContext, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext,
     WorkflowResult,
 };
 use temporalio_sdk_core::{
@@ -89,7 +89,7 @@ async fn task_fail_causes_replay_unset_too_soon() {
         }
         Ok(().into())
     });
-    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("echo", |_ctx: ActivityContext, echo_me: String| async move {
         Ok(echo_me)
     });
 

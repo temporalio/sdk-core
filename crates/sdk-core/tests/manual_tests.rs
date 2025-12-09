@@ -27,7 +27,7 @@ use temporalio_common::{
     telemetry::PrometheusExporterOptions,
     worker::{PollerBehavior, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityContext, ActivityOptions, WfContext};
 use temporalio_sdk_core::CoreRuntime;
 use tracing::info;
 
@@ -85,7 +85,7 @@ async fn poller_load_spiky() {
 
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, echo: String| async move {
+    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
         // Add some jitter to completions
         let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;
@@ -328,7 +328,7 @@ async fn poller_load_spike_then_sustained() {
 
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, echo: String| async move {
+    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
         // Add some jitter to completions
         let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;

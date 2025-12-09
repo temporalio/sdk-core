@@ -38,7 +38,7 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
+use temporalio_sdk::{ActivityContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporalio_sdk_core::{
     replay::HistoryForReplay,
     test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
@@ -672,7 +672,7 @@ async fn update_with_local_acts() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        |_ctx: ActivityContext, echo_me: String| async move {
             // Sleep so we'll heartbeat
             tokio::time::sleep(Duration::from_secs(3)).await;
             Ok(echo_me)
@@ -995,7 +995,7 @@ async fn worker_restarted_in_middle_of_update() {
         sig.next().await;
         Ok(().into())
     });
-    worker.register_activity("blocks", |_ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("blocks", |_ctx: ActivityContext, echo_me: String| async move {
         BARR.wait().await;
         if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
             // On first run fail the task so we'll get retried on the new worker
@@ -1107,7 +1107,7 @@ async fn update_after_empty_wft() {
         });
         Ok(().into())
     });
-    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("echo", |_ctx: ActivityContext, echo_me: String| async move {
         Ok(echo_me)
     });
 
@@ -1185,7 +1185,7 @@ async fn update_lost_on_activity_mismatch() {
         }
         Ok(().into())
     });
-    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("echo", |_ctx: ActivityContext, echo_me: String| async move {
         Ok(echo_me)
     });
 

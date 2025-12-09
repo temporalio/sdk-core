@@ -62,7 +62,7 @@ use temporalio_common::{
     },
 };
 use temporalio_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    ActivityContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
     NexusOperationOptions, WfContext,
 };
 use temporalio_sdk_core::{
@@ -831,7 +831,7 @@ async fn activity_metrics() {
         local_act_cancel.await;
         Ok(().into())
     });
-    worker.register_activity("pass_fail_act", |ctx: ActContext, i: String| async move {
+    worker.register_activity("pass_fail_act", |ctx: ActivityContext, i: String| async move {
         match i.as_str() {
             "pass" => Ok("pass"),
             "cancel" => {

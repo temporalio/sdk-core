@@ -57,7 +57,7 @@ pub mod interceptors;
 mod workflow_context;
 mod workflow_future;
 
-pub use activity_context::ActContext;
+pub use activity_context::ActivityContext;
 pub use temporalio_client::Namespace;
 use tracing::{Instrument, Span, field};
 pub use workflow_context::{
@@ -545,7 +545,7 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) = ActContext::new(
+                let (ctx, arg) = ActivityContext::new(
                     worker.clone(),
                     app_data,
                     ct,
@@ -943,7 +943,10 @@ impl<T: AsJsonPayloadExt> From<T> for ActExitValue<T> {
 }
 
 type BoxActFn = Arc<
-    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, ActivityError>>
+    dyn Fn(
+            ActivityContext,
+            Payload,
+        ) -> BoxFuture<'static, Result<ActExitValue<Payload>, ActivityError>>
         + Send
         + Sync,
 >;
@@ -1004,14 +1007,14 @@ pub trait IntoActivityFunc<Args, Res, Out> {
 
 impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
 where
-    F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
+    F: (Fn(ActivityContext, A) -> Rf) + Sync + Send + 'static,
     A: FromJsonPayloadExt + Send,
     Rf: Future<Output = Result<R, ActivityError>> + Send + 'static,
     R: Into<ActExitValue<O>>,
     O: AsJsonPayloadExt,
 {
     fn into_activity_fn(self) -> BoxActFn {
-        let wrapper = move |ctx: ActContext, input: Payload| {
+        let wrapper = move |ctx: ActivityContext, input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
             match A::from_json_payload(&input) {
                 Ok(deser) => self(ctx, deser)

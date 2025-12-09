@@ -1,6 +1,8 @@
 //! This crate contains base-level functionality needed by the other crates in the Temporal Core and
 //! Rust SDK.
 
+mod activity_definition;
+pub mod data_converters;
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
 pub mod errors;

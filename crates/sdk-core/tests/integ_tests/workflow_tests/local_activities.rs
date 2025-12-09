@@ -48,7 +48,7 @@ use temporalio_common::{
     },
 };
 use temporalio_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    ActivityContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
     UpdateContext, WfContext, WorkflowFunction, WorkflowResult,
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
@@ -147,7 +147,7 @@ async fn long_running_local_act_with_timer() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActivityContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
@@ -211,7 +211,7 @@ async fn local_act_retry_timer_backoff() {
         assert!(res.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, _: String| async {
+    worker.register_activity("echo", |_: ActivityContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
 
@@ -259,7 +259,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |ctx: ActContext, _: String| {
+    worker.register_activity("echo", move |ctx: ActivityContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             tokio::select! {
@@ -361,7 +361,7 @@ async fn cancel_after_act_starts(
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |ctx: ActContext, _: String| {
+    worker.register_activity("echo", move |ctx: ActivityContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             if cancel_on_backoff.is_some() {
@@ -441,7 +441,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         assert_eq!(res.timed_out(), Some(timeout_type));
         Ok(().into())
     });
-    worker.register_activity("echo", |ctx: ActContext, _: String| async move {
+    worker.register_activity("echo", |ctx: ActivityContext, _: String| async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(100)) => {},
             _ = ctx.cancelled() => {
@@ -490,7 +490,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         Ok(().into())
     });
     let num_attempts: &'static _ = Box::leak(Box::new(AtomicU8::new(0)));
-    worker.register_activity("echo", move |_: ActContext, _: String| async {
+    worker.register_activity("echo", move |_: ActivityContext, _: String| async {
         num_attempts.fetch_add(1, Ordering::Relaxed);
         Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
@@ -510,7 +510,7 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
     starter.worker_config.max_cached_workflows = 0_usize;
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActivityContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
@@ -567,7 +567,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         assert!(r2.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, _: String| async {
+    worker.register_activity("echo", |_: ActivityContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
 
@@ -606,7 +606,7 @@ async fn repro_nondeterminism_with_timer_bug() {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(2)).await;
         Ok(())
     });
@@ -650,7 +650,7 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
@@ -674,7 +674,7 @@ async fn second_weird_la_nondeterminism_repro() {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
@@ -696,7 +696,7 @@ async fn third_weird_la_nondeterminism_repro() {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
@@ -751,7 +751,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         }
         Ok(().into())
     });
-    worker.register_activity("delay", |ctx: ActContext, wait_time: u64| async move {
+    worker.register_activity("delay", |ctx: ActivityContext, wait_time: u64| async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_millis(wait_time)) => {}
             _ = ctx.cancelled() => {}
@@ -822,7 +822,7 @@ async fn long_local_activity_with_update(
         update_counter.load(Ordering::Relaxed);
         Ok(().into())
     });
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(6)).await;
         Ok(())
     });
@@ -909,7 +909,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         );
         Ok(().into())
     });
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(6)).await;
         Ok(())
     });
@@ -978,7 +978,7 @@ async fn local_activity_with_summary() {
     );
 }
 
-async fn echo(_ctx: ActContext, e: String) -> Result<String, ActivityError> {
+async fn echo(_ctx: ActivityContext, e: String) -> Result<String, ActivityError> {
     Ok(e)
 }
 
@@ -1117,7 +1117,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_ctx: ActContext, str: String| async move {
+    worker.register_activity("echo", move |_ctx: ActivityContext, str: String| async move {
         if shutdown_middle {
             shutdown_barr.wait().await;
         }
@@ -1186,7 +1186,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+    worker.register_activity("echo", move |_ctx: ActivityContext, _: String| async move {
         // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
         if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
@@ -1267,7 +1267,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     );
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: String| async move {
+        move |_ctx: ActivityContext, _: String| async move {
             Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
         },
     );
@@ -1308,7 +1308,7 @@ async fn local_act_null_result() {
             Ok(().into())
         },
     );
-    worker.register_activity("nullres", |_ctx: ActContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async { Ok(()) });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1352,7 +1352,7 @@ async fn local_act_command_immediately_follows_la_marker() {
             Ok(().into())
         },
     );
-    worker.register_activity("nullres", |_ctx: ActContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async { Ok(()) });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1659,7 +1659,7 @@ async fn test_schedule_to_start_timeout() {
     );
     worker.register_activity(
         "echo",
-        move |_ctx: ActContext, _: String| async move { Ok(()) },
+        move |_ctx: ActivityContext, _: String| async move { Ok(()) },
     );
     worker
         .submit_wf(
@@ -1749,7 +1749,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
     );
     worker.register_activity(
         "echo",
-        move |_ctx: ActContext, _: String| async move { Ok(()) },
+        move |_ctx: ActivityContext, _: String| async move { Ok(()) },
     );
     worker
         .submit_wf(
@@ -1823,7 +1823,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
     let cancels: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |ctx: ActContext, _: String| async move {
+        move |ctx: ActivityContext, _: String| async move {
             // Timeout the first 4 attempts, or all of them if we intend to fail
             if attempts.fetch_add(1, Ordering::AcqRel) < 4 || !la_completes {
                 select! {
@@ -1888,7 +1888,7 @@ async fn wft_failure_cancels_running_las() {
     );
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |ctx: ActContext, _: String| async move {
+        move |ctx: ActivityContext, _: String| async move {
             let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
             if res.is_err() {
                 panic!("Activity must be cancelled!!!!");
@@ -1949,7 +1949,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
     );
     worker.register_activity(
         "echo",
-        move |_: ActContext, _: String| async move { Ok(()) },
+        move |_: ActivityContext, _: String| async move { Ok(()) },
     );
     worker
         .submit_wf(
@@ -2009,7 +2009,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+    worker.register_activity("echo", move |_ctx: ActivityContext, _: String| async move {
         Result::<(), _>::Err(anyhow!("I fail").into())
     });
     worker
@@ -2329,7 +2329,7 @@ async fn local_act_retry_explicit_delay() {
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+    worker.register_activity("echo", move |_ctx: ActivityContext, _: String| async move {
         // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
         let last_attempt = attempts.fetch_add(1, Ordering::Relaxed);
         if 0 == last_attempt {
@@ -2443,7 +2443,7 @@ async fn one_la_success(#[case] replay: bool, #[case] completes_ok: bool) {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: ()| async move {
+        move |_ctx: ActivityContext, _: ()| async move {
             if replay {
                 panic!("Should not be invoked on replay");
             }
@@ -2580,7 +2580,7 @@ async fn two_sequential_las(
     }
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
+        move |_ctx: ActivityContext, _: ()| async move { Ok("Resolved") },
     );
     worker.run().await.unwrap();
 }
@@ -2675,7 +2675,7 @@ async fn las_separated_by_timer(#[case] replay: bool) {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_timer_la);
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
+        move |_ctx: ActivityContext, _: ()| async move { Ok("Resolved") },
     );
     worker.run().await.unwrap();
 }
@@ -2710,7 +2710,7 @@ async fn one_la_heartbeating_wft_failure_still_executes() {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
+        move |_ctx: ActivityContext, _: ()| async move { Ok("Resolved") },
     );
     worker.run().await.unwrap();
 }
@@ -2866,7 +2866,7 @@ async fn cancel_after_act_starts_canned(
         );
         Ok(().into())
     });
-    worker.register_activity(DEFAULT_ACTIVITY_TYPE, move |ctx: ActContext, _: ()| {
+    worker.register_activity(DEFAULT_ACTIVITY_TYPE, move |ctx: ActivityContext, _: ()| {
         let allow_cancel_barr_clone = allow_cancel_barr_clone.clone();
         async move {
             if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
