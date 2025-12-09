@@ -174,13 +174,8 @@ pub(crate) struct WorkflowMachines {
 #[derive(Debug, derive_more::Display)]
 #[display("Cmd&Machine({command})")]
 struct CommandAndMachine {
-    command: MachineAssociatedCommand,
+    command: ProtoCommand,
     machine: MachineKey,
-}
-
-#[derive(Debug, derive_more::Display)]
-enum MachineAssociatedCommand {
-    Real(Box<ProtoCommand>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -420,9 +415,7 @@ impl WorkflowMachines {
             .write_all_known();
         self.commands.iter().filter_map(|c| {
             if !self.machine(c.machine).is_final_state() {
-                match &c.command {
-                    MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
-                }
+                Some(c.command.clone())
             } else {
                 None
             }
@@ -1157,14 +1150,10 @@ impl WorkflowMachines {
                 .machine(c.machine)
                 .was_cancelled_before_sent_to_server()
             {
-                match &c.command {
-                    MachineAssociatedCommand::Real(cmd) => {
-                        let machine_responses = self
-                            .machine_mut(c.machine)
-                            .handle_command(cmd.command_type())?;
-                        self.process_machine_responses(c.machine, machine_responses)?;
-                    }
-                }
+                let machine_responses = self
+                    .machine_mut(c.machine)
+                    .handle_command(c.command.command_type())?;
+                self.process_machine_responses(c.machine, machine_responses)?;
                 self.commands.push_back(c);
             }
         }
@@ -1208,7 +1197,7 @@ impl WorkflowMachines {
                 }
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: MachineAssociatedCommand::Real(Box::new(c)),
+                        command: c,
                         machine: smk,
                     })
                 }
@@ -1644,7 +1633,7 @@ impl WorkflowMachines {
             user_metadata: metadata,
         };
         CommandAndMachine {
-            command: MachineAssociatedCommand::Real(Box::new(cmd)),
+            command: cmd,
             machine: k,
         }
     }
