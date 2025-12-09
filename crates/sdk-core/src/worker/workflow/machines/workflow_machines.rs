@@ -534,11 +534,31 @@ impl WorkflowMachines {
     pub(crate) fn iterate_machines(&mut self) -> Result<()> {
         let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
+        self.apply_local_action_peeked_resolutions()?;
         self.prepare_commands()?;
         if self.workflow_is_finished()
             && let Some(rt) = self.total_runtime()
         {
             self.metrics.wf_e2e_latency(rt);
+        }
+        Ok(())
+    }
+
+    fn apply_local_action_peeked_resolutions(&mut self) -> Result<()> {
+        while let Some(seq) = self.local_activity_data.peek_preresolution_seq() {
+            let Ok(mk) = self.get_machine_key(CommandID::LocalActivity(seq)) else {
+                // If we haven't encountered the LA schedule yet, stop processing the
+                // preresolutions.
+                break;
+            };
+            // Look to make this "safe"
+            let dat = self.local_activity_data.take_preresolution(seq).unwrap();
+            if let Machines::LocalActivityMachine(lam) = self.machine_mut(mk) {
+                let resps = lam.try_resolve_with_dat(dat)?;
+                self.process_machine_responses(mk, resps)?;
+            } else {
+                panic!("Found non-LAM for LA command");
+            }
         }
         Ok(())
     }
@@ -807,6 +827,7 @@ impl WorkflowMachines {
                 DelayedAction::WakeLa(mk, la_dat) => {
                     let mach = self.machine_mut(mk);
                     if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                        // self.local_activity_data.insert_peeked_marker(*la_dat);
                         if lam.will_accept_resolve_marker() {
                             let resps = lam.try_resolve_with_dat((*la_dat).into())?;
                             self.process_machine_responses(mk, resps)?;
@@ -1360,13 +1381,16 @@ impl WorkflowMachines {
                     let (la, mach_resp) = new_local_activity(
                         attrs,
                         self.replaying,
-                        self.local_activity_data.take_preresolution(seq),
                         self.current_wf_time,
                         self.observed_internal_flags.clone(),
                     )?;
                     let machkey = self.all_machines.insert(la.into());
                     self.id_to_machine
                         .insert(CommandID::LocalActivity(seq), machkey);
+                    // This now only does additional things on execute
+                    // Previously on resolved replay it would be processing
+                    // [LocalActivityCommand::FakeMarker, LocalActivityCommand::Resolved(self.dat)]
+                    // replay will alway exit in `WaitingResolveFromMarkerLookAhead` state
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommandVariant::RequestCancelActivity(attrs) => {
