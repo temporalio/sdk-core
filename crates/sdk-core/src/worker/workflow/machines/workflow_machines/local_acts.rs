@@ -83,12 +83,11 @@ impl LocalActivityData {
     }
 
     pub(super) fn take_preresolution(&mut self, seq: u32) -> Option<ResolveDat> {
-        let idx = self
+        let idx = self.preresolutions.iter().position(|(s, _)| *s == seq)?;
+        let (_, dat) = self
             .preresolutions
-            .iter()
-            .enumerate()
-            .find_map(|(ix, (s, _))| (*s == seq).then_some(ix))?;
-        let (_, dat) = self.preresolutions.remove(idx).unwrap();
+            .remove(idx)
+            .expect("This index was just found to contain seq");
         Some(dat)
     }
 
