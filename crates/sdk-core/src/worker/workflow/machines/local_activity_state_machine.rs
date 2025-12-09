@@ -363,12 +363,6 @@ pub(super) enum LocalActivityCommand {
     RequestActivityExecution(ValidScheduleLA),
     #[display("Resolved")]
     Resolved(ResolveDat),
-    /// The fake marker is used to avoid special casing marker recorded event handling.
-    /// If we didn't have the fake marker, there would be no "outgoing command" to match
-    /// against the event. This way there is, but the command never will be issued to
-    /// server because it is understood to be meaningless.
-    #[display("FakeMarker")]
-    FakeMarker,
     /// Indicate we want to cancel an LA that is currently executing, or look up if we have
     /// processed a marker with resolution data since the machine was constructed.
     #[display("Cancel")]
@@ -536,30 +530,12 @@ impl ResultNotified {
 pub(super) struct WaitingResolveFromMarkerLookAhead {}
 
 impl WaitingResolveFromMarkerLookAhead {
-    // FIXME(JWH): I dont think this transition exists any longer.
-    /*
-    pub(super) fn on_marker_recorded(
-        self,
-        shared: &mut SharedState,
-        dat: CompleteLocalActivityData,
-    ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        verify_marker_dat!(
-            shared,
-            &dat,
-            TransitionResult::commands(vec![LocalActivityCommand::Resolved(dat.into())])
-        )
-    }
-    */
-
     fn on_handle_result(
         self,
         dat: ResolveDat,
     ) -> LocalActivityMachineTransition<ResolvedFromMarkerLookAheadWaitingMarkerEvent> {
         TransitionResult::ok(
-            [
-                // LocalActivityCommand::FakeMarker,
-                LocalActivityCommand::Resolved(dat),
-            ],
+            [LocalActivityCommand::Resolved(dat)],
             ResolvedFromMarkerLookAheadWaitingMarkerEvent {},
         )
     }
@@ -603,25 +579,6 @@ impl ResolvedFromMarkerLookAheadWaitingMarkerEvent {
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         verify_marker_dat!(shared, &dat, TransitionResult::commands(vec![]))
     }
-    // fn on_handle_result(
-    //     self,
-    //     dat: ResolveDat,
-    // ) -> LocalActivityMachineTransition<ResolvedFromMarkerLookAheadWaitingMarkerEvent> {
-    //     TransitionResult::ok(
-    //         [LocalActivityCommand::Resolved(dat)],
-    //         ResolvedFromMarkerLookAheadWaitingMarkerEvent {},
-    //     )
-    // }
-    // pub(super) fn on_started_non_replay_wft(
-    //     self,
-    //     dat: &mut SharedState,
-    // ) -> LocalActivityMachineTransition<RequestSent> {
-    //     // We aren't really "replaying" anymore for our purposes, and want to record the marker.
-    //     dat.replaying_when_invoked = false;
-    //     TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(
-    //         dat.attrs.clone(),
-    //     )])
-    // }
 
     fn on_cancel_requested(
         self,
@@ -791,12 +748,6 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     responses.push(MachineResponse::IssueNewCommand(command));
                 }
                 Ok(responses)
-            }
-            LocalActivityCommand::FakeMarker => {
-                // See docs for `FakeMarker` for more
-                Ok(vec![MachineResponse::IssueFakeLocalActivityMarker(
-                    self.shared_state.attrs.seq,
-                )])
             }
             LocalActivityCommand::RequestCancel => {
                 Ok(vec![MachineResponse::RequestCancelLocalActivity(

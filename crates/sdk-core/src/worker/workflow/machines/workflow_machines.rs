@@ -177,8 +177,6 @@ struct CommandAndMachine {
 #[derive(Debug, derive_more::Display)]
 enum MachineAssociatedCommand {
     Real(Box<ProtoCommand>),
-    #[display("FakeLocalActivityMarker({_0})")]
-    FakeLocalActivityMarker(u32),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -205,8 +203,6 @@ pub(super) enum MachineResponse {
     /// collisions.
     #[display("NewCoreOriginatedCommand({_0:?})")]
     NewCoreOriginatedCommand(ProtoCmdAttrs),
-    #[display("IssueFakeLocalActivityMarker({_0})")]
-    IssueFakeLocalActivityMarker(u32),
     #[display("TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
@@ -421,7 +417,6 @@ impl WorkflowMachines {
             if !self.machine(c.machine).is_final_state() {
                 match &c.command {
                     MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
-                    MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
                 }
             } else {
                 None
@@ -547,17 +542,22 @@ impl WorkflowMachines {
     fn apply_local_action_peeked_resolutions(&mut self) -> Result<()> {
         while let Some(seq) = self.local_activity_data.peek_preresolution_seq() {
             let Ok(mk) = self.get_machine_key(CommandID::LocalActivity(seq)) else {
-                // If we haven't encountered the LA schedule yet, stop processing the
+                // If we haven't encountered the LA schedule for the first preresolution yet, stop processing the
                 // preresolutions.
                 break;
             };
-            // Look to make this "safe"
-            let dat = self.local_activity_data.take_preresolution(seq).unwrap();
+            let dat = self
+                .local_activity_data
+                .take_preresolution(seq)
+                .expect("This seq was just given by `peek_preresolution_seq`");
             if let Machines::LocalActivityMachine(lam) = self.machine_mut(mk) {
                 let resps = lam.try_resolve_with_dat(dat)?;
                 self.process_machine_responses(mk, resps)?;
             } else {
-                panic!("Found non-LAM for LA command");
+                return Err(fatal!(
+                    "Peeked local activity marker but the associated machine was of the \
+                     wrong type! {dat:?}"
+                ));
             }
         }
         Ok(())
@@ -1151,7 +1151,6 @@ impl WorkflowMachines {
                             .handle_command(cmd.command_type())?;
                         self.process_machine_responses(c.machine, machine_responses)?;
                     }
-                    MachineAssociatedCommand::FakeLocalActivityMarker(_) => {}
                 }
                 self.commands.push_back(c);
             }
@@ -1238,12 +1237,6 @@ impl WorkflowMachines {
                         ));
                     }
                 },
-                MachineResponse::IssueFakeLocalActivityMarker(seq) => {
-                    self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
-                        machine: smk,
-                    });
-                }
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_data.enqueue(act);
                 }
