@@ -65,7 +65,6 @@ fsm! {
       --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
-    //WaitingResolveFromMarkerLookAhead --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded) --> MarkerCommandRecorded;
     WaitingResolveFromMarkerLookAhead --(HandleKnownResult(ResolveDat), on_handle_result) --> ResolvedFromMarkerLookAheadWaitingMarkerEvent;
     // If we are told to cancel while waiting for the marker, we still need to wait for the marker.
     WaitingResolveFromMarkerLookAhead --(Cancel, on_cancel_requested) --> WaitingResolveFromMarkerLookAhead;

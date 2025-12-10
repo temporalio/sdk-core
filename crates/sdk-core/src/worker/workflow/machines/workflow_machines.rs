@@ -532,30 +532,6 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn apply_local_action_peeked_resolutions(&mut self) -> Result<()> {
-        while let Some(seq) = self.local_activity_data.peek_preresolution_seq() {
-            let Ok(mk) = self.get_machine_key(CommandID::LocalActivity(seq)) else {
-                // If we haven't encountered the LA schedule for the first preresolution yet, stop processing the
-                // preresolutions.
-                break;
-            };
-            let dat = self
-                .local_activity_data
-                .take_preresolution(seq)
-                .expect("This seq was just given by `peek_preresolution_seq`");
-            if let Machines::LocalActivityMachine(lam) = self.machine_mut(mk) {
-                let resps = lam.try_resolve_with_dat(dat)?;
-                self.process_machine_responses(mk, resps)?;
-            } else {
-                return Err(fatal!(
-                    "Peeked local activity marker but the associated machine was of the \
-                     wrong type! {dat:?}"
-                ));
-            }
-        }
-        Ok(())
-    }
-
     /// Returns true if machines are ready to apply the next WFT sequence, false if events will need
     /// to be fetched in order to create a complete update with the entire next WFT sequence.
     pub(crate) fn ready_to_apply_next_wft(&self) -> bool {
@@ -1662,6 +1638,32 @@ impl WorkflowMachines {
                 target_tq.is_empty() || target_tq == self.worker_config.task_queue
             }
         }
+    }
+
+    // Applies local action preresolutions peeked from history until encountering a result for an
+    // LA that has yet to be scheduled.
+    fn apply_local_action_peeked_resolutions(&mut self) -> Result<()> {
+        while let Some(seq) = self.local_activity_data.peek_preresolution_seq() {
+            let Ok(mk) = self.get_machine_key(CommandID::LocalActivity(seq)) else {
+                // If we haven't encountered the LA schedule for the first preresolution yet, stop processing the
+                // preresolutions.
+                break;
+            };
+            let dat = self
+                .local_activity_data
+                .take_preresolution(seq)
+                .expect("This seq was just given by `peek_preresolution_seq`");
+            if let Machines::LocalActivityMachine(lam) = self.machine_mut(mk) {
+                let resps = lam.try_resolve_with_dat(dat)?;
+                self.process_machine_responses(mk, resps)?;
+            } else {
+                return Err(fatal!(
+                    "Peeked local activity marker but the associated machine was of the \
+                     wrong type! {dat:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
