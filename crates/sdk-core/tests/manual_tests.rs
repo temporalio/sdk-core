@@ -24,7 +24,7 @@ use temporalio_client::{
 };
 use temporalio_common::{
     protos::coresdk::AsJsonPayloadExt,
-    telemetry::PrometheusExporterOptionsBuilder,
+    telemetry::PrometheusExporterOptions,
     worker::{PollerBehavior, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
@@ -39,31 +39,28 @@ async fn poller_load_spiky() {
     let (telemopts, addr, _aborter) =
         if std::env::var("PAR_JOBNUM").unwrap_or("1".to_string()) == "1" {
             prom_metrics(Some(
-                PrometheusExporterOptionsBuilder::default()
+                PrometheusExporterOptions::builder()
                     .socket_addr(SocketAddr::V4("0.0.0.0:9999".parse().unwrap()))
-                    .build()
-                    .unwrap(),
+                    .build(),
             ))
         } else {
             prom_metrics(None)
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter
-        .worker_config
-        .max_cached_workflows(5000_usize)
-        .max_outstanding_workflow_tasks(1000_usize)
-        .max_outstanding_activities(1000_usize)
-        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        })
-        .activity_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        });
+    starter.worker_config.max_cached_workflows = 5000;
+    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
+    starter.worker_config.max_outstanding_activities = Some(1000);
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
+    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -198,26 +195,23 @@ async fn poller_load_sustained() {
     let (telemopts, addr, _aborter) =
         if std::env::var("PAR_JOBNUM").unwrap_or("1".to_string()) == "1" {
             prom_metrics(Some(
-                PrometheusExporterOptionsBuilder::default()
+                PrometheusExporterOptions::builder()
                     .socket_addr(SocketAddr::V4("0.0.0.0:9999".parse().unwrap()))
-                    .build()
-                    .unwrap(),
+                    .build(),
             ))
         } else {
             prom_metrics(None)
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter
-        .worker_config
-        .max_cached_workflows(5000_usize)
-        .max_outstanding_workflow_tasks(1000_usize)
-        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        })
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.max_cached_workflows = 5000;
+    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -289,30 +283,27 @@ async fn poller_load_spike_then_sustained() {
     let (telemopts, addr, _aborter) =
         if std::env::var("PAR_JOBNUM").unwrap_or("1".to_string()) == "1" {
             prom_metrics(Some(
-                PrometheusExporterOptionsBuilder::default()
+                PrometheusExporterOptions::builder()
                     .socket_addr(SocketAddr::V4("0.0.0.0:9999".parse().unwrap()))
-                    .build()
-                    .unwrap(),
+                    .build(),
             ))
         } else {
             prom_metrics(None)
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter
-        .worker_config
-        .max_cached_workflows(5000_usize)
-        .max_outstanding_workflow_tasks(1000_usize)
-        .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        })
-        .activity_task_poller_behavior(PollerBehavior::Autoscaling {
-            minimum: 1,
-            maximum: 200,
-            initial: 5,
-        });
+    starter.worker_config.max_cached_workflows = 5000;
+    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
+    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
+    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+        minimum: 1,
+        maximum: 200,
+        initial: 5,
+    };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
