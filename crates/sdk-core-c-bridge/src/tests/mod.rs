@@ -222,10 +222,7 @@ unsafe extern "C" fn callback_override(
 
     // Simple header check to confirm headers are working
     let headers = temporal_core_client_grpc_override_request_headers(req).to_vec_map_on_newlines();
-    assert_eq!(
-        String::from_utf8(headers.get("content-type").unwrap().to_vec()).unwrap(),
-        "application/grpc"
-    );
+    assert_ascii_header_value(&headers, "content-type", "application/grpc");
 
     // Confirm user data is as we expect
     let user_data: &String = unsafe { &*(user_data as *const String) };
