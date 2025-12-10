@@ -6,7 +6,6 @@ use futures_util::FutureExt;
 use prost::bytes::Bytes;
 use std::{
     cell::OnceCell,
-    collections::HashMap,
     str::FromStr,
     sync::{
         Arc,
@@ -191,7 +190,6 @@ fn create_callback_based_grpc_service(
                 let req_ptr = Box::into_raw(Box::new(ClientGrpcOverrideRequest {
                     core: req,
                     built_headers: OnceCell::new(),
-                    holder: OnceCell::new(),
                     response_sender: sender,
                 })) as usize;
 
@@ -288,7 +286,7 @@ pub type ClientGrpcOverrideCallback = Option<
 
 pub struct GrpcMetadataHolder {
     pub data: Vec<ByteArrayRef>,
-    _allocations: Vec<Vec<u8>>,
+    pub(super) _allocations: Vec<Vec<u8>>,
 }
 
 /// Representation of gRPC request for the callback.
@@ -298,8 +296,7 @@ pub struct GrpcMetadataHolder {
 /// call.
 pub struct ClientGrpcOverrideRequest {
     core: callback_based::GrpcRequest,
-    built_headers: OnceCell<HashMap<String, Vec<u8>>>,
-    holder: OnceCell<GrpcMetadataHolder>,
+    built_headers: OnceCell<GrpcMetadataHolder>,
     response_sender: oneshot::Sender<Result<callback_based::GrpcSuccessResponse, tonic::Status>>,
 }
 
@@ -362,20 +359,24 @@ pub extern "C" fn temporal_core_client_grpc_override_request_headers(
     let req = unsafe { &*req };
     // Lazily create the headers on first access
     let headers = req.built_headers.get_or_init(|| {
-        // CONSIDER: Should binary headers be decoded here before they are returned?
-        req.core
+        let refs: Vec<Vec<u8>> = req
+            .core
             .headers
             .iter()
             .filter_map(|(name, value)| {
-                value
-                    .to_str()
-                    .ok()
-                    .map(|val| (name.to_string(), val.as_bytes().to_vec()))
+                value.to_str().ok().map(|val| {
+                    let mut entry = format!("{name}\n").into_bytes();
+                    entry.extend(val.as_bytes());
+                    entry
+                })
             })
-            .collect::<HashMap<String, Vec<u8>>>()
+            .collect();
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
     });
-    let holder = req.holder.get_or_init(|| headers.into());
-    holder.into()
+    headers.into()
 }
 
 /// Get a reference to the request protobuf bytes.
@@ -1276,38 +1277,6 @@ impl From<&ClientHttpConnectProxyOptions> for HttpConnectProxyOptions {
             } else {
                 None
             },
-        }
-    }
-}
-
-impl From<&HashMap<String, String>> for GrpcMetadataHolder {
-    fn from(value: &HashMap<String, String>) -> GrpcMetadataHolder {
-        let refs: Vec<Vec<u8>> = value
-            .iter()
-            .map(|(k, v)| format!("{k}\n{v}").into_bytes())
-            .collect();
-
-        GrpcMetadataHolder {
-            data: refs.iter().map(ByteArrayRef::from).collect(),
-            _allocations: refs,
-        }
-    }
-}
-
-impl From<&HashMap<String, Vec<u8>>> for GrpcMetadataHolder {
-    fn from(value: &HashMap<String, Vec<u8>>) -> GrpcMetadataHolder {
-        let refs: Vec<Vec<u8>> = value
-            .iter()
-            .map(|(k, v)| {
-                let mut nv = format!("{k}\n").into_bytes();
-                nv.extend(v);
-                nv
-            })
-            .collect();
-
-        GrpcMetadataHolder {
-            data: refs.iter().map(ByteArrayRef::from).collect(),
-            _allocations: refs,
         }
     }
 }

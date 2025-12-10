@@ -23,6 +23,7 @@ use crate::{
 use anyhow::anyhow;
 use std::{
     any::Any,
+    collections::HashMap,
     panic::{AssertUnwindSafe, UnwindSafe},
     ptr::NonNull,
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
@@ -654,5 +655,37 @@ extern "C" fn rpc_call_callback(
     }
     if !failure_details.is_null() {
         temporal_core_byte_array_free(std::ptr::null_mut(), failure_details);
+    }
+}
+
+impl From<&HashMap<String, String>> for GrpcMetadataHolder {
+    fn from(value: &HashMap<String, String>) -> GrpcMetadataHolder {
+        let refs: Vec<Vec<u8>> = value
+            .iter()
+            .map(|(k, v)| format!("{k}\n{v}").into_bytes())
+            .collect();
+
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
+    }
+}
+
+impl From<&HashMap<String, Vec<u8>>> for GrpcMetadataHolder {
+    fn from(value: &HashMap<String, Vec<u8>>) -> GrpcMetadataHolder {
+        let refs: Vec<Vec<u8>> = value
+            .iter()
+            .map(|(k, v)| {
+                let mut nv = format!("{k}\n").into_bytes();
+                nv.extend(v);
+                nv
+            })
+            .collect();
+
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
     }
 }
