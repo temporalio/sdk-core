@@ -1,5 +1,5 @@
 use crate::{
-    ByteArray, ByteArrayRef, CancellationToken, GrpcMetadataRef, UserDataHandle, runtime::Runtime,
+    ByteArray, ByteArrayRef, CancellationToken, MetadataRef, UserDataHandle, runtime::Runtime,
 };
 
 use futures_util::FutureExt;
@@ -28,8 +28,8 @@ pub struct ClientOptions {
     pub target_url: ByteArrayRef,
     pub client_name: ByteArrayRef,
     pub client_version: ByteArrayRef,
-    pub metadata: GrpcMetadataRef,
-    pub binary_metadata: GrpcMetadataRef,
+    pub metadata: MetadataRef,
+    pub binary_metadata: MetadataRef,
     pub api_key: ByteArrayRef,
     pub identity: ByteArrayRef,
     pub tls_options: *const ClientTlsOptions,
@@ -239,10 +239,7 @@ pub extern "C" fn temporal_core_client_free(client: *mut Client) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_update_metadata(
-    client: *mut Client,
-    metadata: GrpcMetadataRef,
-) {
+pub extern "C" fn temporal_core_client_update_metadata(client: *mut Client, metadata: MetadataRef) {
     let client = unsafe { &*client };
     let _result = client
         .core
@@ -253,7 +250,7 @@ pub extern "C" fn temporal_core_client_update_metadata(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_update_binary_metadata(
     client: *mut Client,
-    metadata: GrpcMetadataRef,
+    metadata: MetadataRef,
 ) {
     let client = unsafe { &*client };
     let _result = client
@@ -314,7 +311,7 @@ pub struct ClientGrpcOverrideResponse {
 
     /// Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
     /// not the gRPC system headers (like :status or content-type).
-    pub headers: GrpcMetadataRef,
+    pub headers: MetadataRef,
 
     /// Protobuf bytes for a successful response. Ignored if status_code is non-0.
     pub success_proto: ByteArrayRef,
@@ -355,7 +352,7 @@ pub extern "C" fn temporal_core_client_grpc_override_request_rpc(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_grpc_override_request_headers(
     req: *const ClientGrpcOverrideRequest,
-) -> GrpcMetadataRef {
+) -> MetadataRef {
     let req = unsafe { &*req };
     // Lazily create the headers on first access
     let headers = req.built_headers.get_or_init(|| {
@@ -429,9 +426,7 @@ impl ClientGrpcOverrideResponse {
         }
     }
 
-    fn client_headers_from_metadata_ref(
-        headers: GrpcMetadataRef,
-    ) -> Result<http::HeaderMap, String> {
+    fn client_headers_from_metadata_ref(headers: MetadataRef) -> Result<http::HeaderMap, String> {
         let key_values = headers.to_vec_map_on_newlines();
         let mut header_map = http::HeaderMap::with_capacity(key_values.len());
         for (k, v) in key_values.into_iter() {
@@ -451,8 +446,8 @@ pub struct RpcCallOptions {
     pub rpc: ByteArrayRef,
     pub req: ByteArrayRef,
     pub retry: bool,
-    pub metadata: GrpcMetadataRef,
-    pub binary_metadata: GrpcMetadataRef,
+    pub metadata: MetadataRef,
+    pub binary_metadata: MetadataRef,
     /// 0 means no timeout
     pub timeout_millis: u32,
     pub cancellation_token: *const CancellationToken,
@@ -1281,9 +1276,9 @@ impl From<&ClientHttpConnectProxyOptions> for HttpConnectProxyOptions {
     }
 }
 
-impl From<&GrpcMetadataHolder> for GrpcMetadataRef {
+impl From<&GrpcMetadataHolder> for MetadataRef {
     fn from(value: &GrpcMetadataHolder) -> Self {
-        GrpcMetadataRef {
+        MetadataRef {
             data: value.data.as_ptr(),
             size: value.data.len(),
         }

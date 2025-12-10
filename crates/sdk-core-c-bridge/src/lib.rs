@@ -225,12 +225,12 @@ where
 }
 
 /// Each ByteArrayRef is `<key>\n<value>`.
-/// Metadata keys cannot contain a newline.
-pub type GrpcMetadataRef = ByteArrayRefArray;
+/// Keys cannot contain a newline.
+pub type MetadataRef = ByteArrayRefArray;
 
-/// Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
-/// values cannot contain a newline within.
-pub type MetadataRef = ByteArrayRef;
+/// Data is `<key1>\n<value1>\n<key2>\n<value2>`.
+/// Keys and values cannot contain a newline within.
+pub type NewlineDelimitedMapRef = ByteArrayRef;
 
 #[repr(C)]
 pub struct ByteArray {

@@ -1,5 +1,5 @@
 use crate::{
-    ByteArray, ByteArrayRef, MetadataRef,
+    ByteArray, ByteArrayRef, NewlineDelimitedMapRef,
     metric::{CustomMetricMeter, CustomMetricMeterRef},
 };
 
@@ -75,21 +75,21 @@ pub struct MetricsOptions {
     pub custom_meter: *const CustomMetricMeter,
 
     pub attach_service_name: bool,
-    pub global_tags: MetadataRef,
+    pub global_tags: NewlineDelimitedMapRef,
     pub metric_prefix: ByteArrayRef,
 }
 
 #[repr(C)]
 pub struct OpenTelemetryOptions {
     pub url: ByteArrayRef,
-    pub headers: MetadataRef,
+    pub headers: NewlineDelimitedMapRef,
     pub metric_periodicity_millis: u32,
     pub metric_temporality: OpenTelemetryMetricTemporality,
     pub durations_as_seconds: bool,
     pub protocol: OpenTelemetryProtocol,
     /// Histogram bucket overrides in form of
     /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
-    pub histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: NewlineDelimitedMapRef,
 }
 
 #[repr(C)]
@@ -112,7 +112,7 @@ pub struct PrometheusOptions {
     pub durations_as_seconds: bool,
     /// Histogram bucket overrides in form of
     /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
-    pub histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: NewlineDelimitedMapRef,
 }
 
 #[derive(Clone)]
@@ -437,7 +437,7 @@ fn create_meter(
 }
 
 fn parse_histogram_bucket_overrides(
-    raw: &MetadataRef,
+    raw: &NewlineDelimitedMapRef,
 ) -> anyhow::Result<HashMap<String, Vec<f64>>> {
     raw.to_string_map_on_newlines()
         .into_iter()

@@ -99,9 +99,9 @@ typedef struct TemporalCoreByteArrayRefArray {
 
 /**
  * Each ByteArrayRef is `<key>\n<value>`.
- * Metadata keys cannot contain a newline.
+ * Keys cannot contain a newline.
  */
-typedef struct TemporalCoreByteArrayRefArray TemporalCoreGrpcMetadataRef;
+typedef struct TemporalCoreByteArrayRefArray TemporalCoreMetadataRef;
 
 typedef struct TemporalCoreClientTlsOptions {
   struct TemporalCoreByteArrayRef server_root_ca_cert;
@@ -148,8 +148,8 @@ typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
   struct TemporalCoreByteArrayRef client_version;
-  TemporalCoreGrpcMetadataRef metadata;
-  TemporalCoreGrpcMetadataRef binary_metadata;
+  TemporalCoreMetadataRef metadata;
+  TemporalCoreMetadataRef binary_metadata;
   struct TemporalCoreByteArrayRef api_key;
   struct TemporalCoreByteArrayRef identity;
   const struct TemporalCoreClientTlsOptions *tls_options;
@@ -207,7 +207,7 @@ typedef struct TemporalCoreClientGrpcOverrideResponse {
    * Headers for the response if any. Note, this is meant for user-defined metadata/headers, and
    * not the gRPC system headers (like :status or content-type).
    */
-  TemporalCoreGrpcMetadataRef headers;
+  TemporalCoreMetadataRef headers;
   /**
    * Protobuf bytes for a successful response. Ignored if status_code is non-0.
    */
@@ -228,8 +228,8 @@ typedef struct TemporalCoreRpcCallOptions {
   struct TemporalCoreByteArrayRef rpc;
   struct TemporalCoreByteArrayRef req;
   bool retry;
-  TemporalCoreGrpcMetadataRef metadata;
-  TemporalCoreGrpcMetadataRef binary_metadata;
+  TemporalCoreMetadataRef metadata;
+  TemporalCoreMetadataRef binary_metadata;
   /**
    * 0 means no timeout
    */
@@ -342,14 +342,14 @@ typedef struct TemporalCoreLoggingOptions {
 } TemporalCoreLoggingOptions;
 
 /**
- * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
- * values cannot contain a newline within.
+ * Data is `<key1>\n<value1>\n<key2>\n<value2>`.
+ * Keys and values cannot contain a newline within.
  */
-typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
+typedef struct TemporalCoreByteArrayRef TemporalCoreNewlineDelimitedMapRef;
 
 typedef struct TemporalCoreOpenTelemetryOptions {
   struct TemporalCoreByteArrayRef url;
-  TemporalCoreMetadataRef headers;
+  TemporalCoreNewlineDelimitedMapRef headers;
   uint32_t metric_periodicity_millis;
   enum TemporalCoreOpenTelemetryMetricTemporality metric_temporality;
   bool durations_as_seconds;
@@ -358,7 +358,7 @@ typedef struct TemporalCoreOpenTelemetryOptions {
    * Histogram bucket overrides in form of
    * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
-  TemporalCoreMetadataRef histogram_bucket_overrides;
+  TemporalCoreNewlineDelimitedMapRef histogram_bucket_overrides;
 } TemporalCoreOpenTelemetryOptions;
 
 typedef struct TemporalCorePrometheusOptions {
@@ -370,7 +370,7 @@ typedef struct TemporalCorePrometheusOptions {
    * Histogram bucket overrides in form of
    * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
-  TemporalCoreMetadataRef histogram_bucket_overrides;
+  TemporalCoreNewlineDelimitedMapRef histogram_bucket_overrides;
 } TemporalCorePrometheusOptions;
 
 typedef const void *(*TemporalCoreCustomMetricMeterMetricNewCallback)(struct TemporalCoreByteArrayRef name,
@@ -448,7 +448,7 @@ typedef struct TemporalCoreMetricsOptions {
    */
   const struct TemporalCoreCustomMetricMeter *custom_meter;
   bool attach_service_name;
-  TemporalCoreMetadataRef global_tags;
+  TemporalCoreNewlineDelimitedMapRef global_tags;
   struct TemporalCoreByteArrayRef metric_prefix;
 } TemporalCoreMetricsOptions;
 
@@ -841,10 +841,10 @@ void temporal_core_client_connect(struct TemporalCoreRuntime *runtime,
 void temporal_core_client_free(struct TemporalCoreClient *client);
 
 void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
-                                          TemporalCoreGrpcMetadataRef metadata);
+                                          TemporalCoreMetadataRef metadata);
 
 void temporal_core_client_update_binary_metadata(struct TemporalCoreClient *client,
-                                                 TemporalCoreGrpcMetadataRef metadata);
+                                                 TemporalCoreMetadataRef metadata);
 
 void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
                                          struct TemporalCoreByteArrayRef api_key);
@@ -868,7 +868,7 @@ struct TemporalCoreByteArrayRef temporal_core_client_grpc_override_request_rpc(c
  *
  * Note, this is only valid until temporal_core_client_grpc_override_request_respond is called.
  */
-TemporalCoreGrpcMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
+TemporalCoreMetadataRef temporal_core_client_grpc_override_request_headers(const struct TemporalCoreClientGrpcOverrideRequest *req);
 
 /**
  * Get a reference to the request protobuf bytes.
