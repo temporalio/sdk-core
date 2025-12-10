@@ -1,5 +1,8 @@
-use crate::app_data::AppData;
+//! Functionality related to defining and interacting with activities
 
+use crate::{WorkerOptionsBuilder, app_data::AppData, worker_options_builder};
+
+use futures_util::future::BoxFuture;
 use prost_types::{Duration, Timestamp};
 use std::{
     collections::HashMap,
@@ -8,7 +11,8 @@ use std::{
 };
 use temporalio_client::Priority;
 use temporalio_common::{
-    Worker,
+    ActivityDefinition, Worker,
+    data_converters::{PayloadConversionError, PayloadConverter},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -27,32 +31,6 @@ pub struct ActivityContext {
     heartbeat_details: Vec<Payload>,
     header_fields: HashMap<String, Payload>,
     info: ActivityInfo,
-}
-
-#[derive(Clone)]
-pub struct ActivityInfo {
-    pub task_token: Vec<u8>,
-    pub workflow_type: String,
-    pub workflow_namespace: String,
-    pub workflow_execution: Option<WorkflowExecution>,
-    pub activity_id: String,
-    pub activity_type: String,
-    pub task_queue: String,
-    pub heartbeat_timeout: Option<StdDuration>,
-    /// Time activity was scheduled by a workflow
-    pub scheduled_time: Option<SystemTime>,
-    /// Time of activity start
-    pub started_time: Option<SystemTime>,
-    /// Time of activity timeout
-    pub deadline: Option<SystemTime>,
-    /// Attempt starts from 1, and increase by 1 for every retry, if retry policy is specified.
-    pub attempt: u32,
-    /// Time this attempt at the activity was scheduled
-    pub current_attempt_scheduled_time: Option<SystemTime>,
-    pub retry_policy: Option<RetryPolicy>,
-    pub is_local: bool,
-    /// Priority of this activity. If unset uses [Priority::default]
-    pub priority: Priority,
 }
 
 impl ActivityContext {
@@ -175,6 +153,85 @@ impl ActivityContext {
     }
 }
 
+/// Various information about a specific activity attempt.
+#[derive(Clone)]
+#[non_exhaustive]
+pub struct ActivityInfo {
+    /// An opaque token representing a specific Activity task.
+    pub task_token: Vec<u8>,
+    /// The type of the workflow that invoked this activity.
+    pub workflow_type: String,
+    /// The namespace of the workflow that invoked this activity.
+    pub workflow_namespace: String,
+    /// The execution of the workflow that invoked this activity.
+    pub workflow_execution: Option<WorkflowExecution>,
+    /// The ID of this activity.
+    pub activity_id: String,
+    /// The type of this activity.
+    pub activity_type: String,
+    /// The task queue of this activity.
+    pub task_queue: String,
+    /// The interval within which this activity must heartbeat or be timed out.
+    pub heartbeat_timeout: Option<StdDuration>,
+    /// Time activity was scheduled by a workflow.
+    pub scheduled_time: Option<SystemTime>,
+    /// Time of activity start.
+    pub started_time: Option<SystemTime>,
+    /// Time of activity timeout.
+    pub deadline: Option<SystemTime>,
+    /// Attempt starts from 1, and increase by 1 for every retry, if retry policy is specified.
+    pub attempt: u32,
+    /// Time this attempt at the activity was scheduled.
+    pub current_attempt_scheduled_time: Option<SystemTime>,
+    /// The retry policy for this activity.
+    pub retry_policy: Option<RetryPolicy>,
+    /// Whether or not this is a local activity.
+    pub is_local: bool,
+    /// Priority of this activity. If unset uses [Priority::default].
+    pub priority: Priority,
+}
+
+// TODO [rust-sdk-branch]: Remove anyhow from public interfaces
+/// Returned as errors from activity functions
+#[derive(Debug)]
+pub enum ActivityError {
+    /// This error can be returned from activities to allow the explicit configuration of certain
+    /// error properties. It's also the default error type that arbitrary errors will be converted
+    /// into.
+    Retryable {
+        /// The underlying error
+        source: anyhow::Error,
+        /// If specified, the next retry (if there is one) will occur after this delay
+        explicit_delay: Option<StdDuration>,
+    },
+    /// Return this error to indicate your activity is cancelling
+    Cancelled {
+        /// Some data to save as the cancellation reason
+        details: Option<Payload>,
+    },
+    /// Return this error to indicate that the activity should not be retried.
+    NonRetryable(anyhow::Error),
+}
+
+impl ActivityError {
+    /// Construct a cancelled error without details
+    pub fn cancelled() -> Self {
+        Self::Cancelled { details: None }
+    }
+}
+
+impl<E> From<E> for ActivityError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(source: E) -> Self {
+        Self::Retryable {
+            source: source.into(),
+            explicit_delay: None,
+        }
+    }
+}
+
 /// Deadline calculation.  This is a port of
 /// https://github.com/temporalio/sdk-go/blob/8651550973088f27f678118f997839fb1bb9e62f/internal/activity.go#L225
 fn calculate_deadline(
@@ -236,3 +293,36 @@ fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
         system_time.checked_add(StdDuration::from_nanos(timestamp.nanos as u64))
     })
 }
+
+pub(crate) type ActivityInvocation = Box<
+    dyn Fn(
+        Payload,
+        PayloadConverter,
+        ActivityContext,
+    )
+        -> Result<BoxFuture<'static, Result<Payload, ActivityError>>, PayloadConversionError>,
+>;
+
+#[doc(hidden)]
+pub trait ActivityImplementer {
+    fn register_all_static<S: worker_options_builder::State>(
+        worker_options: &mut WorkerOptionsBuilder<S>,
+    );
+    fn register_all_instance<S: worker_options_builder::State>(
+        self: Arc<Self>,
+        worker_options: &mut WorkerOptionsBuilder<S>,
+    );
+}
+
+#[doc(hidden)]
+pub trait ExecutableActivity: ActivityDefinition {
+    type Implementer: ActivityImplementer + 'static;
+    fn execute(
+        receiver: Option<Arc<Self::Implementer>>,
+        ctx: ActivityContext,
+        input: Self::Input,
+    ) -> BoxFuture<'static, Result<Self::Output, ActivityError>>;
+}
+
+#[doc(hidden)]
+pub trait HasOnlyStaticMethods {}

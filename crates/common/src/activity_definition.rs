@@ -17,23 +17,4 @@ pub trait ActivityDefinition {
     fn name() -> &'static str
     where
         Self: Sized;
-
-    // TODO: Maybe can move this to a trait in SDK like "ExecutableActivityDefinition"
-    // type Implementer: ActivityImplementer + 'static;
-    // fn execute(
-    //     receiver: Option<Arc<Self::Implementer>>,
-    //     ctx: ActivityContext,
-    //     input: Self::Input,
-    // ) -> BoxFuture<'static, Result<Self::Output, ActivityError>>;
 }
-
-// TODO: Can likely also go in SDK
-// pub trait ActivityImplementer {
-//     fn register_all_static<S: worker_options_builder::State>(
-//         worker_options: &mut WorkerOptionsBuilder<S>,
-//     );
-//     fn register_all_instance<S: worker_options_builder::State>(
-//         self: Arc<Self>,
-//         worker_options: &mut WorkerOptionsBuilder<S>,
-//     );
-// }

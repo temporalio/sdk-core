@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
-//! use temporalio_sdk::{sdk_client_options, ActContext, Worker};
+//! use temporalio_sdk::{sdk_client_options, activities::ActivityContext, Worker};
 //! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptions};
 //! use temporalio_common::{
 //!     worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
@@ -39,7 +39,7 @@
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
-//!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+//!         |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
 //!     );
 //!
 //!     worker.run().await?;
@@ -50,14 +50,14 @@
 
 #[macro_use]
 extern crate tracing;
+extern crate self as temporalio_sdk;
 
-mod activity_context;
+pub mod activities;
 mod app_data;
 pub mod interceptors;
 mod workflow_context;
 mod workflow_future;
 
-pub use activity_context::ActivityContext;
 pub use temporalio_client::Namespace;
 use tracing::{Instrument, Span, field};
 pub use workflow_context::{
@@ -67,6 +67,10 @@ pub use workflow_context::{
 };
 
 use crate::{
+    activities::{
+        ActivityContext, ActivityError, ActivityImplementer, ActivityInvocation,
+        ExecutableActivity, HasOnlyStaticMethods,
+    },
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
 };
@@ -82,11 +86,11 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::Arc,
-    time::Duration,
 };
 use temporalio_client::{ClientOptions, ClientOptionsBuilder, client_options_builder};
 use temporalio_common::{
-    Worker as CoreWorker,
+    ActivityDefinition, Worker as CoreWorker,
+    data_converters::{GenericPayloadConverter, SerializationContext},
     errors::PollError,
     protos::{
         TaskToken,
@@ -127,6 +131,84 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// TODO [rust-sdk-branch]: Stubbed while working on macros
+#[allow(unused)]
+/// Contains options for configuring a worker.
+#[derive(bon::Builder)]
+#[builder(state_mod(vis = "pub"))]
+#[non_exhaustive]
+pub struct WorkerOptions {
+    #[builder(field)]
+    activities: HashMap<&'static str, ActivityInvocation>,
+}
+
+impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
+    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
+    ///
+    /// Registers all activities on an activity implementer that don't take a receiver.
+    pub fn register_activities_static<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        AI::register_all_static(self);
+        self
+    }
+    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
+    ///
+    /// Registers all activities on an activity implementer that take a receiver.
+    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
+        AI::register_all_static(self);
+        let arcd = Arc::new(instance);
+        AI::register_all_instance(arcd, self);
+        self
+    }
+    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
+    ///
+    /// Registers a specific activitiy that does not take a receiver.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Box::new(move |p, pc, c| {
+                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
+                let pc2 = pc.clone();
+                Ok(AD::execute(None, c, deserialized)
+                    .map(move |v| match v {
+                        Ok(okv) => pc2
+                            .to_payload(&okv, &SerializationContext::Activity)
+                            .map_err(|_| todo!()),
+                        Err(e) => Err(e),
+                    })
+                    .boxed())
+            }),
+        );
+        self
+    }
+    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
+    ///
+    /// Registers a specific activitiy that takes a receiver.
+    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+        &mut self,
+        instance: Arc<AD::Implementer>,
+    ) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Box::new(move |p, pc, c| {
+                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
+                let pc2 = pc.clone();
+                Ok(AD::execute(Some(instance.clone()), c, deserialized)
+                    .map(move |v| match v {
+                        Ok(okv) => pc2
+                            .to_payload(&okv, &SerializationContext::Activity)
+                            .map_err(|_| todo!()),
+                        Err(e) => Err(e),
+                    })
+                    .boxed())
+            }),
+        );
+        self
+    }
+}
 
 /// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
 /// for the Rust SDK.
@@ -957,48 +1039,6 @@ pub struct ActivityFunction {
     act_func: BoxActFn,
 }
 
-/// Returned as errors from activity functions
-#[derive(Debug)]
-pub enum ActivityError {
-    /// This error can be returned from activities to allow the explicit configuration of certain
-    /// error properties. It's also the default error type that arbitrary errors will be converted
-    /// into.
-    Retryable {
-        /// The underlying error
-        source: anyhow::Error,
-        /// If specified, the next retry (if there is one) will occur after this delay
-        explicit_delay: Option<Duration>,
-    },
-    /// Return this error to indicate your activity is cancelling
-    Cancelled {
-        /// Some data to save as the cancellation reason
-        details: Option<Payload>,
-    },
-    /// Return this error to indicate that your activity non-retryable
-    /// this is a transparent wrapper around anyhow Error so essentially any type of error
-    /// could be used here.
-    NonRetryable(anyhow::Error),
-}
-
-impl<E> From<E> for ActivityError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(source: E) -> Self {
-        Self::Retryable {
-            source: source.into(),
-            explicit_delay: None,
-        }
-    }
-}
-
-impl ActivityError {
-    /// Construct a cancelled error without details
-    pub fn cancelled() -> Self {
-        Self::Cancelled { details: None }
-    }
-}
-
 /// Closures / functions which can be turned into activity functions implement this trait
 pub trait IntoActivityFunc<Args, Res, Out> {
     /// Consume the closure or fn pointer and turned it into a boxed activity function
@@ -1153,4 +1193,26 @@ impl Display for EndPrintingAttempts {
 }
 impl PrintablePanicType for EndPrintingAttempts {
     type NextType = EndPrintingAttempts;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporalio_macros::activities;
+
+    struct MyActivities {}
+
+    #[activities]
+    impl MyActivities {
+        #[activity]
+        async fn my_activity(_ctx: ActivityContext) -> Result<(), ActivityError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_activity_registration() {
+        let act_instance = MyActivities {};
+        WorkerOptions::builder().register_activities(act_instance);
+    }
 }

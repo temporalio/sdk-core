@@ -13,6 +13,7 @@ categories = ["development-tools"]
 [dependencies]
 async-trait = "0.1"
 anyhow = "1.0"
+bon = { workspace = true }
 derive_more = { workspace = true }
 futures-util = { version = "0.3", default-features = false }
 parking_lot = { version = "0.12", features = ["send_guard"] }
@@ -40,6 +41,13 @@ version = "0.1"
 
 [dependencies.temporalio-client]
 path = "../client"
+version = "0.1"
+
+[dev-dependencies]
+futures = "0.3"
+
+[dev-dependencies.temporalio-macros]
+path = "../macros"
 version = "0.1"
 
 [features]

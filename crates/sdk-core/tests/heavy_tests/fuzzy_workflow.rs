@@ -5,8 +5,8 @@ use std::{future, time::Duration};
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporalio_sdk::{
-    ActivityContext, ActivityError, ActivityOptions, LocalActivityOptions, WfContext,
-    WorkflowResult,
+    ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult, activities::ActivityContext,
+    activities::ActivityError,
 };
 use tokio_util::sync::CancellationToken;
 

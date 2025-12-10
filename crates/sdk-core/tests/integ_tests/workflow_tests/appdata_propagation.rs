@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WfClientExt, WorkflowExecutionResult, WorkflowOptions};
 use temporalio_common::protos::coresdk::AsJsonPayloadExt;
-use temporalio_sdk::{ActivityContext, ActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
 
 const TEST_APPDATA_MESSAGE: &str = "custom app data, yay";
 

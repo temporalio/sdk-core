@@ -7,7 +7,9 @@ use temporalio_common::protos::{
     coresdk::AsJsonPayloadExt,
     temporal::api::{common, history::v1::history_event::Attributes},
 };
-use temporalio_sdk::{ActivityContext, ActivityOptions, ChildWorkflowOptions, WfContext};
+use temporalio_sdk::{
+    ActivityOptions, ChildWorkflowOptions, WfContext, activities::ActivityContext,
+};
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =

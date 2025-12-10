@@ -48,8 +48,10 @@ use temporalio_common::{
     },
 };
 use temporalio_sdk::{
-    ActivityContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    UpdateContext, WfContext, WorkflowFunction, WorkflowResult,
+    ActivityOptions, CancellableFuture, LocalActivityOptions, UpdateContext, WfContext,
+    WorkflowFunction, WorkflowResult,
+    activities::ActivityContext,
+    activities::ActivityError,
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporalio_sdk_core::{
@@ -147,10 +149,13 @@ async fn long_running_local_act_with_timer() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |_ctx: ActivityContext, str: String| async {
-        tokio::time::sleep(Duration::from_secs(4)).await;
-        Ok(str)
-    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActivityContext, str: String| async {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            Ok(str)
+        },
+    );
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
@@ -510,10 +515,13 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
     starter.worker_config.max_cached_workflows = 0_usize;
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |_ctx: ActivityContext, str: String| async {
-        tokio::time::sleep(Duration::from_secs(4)).await;
-        Ok(str)
-    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActivityContext, str: String| async {
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            Ok(str)
+        },
+    );
 
     let opts = if short_wft_timeout {
         WorkflowOptions {
@@ -1117,14 +1125,17 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_ctx: ActivityContext, str: String| async move {
-        if shutdown_middle {
-            shutdown_barr.wait().await;
-        }
-        // Take slightly more than two workflow tasks
-        tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
-        Ok(str)
-    });
+    worker.register_activity(
+        "echo",
+        move |_ctx: ActivityContext, str: String| async move {
+            if shutdown_middle {
+                shutdown_barr.wait().await;
+            }
+            // Take slightly more than two workflow tasks
+            tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
+            Ok(str)
+        },
+    );
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1308,7 +1319,9 @@ async fn local_act_null_result() {
             Ok(().into())
         },
     );
-    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async {
+        Ok(())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1352,7 +1365,9 @@ async fn local_act_command_immediately_follows_la_marker() {
             Ok(().into())
         },
     );
-    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |_ctx: ActivityContext, _: String| async {
+        Ok(())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1657,10 +1672,9 @@ async fn test_schedule_to_start_timeout() {
             Ok(().into())
         },
     );
-    worker.register_activity(
-        "echo",
-        move |_ctx: ActivityContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |_ctx: ActivityContext, _: String| async move {
+        Ok(())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1747,10 +1761,9 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             Ok(().into())
         },
     );
-    worker.register_activity(
-        "echo",
-        move |_ctx: ActivityContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |_ctx: ActivityContext, _: String| async move {
+        Ok(())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1947,10 +1960,9 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
             panic!()
         }),
     );
-    worker.register_activity(
-        "echo",
-        move |_: ActivityContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |_: ActivityContext, _: String| async move {
+        Ok(())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),

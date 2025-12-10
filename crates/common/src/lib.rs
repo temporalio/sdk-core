@@ -29,6 +29,9 @@ use crate::{
 use std::sync::Arc;
 use uuid::Uuid;
 
+pub use activity_definition::ActivityDefinition;
+
+// TODO [rust-sdk-branch]: Move to core
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
 /// It represents one worker, which has a (potentially shared) client for connecting to the service
 /// and is bound to a specific task queue.

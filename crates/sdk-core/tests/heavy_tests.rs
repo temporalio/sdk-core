@@ -32,7 +32,7 @@ use temporalio_common::{
     },
     worker::{PollerBehavior, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActivityContext, ActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
 
 #[tokio::test]

@@ -25,7 +25,7 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_sdk::{ActivityContext, ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 

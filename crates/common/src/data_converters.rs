@@ -5,6 +5,8 @@ use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
+// TODO [rust-sdk-branch]: Use
+#[allow(unused)]
 pub struct DataConverter {
     payload_converter: PayloadConverter,
     failure_converter: Box<dyn FailureConverter>,
@@ -115,7 +117,7 @@ pub struct RawValue {
     pub payload: Payload,
 }
 
-trait GenericPayloadConverter {
+pub trait GenericPayloadConverter {
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
         val: &T,
@@ -271,7 +273,7 @@ where
 
 #[derive(Clone)]
 pub struct CompositePayloadConverter {
-    converters: Vec<PayloadConverter>,
+    _converters: Vec<PayloadConverter>,
 }
 
 impl Default for DataConverter {

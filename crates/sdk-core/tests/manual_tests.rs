@@ -27,7 +27,7 @@ use temporalio_common::{
     telemetry::PrometheusExporterOptions,
     worker::{PollerBehavior, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActivityContext, ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
 use temporalio_sdk_core::CoreRuntime;
 use tracing::info;
 
