@@ -192,7 +192,6 @@ impl LocalActivityMachine {
     pub(super) fn marker_should_get_special_handling(&self) -> Result<bool, WFMachinesError> {
         match self.state() {
             LocalActivityMachineState::ResultNotified(_) => Ok(false),
-            LocalActivityMachineState::WaitingResolveFromMarkerLookAhead(_) => Ok(true),
             LocalActivityMachineState::ResolvedFromMarkerLookAheadWaitingMarkerEvent(_) => Ok(true),
             _ => Err(fatal!(
                 "Attempted to check for LA marker handling in invalid state {}",
