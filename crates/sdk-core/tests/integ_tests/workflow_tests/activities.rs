@@ -47,7 +47,8 @@ use temporalio_common::{
 };
 use temporalio_sdk::{
     ActExitValue, ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction,
-    WorkflowResult, activities::ActivityContext, activities::ActivityError,
+    WorkflowResult,
+    activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{
     MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,

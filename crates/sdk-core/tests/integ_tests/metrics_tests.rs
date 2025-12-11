@@ -63,7 +63,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
-    activities::ActivityContext, activities::ActivityError,
+    activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
     CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,

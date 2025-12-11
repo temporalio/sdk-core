@@ -24,6 +24,15 @@ impl MyActivities {
     }
 
     #[activity]
+    pub async fn activity_arc_fully_qualified(
+        self: std::sync::Arc<Self>,
+        _ctx: ActivityContext,
+        _in: bool,
+    ) -> Result<&'static str, ActivityError> {
+        Ok("I'm done!")
+    }
+
+    #[activity]
     pub fn sync_activity(_ctx: ActivityContext, _in: bool) -> Result<&'static str, ActivityError> {
         Ok("Sync activities are supported too")
     }

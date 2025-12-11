@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    FnArg, ImplItem, ItemImpl, Pat, ReturnType, Type, TypePath,
+    FnArg, ImplItem, ItemImpl, ReturnType, Type, TypePath,
     parse::{Parse, ParseStream},
     spanned::Spanned,
 };
@@ -52,12 +52,19 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
 
     // Determine if static (no self receiver) or instance (Arc<Self>)
     let is_static = match method.sig.inputs.first() {
-        Some(FnArg::Receiver(_)) => false,
-        Some(FnArg::Typed(pat_type)) => {
-            // Check if it's `self: Arc<Self>`
-            !matches!(pat_type.pat.as_ref(), Pat::Ident(ident) if ident.ident == "self")
+        Some(FnArg::Receiver(receiver)) => {
+            if receiver.colon_token.is_some() {
+                validate_arc_self_type(&receiver.ty)?;
+                false
+            } else {
+                return Err(syn::Error::new_spanned(
+                    receiver,
+                    "Activity methods with instance state must use `self: Arc<Self>` as the \
+                     receiver, not `self`, `&self`, or `&mut self`",
+                ));
+            }
         }
-        None => true,
+        Some(FnArg::Typed(_)) | None => true,
     };
 
     let input_type = extract_input_type(&method.sig)?;
@@ -70,6 +77,25 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
         input_type,
         output_type,
     })
+}
+
+fn validate_arc_self_type(ty: &Type) -> syn::Result<()> {
+    let expected: Type = syn::parse_quote!(Arc<Self>);
+
+    if let (Type::Path(actual_path), Type::Path(expected_path)) = (ty, &expected)
+        && let (Some(actual_seg), Some(expected_seg)) = (
+            actual_path.path.segments.last(),
+            expected_path.path.segments.last(),
+        )
+        && actual_seg == expected_seg
+    {
+        return Ok(());
+    }
+
+    Err(syn::Error::new_spanned(
+        ty,
+        "Instance activity methods must use `self: Arc<Self>` as the receiver type",
+    ))
 }
 
 fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
@@ -196,7 +222,6 @@ impl ActivitiesDefinition {
         let struct_ident = format_ident!("{}", struct_name);
         let method_ident = &activity.method.sig.ident;
 
-        // Use () for input type if not specified
         let input_type = activity
             .input_type
             .as_ref()

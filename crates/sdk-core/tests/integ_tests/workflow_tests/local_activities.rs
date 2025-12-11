@@ -50,8 +50,7 @@ use temporalio_common::{
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, UpdateContext, WfContext,
     WorkflowFunction, WorkflowResult,
-    activities::ActivityContext,
-    activities::ActivityError,
+    activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporalio_sdk_core::{
