@@ -29,7 +29,7 @@ use temporalio_common::{
     telemetry::{OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions},
     worker::PollerBehavior,
 };
-use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
 use temporalio_sdk_core::{
     CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
@@ -163,7 +163,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
 
     let acts_started_act = acts_started.clone();
     let acts_done_act = acts_done.clone();
-    worker.register_activity("pass_fail_act", move |_ctx: ActContext, i: String| {
+    worker.register_activity("pass_fail_act", move |_ctx: ActivityContext, i: String| {
         let acts_started = acts_started_act.clone();
         let acts_done = acts_done_act.clone();
         async move {
@@ -313,9 +313,10 @@ async fn docker_worker_heartbeat_tuner() {
         .await;
         Ok(().into())
     });
-    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
-        Ok(i)
-    });
+    worker.register_activity(
+        "pass_fail_act",
+        |_ctx: ActivityContext, i: String| async move { Ok(i) },
+    );
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
@@ -576,7 +577,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
     });
     worker.register_activity(
         "sticky_cache_history_act",
-        |_ctx: ActContext, marker: String| async move {
+        |_ctx: ActivityContext, marker: String| async move {
             match marker.as_str() {
                 "wf1" => {
                     HISTORY_WF1_ACTIVITY_STARTED.notify_one();
@@ -668,18 +669,20 @@ async fn worker_heartbeat_multiple_workers() {
     worker_a.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
         Ok(().into())
     });
-    worker_a.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
-        Ok(())
-    });
+    worker_a.register_activity(
+        "failing_act",
+        |_ctx: ActivityContext, _: String| async move { Ok(()) },
+    );
 
     let mut starter_b = starter.clone_no_worker();
     let mut worker_b = starter_b.worker().await;
     worker_b.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
         Ok(().into())
     });
-    worker_b.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
-        Ok(())
-    });
+    worker_b.register_activity(
+        "failing_act",
+        |_ctx: ActivityContext, _: String| async move { Ok(()) },
+    );
 
     let worker_a_key = worker_a.worker_instance_key().to_string();
     let worker_b_key = worker_b.worker_instance_key().to_string();
@@ -799,14 +802,17 @@ async fn worker_heartbeat_failure_metrics() {
         Ok(().into())
     });
 
-    worker.register_activity("failing_act", |_ctx: ActContext, _: String| async move {
-        if ACT_COUNT.load(Ordering::Relaxed) == 3 {
-            return Ok(());
-        }
-        ACT_COUNT.fetch_add(1, Ordering::Relaxed);
-        ACT_FAIL.notify_one();
-        Err(anyhow!("Expected error").into())
-    });
+    worker.register_activity(
+        "failing_act",
+        |_ctx: ActivityContext, _: String| async move {
+            if ACT_COUNT.load(Ordering::Relaxed) == 3 {
+                return Ok(());
+            }
+            ACT_COUNT.fetch_add(1, Ordering::Relaxed);
+            ACT_FAIL.notify_one();
+            Err(anyhow!("Expected error").into())
+        },
+    );
 
     let worker_key = worker_instance_key.to_string();
     starter.workflow_options.retry_policy = Some(RetryPolicy {
@@ -958,9 +964,10 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
         Ok(().into())
     });
 
-    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
-        Ok(i)
-    });
+    worker.register_activity(
+        "pass_fail_act",
+        |_ctx: ActivityContext, i: String| async move { Ok(i) },
+    );
 
     starter
         .start_with_worker(wf_name.to_owned(), &mut worker)
@@ -1019,9 +1026,10 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
         Ok(().into())
     });
 
-    worker.register_activity("pass_fail_act", |_ctx: ActContext, i: String| async move {
-        Ok(i)
-    });
+    worker.register_activity(
+        "pass_fail_act",
+        |_ctx: ActivityContext, i: String| async move { Ok(i) },
+    );
 
     starter
         .start_with_worker(wf_name.to_owned(), &mut worker)

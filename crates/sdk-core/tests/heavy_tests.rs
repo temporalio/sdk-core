@@ -32,7 +32,7 @@ use temporalio_common::{
     },
     worker::{PollerBehavior, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
 use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
 
 #[tokio::test]
@@ -77,7 +77,7 @@ async fn activity_load() {
     worker.register_wf(wf_type.to_owned(), wf_fn);
     worker.register_activity(
         "test_activity",
-        |_ctx: ActContext, echo: String| async move { Ok(echo) },
+        |_ctx: ActivityContext, echo: String| async move { Ok(echo) },
     );
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
@@ -149,7 +149,7 @@ async fn chunky_activities_resource_based() {
     worker.register_wf(wf_type.to_owned(), wf_fn);
     worker.register_activity(
         "test_activity",
-        |_ctx: ActContext, echo: String| async move {
+        |_ctx: ActivityContext, echo: String| async move {
             tokio::task::spawn_blocking(move || {
                 // Allocate a gig and then do some CPU stuff on it
                 let mut mem = vec![0_u8; 1000 * 1024 * 1024];
@@ -233,7 +233,7 @@ async fn workflow_load() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
     );
     let client = starter.get_client().await;
 
@@ -288,7 +288,7 @@ async fn evict_while_la_running_no_interference() {
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActivityContext, _: String| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
@@ -425,7 +425,7 @@ async fn poller_autoscaling_basic_loadtest() {
 
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, echo: String| async move {
+    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
         // Add some jitter to completions
         let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;

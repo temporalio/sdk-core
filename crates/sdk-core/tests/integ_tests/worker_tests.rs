@@ -726,7 +726,7 @@ async fn test_custom_slot_supplier_simple() {
 
     worker.register_activity(
         "SlotSupplierActivity",
-        |_: temporalio_sdk::ActContext, _: ()| async move { Ok(()) },
+        |_: temporalio_sdk::activities::ActivityContext, _: ()| async move { Ok(()) },
     );
     worker.register_wf(
         "SlotSupplierWorkflow".to_owned(),

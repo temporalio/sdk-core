@@ -1,6 +1,11 @@
+// TODO [rust-sdk-branch]: Enable
+//#![warn(missing_docs)] // error if there are missing docs
+
 //! This crate contains base-level functionality needed by the other crates in the Temporal Core and
 //! Rust SDK.
 
+mod activity_definition;
+pub mod data_converters;
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
 pub mod errors;
@@ -27,6 +32,9 @@ use crate::{
 use std::sync::Arc;
 use uuid::Uuid;
 
+pub use activity_definition::ActivityDefinition;
+
+// TODO [rust-sdk-branch]: Move to core
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
 /// It represents one worker, which has a (potentially shared) client for connecting to the service
 /// and is bound to a specific task queue.
