@@ -46,8 +46,9 @@ use temporalio_common::{
     worker::PollerBehavior,
 };
 use temporalio_sdk::{
-    ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
-    WfExitValue, WorkflowFunction, WorkflowResult,
+    ActExitValue, ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction,
+    WorkflowResult,
+    activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{
     MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
@@ -903,7 +904,7 @@ async fn one_activity_abandon_cancelled_before_started() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        |_ctx: ActivityContext, echo_me: String| async move {
             sleep(Duration::from_secs(2)).await;
             Ok(echo_me)
         },
@@ -949,7 +950,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        |_ctx: ActivityContext, echo_me: String| async move {
             sleep(Duration::from_secs(2)).await;
             Ok(echo_me)
         },
@@ -1008,7 +1009,7 @@ async fn it_can_complete_async() {
     let shared_token_ref = shared_token.clone();
     worker.register_activity(
         "complete_async_activity",
-        move |ctx: ActContext, _: String| {
+        move |ctx: ActivityContext, _: String| {
             let shared_token_ref = shared_token_ref.clone();
             async move {
                 // set the `activity_task_token`
@@ -1079,7 +1080,7 @@ async fn graceful_shutdown() {
     });
     static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
     static ACTS_DONE: Semaphore = Semaphore::const_new(0);
-    worker.register_activity("sleeper", |ctx: ActContext, _: String| async move {
+    worker.register_activity("sleeper", |ctx: ActivityContext, _: String| async move {
         ACTS_STARTED.add_permits(1);
         // just wait to be cancelled
         ctx.cancelled().await;
@@ -1141,7 +1142,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
     static WAS_CANCELLED: AtomicBool = AtomicBool::new(false);
     worker.register_activity(
         "echo_activity",
-        |ctx: ActContext, echo_me: String| async move {
+        |ctx: ActivityContext, echo_me: String| async move {
             // Doesn't heartbeat
             ctx.cancelled().await;
             WAS_CANCELLED.store(true, Ordering::Relaxed);

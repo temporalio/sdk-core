@@ -1,0 +1,5 @@
+error: Activity methods with instance state must use `self: Arc<Self>` as the receiver, not `self`, `&self`, or `&mut self`
+ --> tests/activities_trybuild/invalid_self_type_fail.rs:9:9
+  |
+9 |         &self,
+  |         ^^^^^
