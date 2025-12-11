@@ -87,6 +87,7 @@ impl WorkerTaskTypes {
     }
 }
 
+// TODO [rust-sdk-branch]: Move to core
 /// Defines per-worker configuration options
 #[derive(Clone, bon::Builder)]
 #[builder(on(String, into), state_mod(vis = "pub"), finish_fn(vis = "", name = build_internal))]
