@@ -27,7 +27,7 @@ impl DataConverter {
 }
 
 pub enum SerializationContext {
-    // Details inside variants elided
+    // TODO [rust-sdk-branch]: Fill in
     Workflow,
     Activity,
     Nexus,
@@ -44,7 +44,7 @@ impl PayloadConverter {
     pub fn serde_json() -> Self {
         Self::Serde(Arc::new(SerdeJsonPayloadConverter))
     }
-    // ... and more
+    // TODO [rust-sdk-branch]: Proto binary, other standard built-ins
 }
 
 pub enum PayloadConversionError {
@@ -82,14 +82,10 @@ pub trait PayloadCodec {
 }
 pub struct DefaultPayloadCodec;
 
-// Users don't need to implement these unless they are using a non-serde-compatible custom
-// converter, in which case they will implement the to/from_payload functions on some wrapper type
-// and can ignore the serde methods. (See example at bottom)
-//
-// These should remain as separate traits because the serializable half is dyn-safe and can be
-// passed like `&dyn TemporalSerializable` but the deserialize half is not due to requiring Sized.
-// Also this follows the serde mold which many people are used to, and implementing them separately
-// is two lines extra. If we want a trait that requires both, that can easily be added.
+/// Indicates some type can be serialized for use with Temporal.
+///
+/// You don't need to implement this unless you are using a non-serde-compatible custom converter,
+/// in which case you should implement the to/from_payload functions on some wrapper type.
 pub trait TemporalSerializable {
     fn as_serde(&self) -> Option<&dyn erased_serde::Serialize> {
         None
@@ -98,6 +94,11 @@ pub trait TemporalSerializable {
         None
     }
 }
+///
+/// Indicates some type can be deserialized for use with Temporal.
+///
+/// You don't need to implement this unless you are using a non-serde-compatible custom converter,
+/// in which case you should implement the to/from_payload functions on some wrapper type.
 pub trait TemporalDeserializable: Sized {
     fn from_serde(
         _: &dyn ErasedSerdePayloadConverter,
@@ -110,8 +111,9 @@ pub trait TemporalDeserializable: Sized {
         None
     }
 }
-// Isn't serde serializable, therefore not caught by the blanket impl. Will implement
-// serialize/deserialize directly to always bypass the converter.
+
+// TODO [rust-sdk-branch]: implement serialize/deserialize directly (should always bypass the
+// converter).
 #[derive(Clone)]
 pub struct RawValue {
     pub payload: Payload,
@@ -166,9 +168,7 @@ impl GenericPayloadConverter for PayloadConverter {
     }
 }
 
-// These blanket traits we can allow users to opt-out of with a compile time flag, which will allow
-// them to implement their own blanket traits... but I don't think that's actually useful in any
-// way. They can never add their own blanket impls since they don't own the traits.
+// TODO [rust-sdk-branch]: Potentially allow opt-out / no-serde compile flags
 impl<T> TemporalSerializable for T
 where
     T: serde::Serialize,
@@ -193,9 +193,6 @@ where
     }
 }
 
-// Users can implement for any serde backend they want, we'll provide the standard defaults.
-// If they need to use custom serialization contexts, they'll need to provide their own impl, as
-// there's no sensible place to insert a generic hook (and these impls are very easy to make).
 struct SerdeJsonPayloadConverter;
 impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
     fn to_payload(
@@ -239,7 +236,7 @@ pub trait ErasedSerdePayloadConverter: Send + Sync {
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError>;
 }
 
-// TODO: Feature flag prost stuff
+// TODO [rust-sdk-branch]: All prost things should be behind a compile flag
 
 pub struct ProstSerializable<T: prost::Message>(T);
 impl<T> TemporalSerializable for ProstSerializable<T>
@@ -266,7 +263,7 @@ where
     where
         Self: Sized,
     {
-        // TODO: Check metadata
+        // TODO [rust-sdk-branch]: Check metadata
         Some(ProstSerializable(T::decode(p.data.as_slice()).ok()?))
     }
 }
