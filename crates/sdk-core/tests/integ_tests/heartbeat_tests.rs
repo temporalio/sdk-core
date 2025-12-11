@@ -25,7 +25,7 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
@@ -187,7 +187,7 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let client = starter.get_client().await;
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        |_ctx: ActivityContext, echo_me: String| async move {
             sleep(Duration::from_secs(4)).await;
             Ok(echo_me)
         },

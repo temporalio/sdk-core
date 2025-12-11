@@ -5,7 +5,8 @@ use std::{future, time::Duration};
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporalio_sdk::{
-    ActContext, ActivityError, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
+    ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
 };
 use tokio_util::sync::CancellationToken;
 
@@ -30,7 +31,7 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn echo(_ctx: ActContext, echo_me: String) -> Result<String, ActivityError> {
+async fn echo(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
     Ok(echo_me)
 }
 

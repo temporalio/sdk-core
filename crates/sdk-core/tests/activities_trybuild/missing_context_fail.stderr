@@ -1,0 +1,5 @@
+error: Activity functions must have an ActivityContext parameter as either the first parameter, or the second after `self: Arc<Self>`.
+ --> tests/activities_trybuild/missing_context_fail.rs:8:29
+  |
+8 |     pub async fn no_context(_in: String) -> Result<String, ActivityError> {
+  |                             ^^^
