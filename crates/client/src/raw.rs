@@ -3,9 +3,10 @@
 //! happen.
 
 use crate::{
-    Client, ConfiguredClient, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
-    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
+    Client, ConfiguredClient, Connection, LONG_POLL_TIMEOUT, RequestExt, RetryClient,
+    SharedReplaceableClient, TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
+    retry::make_future_retry,
     worker::{ClientWorkerSet, Slot},
 };
 use dyn_clone::DynClone;
@@ -133,6 +134,35 @@ where
 }
 
 #[async_trait::async_trait]
+impl RawGrpcCaller for Connection {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        mut callfn: F,
+        mut req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: Send + Sync + Unpin + 'static,
+        for<'a> F:
+            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+    {
+        let info = self.retry_options.get_call_info(call_name, Some(&req));
+        req.extensions_mut().insert(info.call_type);
+        if info.call_type.is_long() {
+            req.set_default_timeout(LONG_POLL_TIMEOUT);
+        }
+        let fact = || {
+            let req_clone = req_cloner(&req);
+            callfn(self, req_clone)
+        };
+        let res = make_future_retry(info, fact);
+        res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+    }
+}
+
+#[async_trait::async_trait]
 impl RawGrpcCaller for dyn ErasedRawClient {
     async fn call<F, Req, Resp>(
         &mut self,
@@ -218,7 +248,7 @@ where
         F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
     {
-        let info = self.get_call_info(call_name, Some(&req));
+        let info = self.retry_config.get_call_info(call_name, Some(&req));
         req.extensions_mut().insert(info.call_type);
         if info.call_type.is_long() {
             req.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -227,7 +257,7 @@ where
             let req_clone = req_cloner(&req);
             callfn(self, req_clone)
         };
-        let res = Self::make_future_retry(info, fact);
+        let res = make_future_retry(info, fact);
         res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
     }
 }
@@ -283,6 +313,32 @@ where
 impl<RC> RawGrpcCaller for SharedReplaceableClient<RC> where
     RC: RawGrpcCaller + Clone + Sync + 'static
 {
+}
+
+impl RawClientProducer for Connection {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
+        None
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.inner.workflow_svc()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.inner.operator_svc()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.inner.cloud_svc()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.inner.test_svc()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.inner.health_svc()
+    }
 }
 
 impl RawClientProducer for TemporalServiceClient {

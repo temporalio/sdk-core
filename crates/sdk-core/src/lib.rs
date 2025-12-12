@@ -141,6 +141,7 @@ where
     rwi.into_core_worker()
 }
 
+// TODO [rust-sdk-branch]: Can this be eliminated?
 pub(crate) fn init_worker_client<CT>(
     namespace: String,
     client_identity_override: Option<String>,
@@ -240,7 +241,8 @@ pub struct CoreRuntime {
     heartbeat_interval: Option<Duration>,
 }
 
-/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptions::builder]
+/// Holds telemetry options, as well as worker heartbeat_interval. Construct with
+/// [RuntimeOptions::builder]
 #[derive(Default, bon::Builder)]
 #[builder(finish_fn(vis = "", name = build_internal))]
 #[non_exhaustive]

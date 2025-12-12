@@ -26,6 +26,7 @@ pub use crate::{
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
+pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
     GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
@@ -39,7 +40,6 @@ use crate::{
     worker::ClientWorkerSet,
     workflow_handle::UntypedWorkflowHandle,
 };
-use backoff::{ExponentialBackoff, SystemClock, exponential};
 use http::{Uri, uri::InvalidUri};
 use parking_lot::RwLock;
 use std::{
@@ -48,7 +48,7 @@ use std::{
     ops::{Deref, DerefMut},
     str::FromStr,
     sync::{Arc, OnceLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use temporalio_common::{
     protos::{
@@ -77,7 +77,7 @@ use temporalio_common::{
     telemetry::metrics::TemporalMeter,
 };
 use tonic::{
-    Code, IntoRequest,
+    IntoRequest,
     body::Body,
     client::GrpcService,
     codegen::InterceptedService,
@@ -104,8 +104,174 @@ pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+
+/// Options for [Connection::connect] and [Client::connect].
+#[derive(bon::Builder, Clone, Debug)]
+#[non_exhaustive]
+#[builder(start_fn = new)]
+pub struct ConnectionOptions {
+    /// The server to connect to.
+    #[builder(start_fn, into)]
+    pub target: Url,
+    /// A human-readable string that can identify this process. Defaults to empty string.
+    #[builder(default)]
+    pub identity: String,
+    /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
+    /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
+    /// certs or keys as bytes, loading them from disk itself if needed.
+    pub tls_options: Option<TlsOptions>,
+    /// If set, override the origin used when connecting. May be useful in rare situations where tls
+    /// verification needs to use a different name from what should be set as the `:authority`
+    /// header. If [TlsOptions::domain] is set, and this is not, this will be set to
+    /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
+    /// override.
+    pub override_origin: Option<Uri>,
+    /// An API key to use for auth. If set, TLS will be enabled by default, but without any mTLS
+    /// specific settings.
+    #[builder(into)]
+    pub api_key: Option<String>,
+    /// Retry configuration for the server client. Default is [RetryOptions::default]
+    #[builder(default)]
+    pub retry_options: RetryOptions,
+    /// If set, HTTP2 gRPC keep alive will be enabled.
+    /// To enable with default settings, use `.keep_alive(Some(ClientKeepAliveConfig::default()))`.
+    #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
+    pub keep_alive: Option<ClientKeepAliveOptions>,
+    // TODO [rust-sdk-branch]: Probably combine headers into specific headers type
+    /// HTTP headers to include on every RPC call.
+    ///
+    /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
+    /// `-bin). To set binary headers, use [ClientOptions::binary_headers]. Invalid header keys or
+    /// values will cause an error to be returned when connecting.
+    pub headers: Option<HashMap<String, String>>,
+    /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
+    ///
+    /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix). Invalid
+    /// header keys will cause an error to be returned when connecting.
+    pub binary_headers: Option<HashMap<String, Vec<u8>>>,
+    /// HTTP CONNECT proxy to use for this client.
+    pub http_connect_proxy: Option<HttpConnectProxyOptions>,
+    /// If set true, error code labels will not be included on request failure metrics.
+    #[builder(default)]
+    pub disable_error_code_metric_tags: bool,
+    /// If set, all gRPC calls will be routed through the provided service.
+    pub service_override: Option<callback_based::CallbackBasedGrpcService>,
+
+    // TODO [rust-sdk-branch]: Put behind compile time flag
+    // Internal / Core-based SDK only options below =============================================
+    /// If set true, get_system_info will not be called upon connection.
+    #[doc(hidden)]
+    #[builder(default)]
+    pub skip_get_system_info: bool,
+    /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
+    /// all RPC calls
+    #[doc(hidden)]
+    #[builder(default = "temporal-rust".to_owned())]
+    pub client_name: String,
+    /// The version of the SDK being implemented on top of core. Is set as `client-version` header
+    /// in all RPC calls. The server decides if the client is supported based on this.
+    #[doc(hidden)]
+    #[builder(default = VERSION.to_owned())]
+    pub client_version: String,
+}
+
+/// A connection to the Temporal service.
+#[derive(Clone)]
+pub struct Connection {
+    pub(crate) inner: Arc<TemporalServiceClient>,
+    pub(crate) retry_options: RetryOptions,
+}
+
+impl Connection {
+    /// Connect to a Temporal service.
+    pub async fn connect(
+        // TODO [rust-sdk-branch]: Should be moved to client options, requires moving all the
+        // telemetry (and runtime?) stuff into common.
+        metrics_meter: Option<TemporalMeter>,
+        options: ConnectionOptions,
+    ) -> Result<Self, ClientInitError> {
+        let service = if let Some(service_override) = options.service_override {
+            GrpcMetricSvc {
+                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
+                metrics: metrics_meter.clone().map(MetricsContext::new),
+                disable_errcode_label: options.disable_error_code_metric_tags,
+            }
+        } else {
+            let channel = Channel::from_shared(options.target.to_string())?;
+            let channel = add_tls_to_channel(options.tls_options.as_ref(), channel).await?;
+            let channel = if let Some(keep_alive) = options.keep_alive.as_ref() {
+                channel
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(keep_alive.interval)
+                    .keep_alive_timeout(keep_alive.timeout)
+            } else {
+                channel
+            };
+            let channel = if let Some(origin) = options.override_origin.clone() {
+                channel.origin(origin)
+            } else {
+                channel
+            };
+            // If there is a proxy, we have to connect that way
+            let channel = if let Some(proxy) = options.http_connect_proxy.as_ref() {
+                proxy.connect_endpoint(&channel).await?
+            } else {
+                channel.connect().await?
+            };
+            ServiceBuilder::new()
+                .layer_fn(move |channel| GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::Channel(channel),
+                    metrics: metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: options.disable_error_code_metric_tags,
+                })
+                .service(channel)
+        };
+
+        let headers = Arc::new(RwLock::new(ClientHeaders {
+            user_headers: parse_ascii_headers(options.headers.clone().unwrap_or_default())?,
+            user_binary_headers: parse_binary_headers(
+                options.binary_headers.clone().unwrap_or_default(),
+            )?,
+            api_key: options.api_key.clone(),
+        }));
+        let interceptor = ServiceCallInterceptor {
+            client_name: options.client_name,
+            client_version: options.client_version,
+            headers: headers.clone(),
+        };
+        let svc = InterceptedService::new(service, interceptor);
+        let svc_client = TemporalServiceClient::new(svc);
+
+        // let mut client = ConfiguredClient {
+        //     headers,
+        //     client: svc_client,
+        //     options: Arc::new(options.clone()),
+        //     capabilities: None,
+        //     workers: Arc::new(ClientWorkerSet::new()),
+        // };
+        // if !options.skip_get_system_info {
+        //     match client
+        //         .get_system_info(GetSystemInfoRequest::default().into_request())
+        //         .await
+        //     {
+        //         Ok(sysinfo) => {
+        //             client.capabilities = sysinfo.into_inner().capabilities;
+        //         }
+        //         Err(status) => match status.code() {
+        //             Code::Unimplemented => {}
+        //             _ => return Err(ClientInitError::SystemInfoCallError(status)),
+        //         },
+        //     };
+        // }
+        Ok(Self {
+            inner: Arc::new(svc_client),
+            retry_options: options.retry_options,
+        })
+    }
+}
 
 /// Options for the connection to the temporal server. Construct with [ClientOptions::builder]
 #[derive(Clone, Debug, bon::Builder)]
@@ -216,93 +382,6 @@ impl Default for ClientKeepAliveOptions {
             interval: Duration::from_secs(30),
             timeout: Duration::from_secs(15),
         }
-    }
-}
-
-/// Configuration for retrying requests to the server
-#[derive(Clone, Debug, PartialEq)]
-pub struct RetryOptions {
-    /// initial wait time before the first retry.
-    pub initial_interval: Duration,
-    /// randomization jitter that is used as a multiplier for the current retry interval
-    /// and is added or subtracted from the interval length.
-    pub randomization_factor: f64,
-    /// rate at which retry time should be increased, until it reaches max_interval.
-    pub multiplier: f64,
-    /// maximum amount of time to wait between retries.
-    pub max_interval: Duration,
-    /// maximum total amount of time requests should be retried for, if None is set then no limit
-    /// will be used.
-    pub max_elapsed_time: Option<Duration>,
-    /// maximum number of retry attempts.
-    pub max_retries: usize,
-}
-
-impl Default for RetryOptions {
-    fn default() -> Self {
-        Self {
-            initial_interval: Duration::from_millis(100), // 100 ms wait by default.
-            randomization_factor: 0.2,                    // +-20% jitter.
-            multiplier: 1.7, // each next retry delay will increase by 70%
-            max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
-            max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
-            max_retries: 10,
-        }
-    }
-}
-
-impl RetryOptions {
-    pub(crate) const fn task_poll_retry_policy() -> Self {
-        Self {
-            initial_interval: Duration::from_millis(200),
-            randomization_factor: 0.2,
-            multiplier: 2.0,
-            max_interval: Duration::from_secs(10),
-            max_elapsed_time: None,
-            max_retries: 0,
-        }
-    }
-
-    pub(crate) const fn throttle_retry_policy() -> Self {
-        Self {
-            initial_interval: Duration::from_secs(1),
-            randomization_factor: 0.2,
-            multiplier: 2.0,
-            max_interval: Duration::from_secs(10),
-            max_elapsed_time: None,
-            max_retries: 0,
-        }
-    }
-
-    /// A retry policy that never retires
-    pub const fn no_retries() -> Self {
-        Self {
-            initial_interval: Duration::from_secs(0),
-            randomization_factor: 0.0,
-            multiplier: 1.0,
-            max_interval: Duration::from_secs(0),
-            max_elapsed_time: None,
-            max_retries: 1,
-        }
-    }
-
-    pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
-        exponential::ExponentialBackoff {
-            current_interval: self.initial_interval,
-            initial_interval: self.initial_interval,
-            randomization_factor: self.randomization_factor,
-            multiplier: self.multiplier,
-            max_interval: self.max_interval,
-            max_elapsed_time: self.max_elapsed_time,
-            clock,
-            start_time: Instant::now(),
-        }
-    }
-}
-
-impl From<RetryOptions> for ExponentialBackoff {
-    fn from(c: RetryOptions) -> Self {
-        c.into_exp_backoff(SystemClock::default())
     }
 }
 
@@ -512,117 +591,49 @@ impl ClientOptions {
     /// See [RetryClient] for more
     pub async fn connect_no_namespace_with_service_override(
         &self,
-        metrics_meter: Option<TemporalMeter>,
-        service_override: Option<callback_based::CallbackBasedGrpcService>,
+        _metrics_meter: Option<TemporalMeter>,
+        _service_override: Option<callback_based::CallbackBasedGrpcService>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClient>>, ClientInitError> {
-        let service = if let Some(service_override) = service_override {
-            GrpcMetricSvc {
-                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
-                metrics: metrics_meter.clone().map(MetricsContext::new),
-                disable_errcode_label: self.disable_error_code_metric_tags,
-            }
+        todo!("remove")
+    }
+}
+
+/// If TLS is configured, set the appropriate options on the provided channel and return it.
+/// Passes it through if TLS options not set.
+async fn add_tls_to_channel(
+    tls_options: Option<&TlsOptions>,
+    mut channel: Endpoint,
+) -> Result<Endpoint, ClientInitError> {
+    if let Some(tls_cfg) = tls_options {
+        let mut tls = tonic::transport::ClientTlsConfig::new();
+
+        if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
+            let server_root_ca_cert = Certificate::from_pem(root_cert);
+            tls = tls.ca_certificate(server_root_ca_cert);
         } else {
-            let channel = Channel::from_shared(self.target_url.to_string())?;
-            let channel = self.add_tls_to_channel(channel).await?;
-            let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
-                channel
-                    .keep_alive_while_idle(true)
-                    .http2_keep_alive_interval(keep_alive.interval)
-                    .keep_alive_timeout(keep_alive.timeout)
-            } else {
-                channel
-            };
-            let channel = if let Some(origin) = self.override_origin.clone() {
-                channel.origin(origin)
-            } else {
-                channel
-            };
-            // If there is a proxy, we have to connect that way
-            let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
-                proxy.connect_endpoint(&channel).await?
-            } else {
-                channel.connect().await?
-            };
-            ServiceBuilder::new()
-                .layer_fn(move |channel| GrpcMetricSvc {
-                    inner: ChannelOrGrpcOverride::Channel(channel),
-                    metrics: metrics_meter.clone().map(MetricsContext::new),
-                    disable_errcode_label: self.disable_error_code_metric_tags,
-                })
-                .service(channel)
-        };
-
-        let headers = Arc::new(RwLock::new(ClientHeaders {
-            user_headers: parse_ascii_headers(self.headers.clone().unwrap_or_default())?,
-            user_binary_headers: parse_binary_headers(
-                self.binary_headers.clone().unwrap_or_default(),
-            )?,
-            api_key: self.api_key.clone(),
-        }));
-        let interceptor = ServiceCallInterceptor {
-            opts: self.clone(),
-            headers: headers.clone(),
-        };
-        let svc = InterceptedService::new(service, interceptor);
-
-        let mut client = ConfiguredClient {
-            headers,
-            client: TemporalServiceClient::new(svc),
-            options: Arc::new(self.clone()),
-            capabilities: None,
-            workers: Arc::new(ClientWorkerSet::new()),
-        };
-        if !self.skip_get_system_info {
-            match client
-                .get_system_info(GetSystemInfoRequest::default().into_request())
-                .await
-            {
-                Ok(sysinfo) => {
-                    client.capabilities = sysinfo.into_inner().capabilities;
-                }
-                Err(status) => match status.code() {
-                    Code::Unimplemented => {}
-                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
-                },
-            };
+            tls = tls.with_native_roots();
         }
-        Ok(RetryClient::new(client, self.retry_options.clone()))
-    }
 
-    /// If TLS is configured, set the appropriate options on the provided channel and return it.
-    /// Passes it through if TLS options not set.
-    async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
-        if let Some(tls_cfg) = &self.tls_options {
-            let mut tls = tonic::transport::ClientTlsConfig::new();
+        if let Some(domain) = &tls_cfg.domain {
+            tls = tls.domain_name(domain);
 
-            if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
-                let server_root_ca_cert = Certificate::from_pem(root_cert);
-                tls = tls.ca_certificate(server_root_ca_cert);
-            } else {
-                tls = tls.with_native_roots();
-            }
-
-            if let Some(domain) = &tls_cfg.domain {
-                tls = tls.domain_name(domain);
-
-                // This song and dance ultimately is just to make sure the `:authority` header ends
-                // up correct on requests while we use TLS. Setting the header directly in our
-                // interceptor doesn't work since seemingly it is overridden at some point by
-                // something lower level.
-                let uri: Uri = format!("https://{domain}").parse()?;
-                channel = channel.origin(uri);
-            }
-
-            if let Some(client_opts) = &tls_cfg.client_tls_options {
-                let client_identity =
-                    Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
-                tls = tls.identity(client_identity);
-            }
-
-            return channel.tls_config(tls).map_err(Into::into);
+            // This song and dance ultimately is just to make sure the `:authority` header ends
+            // up correct on requests while we use TLS. Setting the header directly in our
+            // interceptor doesn't work since seemingly it is overridden at some point by
+            // something lower level.
+            let uri: Uri = format!("https://{domain}").parse()?;
+            channel = channel.origin(uri);
         }
-        Ok(channel)
+
+        if let Some(client_opts) = &tls_cfg.client_tls_options {
+            let client_identity =
+                Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
+            tls = tls.identity(client_identity);
+        }
+
+        return channel.tls_config(tls).map_err(Into::into);
     }
+    Ok(channel)
 }
 
 fn parse_ascii_headers(
@@ -679,7 +690,8 @@ fn parse_binary_headers(
 /// Interceptor which attaches common metadata (like "client-name") to every outgoing call
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
-    opts: ClientOptions,
+    client_name: String,
+    client_version: String,
     /// Only accessed as a reader
     headers: Arc<RwLock<ClientHeaders>>,
 }
@@ -695,8 +707,7 @@ impl Interceptor for ServiceCallInterceptor {
         if !metadata.contains_key(CLIENT_NAME_HEADER_KEY) {
             metadata.insert(
                 CLIENT_NAME_HEADER_KEY,
-                self.opts
-                    .client_name
+                self.client_name
                     .parse()
                     .unwrap_or_else(|_| MetadataValue::from_static("")),
             );
@@ -704,8 +715,7 @@ impl Interceptor for ServiceCallInterceptor {
         if !metadata.contains_key(CLIENT_VERSION_HEADER_KEY) {
             metadata.insert(
                 CLIENT_VERSION_HEADER_KEY,
-                self.opts
-                    .client_version
+                self.client_version
                     .parse()
                     .unwrap_or_else(|_| MetadataValue::from_static("")),
             );
@@ -717,6 +727,7 @@ impl Interceptor for ServiceCallInterceptor {
     }
 }
 
+// TODO [rust-sdk-branch]: Should become non-pub
 /// Aggregates various services exposed by the Temporal server
 #[derive(Clone)]
 pub struct TemporalServiceClient {
@@ -1825,13 +1836,6 @@ mod tests {
 
     #[test]
     fn applies_headers() {
-        let opts = ClientOptions::builder()
-            .identity("enchicat".to_string())
-            .target_url(Url::parse("https://smolkitty").unwrap())
-            .client_name("cute-kitty".to_string())
-            .client_version("0.1.0".to_string())
-            .build();
-
         // Initial header set
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: HashMap::new(),
@@ -1847,7 +1851,8 @@ mod tests {
             vec![1, 2, 3].try_into().unwrap(),
         );
         let mut interceptor = ServiceCallInterceptor {
-            opts,
+            client_name: "cute-kitty".to_string(),
+            client_version: "0.1.0".to_string(),
             headers: headers.clone(),
         };
 

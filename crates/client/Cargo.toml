@@ -12,6 +12,7 @@ categories = ["development-tools"]
 
 [features]
 telemetry = ["dep:opentelemetry"]
+core-based-sdk = []
 
 [dependencies]
 anyhow = "1.0"

@@ -260,6 +260,10 @@ struct ActivityHalf {
 }
 
 impl Worker {
+    // TODO [rust-sdk-branch]: Needs new fundamental `Client` type.
+    // /// Create a new worker from an existing client, and options.
+    // pub fn new(client: ) -> Self {}
+
     /// Create a new Rust SDK worker from a core worker
     pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
