@@ -239,11 +239,10 @@ impl Runtime {
 
         let core_runtime_options = CoreRuntimeOptions::builder()
             .telemetry_options(telemetry_options)
-            .maybe_heartbeat_interval((options.worker_heartbeat_interval_millis != 0).then(|| {
-                Some(Duration::from_millis(
-                    options.worker_heartbeat_interval_millis,
-                ))
-            }))
+            .heartbeat_interval(
+                (options.worker_heartbeat_interval_millis != 0)
+                    .then(|| Duration::from_millis(options.worker_heartbeat_interval_millis)),
+            )
             .build()
             .map_err(|e| anyhow::anyhow!(e))?;
 

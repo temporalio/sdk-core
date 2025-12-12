@@ -58,7 +58,6 @@ pub(crate) async fn grpc_message_too_large() {
                     false
                 }
         }),
-        "Expected workflow task failure or termination b/c grpc message too large: {:?}",
-        events
+        "Expected workflow task failure or termination b/c grpc message too large: {events:?}",
     );
 }
