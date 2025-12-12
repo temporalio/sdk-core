@@ -48,6 +48,7 @@ path = "../common"
 features = ["envconfig"]
 
 [dev-dependencies]
+base64 = "0.21.0"
 futures-util = "0.3"
 thiserror = { workspace = true }
 
