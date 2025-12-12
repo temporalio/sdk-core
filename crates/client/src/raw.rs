@@ -3,8 +3,8 @@
 //! happen.
 
 use crate::{
-    Client, ConfiguredClient, Connection, LONG_POLL_TIMEOUT, RequestExt, RetryClient,
-    SharedReplaceableClient, TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
+    Client, Connection, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
+    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
     retry::make_future_retry,
     worker::{ClientWorkerSet, Slot},
@@ -133,13 +133,36 @@ where
     }
 }
 
+/// Macro to apply retry logic to a gRPC call. This exists to avoid some dynamic dispatch overhead
+/// and double-borrow issues that exist in alternate solutions.
+macro_rules! apply_retry_logic {
+    ($caller:expr, $retry_options:expr, $call_name:expr, $callfn:expr, $req:expr) => {{
+        let mut callfn = $callfn;
+        let mut req = $req;
+
+        let info = $retry_options.get_call_info($call_name, Some(&req));
+        req.extensions_mut().insert(info.call_type);
+        if info.call_type.is_long() {
+            req.set_default_timeout(LONG_POLL_TIMEOUT);
+        }
+
+        let fact = || {
+            let req_clone = req_cloner(&req);
+            callfn($caller, req_clone)
+        };
+
+        let res = make_future_retry(info, fact);
+        res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+    }};
+}
+
 #[async_trait::async_trait]
 impl RawGrpcCaller for Connection {
     async fn call<F, Req, Resp>(
         &mut self,
         call_name: &'static str,
-        mut callfn: F,
-        mut req: Request<Req>,
+        callfn: F,
+        req: Request<Req>,
     ) -> Result<Response<Resp>, Status>
     where
         Req: Clone + Unpin + Send + Sync + 'static,
@@ -148,17 +171,7 @@ impl RawGrpcCaller for Connection {
         for<'a> F:
             FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
     {
-        let info = self.retry_options.get_call_info(call_name, Some(&req));
-        req.extensions_mut().insert(info.call_type);
-        if info.call_type.is_long() {
-            req.set_default_timeout(LONG_POLL_TIMEOUT);
-        }
-        let fact = || {
-            let req_clone = req_cloner(&req);
-            callfn(self, req_clone)
-        };
-        let res = make_future_retry(info, fact);
-        res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+        apply_retry_logic!(self, &self.retry_options, call_name, callfn, req)
     }
 }
 
@@ -369,61 +382,50 @@ impl RawClientProducer for TemporalServiceClient {
 
 impl RawGrpcCaller for TemporalServiceClient {}
 
-impl RawClientProducer for ConfiguredClient<TemporalServiceClient> {
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        Some(self.workers())
-    }
-
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.client.workflow_client()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.client.operator_client()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.client.cloud_client()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.client.test_client()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.client.health_client()
-    }
-}
-
-impl RawGrpcCaller for ConfiguredClient<TemporalServiceClient> {}
-
 impl RawClientProducer for Client {
     fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        self.inner.get_workers_info()
+        Some(self.connection.workers.clone())
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner.workflow_client()
+        self.connection.workflow_client()
     }
 
     fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner.operator_client()
+        self.connection.operator_client()
     }
 
     fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner.cloud_client()
+        self.connection.cloud_client()
     }
 
     fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner.test_client()
+        self.connection.test_client()
     }
 
     fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner.health_client()
+        self.connection.health_client()
     }
 }
 
-impl RawGrpcCaller for Client {}
+#[async_trait::async_trait]
+impl RawGrpcCaller for Client {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: Send + Sync + Unpin + 'static,
+        for<'a> F:
+            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+    {
+        apply_retry_logic!(self, &self.connection.retry_options, call_name, callfn, req)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct AttachMetricLabels {
@@ -1654,7 +1656,7 @@ proxier! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptions, RetryClient};
+    use crate::{ClientOptions, ConnectionOptions};
     use std::collections::HashSet;
     use temporalio_common::{
         protos::temporal::api::{
@@ -1669,63 +1671,62 @@ mod tests {
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
-        let opts = ClientOptions::builder()
-            .target_url(Url::parse("http://localhost:7233").unwrap())
+        let opts = ConnectionOptions::new(Url::parse("http://localhost:7233").unwrap())
             .client_name("test")
             .client_version("0.0.0")
             .build();
-        let raw_client = opts.connect_no_namespace(None).await.unwrap();
-        let mut retry_client = RetryClient::new(raw_client, opts.retry_options);
+        let connection = Connection::connect(None, opts).await.unwrap();
+        let mut client = Client::new(
+            connection,
+            ClientOptions::builder().namespace("default").build(),
+        );
 
         let list_ns_req = ListNamespacesRequest::default();
-        let fact = |c: &mut RetryClient<_>, req| {
+        let fact = |c: &mut Client, req| {
             let mut c = c.workflow_client();
             async move { c.list_namespaces(req).await }.boxed()
         };
-        retry_client
+        client
             .call("whatever", fact, Request::new(list_ns_req.clone()))
             .await
             .unwrap();
 
         // Operator svc method
         let op_del_ns_req = DeleteNamespaceRequest::default();
-        let fact = |c: &mut RetryClient<_>, req| {
+        let fact = |c: &mut Client, req| {
             let mut c = c.operator_client();
             async move { c.delete_namespace(req).await }.boxed()
         };
-        retry_client
+        client
             .call("whatever", fact, Request::new(op_del_ns_req.clone()))
             .await
             .unwrap();
 
         // Cloud svc method
         let cloud_del_ns_req = cloudreq::DeleteNamespaceRequest::default();
-        let fact = |c: &mut RetryClient<_>, req| {
+        let fact = |c: &mut Client, req| {
             let mut c = c.cloud_client();
             async move { c.delete_namespace(req).await }.boxed()
         };
-        retry_client
+        client
             .call("whatever", fact, Request::new(cloud_del_ns_req.clone()))
             .await
             .unwrap();
 
         // Verify calling through traits works
-        retry_client
+        client
             .list_namespaces(list_ns_req.into_request())
             .await
             .unwrap();
         // Have to disambiguate operator and cloud service
-        OperatorService::delete_namespace(&mut retry_client, op_del_ns_req.into_request())
+        OperatorService::delete_namespace(&mut client, op_del_ns_req.into_request())
             .await
             .unwrap();
-        CloudService::delete_namespace(&mut retry_client, cloud_del_ns_req.into_request())
+        CloudService::delete_namespace(&mut client, cloud_del_ns_req.into_request())
             .await
             .unwrap();
-        retry_client
-            .get_current_time(().into_request())
-            .await
-            .unwrap();
-        retry_client
+        client.get_current_time(().into_request()).await.unwrap();
+        client
             .check(HealthCheckRequest::default().into_request())
             .await
             .unwrap();

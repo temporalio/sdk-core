@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, RetryClient, WfClientExt, WorkflowClientTrait, WorkflowService,
+    Client, NamespacedClient, WfClientExt, WorkflowClientTrait, WorkflowService,
 };
 use temporalio_common::{
     prost_dur,
@@ -65,7 +65,7 @@ fn to_system_time(ts: Timestamp) -> SystemTime {
 }
 
 async fn list_worker_heartbeats(
-    client: &Arc<RetryClient<Client>>,
+    client: &Arc<Client>,
     query: impl Into<String>,
 ) -> Vec<WorkerHeartbeat> {
     let mut raw_client = client.as_ref().clone();

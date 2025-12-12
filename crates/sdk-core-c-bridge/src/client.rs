@@ -14,17 +14,15 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ClientKeepAliveOptions as CoreClientKeepAliveOptions, ClientOptions as CoreClientOptions,
-    ClientTlsOptions as CoreClientTlsOptions, CloudService, ConfiguredClient, HealthService,
-    OperatorService, RetryClient, RetryOptions, TemporalServiceClient, TestService,
-    TlsOptions as CoreTlsOptions, WorkflowService, callback_based, proxy::HttpConnectProxyOptions,
+    ClientKeepAliveOptions as CoreClientKeepAliveOptions, CloudService, HealthService,
+    OperatorService, RetryOptions, TestService, WorkflowService, callback_based,
 };
 use tokio::sync::oneshot;
 use tonic::metadata::MetadataKey;
 use url::Url;
 
 #[repr(C)]
-pub struct ClientOptions {
+pub struct ConnectionOptions {
     pub target_url: ByteArrayRef,
     pub client_name: ByteArrayRef,
     pub client_version: ByteArrayRef,
@@ -79,21 +77,21 @@ pub struct ClientHttpConnectProxyOptions {
     pub password: ByteArrayRef,
 }
 
-type CoreClient = RetryClient<ConfiguredClient<TemporalServiceClient>>;
+type CoreConnection = temporalio_client::Connection;
 
-pub struct Client {
+pub struct Connection {
     pub(crate) runtime: Runtime,
-    pub(crate) core: CoreClient,
+    pub(crate) core: CoreConnection,
 }
 
 // Expected to outlive all async calls that use it
-unsafe impl Send for Client {}
-unsafe impl Sync for Client {}
+unsafe impl Send for Connection {}
+unsafe impl Sync for Connection {}
 
 /// If success or fail are not null, they must be manually freed when done.
 pub type ClientConnectCallback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
-    success: *mut Client,
+    success: *mut Connection,
     fail: *const ByteArray,
 );
 
@@ -102,14 +100,14 @@ pub type ClientConnectCallback = unsafe extern "C" fn(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_connect(
     runtime: *mut Runtime,
-    options: *const ClientOptions,
+    options: *const ConnectionOptions,
     user_data: *mut libc::c_void,
     callback: ClientConnectCallback,
 ) {
     let runtime = unsafe { &mut *runtime };
     // Convert opts
     let options = unsafe { &*options };
-    let core_options: CoreClientOptions = match options.try_into() {
+    let mut connection_options: temporalio_client::ConnectionOptions = match options.try_into() {
         Ok(v) => v,
         Err(err) => {
             unsafe {
@@ -125,24 +123,27 @@ pub extern "C" fn temporal_core_client_connect(
         }
     };
     // Create override if present
-    let service_override = options.grpc_override_callback.map(|cb| {
-        create_callback_based_grpc_service(runtime, cb, options.grpc_override_callback_user_data)
-    });
+    if let Some(cb) = options.grpc_override_callback {
+        connection_options.service_override = Some(create_callback_based_grpc_service(
+            runtime,
+            cb,
+            options.grpc_override_callback_user_data,
+        ));
+    }
     // Spawn async call
     let user_data = UserDataHandle(user_data);
     let core = runtime.core.clone();
     runtime.core.tokio_handle().spawn(async move {
-        match core_options
-            .connect_no_namespace_with_service_override(
-                core.telemetry().get_temporal_metric_meter(),
-                service_override,
-            )
-            .await
+        match temporalio_client::Connection::connect(
+            core.telemetry().get_temporal_metric_meter(),
+            connection_options,
+        )
+        .await
         {
-            Ok(core) => {
-                let owned_client = Box::into_raw(Box::new(Client {
+            Ok(connection) => {
+                let owned_client = Box::into_raw(Box::new(Connection {
                     runtime: runtime.clone(),
-                    core,
+                    core: connection,
                 }));
                 unsafe {
                     callback(user_data.into(), owned_client, std::ptr::null());
@@ -231,7 +232,7 @@ fn create_callback_based_grpc_service(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_free(client: *mut Client) {
+pub extern "C" fn temporal_core_client_free(client: *mut Connection) {
     unsafe {
         let _ = Box::from_raw(client);
     }
@@ -239,23 +240,22 @@ pub extern "C" fn temporal_core_client_free(client: *mut Client) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_update_metadata(
-    client: *mut Client,
+    client: *mut Connection,
     metadata: ByteArrayRef,
 ) {
     let client = unsafe { &*client };
     let _result = client
         .core
-        .get_client()
         .set_headers(metadata.to_string_map_on_newlines());
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_update_api_key(client: *mut Client, api_key: ByteArrayRef) {
+pub extern "C" fn temporal_core_client_update_api_key(
+    client: *mut Connection,
+    api_key: ByteArrayRef,
+) {
     let client = unsafe { &*client };
-    client
-        .core
-        .get_client()
-        .set_api_key(api_key.to_option_string());
+    client.core.set_api_key(api_key.to_option_string());
 }
 
 /// Callback that is invoked for every gRPC call if set on the client options.
@@ -471,7 +471,7 @@ macro_rules! service_call {
 /// Client, options, and user data must live through callback.
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_rpc_call(
-    client: *mut Client,
+    client: *mut Connection,
     options: *const RpcCallOptions,
     user_data: *mut libc::c_void,
     callback: ClientRpcCallCallback,
@@ -533,13 +533,15 @@ macro_rules! rpc_call_on_trait {
         if $call.retry {
             rpc_resp($trait::$call_name(&mut $client, rpc_req($call)?).await)
         } else {
-            rpc_resp($trait::$call_name(&mut $client.into_inner(), rpc_req($call)?).await)
+            // Disable retries for this call
+            *$client.retry_options_mut() = RetryOptions::no_retries();
+            rpc_resp($trait::$call_name(&mut $client, rpc_req($call)?).await)
         }
     };
 }
 
 async fn call_workflow_service(
-    client: &CoreClient,
+    client: &CoreConnection,
     call: &RpcCallOptions,
 ) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
@@ -904,7 +906,7 @@ async fn call_workflow_service(
 }
 
 async fn call_operator_service(
-    client: &CoreClient,
+    client: &CoreConnection,
     call: &RpcCallOptions,
 ) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
@@ -944,7 +946,10 @@ async fn call_operator_service(
     }
 }
 
-async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow::Result<Vec<u8>> {
+async fn call_cloud_service(
+    client: &CoreConnection,
+    call: &RpcCallOptions,
+) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
@@ -1073,7 +1078,10 @@ async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyho
     }
 }
 
-async fn call_test_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow::Result<Vec<u8>> {
+async fn call_test_service(
+    client: &CoreConnection,
+    call: &RpcCallOptions,
+) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
@@ -1090,7 +1098,7 @@ async fn call_test_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow
 }
 
 async fn call_health_service(
-    client: &CoreClient,
+    client: &CoreConnection,
     call: &RpcCallOptions,
 ) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
@@ -1129,10 +1137,10 @@ where
     Ok(res?.get_ref().encode_to_vec())
 }
 
-impl TryFrom<&ClientOptions> for CoreClientOptions {
+impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
     type Error = anyhow::Error;
 
-    fn try_from(opts: &ClientOptions) -> anyhow::Result<Self> {
+    fn try_from(opts: &ConnectionOptions) -> anyhow::Result<Self> {
         let tls_cfg = unsafe { opts.tls_options.as_ref() }
             .map(|c| c.try_into())
             .transpose()?;
@@ -1153,29 +1161,30 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
         let http_connect_proxy =
             unsafe { opts.http_connect_proxy_options.as_ref() }.map(Into::into);
 
-        Ok(CoreClientOptions::builder()
-            .target_url(Url::parse(opts.target_url.to_str())?)
-            .client_name(opts.client_name.to_string())
-            .client_version(opts.client_version.to_string())
-            .identity(opts.identity.to_string())
-            .retry_options(
-                unsafe { opts.retry_options.as_ref() }
-                    .map_or(RetryOptions::default(), |c| c.into()),
-            )
-            .maybe_keep_alive(keep_alive.map(Some))
-            .maybe_headers(headers)
-            .maybe_api_key(api_key)
-            .maybe_http_connect_proxy(http_connect_proxy)
-            .maybe_tls_options(tls_cfg)
-            .build())
+        Ok(
+            temporalio_client::ConnectionOptions::new(Url::parse(opts.target_url.to_str())?)
+                .client_name(opts.client_name.to_string())
+                .client_version(opts.client_version.to_string())
+                .identity(opts.identity.to_string())
+                .retry_options(
+                    unsafe { opts.retry_options.as_ref() }
+                        .map_or(RetryOptions::default(), |c| c.into()),
+                )
+                .keep_alive(keep_alive)
+                .maybe_headers(headers)
+                .maybe_api_key(api_key)
+                .maybe_http_connect_proxy(http_connect_proxy)
+                .maybe_tls_options(tls_cfg)
+                .build(),
+        )
     }
 }
 
-impl TryFrom<&ClientTlsOptions> for CoreTlsOptions {
+impl TryFrom<&ClientTlsOptions> for temporalio_client::TlsOptions {
     type Error = anyhow::Error;
 
     fn try_from(opts: &ClientTlsOptions) -> anyhow::Result<Self> {
-        Ok(CoreTlsOptions {
+        Ok(temporalio_client::TlsOptions {
             server_root_ca_cert: opts.server_root_ca_cert.to_option_vec(),
             domain: opts.domain.to_option_string(),
             client_tls_options: match (
@@ -1183,10 +1192,12 @@ impl TryFrom<&ClientTlsOptions> for CoreTlsOptions {
                 opts.client_private_key.to_option_vec(),
             ) {
                 (None, None) => None,
-                (Some(client_cert), Some(client_private_key)) => Some(CoreClientTlsOptions {
-                    client_cert,
-                    client_private_key,
-                }),
+                (Some(client_cert), Some(client_private_key)) => {
+                    Some(temporalio_client::ClientTlsOptions {
+                        client_cert,
+                        client_private_key,
+                    })
+                }
                 _ => {
                     return Err(anyhow::anyhow!(
                         "Must have both client cert and private key or neither"
@@ -1197,9 +1208,9 @@ impl TryFrom<&ClientTlsOptions> for CoreTlsOptions {
     }
 }
 
-impl From<&ClientRetryOptions> for RetryOptions {
+impl From<&ClientRetryOptions> for temporalio_client::RetryOptions {
     fn from(opts: &ClientRetryOptions) -> Self {
-        RetryOptions {
+        temporalio_client::RetryOptions {
             initial_interval: Duration::from_millis(opts.initial_interval_millis),
             randomization_factor: opts.randomization_factor,
             multiplier: opts.multiplier,
@@ -1214,18 +1225,18 @@ impl From<&ClientRetryOptions> for RetryOptions {
     }
 }
 
-impl From<&ClientKeepAliveOptions> for CoreClientKeepAliveOptions {
+impl From<&ClientKeepAliveOptions> for temporalio_client::ClientKeepAliveOptions {
     fn from(opts: &ClientKeepAliveOptions) -> Self {
-        CoreClientKeepAliveOptions {
+        temporalio_client::ClientKeepAliveOptions {
             interval: Duration::from_millis(opts.interval_millis),
             timeout: Duration::from_millis(opts.timeout_millis),
         }
     }
 }
 
-impl From<&ClientHttpConnectProxyOptions> for HttpConnectProxyOptions {
+impl From<&ClientHttpConnectProxyOptions> for temporalio_client::proxy::HttpConnectProxyOptions {
     fn from(opts: &ClientHttpConnectProxyOptions) -> Self {
-        HttpConnectProxyOptions {
+        temporalio_client::proxy::HttpConnectProxyOptions {
             target_addr: opts.target_host.to_string(),
             basic_auth: if opts.username.size != 0 && opts.password.size != 0 {
                 Some((opts.username.to_string(), opts.password.to_string()))

@@ -11,9 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{
-    Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
-};
+use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait, WorkflowService};
 use temporalio_common::{
     Worker, prost_dur,
     protos::{
@@ -200,7 +198,7 @@ async fn send_and_handle_update(
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
-    client: &RetryClient<Client>,
+    client: &Client,
 ) -> String {
     // Complete first task with no commands
     let act = core.poll_workflow_activation().await.unwrap();

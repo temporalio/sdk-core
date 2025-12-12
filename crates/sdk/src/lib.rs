@@ -87,7 +87,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::Arc,
 };
-use temporalio_client::{ClientOptions, ClientOptionsBuilder, client_options_builder};
+use temporalio_client::{ConnectionOptions, ConnectionOptionsBuilder, connection_options_builder};
 use temporalio_common::{
     ActivityDefinition, Worker as CoreWorker,
     data_converters::{GenericPayloadConverter, SerializationContext},
@@ -212,11 +212,10 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
 
 /// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
 /// for the Rust SDK.
-pub fn sdk_client_options(
+pub fn sdk_connection_options(
     url: impl Into<Url>,
-) -> ClientOptionsBuilder<impl client_options_builder::IsComplete> {
-    ClientOptions::builder()
-        .target_url(url)
+) -> ConnectionOptionsBuilder<impl connection_options_builder::IsComplete> {
+    ConnectionOptions::new(url)
         .client_name("temporal-rust".to_string())
         .client_version(VERSION.to_string())
 }

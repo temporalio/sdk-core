@@ -6,6 +6,7 @@ mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
 
+use temporalio_client::Connection;
 pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
@@ -31,7 +32,6 @@ use crate::{
     errors::CompleteWfError,
     pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
-    sealed::AnyClient,
     telemetry::{
         TelemetryInstance,
         metrics::{
@@ -345,23 +345,19 @@ impl Worker {
     /// For worker heartbeat, this will remove an existing shared worker if it is the last worker of
     /// the old client and create a new nexus worker if it's the first client of the namespace on
     /// the new client.
-    pub fn replace_client<CT>(&self, new_client: CT) -> Result<(), anyhow::Error>
-    where
-        CT: Into<AnyClient>,
-    {
+    pub fn replace_client(&self, mut new_connection: Connection) -> Result<(), anyhow::Error> {
         // Unregister worker from current client, register in new client at the end
         let client_worker = self
             .client
             .workers()
             .unregister_worker(self.worker_instance_key)?;
 
-        let new_worker_client = super::init_worker_client(
-            self.config.namespace.clone(),
+        super::init_worker_client(
+            &mut new_connection,
             self.config.client_identity_override.clone(),
-            new_client,
         );
 
-        self.client.replace_client(new_worker_client);
+        self.client.replace_connection(new_connection);
         *self.client_worker_registrator.client.write() = self.client.clone();
         self.client
             .workers()

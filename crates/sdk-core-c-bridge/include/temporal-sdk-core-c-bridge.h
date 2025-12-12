@@ -56,8 +56,6 @@ typedef enum TemporalCoreSlotKindType {
 
 typedef struct TemporalCoreCancellationToken TemporalCoreCancellationToken;
 
-typedef struct TemporalCoreClient TemporalCoreClient;
-
 /**
  * Representation of gRPC request for the callback.
  *
@@ -66,6 +64,8 @@ typedef struct TemporalCoreClient TemporalCoreClient;
  * call.
  */
 typedef struct TemporalCoreClientGrpcOverrideRequest TemporalCoreClientGrpcOverrideRequest;
+
+typedef struct TemporalCoreConnection TemporalCoreConnection;
 
 typedef struct TemporalCoreEphemeralServer TemporalCoreEphemeralServer;
 
@@ -139,7 +139,7 @@ typedef struct TemporalCoreClientHttpConnectProxyOptions {
 typedef void (*TemporalCoreClientGrpcOverrideCallback)(struct TemporalCoreClientGrpcOverrideRequest *request,
                                                        void *user_data);
 
-typedef struct TemporalCoreClientOptions {
+typedef struct TemporalCoreConnectionOptions {
   struct TemporalCoreByteArrayRef target_url;
   struct TemporalCoreByteArrayRef client_name;
   struct TemporalCoreByteArrayRef client_version;
@@ -165,7 +165,7 @@ typedef struct TemporalCoreClientOptions {
    * Optional user data passed to each callback call.
    */
   void *grpc_override_callback_user_data;
-} TemporalCoreClientOptions;
+} TemporalCoreConnectionOptions;
 
 typedef struct TemporalCoreByteArray {
   const uint8_t *data;
@@ -184,7 +184,7 @@ typedef struct TemporalCoreByteArray {
  * If success or fail are not null, they must be manually freed when done.
  */
 typedef void (*TemporalCoreClientConnectCallback)(void *user_data,
-                                                  struct TemporalCoreClient *success,
+                                                  struct TemporalCoreConnection *success,
                                                   const struct TemporalCoreByteArray *fail);
 
 /**
@@ -826,16 +826,16 @@ void temporal_core_cancellation_token_free(struct TemporalCoreCancellationToken 
  * callback.
  */
 void temporal_core_client_connect(struct TemporalCoreRuntime *runtime,
-                                  const struct TemporalCoreClientOptions *options,
+                                  const struct TemporalCoreConnectionOptions *options,
                                   void *user_data,
                                   TemporalCoreClientConnectCallback callback);
 
-void temporal_core_client_free(struct TemporalCoreClient *client);
+void temporal_core_client_free(struct TemporalCoreConnection *client);
 
-void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
+void temporal_core_client_update_metadata(struct TemporalCoreConnection *client,
                                           struct TemporalCoreByteArrayRef metadata);
 
-void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
+void temporal_core_client_update_api_key(struct TemporalCoreConnection *client,
                                          struct TemporalCoreByteArrayRef api_key);
 
 /**
@@ -878,7 +878,7 @@ void temporal_core_client_grpc_override_request_respond(struct TemporalCoreClien
 /**
  * Client, options, and user data must live through callback.
  */
-void temporal_core_client_rpc_call(struct TemporalCoreClient *client,
+void temporal_core_client_rpc_call(struct TemporalCoreConnection *client,
                                    const struct TemporalCoreRpcCallOptions *options,
                                    void *user_data,
                                    TemporalCoreClientRpcCallCallback callback);
@@ -985,7 +985,7 @@ void temporal_core_ephemeral_server_shutdown(struct TemporalCoreEphemeralServer 
                                              void *user_data,
                                              TemporalCoreEphemeralServerShutdownCallback callback);
 
-struct TemporalCoreWorkerOrFail temporal_core_worker_new(struct TemporalCoreClient *client,
+struct TemporalCoreWorkerOrFail temporal_core_worker_new(struct TemporalCoreConnection *connection,
                                                          const struct TemporalCoreWorkerOptions *options);
 
 void temporal_core_worker_free(struct TemporalCoreWorker *worker);
@@ -995,7 +995,7 @@ void temporal_core_worker_validate(struct TemporalCoreWorker *worker,
                                    TemporalCoreWorkerCallback callback);
 
 const struct TemporalCoreByteArray *temporal_core_worker_replace_client(struct TemporalCoreWorker *worker,
-                                                                        struct TemporalCoreClient *new_client);
+                                                                        struct TemporalCoreConnection *new_connection);
 
 void temporal_core_worker_poll_workflow_activation(struct TemporalCoreWorker *worker,
                                                    void *user_data,

@@ -10,7 +10,7 @@ use std::{
     io,
     path::{Path, PathBuf},
 };
-use temporalio_client::ClientOptions;
+use temporalio_client::{Connection, ConnectionOptions};
 use tokio::{
     task::spawn_blocking,
     time::{Duration, sleep},
@@ -218,19 +218,19 @@ impl EphemeralServer {
             child,
         });
 
-        // Try to connect every 100ms for 5s
-        // TODO(cretz): Some other way, e.g. via stdout, to know whether the
-        // server is up?
-        let client_options = ClientOptions::builder()
+        let connection_options = ConnectionOptions::new(Url::parse(&target_url)?)
             .identity("online_checker".to_owned())
-            .target_url(Url::parse(&target_url)?)
             .client_name("online-checker".to_owned())
             .client_version("0.1.0".to_owned())
             .build();
+
+        // Try to connect every 100ms for 5s
+        // TODO(cretz): Some other way, e.g. via stdout, to know whether the
+        // server is up?
         let mut last_error = None;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
-            let connect_res = client_options.connect_no_namespace(None).await;
+            let connect_res = Connection::connect(None, connection_options.clone()).await;
             if let Err(err) = connect_res {
                 last_error = Some(err);
             } else {

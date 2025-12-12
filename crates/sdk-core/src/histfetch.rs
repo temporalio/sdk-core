@@ -5,18 +5,22 @@
 //! We can use `clap` if this needs more arguments / other stuff later on.
 
 use prost::Message;
-use temporalio_client::{ClientOptions, WorkflowClientTrait};
+use temporalio_client::{
+    Client, ClientOptions, Connection, ConnectionOptions, WorkflowClientTrait,
+};
 use url::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let url = Url::try_from("http://localhost:7233").unwrap();
-    let copts = ClientOptions::builder()
+    let copts = ConnectionOptions::new(Url::try_from("http://localhost:7233").unwrap())
         .client_name("histfetch")
         .client_version("0.0")
-        .target_url(url)
         .build();
-    let client = copts.connect("default", None).await?;
+    let connection = Connection::connect(None, copts).await?;
+    let client = Client::new(
+        connection,
+        ClientOptions::builder().namespace("default").build(),
+    );
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");

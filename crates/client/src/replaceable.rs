@@ -1,4 +1,3 @@
-use crate::NamespacedClient;
 use std::{
     borrow::Cow,
     sync::{
@@ -6,6 +5,8 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
 };
+
+use crate::NamespacedClient;
 
 /// A client wrapper that allows replacing the underlying client at a later point in time.
 /// Clones of this struct have a shared reference to the underlying client, and each clone also

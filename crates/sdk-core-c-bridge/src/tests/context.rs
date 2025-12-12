@@ -1,8 +1,8 @@
 use crate::{
     client::{
-        Client, ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
-        ClientTlsOptions, RpcCallOptions, temporal_core_client_connect, temporal_core_client_free,
-        temporal_core_client_rpc_call,
+        ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
+        ClientTlsOptions, Connection, RpcCallOptions, temporal_core_client_connect,
+        temporal_core_client_free, temporal_core_client_rpc_call,
     },
     runtime::{
         Runtime, RuntimeOptions, RuntimeOrFail, temporal_core_byte_array_free,
@@ -29,7 +29,7 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak},
     time::Duration,
 };
-use temporalio_client::ClientOptions;
+use temporalio_client::ConnectionOptions;
 use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, TemporalDevServerConfig,
 };
@@ -48,7 +48,7 @@ struct InnerContext {
     runtime: *mut Runtime,
     ephemeral_server: *mut EphemeralServer,
     ephemeral_server_target: String,
-    client: *mut Client,
+    client: *mut Connection,
 }
 
 unsafe impl Send for InnerContext {}
@@ -104,7 +104,7 @@ impl Context {
     }
 
     #[allow(dead_code)]
-    pub fn client(&self) -> anyhow::Result<Option<NonNull<Client>>> {
+    pub fn client(&self) -> anyhow::Result<Option<NonNull<Connection>>> {
         Ok(NonNull::new(self.wait_for_available()?.client))
     }
 
@@ -279,13 +279,13 @@ impl Context {
         self.wait_for_operation()
     }
 
-    pub fn client_connect(self: &Arc<Self>, options: Box<ClientOptions>) -> anyhow::Result<()> {
+    pub fn client_connect(self: &Arc<Self>, options: Box<ConnectionOptions>) -> anyhow::Result<()> {
         Self::client_connect_with_override(self, options, None, std::ptr::null_mut())
     }
 
     pub fn client_connect_with_override(
         self: &Arc<Self>,
-        options: Box<ClientOptions>,
+        options: Box<ConnectionOptions>,
         grpc_override_callback: crate::client::ClientGrpcOverrideCallback,
         grpc_override_callback_user_data: *mut libc::c_void,
     ) -> anyhow::Result<()> {
@@ -340,8 +340,8 @@ impl Context {
             })
         });
 
-        let client_options = Box::new(crate::client::ClientOptions {
-            target_url: options.target_url.as_str().into(),
+        let client_options = Box::new(crate::client::ConnectionOptions {
+            target_url: options.target.as_str().into(),
             client_name: options.client_name.as_str().into(),
             client_version: options.client_version.as_str().into(),
             metadata: metadata.as_deref().into(),
@@ -579,7 +579,7 @@ extern "C" fn ephemeral_server_shutdown_callback(
 
 extern "C" fn client_connect_callback(
     user_data: *mut libc::c_void,
-    mut client: *mut Client,
+    mut client: *mut Connection,
     mut fail: *const ByteArray,
 ) {
     let user_data = unsafe { Box::from_raw(user_data as *mut CallbackUserData<(), Context>) };
