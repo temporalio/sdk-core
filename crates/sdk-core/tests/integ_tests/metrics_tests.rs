@@ -103,10 +103,9 @@ async fn prometheus_metrics_exported(
         .build();
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let opts = get_integ_server_options();
-    let mut connection = Connection::connect(rt.telemetry().get_temporal_metric_meter(), opts)
-        .await
-        .unwrap();
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+    let mut connection = Connection::connect(opts).await.unwrap();
     assert!(connection.capabilities().is_some());
 
     let _ = connection
@@ -534,11 +533,10 @@ fn runtime_new() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
         .attach_late_init_metrics(telemopts.metrics.unwrap());
-    let opts = get_integ_server_options();
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
     handle.block_on(async {
-        let mut raw_client = Connection::connect(rt.telemetry().get_temporal_metric_meter(), opts)
-            .await
-            .unwrap();
+        let mut raw_client = Connection::connect(opts).await.unwrap();
         assert!(raw_client.capabilities().is_some());
         let _ = raw_client
             .list_namespaces(ListNamespacesRequest::default().into_request())

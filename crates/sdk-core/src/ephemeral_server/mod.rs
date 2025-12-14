@@ -230,7 +230,7 @@ impl EphemeralServer {
         let mut last_error = None;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
-            let connect_res = Connection::connect(None, connection_options.clone()).await;
+            let connect_res = Connection::connect(connection_options.clone()).await;
             if let Err(err) = connect_res {
                 last_error = Some(err);
             } else {

@@ -138,7 +138,7 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
             .client_name(INTEG_CLIENT_NAME.to_string())
             .client_version(INTEG_CLIENT_VERSION.to_string())
             .build();
-    let mut connection = Connection::connect(None, connection_opts).await.unwrap();
+    let mut connection = Connection::connect(connection_opts).await.unwrap();
     let resp = connection
         .describe_namespace(
             DescribeNamespaceRequest {

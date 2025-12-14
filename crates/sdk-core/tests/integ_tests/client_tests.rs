@@ -50,7 +50,7 @@ async fn can_use_retry_client() {
 #[tokio::test]
 async fn can_use_retry_raw_client() {
     let opts = get_integ_server_options();
-    let mut connection = Connection::connect(None, opts).await.unwrap();
+    let mut connection = Connection::connect(opts).await.unwrap();
     connection
         .describe_namespace(
             DescribeNamespaceRequest {
@@ -66,14 +66,14 @@ async fn can_use_retry_raw_client() {
 #[tokio::test]
 async fn calls_get_system_info() {
     let opts = get_integ_server_options();
-    let connection = Connection::connect(None, opts).await.unwrap();
+    let connection = Connection::connect(opts).await.unwrap();
     assert!(connection.capabilities().is_some());
 }
 
 #[tokio::test]
 async fn per_call_timeout_respected_whole_client() {
     let opts = get_integ_server_options();
-    let mut connection = Connection::connect(None, opts).await.unwrap();
+    let mut connection = Connection::connect(opts).await.unwrap();
     let mut hm = HashMap::new();
     hm.insert("grpc-timeout".to_string(), "0S".to_string());
     connection.set_headers(hm).unwrap();
@@ -93,7 +93,7 @@ async fn per_call_timeout_respected_whole_client() {
 #[tokio::test]
 async fn per_call_timeout_respected_one_call() {
     let opts = get_integ_server_options();
-    let mut connection = Connection::connect(None, opts).await.unwrap();
+    let mut connection = Connection::connect(opts).await.unwrap();
 
     let mut req = Request::new(DescribeNamespaceRequest {
         namespace: NAMESPACE.to_string(),
@@ -125,7 +125,7 @@ async fn timeouts_respected_one_call_fake_server() {
     .retry_options(RetryOptions::no_retries())
     .build();
 
-    let mut connection = Connection::connect(None, opts).await.unwrap();
+    let mut connection = Connection::connect(opts).await.unwrap();
 
     macro_rules! call_client {
         ($client:ident, $trx:ident, $client_fn:ident, $msg:expr) => {
@@ -200,7 +200,7 @@ async fn non_retryable_errors() {
         .client_version(base_opts.client_version)
         .skip_get_system_info(true)
         .build();
-        let connection = Connection::connect(None, opts).await.unwrap();
+        let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::builder()
             .namespace("ns")
             .build();
@@ -249,7 +249,7 @@ async fn retryable_errors() {
         .client_version(base_opts.client_version)
         .skip_get_system_info(true)
         .build();
-        let connection = Connection::connect(None, opts).await.unwrap();
+        let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::builder()
             .namespace("ns")
             .build();
@@ -305,7 +305,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     .skip_get_system_info(true)
     .retry_options(RetryOptions::no_retries())
     .build();
-    let connection = Connection::connect(None, opts).await.unwrap();
+    let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace(namespace)
         .build();
@@ -361,7 +361,7 @@ async fn cloud_ops_test() {
         hm
     })
     .build();
-    let connection = Connection::connect(None, opts).await.unwrap();
+    let connection = Connection::connect(opts).await.unwrap();
     let mut cloud_client = connection.cloud_svc();
     let res = cloud_client
         .get_namespace(
@@ -400,7 +400,7 @@ async fn http_proxy() {
     opts.target = format!("http://127.0.0.1:{}", server.addr.port())
         .parse()
         .unwrap();
-    let connection = Connection::connect(None, opts.clone()).await.unwrap();
+    let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace("my-namespace")
         .build();
@@ -414,7 +414,7 @@ async fn http_proxy() {
         target_addr: tcp_proxy_addr.to_string(),
         basic_auth: None,
     });
-    let connection = Connection::connect(None, opts.clone()).await.unwrap();
+    let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace("my-namespace")
         .build();
@@ -440,7 +440,7 @@ async fn http_proxy() {
             target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
             basic_auth: None,
         });
-        let connection = Connection::connect(None, opts.clone()).await.unwrap();
+        let connection = Connection::connect(opts.clone()).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::builder()
             .namespace("my-namespace")
             .build();

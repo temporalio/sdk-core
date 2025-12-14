@@ -73,13 +73,12 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
-    let opts = get_integ_server_options();
+    let mut opts = get_integ_server_options();
     let runtime =
         CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
             .unwrap();
-    let connection = Connection::connect(runtime.telemetry().get_temporal_metric_meter(), opts)
-        .await
-        .unwrap();
+    opts.metrics_meter = runtime.telemetry().get_temporal_metric_meter();
+    let connection = Connection::connect(opts).await.unwrap();
 
     let worker = init_worker(
         &runtime,
@@ -916,7 +915,7 @@ async fn shutdown_worker_not_retried() {
     .client_version(base_opts.client_version)
     .skip_get_system_info(true)
     .build();
-    let connection = Connection::connect(None, opts).await.unwrap();
+    let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace("ns")
         .build();

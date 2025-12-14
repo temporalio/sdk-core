@@ -208,7 +208,7 @@ pub(crate) async fn get_cloud_client() -> Client {
             ..Default::default()
         })
         .build();
-    let connection = Connection::connect(None, connection_opts).await.unwrap();
+    let connection = Connection::connect(connection_opts).await.unwrap();
     let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace(namespace)
@@ -454,12 +454,9 @@ impl CoreWfStarter {
                     (connection, client)
                 } else {
                     // Create connection and client
-                    let connection = Connection::connect(
-                        rt.telemetry().get_temporal_metric_meter(),
-                        get_integ_server_options(),
-                    )
-                    .await
-                    .expect("Must connect");
+                    let mut opts = get_integ_server_options();
+                    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+                    let connection = Connection::connect(opts).await.expect("Must connect");
                     let client_opts = temporalio_client::ClientOptions::builder()
                         .namespace(cfg.namespace.clone())
                         .build();
@@ -775,9 +772,9 @@ pub(crate) fn get_integ_server_options() -> ConnectionOptions {
 pub(crate) async fn get_integ_connection(
     meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
 ) -> Connection {
-    Connection::connect(meter, get_integ_server_options())
-        .await
-        .expect("Must connect")
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = meter;
+    Connection::connect(opts).await.expect("Must connect")
 }
 
 /// Helper to create a namespaced client using the default integ test options

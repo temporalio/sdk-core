@@ -52,10 +52,7 @@ mod integ_tests {
         let runtime =
             CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
                 .unwrap();
-        let mut connection =
-            Connection::connect(runtime.telemetry().get_temporal_metric_meter(), opts)
-                .await
-                .unwrap();
+        let mut connection = Connection::connect(opts).await.unwrap();
 
         let _worker = init_worker(
             &runtime,

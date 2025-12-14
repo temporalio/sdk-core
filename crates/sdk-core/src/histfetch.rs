@@ -16,7 +16,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .client_name("histfetch")
         .client_version("0.0")
         .build();
-    let connection = Connection::connect(None, copts).await?;
+    let connection = Connection::connect(copts).await?;
     let client = Client::new(
         connection,
         ClientOptions::builder().namespace("default").build(),

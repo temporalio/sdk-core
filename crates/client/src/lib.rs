@@ -118,6 +118,9 @@ pub struct ConnectionOptions {
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
     pub identity: String,
+    /// When set, this client will record metrics using the provided meter. The meter can be
+    /// obtained from [TelemetryInstance::get_temporal_metric_meter]
+    pub metrics_meter: Option<TemporalMeter>,
     /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
@@ -200,16 +203,11 @@ struct ConnectionInner {
 
 impl Connection {
     /// Connect to a Temporal service.
-    pub async fn connect(
-        // TODO [rust-sdk-branch]: Should be moved to client options, requires moving all the
-        // telemetry (and runtime?) stuff into common.
-        metrics_meter: Option<TemporalMeter>,
-        options: ConnectionOptions,
-    ) -> Result<Self, ClientInitError> {
+    pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientInitError> {
         let service = if let Some(service_override) = options.service_override {
             GrpcMetricSvc {
                 inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
-                metrics: metrics_meter.clone().map(MetricsContext::new),
+                metrics: options.metrics_meter.clone().map(MetricsContext::new),
                 disable_errcode_label: options.disable_error_code_metric_tags,
             }
         } else {
@@ -237,7 +235,7 @@ impl Connection {
             ServiceBuilder::new()
                 .layer_fn(move |channel| GrpcMetricSvc {
                     inner: ChannelOrGrpcOverride::Channel(channel),
-                    metrics: metrics_meter.clone().map(MetricsContext::new),
+                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
                     disable_errcode_label: options.disable_error_code_metric_tags,
                 })
                 .service(channel)

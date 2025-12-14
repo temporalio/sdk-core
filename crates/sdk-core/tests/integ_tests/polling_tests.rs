@@ -153,7 +153,7 @@ async fn switching_worker_client_changes_poll() {
                 .client_name("temporal-core".to_owned())
                 .client_version("0.1.0".to_owned())
                 .build();
-        let connection1 = Connection::connect(None, opts1).await.unwrap();
+        let connection1 = Connection::connect(opts1).await.unwrap();
         let client_opts1 = temporalio_client::ClientOptions::builder()
             .namespace("default")
             .build();
@@ -165,7 +165,7 @@ async fn switching_worker_client_changes_poll() {
                 .client_name("temporal-core".to_owned())
                 .client_version("0.1.0".to_owned())
                 .build();
-        let connection2 = Connection::connect(None, opts2).await.unwrap();
+        let connection2 = Connection::connect(opts2).await.unwrap();
         let client_opts2 = temporalio_client::ClientOptions::builder()
             .namespace("default")
             .build();
@@ -393,9 +393,7 @@ async fn replace_client_works_after_polling_failure() {
                 .client_name(INTEG_CLIENT_NAME.to_string())
                 .client_version(INTEG_CLIENT_VERSION.to_string())
                 .build();
-            let connection = Connection::connect(rt.telemetry().get_temporal_metric_meter(), opts)
-                .await
-                .unwrap();
+            let connection = Connection::connect(opts).await.unwrap();
             let client_opts = temporalio_client::ClientOptions::builder()
                 .namespace(NAMESPACE)
                 .build();

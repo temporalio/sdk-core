@@ -1618,7 +1618,7 @@ mod tests {
             .client_name("test")
             .client_version("0.0.0")
             .build();
-        let connection = Connection::connect(None, opts).await.unwrap();
+        let connection = Connection::connect(opts).await.unwrap();
         let mut client = Client::new(
             connection,
             ClientOptions::builder().namespace("default").build(),
