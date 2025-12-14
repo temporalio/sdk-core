@@ -1,5 +1,5 @@
 use crate::{
-    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, NamespacedClient, Result,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, Result,
     raw::IsUserLongPoll,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
@@ -13,7 +13,6 @@ use std::{
     error::Error,
     fmt::Debug,
     future::Future,
-    sync::Arc,
     time::{Duration, Instant},
 };
 use tonic::Code;
@@ -152,41 +151,6 @@ impl From<RetryOptions> for backoff::ExponentialBackoff {
     }
 }
 
-/// A wrapper for a [crate::WorkflowClientTrait] or [crate::WorkflowService] implementor which
-/// performs auto-retries
-#[derive(Debug, Clone)]
-pub struct RetryClient<SG> {
-    client: SG,
-    pub(crate) retry_config: Arc<RetryOptions>,
-}
-
-impl<SG> RetryClient<SG> {
-    /// Use the provided retry config with the provided client
-    pub fn new(client: SG, retry_config: RetryOptions) -> Self {
-        Self {
-            client,
-            retry_config: Arc::new(retry_config),
-        }
-    }
-}
-
-impl<SG> RetryClient<SG> {
-    /// Return the inner client type
-    pub fn get_client(&self) -> &SG {
-        &self.client
-    }
-
-    /// Return the inner client type mutably
-    pub fn get_client_mut(&mut self) -> &mut SG {
-        &mut self.client
-    }
-
-    /// Disable retry and return the inner client type
-    pub fn into_inner(self) -> SG {
-        self.client
-    }
-}
-
 pub(crate) fn make_future_retry<R, F, Fut>(
     info: CallInfo,
     factory: F,
@@ -199,19 +163,6 @@ where
         factory,
         TonicErrorHandler::new(info, RetryOptions::throttle_retry_policy()),
     )
-}
-
-impl<SG> NamespacedClient for RetryClient<SG>
-where
-    SG: NamespacedClient,
-{
-    fn namespace(&self) -> String {
-        self.client.namespace()
-    }
-
-    fn identity(&self) -> String {
-        self.client.identity()
-    }
 }
 
 #[derive(Debug)]

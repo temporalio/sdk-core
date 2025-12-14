@@ -21,7 +21,7 @@ mod workflow_handle;
 
 pub use crate::{
     proxy::HttpConnectProxyOptions,
-    retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient},
+    retry::{CallType, RETRYABLE_ERROR_CODES},
 };
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};

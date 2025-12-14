@@ -3,7 +3,7 @@
 //! happen.
 
 use crate::{
-    Client, Connection, LONG_POLL_TIMEOUT, RequestExt, RetryClient, SharedReplaceableClient,
+    Client, Connection, LONG_POLL_TIMEOUT, RequestExt, SharedReplaceableClient,
     TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::namespace_kv,
     retry::make_future_retry,
@@ -157,6 +157,25 @@ impl RawGrpcCaller for Connection {
     }
 }
 
+/// Helper for cloning a tonic request as long as the inner message may be cloned.
+fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
+    let msg = cloneme.get_ref().clone();
+    let mut new_req = Request::new(msg);
+    let new_met = new_req.metadata_mut();
+    for kv in cloneme.metadata().iter() {
+        match kv {
+            KeyAndValueRef::Ascii(k, v) => {
+                new_met.insert(k, v.clone());
+            }
+            KeyAndValueRef::Binary(k, v) => {
+                new_met.insert_bin(k, v.clone());
+            }
+        }
+    }
+    *new_req.extensions_mut() = cloneme.extensions().clone();
+    new_req
+}
+
 #[async_trait::async_trait]
 impl RawGrpcCaller for dyn ErasedRawClient {
     async fn call<F, Req, Resp>(
@@ -193,86 +212,6 @@ where
         let raw: &mut dyn ErasedRawClient = self;
         op.invoke(raw, call_name)
     }
-}
-
-impl<RC> RawClientProducer for RetryClient<RC>
-where
-    RC: RawClientProducer + 'static,
-{
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        self.get_client().get_workers_info()
-    }
-
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.get_client_mut().workflow_client()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.get_client_mut().operator_client()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.get_client_mut().cloud_client()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.get_client_mut().test_client()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.get_client_mut().health_client()
-    }
-}
-
-#[async_trait::async_trait]
-impl<RC> RawGrpcCaller for RetryClient<RC>
-where
-    RC: RawGrpcCaller + 'static,
-{
-    async fn call<F, Req, Resp>(
-        &mut self,
-        call_name: &'static str,
-        mut callfn: F,
-        mut req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        Resp: Send + 'static,
-        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-        F: Send + Sync + Unpin + 'static,
-    {
-        let info = self.retry_config.get_call_info(call_name, Some(&req));
-        req.extensions_mut().insert(info.call_type);
-        if info.call_type.is_long() {
-            req.set_default_timeout(LONG_POLL_TIMEOUT);
-        }
-
-        let fact = || {
-            let req_clone = req_cloner(&req);
-            callfn(req_clone)
-        };
-        let res = make_future_retry(info, fact);
-        res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
-    }
-}
-
-/// Helper for cloning a tonic request as long as the inner message may be cloned.
-fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
-    let msg = cloneme.get_ref().clone();
-    let mut new_req = Request::new(msg);
-    let new_met = new_req.metadata_mut();
-    for kv in cloneme.metadata().iter() {
-        match kv {
-            KeyAndValueRef::Ascii(k, v) => {
-                new_met.insert(k, v.clone());
-            }
-            KeyAndValueRef::Binary(k, v) => {
-                new_met.insert_bin(k, v.clone());
-            }
-        }
-    }
-    *new_req.extensions_mut() = cloneme.extensions().clone();
-    new_req
 }
 
 impl<RC> RawClientProducer for SharedReplaceableClient<RC>

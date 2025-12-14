@@ -35,8 +35,7 @@ pub mod test_help;
 pub(crate) use temporalio_common::errors;
 
 pub use pollers::{
-    Client, ClientOptions, ClientTlsOptions, RetryClient, RetryOptions, TlsOptions,
-    WorkflowClientTrait,
+    Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions, WorkflowClientTrait,
 };
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;

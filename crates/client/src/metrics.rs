@@ -250,7 +250,6 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
     }
 
     fn call(&mut self, mut req: http::Request<Body>) -> Self::Future {
-        dbg!("Calling via metrics service", &req, req.extensions());
         let metrics = self
             .metrics
             .clone()

@@ -587,7 +587,6 @@ async fn latency_metrics(
         .unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
-    dbg!(&body);
     let matching_line = body
         .lines()
         .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
