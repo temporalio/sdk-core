@@ -141,7 +141,10 @@ impl RawGrpcCaller for Connection {
         F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
     {
-        let info = self.retry_options.get_call_info(call_name, Some(&req));
+        let info = self
+            .inner
+            .retry_options
+            .get_call_info(call_name, Some(&req));
         req.extensions_mut().insert(info.call_type);
         if info.call_type.is_long() {
             req.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -271,23 +274,23 @@ impl RawClientProducer for Connection {
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner.workflow_svc()
+        self.inner.service.workflow_svc()
     }
 
     fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner.operator_svc()
+        self.inner.service.operator_svc()
     }
 
     fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner.cloud_svc()
+        self.inner.service.cloud_svc()
     }
 
     fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner.test_svc()
+        self.inner.service.test_svc()
     }
 
     fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner.health_svc()
+        self.inner.service.health_svc()
     }
 }
 
@@ -321,7 +324,7 @@ impl RawGrpcCaller for TemporalServiceClient {}
 
 impl RawClientProducer for Client {
     fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        Some(self.connection.workers.clone())
+        Some(self.connection.workers())
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {

@@ -176,13 +176,20 @@ pub struct ConnectionOptions {
     pub client_version: String,
 }
 
-// TODO [rust-sdk-branch]: May need to be cheaper to clone
 /// A connection to the Temporal service.
+///
+/// Cloning a connection is cheap (single Arc increment). The underlying connection is shared
+/// between clones.
 #[derive(Clone)]
 pub struct Connection {
-    pub(crate) inner: Arc<TemporalServiceClient>,
-    pub(crate) retry_options: RetryOptions,
-    pub(crate) identity: String,
+    inner: Arc<ConnectionInner>,
+}
+
+#[derive(Clone)]
+struct ConnectionInner {
+    service: TemporalServiceClient,
+    retry_options: RetryOptions,
+    identity: String,
     headers: Arc<RwLock<ClientHeaders>>,
     client_name: String,
     client_version: String,
@@ -266,20 +273,22 @@ impl Connection {
             None
         };
         Ok(Self {
-            inner: Arc::new(svc_client),
-            retry_options: options.retry_options,
-            identity: options.identity,
-            headers,
-            client_name: options.client_name,
-            client_version: options.client_version,
-            capabilities,
-            workers: Arc::new(ClientWorkerSet::new()),
+            inner: Arc::new(ConnectionInner {
+                service: svc_client,
+                retry_options: options.retry_options,
+                identity: options.identity,
+                headers,
+                client_name: options.client_name,
+                client_version: options.client_version,
+                capabilities,
+                workers: Arc::new(ClientWorkerSet::new()),
+            }),
         })
     }
 
     /// Set API key, overwriting any previous one.
     pub fn set_api_key(&self, api_key: Option<String>) {
-        self.headers.write().api_key = api_key;
+        self.inner.headers.write().api_key = api_key;
     }
 
     /// Set HTTP request headers overwriting previous headers.
@@ -291,7 +300,7 @@ impl Connection {
     /// Will return an error if any of the provided keys or values are not valid gRPC metadata.
     /// If an error is returned, the previous headers will remain unchanged.
     pub fn set_headers(&self, headers: HashMap<String, String>) -> Result<(), InvalidHeaderError> {
-        self.headers.write().user_headers = parse_ascii_headers(headers)?;
+        self.inner.headers.write().user_headers = parse_ascii_headers(headers)?;
         Ok(())
     }
 
@@ -307,54 +316,60 @@ impl Connection {
         &self,
         binary_headers: HashMap<String, Vec<u8>>,
     ) -> Result<(), InvalidHeaderError> {
-        self.headers.write().user_binary_headers = parse_binary_headers(binary_headers)?;
+        self.inner.headers.write().user_binary_headers = parse_binary_headers(binary_headers)?;
         Ok(())
     }
 
     /// Returns the value used for the `client-name` header by this connection.
     pub fn client_name(&self) -> &str {
-        &self.client_name
+        &self.inner.client_name
     }
 
     /// Returns the value used for the `client-version` header by this connection.
     pub fn client_version(&self) -> &str {
-        &self.client_version
+        &self.inner.client_version
     }
 
     /// Returns the server capabilities we (may have) learned about when establishing an initial
     /// connection
     pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
-        self.capabilities.as_ref()
+        self.inner.capabilities.as_ref()
     }
 
     /// Get a mutable reference to the retry options.
+    ///
+    /// Note: If this connection has been cloned, this will copy-on-write to avoid
+    /// affecting other clones.
     pub fn retry_options_mut(&mut self) -> &mut RetryOptions {
-        &mut self.retry_options
+        &mut Arc::make_mut(&mut self.inner).retry_options
     }
 
     /// Get a reference to the connection identity.
     pub fn identity(&self) -> &str {
-        &self.identity
+        &self.inner.identity
     }
 
     /// Get a mutable reference to the connection identity.
+    ///
+    /// Note: If this connection has been cloned, this will copy-on-write to avoid
+    /// affecting other clones.
     pub fn identity_mut(&mut self) -> &mut String {
-        &mut self.identity
+        &mut Arc::make_mut(&mut self.inner).identity
     }
 
     /// Returns a reference to a registry with workers using this client instance.
     pub fn workers(&self) -> Arc<ClientWorkerSet> {
-        self.workers.clone()
+        self.inner.workers.clone()
     }
 
     /// Returns the client-wide key.
     pub fn worker_grouping_key(&self) -> Uuid {
-        self.workers.worker_grouping_key()
+        self.inner.workers.worker_grouping_key()
     }
 
     /// Get the underlying cloud service client
     pub fn cloud_svc(&self) -> Box<dyn CloudService> {
-        self.inner.cloud_svc()
+        self.inner.service.cloud_svc()
     }
 }
 
@@ -768,7 +783,7 @@ impl NamespacedClient for Client {
     }
 
     fn identity(&self) -> String {
-        self.connection.identity.clone()
+        self.connection.identity().to_owned()
     }
 }
 
