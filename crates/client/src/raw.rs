@@ -55,8 +55,7 @@ trait RawClientProducer {
 }
 
 /// Any client that can make gRPC calls. The default implementation simply invokes the passed-in
-/// function. Implementers may override this to provide things like retry behavior, ex:
-/// [RetryClient].
+/// function. Implementers may override this to provide things like retry behavior.
 #[async_trait::async_trait]
 trait RawGrpcCaller: Send + Sync + 'static {
     async fn call<F, Req, Resp>(
@@ -68,11 +67,10 @@ trait RawGrpcCaller: Send + Sync + 'static {
     where
         Req: Clone + Unpin + Send + Sync + 'static,
         Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
-        for<'a> F:
-            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
     {
-        callfn(self, req).await
+        callfn(req).await
     }
 }
 
@@ -111,19 +109,15 @@ impl<F, Req, Resp> ErasedCallOp for CallShim<F, Req, Resp>
 where
     Req: Clone + Unpin + Send + Sync + 'static,
     Resp: Send + 'static,
+    F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
     F: Send + Sync + Unpin + 'static,
-    for<'a> F: FnMut(
-        &'a mut dyn ErasedRawClient,
-        Request<Req>,
-    ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
 {
     fn invoke(
         &mut self,
-        raw: &mut dyn ErasedRawClient,
+        _raw: &mut dyn ErasedRawClient,
         _call_name: &'static str,
     ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>> {
         (self.callfn)(
-            raw,
             self.seed_req
                 .take()
                 .expect("CallShim must have request populated"),
@@ -133,14 +127,21 @@ where
     }
 }
 
-/// Macro to apply retry logic to a gRPC call. This exists to avoid some dynamic dispatch overhead
-/// and double-borrow issues that exist in alternate solutions.
-macro_rules! apply_retry_logic {
-    ($caller:expr, $retry_options:expr, $call_name:expr, $callfn:expr, $req:expr) => {{
-        let mut callfn = $callfn;
-        let mut req = $req;
-
-        let info = $retry_options.get_call_info($call_name, Some(&req));
+#[async_trait::async_trait]
+impl RawGrpcCaller for Connection {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        mut callfn: F,
+        mut req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+        F: Send + Sync + Unpin + 'static,
+    {
+        let info = self.retry_options.get_call_info(call_name, Some(&req));
         req.extensions_mut().insert(info.call_type);
         if info.call_type.is_long() {
             req.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -148,30 +149,11 @@ macro_rules! apply_retry_logic {
 
         let fact = || {
             let req_clone = req_cloner(&req);
-            callfn($caller, req_clone)
+            callfn(req_clone)
         };
 
         let res = make_future_retry(info, fact);
         res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
-    }};
-}
-
-#[async_trait::async_trait]
-impl RawGrpcCaller for Connection {
-    async fn call<F, Req, Resp>(
-        &mut self,
-        call_name: &'static str,
-        callfn: F,
-        req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        Resp: Send + 'static,
-        F: Send + Sync + Unpin + 'static,
-        for<'a> F:
-            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-    {
-        apply_retry_logic!(self, &self.retry_options, call_name, callfn, req)
     }
 }
 
@@ -186,11 +168,8 @@ impl RawGrpcCaller for dyn ErasedRawClient {
     where
         Req: Clone + Unpin + Send + Sync + 'static,
         Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
-        for<'a> F: FnMut(
-            &'a mut dyn ErasedRawClient,
-            Request<Req>,
-        ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
     {
         let mut shim = CallShim::new(callfn, req);
         let erased_resp = ErasedRawClient::erased_call(self, call_name, &mut shim).await?;
@@ -258,7 +237,8 @@ where
     ) -> Result<Response<Resp>, Status>
     where
         Req: Clone + Unpin + Send + Sync + 'static,
-        F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+        Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
     {
         let info = self.retry_config.get_call_info(call_name, Some(&req));
@@ -266,9 +246,10 @@ where
         if info.call_type.is_long() {
             req.set_default_timeout(LONG_POLL_TIMEOUT);
         }
+
         let fact = || {
             let req_clone = req_cloner(&req);
-            callfn(self, req_clone)
+            callfn(req_clone)
         };
         let res = make_future_retry(info, fact);
         res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
@@ -323,9 +304,26 @@ where
 }
 
 #[async_trait::async_trait]
-impl<RC> RawGrpcCaller for SharedReplaceableClient<RC> where
-    RC: RawGrpcCaller + Clone + Sync + 'static
+impl<RC> RawGrpcCaller for SharedReplaceableClient<RC>
+where
+    RC: RawGrpcCaller + Clone + Sync + 'static,
 {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+        F: Send + Sync + Unpin + 'static,
+    {
+        self.inner_mut_refreshed()
+            .call(call_name, callfn, req)
+            .await
+    }
 }
 
 impl RawClientProducer for Connection {
@@ -419,11 +417,10 @@ impl RawGrpcCaller for Client {
     where
         Req: Clone + Unpin + Send + Sync + 'static,
         Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
-        for<'a> F:
-            FnMut(&'a mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
     {
-        apply_retry_logic!(self, &self.connection.retry_options, call_name, callfn, req)
+        self.connection.call(call_name, callfn, req).await
     }
 }
 
@@ -505,9 +502,10 @@ macro_rules! proxy_impl {
             mut request: tonic::Request<$req>,
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             $( type_closure_arg(&mut request, $closure); )*
+            let service_client = self.$client_meth();
             #[allow(unused_mut)]
-            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let mut c = c.$client_meth();
+            let fact = move |mut req: tonic::Request<$req>| {
+                let mut c = service_client.clone();
                 async move { c.$method(req).await }.boxed()
             };
             self.call(stringify!($method), fact, request)
@@ -521,10 +519,12 @@ macro_rules! proxy_impl {
             mut request: tonic::Request<$req>,
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             type_closure_arg(&mut request, $closure_request);
+            let workers_info = self.get_workers_info();
+            let service_client = self.$client_meth();
             #[allow(unused_mut)]
-            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let data = type_closure_two_arg(&mut req, c.get_workers_info(), $closure_before);
-                let mut c = c.$client_meth();
+            let fact = move |mut req: tonic::Request<$req>| {
+                let data = type_closure_two_arg(&mut req, workers_info.clone(), $closure_before);
+                let mut c = service_client.clone();
                 async move {
                     type_closure_two_arg(c.$method(req).await, data, $closure_after)
                 }.boxed()
@@ -1682,8 +1682,9 @@ mod tests {
         );
 
         let list_ns_req = ListNamespacesRequest::default();
-        let fact = |c: &mut Client, req| {
-            let mut c = c.workflow_client();
+        let wf_client = client.workflow_client();
+        let fact = move |req| {
+            let mut c = wf_client.clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         client
@@ -1693,8 +1694,9 @@ mod tests {
 
         // Operator svc method
         let op_del_ns_req = DeleteNamespaceRequest::default();
-        let fact = |c: &mut Client, req| {
-            let mut c = c.operator_client();
+        let op_client = client.operator_client();
+        let fact = move |req| {
+            let mut c = op_client.clone();
             async move { c.delete_namespace(req).await }.boxed()
         };
         client
@@ -1704,8 +1706,9 @@ mod tests {
 
         // Cloud svc method
         let cloud_del_ns_req = cloudreq::DeleteNamespaceRequest::default();
-        let fact = |c: &mut Client, req| {
-            let mut c = c.cloud_client();
+        let cloud_client = client.cloud_client();
+        let fact = move |req| {
+            let mut c = cloud_client.clone();
             async move { c.delete_namespace(req).await }.boxed()
         };
         client
