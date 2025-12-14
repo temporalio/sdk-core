@@ -420,6 +420,7 @@ macro_rules! proxy_def {
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>>;
     };
 }
+
 /// Helps re-declare gRPC client methods
 ///
 /// There are four forms:
@@ -441,10 +442,10 @@ macro_rules! proxy_impl {
             mut request: tonic::Request<$req>,
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             $( type_closure_arg(&mut request, $closure); )*
-            let service_client = self.$client_meth();
+            let mut self_clone = self.clone();
             #[allow(unused_mut)]
             let fact = move |mut req: tonic::Request<$req>| {
-                let mut c = service_client.clone();
+                let mut c = self_clone.$client_meth();
                 async move { c.$method(req).await }.boxed()
             };
             self.call(stringify!($method), fact, request)
@@ -459,11 +460,11 @@ macro_rules! proxy_impl {
         ) -> BoxFuture<'_, Result<tonic::Response<$resp>, tonic::Status>> {
             type_closure_arg(&mut request, $closure_request);
             let workers_info = self.get_workers_info();
-            let service_client = self.$client_meth();
+            let mut self_clone = self.clone();
             #[allow(unused_mut)]
             let fact = move |mut req: tonic::Request<$req>| {
                 let data = type_closure_two_arg(&mut req, workers_info.clone(), $closure_before);
-                let mut c = service_client.clone();
+                let mut c = self_clone.$client_meth();
                 async move {
                     type_closure_two_arg(c.$method(req).await, data, $closure_after)
                 }.boxed()
@@ -516,7 +517,7 @@ macro_rules! proxier_impl {
 
         impl<RC> $trait_name for RC
         where
-            RC: RawGrpcCaller + RawClientProducer + Clone,
+            RC: RawGrpcCaller + RawClientProducer + Clone + Unpin,
         {
             $(
                 proxy_impl!($client_type, $client_meth, $method, $req, $resp
