@@ -887,24 +887,25 @@ mod tests {
 
                 async move {
                     match count {
-                        0 => {
-                            let mut resp = PollWorkflowTaskQueueResponse::default();
-                            resp.task_token = vec![1];
-                            Ok(resp)
-                        }
+                        0 => Ok(PollWorkflowTaskQueueResponse {
+                            task_token: vec![1],
+                            ..Default::default()
+                        }),
                         1 => {
                             second_started.notify_one();
                             second_complete.notified().await;
-                            let mut resp = PollWorkflowTaskQueueResponse::default();
-                            resp.task_token = vec![2];
-                            Ok(resp)
+                            Ok(PollWorkflowTaskQueueResponse {
+                                task_token: vec![2],
+                                ..Default::default()
+                            })
                         }
                         _ => {
                             third_started.notify_one();
                             third_complete.notified().await;
-                            let mut resp = PollWorkflowTaskQueueResponse::default();
-                            resp.task_token = vec![3];
-                            Ok(resp)
+                            Ok(PollWorkflowTaskQueueResponse {
+                                task_token: vec![3],
+                                ..Default::default()
+                            })
                         }
                     }
                 }

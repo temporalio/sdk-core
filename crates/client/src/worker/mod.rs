@@ -651,14 +651,14 @@ mod tests {
             let worker_instance_key = mock_provider.worker_instance_key();
 
             let result = manager.register_worker(Arc::new(mock_provider), false);
-            if result.is_ok() {
-                successful_registrations += 1;
-                worker_keys.push(worker_instance_key);
-            } else {
+            if let Err(err) = result {
                 // Should get error for overlapping worker task types
-                assert!(result.unwrap_err().to_string().contains(
+                assert!(err.to_string().contains(
                     "Registration of multiple workers with overlapping worker task types"
                 ));
+            } else {
+                successful_registrations += 1;
+                worker_keys.push(worker_instance_key);
             }
         }
 
