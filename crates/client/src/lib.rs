@@ -141,7 +141,6 @@ pub struct ConnectionOptions {
     /// To enable with default settings, use `.keep_alive(Some(ClientKeepAliveConfig::default()))`.
     #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
     pub keep_alive: Option<ClientKeepAliveOptions>,
-    // TODO [rust-sdk-branch]: Probably combine headers into specific headers type
     /// HTTP headers to include on every RPC call.
     ///
     /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
@@ -164,19 +163,40 @@ pub struct ConnectionOptions {
     // TODO [rust-sdk-branch]: Put behind compile time flag
     // Internal / Core-based SDK only options below =============================================
     /// If set true, get_system_info will not be called upon connection.
-    #[doc(hidden)]
     #[builder(default)]
-    pub skip_get_system_info: bool,
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    skip_get_system_info: bool,
     /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
     /// all RPC calls
-    #[doc(hidden)]
     #[builder(default = "temporal-rust".to_owned())]
-    pub client_name: String,
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    client_name: String,
     /// The version of the SDK being implemented on top of core. Is set as `client-version` header
     /// in all RPC calls. The server decides if the client is supported based on this.
-    #[doc(hidden)]
     #[builder(default = VERSION.to_owned())]
-    pub client_version: String,
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    client_version: String,
+}
+
+// Setters/getters for fields that should only be touched by SDK implementers.
+#[cfg(feature = "core-based-sdk")]
+impl ConnectionOptions {
+    /// Set whether or not get_system_info will be called upon connection.
+    pub fn set_skip_get_system_info(&mut self, skip: bool) {
+        self.skip_get_system_info = skip;
+    }
+    /// Get whether or not get_system_info will be called upon connection.
+    pub fn get_skip_get_system_info(&self) -> bool {
+        self.skip_get_system_info
+    }
+    /// Get the name of the SDK being implemented on top of core.
+    pub fn get_client_name(&self) -> &str {
+        &self.client_name
+    }
+    /// Get the version of the SDK being implemented on top of core.
+    pub fn get_client_version(&self) -> &str {
+        &self.client_version
+    }
 }
 
 /// A connection to the Temporal service.
@@ -639,7 +659,6 @@ impl Interceptor for ServiceCallInterceptor {
     }
 }
 
-// TODO [rust-sdk-branch]: Should become non-pub
 /// Aggregates various services exposed by the Temporal server
 #[derive(Clone)]
 pub struct TemporalServiceClient {

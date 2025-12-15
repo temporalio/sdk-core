@@ -342,8 +342,8 @@ impl Context {
 
         let client_options = Box::new(crate::client::ConnectionOptions {
             target_url: options.target.as_str().into(),
-            client_name: options.client_name.as_str().into(),
-            client_version: options.client_version.as_str().into(),
+            client_name: options.get_client_name().into(),
+            client_version: options.get_client_version().into(),
             metadata: metadata.as_deref().into(),
             api_key: options.api_key.as_deref().into(),
             identity: options.identity.as_str().into(),

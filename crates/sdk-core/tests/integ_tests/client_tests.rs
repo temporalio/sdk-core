@@ -112,18 +112,12 @@ async fn timeouts_respected_one_call_fake_server() {
     let mut fs = fake_server(|_| async { Response::new(Body::empty()) }.boxed()).await;
     let header_rx = &mut fs.header_rx;
 
-    let base_opts = get_integ_server_options();
-    let opts = temporalio_client::ConnectionOptions::new(
-        format!("http://localhost:{}", fs.addr.port())
-            .parse::<url::Url>()
-            .unwrap(),
-    )
-    .identity(base_opts.identity)
-    .client_name(base_opts.client_name)
-    .client_version(base_opts.client_version)
-    .skip_get_system_info(true)
-    .retry_options(RetryOptions::no_retries())
-    .build();
+    let mut opts = get_integ_server_options();
+    opts.target = format!("http://localhost:{}", fs.addr.port())
+        .parse::<url::Url>()
+        .unwrap();
+    opts.set_skip_get_system_info(true);
+    opts.retry_options = RetryOptions::no_retries();
 
     let mut connection = Connection::connect(opts).await.unwrap();
 
@@ -189,17 +183,11 @@ async fn non_retryable_errors() {
         })
         .await;
 
-        let base_opts = get_integ_server_options();
-        let opts = temporalio_client::ConnectionOptions::new(
-            format!("http://localhost:{}", fs.addr.port())
-                .parse::<url::Url>()
-                .unwrap(),
-        )
-        .identity(base_opts.identity)
-        .client_name(base_opts.client_name)
-        .client_version(base_opts.client_version)
-        .skip_get_system_info(true)
-        .build();
+        let mut opts = get_integ_server_options();
+        opts.target = format!("http://localhost:{}", fs.addr.port())
+            .parse::<url::Url>()
+            .unwrap();
+        opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::builder()
             .namespace("ns")
@@ -238,17 +226,11 @@ async fn retryable_errors() {
         })
         .await;
 
-        let base_opts = get_integ_server_options();
-        let opts = temporalio_client::ConnectionOptions::new(
-            format!("http://localhost:{}", fs.addr.port())
-                .parse::<url::Url>()
-                .unwrap(),
-        )
-        .identity(base_opts.identity)
-        .client_name(base_opts.client_name)
-        .client_version(base_opts.client_version)
-        .skip_get_system_info(true)
-        .build();
+        let mut opts = get_integ_server_options();
+        opts.target = format!("http://localhost:{}", fs.addr.port())
+            .parse::<url::Url>()
+            .unwrap();
+        opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::builder()
             .namespace("ns")
@@ -293,18 +275,12 @@ async fn namespace_header_attached_to_relevant_calls() {
     });
 
     let namespace = "namespace";
-    let base_opts = get_integ_server_options();
-    let opts = temporalio_client::ConnectionOptions::new(
-        format!("http://localhost:{}", addr.port())
-            .parse::<url::Url>()
-            .unwrap(),
-    )
-    .identity(base_opts.identity)
-    .client_name(base_opts.client_name)
-    .client_version(base_opts.client_version)
-    .skip_get_system_info(true)
-    .retry_options(RetryOptions::no_retries())
-    .build();
+    let mut opts = get_integ_server_options();
+    opts.target = format!("http://localhost:{}", addr.port())
+        .parse::<url::Url>()
+        .unwrap();
+    opts.set_skip_get_system_info(true);
+    opts.retry_options = RetryOptions::no_retries();
     let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace(namespace)
@@ -345,22 +321,16 @@ async fn cloud_ops_test() {
         env::var("TEMPORAL_CLIENT_CLOUD_API_VERSION").expect("version env var must exist");
     let namespace =
         env::var("TEMPORAL_CLIENT_CLOUD_NAMESPACE").expect("namespace env var must exist");
-    let base_opts = get_integ_server_options();
-    let opts = temporalio_client::ConnectionOptions::new(
-        "https://saas-api.tmprl.cloud:443"
-            .parse::<url::Url>()
-            .unwrap(),
-    )
-    .identity(base_opts.identity)
-    .client_name(base_opts.client_name)
-    .client_version(base_opts.client_version)
-    .api_key(api_key)
-    .headers({
+    let mut opts = get_integ_server_options();
+    opts.target = "https://saas-api.tmprl.cloud:443"
+        .parse::<url::Url>()
+        .unwrap();
+    opts.api_key = Some(api_key);
+    opts.headers = Some({
         let mut hm = HashMap::new();
         hm.insert("temporal-cloud-api-version".to_string(), api_version);
         hm
-    })
-    .build();
+    });
     let connection = Connection::connect(opts).await.unwrap();
     let mut cloud_client = connection.cloud_svc();
     let res = cloud_client
@@ -394,7 +364,7 @@ async fn http_proxy() {
     // General client options
     let mut opts = get_integ_server_options();
     opts.retry_options = RetryOptions::no_retries();
-    opts.skip_get_system_info = true;
+    opts.set_skip_get_system_info(true);
 
     // Connect client with no proxy and make call and confirm reached
     opts.target = format!("http://127.0.0.1:{}", server.addr.port())

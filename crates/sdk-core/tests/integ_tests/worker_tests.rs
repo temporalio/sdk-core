@@ -904,17 +904,11 @@ async fn shutdown_worker_not_retried() {
     })
     .await;
 
-    let base_opts = get_integ_server_options();
-    let opts = temporalio_client::ConnectionOptions::new(
-        format!("http://localhost:{}", fs.addr.port())
-            .parse::<url::Url>()
-            .unwrap(),
-    )
-    .identity(base_opts.identity)
-    .client_name(base_opts.client_name)
-    .client_version(base_opts.client_version)
-    .skip_get_system_info(true)
-    .build();
+    let mut opts = get_integ_server_options();
+    opts.target = format!("http://localhost:{}", fs.addr.port())
+        .parse::<url::Url>()
+        .unwrap();
+    opts.set_skip_get_system_info(true);
     let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::builder()
         .namespace("ns")
