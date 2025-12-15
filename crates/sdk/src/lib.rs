@@ -9,7 +9,8 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
-//! use temporalio_sdk::{sdk_client_options, activities::ActivityContext, Worker};
+//! use temporalio_client::{ConnectionOptions, ClientOptions, Connection, Client};
+//! use temporalio_sdk::{activities::ActivityContext, Worker};
 //! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptions};
 //! use temporalio_common::{
 //!     worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
@@ -18,13 +19,12 @@
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build();
-//!
+//!     let connection_options = ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build();
 //!     let telemetry_options = TelemetryOptions::builder().build();
 //!     let runtime_options = RuntimeOptions::builder().telemetry_options(telemetry_options).build().unwrap();
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
-//!     let client = server_options.connect("default", None).await?;
+//!     let connection = Connection::connect(connection_options).await?;
 //!
 //!     let worker_config = WorkerConfig::builder()
 //!         .namespace("default")
@@ -34,7 +34,7 @@
 //!         .build()
 //!         .unwrap();
 //!
-//!     let core_worker = init_worker(&runtime, worker_config, client)?;
+//!     let core_worker = init_worker(&runtime, worker_config, connection)?;
 //!
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
@@ -210,8 +210,7 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
     }
 }
 
-/// Returns a [ClientOptionsBuilder] with required fields set to appropriate values
-/// for the Rust SDK.
+/// Returns connection options with required fields set to appropriate values for the Rust SDK.
 pub fn sdk_connection_options(
     url: impl Into<Url>,
 ) -> ConnectionOptionsBuilder<impl connection_options_builder::IsComplete> {

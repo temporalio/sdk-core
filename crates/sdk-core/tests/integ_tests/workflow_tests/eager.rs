@@ -34,9 +34,7 @@ async fn eager_wf_start_different_clients() {
     worker.register_wf(wf_name.to_owned(), eager_wf);
 
     let connection = get_integ_connection(None).await;
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace(NAMESPACE)
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
     let client = Client::new(connection, client_opts);
     let w = starter.get_worker().await;
     let res = client

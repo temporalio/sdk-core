@@ -73,7 +73,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         will_fail,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 
@@ -107,7 +107,7 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 
@@ -116,7 +116,7 @@ async fn reapplied_updates_due_to_reset() {
 
     let mut client_mut = client.clone();
     let reset_response = WorkflowService::reset_workflow_execution(
-        Arc::make_mut(&mut client_mut),
+        &mut client_mut,
         #[allow(deprecated)]
         ResetWorkflowExecutionRequest {
             namespace: client.namespace(),
@@ -147,7 +147,7 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 

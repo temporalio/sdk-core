@@ -910,9 +910,7 @@ async fn shutdown_worker_not_retried() {
         .unwrap();
     opts.set_skip_get_system_info(true);
     let connection = Connection::connect(opts).await.unwrap();
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace("ns")
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new("ns").build();
     let client = temporalio_client::Client::new(connection, client_opts);
 
     let wf_type = "shutdown_worker_not_retried";

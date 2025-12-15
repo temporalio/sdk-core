@@ -189,9 +189,7 @@ async fn non_retryable_errors() {
             .unwrap();
         opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
-        let client_opts = temporalio_client::ClientOptions::builder()
-            .namespace("ns")
-            .build();
+        let client_opts = temporalio_client::ClientOptions::new("ns").build();
         let client = temporalio_client::Client::new(connection, client_opts);
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
@@ -232,9 +230,7 @@ async fn retryable_errors() {
             .unwrap();
         opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
-        let client_opts = temporalio_client::ClientOptions::builder()
-            .namespace("ns")
-            .build();
+        let client_opts = temporalio_client::ClientOptions::new("ns").build();
         let client = temporalio_client::Client::new(connection, client_opts);
 
         let result = client.cancel_activity_task(vec![1].into(), None).await;
@@ -282,9 +278,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     opts.set_skip_get_system_info(true);
     opts.retry_options = RetryOptions::no_retries();
     let connection = Connection::connect(opts).await.unwrap();
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace(namespace)
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
     let client = temporalio_client::Client::new(connection, client_opts);
 
     let _ = client
@@ -371,9 +365,7 @@ async fn http_proxy() {
         .parse()
         .unwrap();
     let connection = Connection::connect(opts.clone()).await.unwrap();
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace("my-namespace")
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
     let client = temporalio_client::Client::new(connection, client_opts);
     let _ = client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 1);
@@ -385,9 +377,7 @@ async fn http_proxy() {
         basic_auth: None,
     });
     let connection = Connection::connect(opts.clone()).await.unwrap();
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace("my-namespace")
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
     let proxied_client = temporalio_client::Client::new(connection, client_opts);
     let _ = proxied_client.list_namespaces().await;
     assert!(call_count.load(Ordering::SeqCst) == 2);
@@ -411,9 +401,7 @@ async fn http_proxy() {
             basic_auth: None,
         });
         let connection = Connection::connect(opts.clone()).await.unwrap();
-        let client_opts = temporalio_client::ClientOptions::builder()
-            .namespace("my-namespace")
-            .build();
+        let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
         let proxied_client = temporalio_client::Client::new(connection, client_opts);
         let _ = proxied_client.list_namespaces().await;
         assert!(call_count.load(Ordering::SeqCst) == 3);

@@ -55,9 +55,7 @@ pub enum LegacyQueryResult {
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
     connection: SharedReplaceableClient<Connection>,
-    // TODO: Namespace and identity should in theory go away
     namespace: String,
-    identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
     worker_heartbeat_map: Arc<Mutex<HashMap<String, ClientHeartbeatData>>>,
 }
@@ -66,16 +64,18 @@ impl WorkerClientBag {
     pub(crate) fn new(
         connection: SharedReplaceableClient<Connection>,
         namespace: String,
-        identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
     ) -> Self {
         Self {
             connection,
             namespace,
-            identity,
             worker_versioning_strategy,
             worker_heartbeat_map: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn identity(&self) -> String {
+        self.connection.inner_cow().identity().to_owned()
     }
 
     fn default_capabilities(&self) -> Capabilities {
@@ -298,7 +298,7 @@ impl WorkerClient for WorkerClientBag {
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
@@ -334,7 +334,7 @@ impl WorkerClient for WorkerClientBag {
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             task_queue_metadata: act_options.max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
@@ -372,7 +372,7 @@ impl WorkerClient for WorkerClientBag {
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_heartbeat: Vec::new(),
@@ -403,7 +403,7 @@ impl WorkerClient for WorkerClientBag {
             task_token: request.task_token.into(),
             commands: request.commands,
             messages: request.messages,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
@@ -458,7 +458,7 @@ impl WorkerClient for WorkerClientBag {
                 RespondActivityTaskCompletedRequest {
                     task_token: task_token.0,
                     result,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
                     // Will never be set, deprecated.
@@ -482,7 +482,7 @@ impl WorkerClient for WorkerClientBag {
             .respond_nexus_task_completed(
                 RespondNexusTaskCompletedRequest {
                     namespace: self.namespace.clone(),
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     task_token: task_token.0,
                     response: Some(response),
                 }
@@ -504,7 +504,7 @@ impl WorkerClient for WorkerClientBag {
                 RecordActivityTaskHeartbeatRequest {
                     task_token: task_token.0,
                     details,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                 }
                 .into_request(),
@@ -526,7 +526,7 @@ impl WorkerClient for WorkerClientBag {
                 RespondActivityTaskCanceledRequest {
                     task_token: task_token.0,
                     details,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
                     // Will never be set, deprecated.
@@ -552,7 +552,7 @@ impl WorkerClient for WorkerClientBag {
                 RespondActivityTaskFailedRequest {
                     task_token: task_token.0,
                     failure,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                     last_heartbeat_details: None,
@@ -578,7 +578,7 @@ impl WorkerClient for WorkerClientBag {
             task_token: task_token.0,
             cause: cause as i32,
             failure,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             binary_checksum: self.binary_checksum(),
             namespace: self.namespace.clone(),
             messages: vec![],
@@ -606,7 +606,7 @@ impl WorkerClient for WorkerClientBag {
             .respond_nexus_task_failed(
                 RespondNexusTaskFailedRequest {
                     namespace: self.namespace.clone(),
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     task_token: task_token.0,
                     error: Some(error),
                 }
@@ -702,7 +702,7 @@ impl WorkerClient for WorkerClientBag {
         }
         let mut request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
             worker_heartbeat: final_heartbeat,
@@ -726,7 +726,7 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RecordWorkerHeartbeatResponse> {
         let request = RecordWorkerHeartbeatRequest {
             namespace,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             worker_heartbeat,
         };
         Ok(self
@@ -762,7 +762,7 @@ impl WorkerClient for WorkerClientBag {
     }
 
     fn identity(&self) -> String {
-        self.identity.clone()
+        self.identity()
     }
 
     fn worker_grouping_key(&self) -> Uuid {
@@ -820,7 +820,7 @@ impl NamespacedClient for WorkerClientBag {
     }
 
     fn identity(&self) -> String {
-        self.identity.clone()
+        self.identity()
     }
 }
 

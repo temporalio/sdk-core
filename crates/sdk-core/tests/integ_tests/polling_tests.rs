@@ -154,9 +154,7 @@ async fn switching_worker_client_changes_poll() {
                 .client_version("0.1.0".to_owned())
                 .build();
         let connection1 = Connection::connect(opts1).await.unwrap();
-        let client_opts1 = temporalio_client::ClientOptions::builder()
-            .namespace("default")
-            .build();
+        let client_opts1 = temporalio_client::ClientOptions::new("default").build();
         let client1 = Client::new(connection1, client_opts1);
 
         let opts2 =
@@ -166,9 +164,7 @@ async fn switching_worker_client_changes_poll() {
                 .client_version("0.1.0".to_owned())
                 .build();
         let connection2 = Connection::connect(opts2).await.unwrap();
-        let client_opts2 = temporalio_client::ClientOptions::builder()
-            .namespace("default")
-            .build();
+        let client_opts2 = temporalio_client::ClientOptions::new("default").build();
         let client2 = Client::new(connection2, client_opts2);
 
         // Start a workflow on both servers
@@ -394,9 +390,7 @@ async fn replace_client_works_after_polling_failure() {
                 .client_version(INTEG_CLIENT_VERSION.to_string())
                 .build();
             let connection = Connection::connect(opts).await.unwrap();
-            let client_opts = temporalio_client::ClientOptions::builder()
-                .namespace(NAMESPACE)
-                .build();
+            let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
             let client_for_initial_server = Client::new(connection, client_opts);
 
             let wf_name = "replace_client_works_after_polling_failure";

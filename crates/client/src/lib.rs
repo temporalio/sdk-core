@@ -107,7 +107,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
-/// Options for [Connection::connect] and [Client::connect].
+/// Options for [Connection::connect].
 #[derive(bon::Builder, Clone, Debug)]
 #[non_exhaustive]
 #[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
@@ -118,8 +118,9 @@ pub struct ConnectionOptions {
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
     pub identity: String,
+    // TODO [rust-sdk-branch]: Telemetry needs to be moved to common
     /// When set, this client will record metrics using the provided meter. The meter can be
-    /// obtained from [TelemetryInstance::get_temporal_metric_meter]
+    /// obtained from TelemetryInstance::get_temporal_metric_meter
     pub metrics_meter: Option<TemporalMeter>,
     /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
@@ -144,8 +145,8 @@ pub struct ConnectionOptions {
     /// HTTP headers to include on every RPC call.
     ///
     /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
-    /// `-bin). To set binary headers, use [ClientOptions::binary_headers]. Invalid header keys or
-    /// values will cause an error to be returned when connecting.
+    /// `-bin). To set binary headers, use [ConnectionOptions::binary_headers]. Invalid header keys
+    /// or values will cause an error to be returned when connecting.
     pub headers: Option<HashMap<String, String>>,
     /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
     ///
@@ -311,7 +312,7 @@ impl Connection {
 
     /// Set HTTP request headers overwriting previous headers.
     ///
-    /// This will not affect headers set via [ClientOptions::binary_headers].
+    /// This will not affect headers set via [ConnectionOptions::binary_headers].
     ///
     /// # Errors
     ///
@@ -324,7 +325,7 @@ impl Connection {
 
     /// Set binary HTTP request headers overwriting previous headers.
     ///
-    /// This will not affect headers set via [ClientOptions::headers].
+    /// This will not affect headers set via [ConnectionOptions::headers].
     ///
     /// # Errors
     ///
@@ -391,12 +392,13 @@ impl Connection {
     }
 }
 
-/// Options for the connection to the temporal server. Construct with [ClientOptions::builder]
+/// Options for [Client::new].
 #[derive(Clone, Debug, bon::Builder)]
 #[non_exhaustive]
-#[builder(on(String, into), state_mod(vis = "pub"))]
+#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
 pub struct ClientOptions {
     /// The namespace this client will be bound to.
+    #[builder(start_fn)]
     pub namespace: String,
 }
 
@@ -757,11 +759,12 @@ impl TemporalServiceClient {
     }
 }
 
-/// Contains an instance of a namespace-bound client for interacting with the Temporal server
+/// Contains an instance of a namespace-bound client for interacting with the Temporal server.
+/// Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
     connection: Connection,
-    options: ClientOptions,
+    options: Arc<ClientOptions>,
 }
 
 impl Client {
@@ -769,7 +772,7 @@ impl Client {
     pub fn new(connection: Connection, options: ClientOptions) -> Self {
         Client {
             connection,
-            options,
+            options: Arc::new(options),
         }
     }
 
@@ -779,8 +782,11 @@ impl Client {
     }
 
     /// Return this client's options mutably.
+    ///
+    /// Note: If this client has been cloned, this will copy-on-write to avoid affecting other
+    /// clones.
     pub fn options_mut(&mut self) -> &mut ClientOptions {
-        &mut self.options
+        Arc::make_mut(&mut self.options)
     }
 
     /// Returns a reference to the underlying connection

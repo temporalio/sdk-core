@@ -1,3 +1,4 @@
+use crate::NamespacedClient;
 use std::{
     borrow::Cow,
     sync::{
@@ -5,8 +6,6 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
 };
-
-use crate::NamespacedClient;
 
 /// A client wrapper that allows replacing the underlying client at a later point in time.
 /// Clones of this struct have a shared reference to the underlying client, and each clone also
@@ -106,7 +105,8 @@ where
     ///
     /// While this method allows mutable access to the underlying client, any configuration changes
     /// will not be shared with other instances, and will be lost if the client gets replaced from
-    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client) instead.
+    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client)
+    /// instead.
     pub fn inner_mut_refreshed(&mut self) -> &mut C {
         if let Some((client, generation)) =
             self.shared_data.fetch_newer_than(self.cloned_generation)

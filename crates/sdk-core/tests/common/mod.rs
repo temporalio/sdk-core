@@ -210,9 +210,7 @@ pub(crate) async fn get_cloud_client() -> Client {
         .build();
     let connection = Connection::connect(connection_opts).await.unwrap();
     let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace(namespace)
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
     Client::new(connection, client_opts)
 }
 
@@ -225,12 +223,12 @@ pub(crate) struct CoreWfStarter {
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
-    client_override: Option<Arc<Client>>,
+    client_override: Option<Client>,
     min_local_server_version: Option<String>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
-    client: Arc<Client>,
+    client: Client,
 }
 
 impl CoreWfStarter {
@@ -262,8 +260,6 @@ impl CoreWfStarter {
             let clustinfo = s
                 .get_client()
                 .await
-                .connection()
-                .clone()
                 .get_cluster_info(GetClusterInfoRequest::default().into_request())
                 .await;
             let srv_ver = semver::Version::parse(
@@ -303,7 +299,7 @@ impl CoreWfStarter {
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
-            client_override: client_override.map(Arc::new),
+            client_override,
             min_local_server_version: None,
         }
     }
@@ -338,7 +334,7 @@ impl CoreWfStarter {
         self.get_or_init().await.worker.clone()
     }
 
-    pub(crate) async fn get_client(&mut self) -> Arc<Client> {
+    pub(crate) async fn get_client(&mut self) -> Client {
         self.get_or_init().await.client.clone()
     }
 
@@ -457,11 +453,10 @@ impl CoreWfStarter {
                     let mut opts = get_integ_server_options();
                     opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
                     let connection = Connection::connect(opts).await.expect("Must connect");
-                    let client_opts = temporalio_client::ClientOptions::builder()
-                        .namespace(cfg.namespace.clone())
-                        .build();
+                    let client_opts =
+                        temporalio_client::ClientOptions::new(cfg.namespace.clone()).build();
                     let client = Client::new(connection.clone(), client_opts);
-                    (connection, Arc::new(client))
+                    (connection, client)
                 };
                 let worker = init_worker(rt, cfg, connection).expect("Worker inits cleanly");
                 InitializedWorker {
@@ -477,7 +472,7 @@ impl CoreWfStarter {
 pub(crate) struct TestWorker {
     inner: Worker,
     pub core_worker: Arc<dyn CoreWorker>,
-    client: Option<Arc<Client>>,
+    client: Option<Client>,
     pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
@@ -642,7 +637,7 @@ impl TestWorker {
 }
 
 pub(crate) struct TestWorkerSubmitterHandle {
-    client: Arc<Client>,
+    client: Client,
     tq: String,
     started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
 }
@@ -682,7 +677,7 @@ impl TestWorkerSubmitterHandle {
 }
 
 pub(crate) enum TestWorkerShutdownCond {
-    GetResults(Vec<WorkflowExecutionInfo>, Arc<Client>),
+    GetResults(Vec<WorkflowExecutionInfo>, Client),
     NoAutoShutdown,
 }
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
@@ -704,7 +699,7 @@ impl TestWorkerCompletionIceptor {
         if let TestWorkerShutdownCond::GetResults(ref mut wfs, ref client) = self.condition {
             let wfs = std::mem::take(wfs);
             let shutdown_h = self.shutdown_handle.clone();
-            let client = (**client).clone();
+            let client = client.clone();
             let stream = stream::iter(
                 wfs.into_iter()
                     .map(move |info| info.bind_untyped(client.clone())),
@@ -783,9 +778,7 @@ pub(crate) async fn get_integ_client(
     meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
 ) -> Client {
     let connection = get_integ_connection(meter).await;
-    let client_opts = temporalio_client::ClientOptions::builder()
-        .namespace(namespace)
-        .build();
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
     Client::new(connection, client_opts)
 }
 

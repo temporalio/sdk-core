@@ -34,7 +34,7 @@ pub fn default_server_config() -> TemporalDevServerConfig {
         .build()
 }
 
-pub fn default_client_options(target: &str) -> ConnectionOptions {
+pub fn default_connection_options(target: &str) -> ConnectionOptions {
     ConnectionOptions::new(Url::parse(&format!("http://{target}")).unwrap())
         .client_name("core-c-bridge-tests".to_owned())
         .client_version("0.1.0".to_owned())

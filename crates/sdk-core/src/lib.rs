@@ -94,16 +94,14 @@ pub fn init_worker(
     );
     let client = SharedReplaceableClient::new(connection);
     let client_ident = client.inner_cow().identity().to_owned();
-    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
-
     if client_ident.is_empty() {
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
+    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         namespace.clone(),
-        client_ident,
         worker_config.versioning_strategy.clone(),
     ));
 

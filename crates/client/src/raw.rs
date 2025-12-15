@@ -1619,10 +1619,7 @@ mod tests {
             .client_version("0.0.0")
             .build();
         let connection = Connection::connect(opts).await.unwrap();
-        let mut client = Client::new(
-            connection,
-            ClientOptions::builder().namespace("default").build(),
-        );
+        let mut client = Client::new(connection, ClientOptions::new("default").build());
 
         let list_ns_req = ListNamespacesRequest::default();
         let wf_client = client.workflow_client();
