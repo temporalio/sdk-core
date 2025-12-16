@@ -27,8 +27,7 @@ use temporalio_common::{
             },
             deployment,
             enums::v1::{
-                TaskQueueKind, VersioningBehavior, WorkerStatus, WorkerVersioningMode,
-                WorkflowTaskFailedCause,
+                TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
             },
             failure::v1::Failure,
             nexus,
@@ -696,7 +695,6 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<ShutdownWorkerResponse> {
         let mut final_heartbeat = final_heartbeat;
         if let Some(w) = final_heartbeat.as_mut() {
-            w.status = WorkerStatus::Shutdown.into();
             self.set_heartbeat_client_fields(w);
         }
         let mut request = ShutdownWorkerRequest {
