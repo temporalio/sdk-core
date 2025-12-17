@@ -1675,7 +1675,7 @@ impl WorkflowMachines {
                 let resps = lam.try_resolve_with_dat(dat)?;
                 self.process_machine_responses(mk, resps)?;
             } else {
-                return Err(fatal!(
+                return Err(nondeterminism!(
                     "Peeked local activity marker but the associated machine was of the \
                      wrong type! {dat:?}"
                 ));
