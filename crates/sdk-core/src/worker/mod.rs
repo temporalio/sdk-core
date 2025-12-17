@@ -260,12 +260,12 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        // First, unregister worker from the client
+        // First, disable Eager Workflow Start
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
                 .workers()
-                .unregister_worker(self.worker_instance_key);
+                .unregister_slot_provider(self.worker_instance_key);
         }
 
         // Push a BumpStream message to the workflow activation queue. This ensures that
@@ -347,10 +347,13 @@ impl Worker {
         CT: Into<AnyClient>,
     {
         // Unregister worker from current client, register in new client at the end
+        self.client
+            .workers()
+            .unregister_slot_provider(self.worker_instance_key)?;
         let client_worker = self
             .client
             .workers()
-            .unregister_worker(self.worker_instance_key)?;
+            .finalize_unregister(self.worker_instance_key)?;
 
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
@@ -798,6 +801,13 @@ impl Worker {
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
+        // Only after worker is fully shutdown do we remove the heartbeat callback
+        // from SharedNamespaceWorker, allowing for accurate worker shutdown
+        // from Server POV
+        let _res = self
+            .client
+            .workers()
+            .finalize_unregister(self.worker_instance_key);
     }
 
     pub(crate) fn shutdown_token(&self) -> CancellationToken {
