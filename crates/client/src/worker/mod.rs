@@ -237,6 +237,20 @@ impl ClientWorkerSetImpl {
         &mut self,
         worker_instance_key: Uuid,
     ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
+        if let Some(worker) = self.all_workers.get(&worker_instance_key)
+            && let Some(slot_vec) = self.slot_providers.get(&SlotKey::new(
+                worker.namespace().to_string(),
+                worker.task_queue().to_string(),
+            ))
+            && slot_vec
+                .iter()
+                .any(|info| info.worker_id == worker_instance_key)
+        {
+            return Err(anyhow::anyhow!(
+                "Worker still in slot_providers during finalize"
+            ));
+        }
+
         let worker = self
             .all_workers
             .remove(&worker_instance_key)
@@ -1534,5 +1548,12 @@ mod tests {
         assert!(res.is_err());
         let err_string = res.err().map(|e| e.to_string()).unwrap();
         assert!(err_string.contains("Worker still in slot_providers during finalize"));
+
+        // previous incorrect call to finalize_unregister should not cause any state leaks when
+        // properly removed later
+        manager
+            .unregister_slot_provider(worker_instance_key)
+            .unwrap();
+        manager.finalize_unregister(worker_instance_key).unwrap();
     }
 }
