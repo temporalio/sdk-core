@@ -28,9 +28,9 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsOptions, GetWorkflowResultOptions, NamespacedClient, RetryClient, TlsOptions,
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
-    WorkflowHandle, WorkflowOptions,
+    Client, ClientTlsOptions, Connection, ConnectionOptions, GetWorkflowResultOptions,
+    NamespacedClient, TlsOptions, WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo,
+    WorkflowExecutionResult, WorkflowHandle, WorkflowOptions, WorkflowService,
 };
 use temporalio_common::{
     Worker as CoreWorker,
@@ -61,7 +61,7 @@ use temporalio_sdk::{
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
+    CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
@@ -187,7 +187,7 @@ pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }))
 }
 
-pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
+pub(crate) async fn get_cloud_client() -> Client {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
     let cloud_key = env::var("TEMPORAL_CLIENT_KEY").unwrap();
 
@@ -196,8 +196,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .replace("\\n", "\n")
         .into_bytes();
     let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-    let sgo = ClientOptions::builder()
-        .target_url(Url::from_str(&cloud_addr).unwrap())
+    let connection_opts = ConnectionOptions::new(Url::from_str(&cloud_addr).unwrap())
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
         .identity("sdk-test-client")
@@ -209,12 +208,10 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
             ..Default::default()
         })
         .build();
-    sgo.connect(
-        env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
-        None,
-    )
-    .await
-    .unwrap()
+    let connection = Connection::connect(connection_opts).await.unwrap();
+    let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
+    Client::new(connection, client_opts)
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
@@ -226,12 +223,12 @@ pub(crate) struct CoreWfStarter {
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
-    client_override: Option<Arc<RetryClient<Client>>>,
+    client_override: Option<Client>,
     min_local_server_version: Option<String>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
-    client: Arc<RetryClient<Client>>,
+    client: Client,
 }
 
 impl CoreWfStarter {
@@ -260,10 +257,9 @@ impl CoreWfStarter {
         let mut s = Self::new_with_overrides(test_name, None, client);
 
         if check_mlsv && !version_req.is_empty() {
-            let clustinfo = (*s.get_client().await)
+            let clustinfo = s
                 .get_client()
-                .inner()
-                .workflow_svc()
+                .await
                 .get_cluster_info(GetClusterInfoRequest::default().into_request())
                 .await;
             let srv_ver = semver::Version::parse(
@@ -291,7 +287,7 @@ impl CoreWfStarter {
     pub(crate) fn new_with_overrides(
         test_name: &str,
         runtime_override: Option<CoreRuntime>,
-        client_override: Option<RetryClient<Client>>,
+        client_override: Option<Client>,
     ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
@@ -303,7 +299,7 @@ impl CoreWfStarter {
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
-            client_override: client_override.map(Arc::new),
+            client_override,
             min_local_server_version: None,
         }
     }
@@ -338,7 +334,7 @@ impl CoreWfStarter {
         self.get_or_init().await.worker.clone()
     }
 
-    pub(crate) async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
+    pub(crate) async fn get_client(&mut self) -> Client {
         self.get_or_init().await.client.clone()
     }
 
@@ -352,7 +348,7 @@ impl CoreWfStarter {
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
-    ) -> WorkflowHandle<RetryClient<Client>, Vec<Payload>> {
+    ) -> WorkflowHandle<Client, Vec<Payload>> {
         let run_id = worker
             .submit_wf(
                 self.task_queue_name.clone(),
@@ -448,20 +444,21 @@ impl CoreWfStarter {
                     init_integ_telem().unwrap()
                 };
                 let cfg = self.worker_config.clone();
-                let client = if let Some(client) = self.client_override.take() {
-                    client
+                let (connection, client) = if let Some(client) = self.client_override.take() {
+                    // Extract the connection from the client to pass to init_worker
+                    let connection = client.connection().clone();
+                    (connection, client)
                 } else {
-                    Arc::new(
-                        get_integ_server_options()
-                            .connect(
-                                cfg.namespace.clone(),
-                                rt.telemetry().get_temporal_metric_meter(),
-                            )
-                            .await
-                            .expect("Must connect"),
-                    )
+                    // Create connection and client
+                    let mut opts = get_integ_server_options();
+                    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+                    let connection = Connection::connect(opts).await.expect("Must connect");
+                    let client_opts =
+                        temporalio_client::ClientOptions::new(cfg.namespace.clone()).build();
+                    let client = Client::new(connection.clone(), client_opts);
+                    (connection, client)
                 };
-                let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
+                let worker = init_worker(rt, cfg, connection).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
@@ -475,7 +472,7 @@ impl CoreWfStarter {
 pub(crate) struct TestWorker {
     inner: Worker,
     pub core_worker: Arc<dyn CoreWorker>,
-    client: Option<Arc<RetryClient<Client>>>,
+    client: Option<Client>,
     pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
@@ -640,7 +637,7 @@ impl TestWorker {
 }
 
 pub(crate) struct TestWorkerSubmitterHandle {
-    client: Arc<RetryClient<Client>>,
+    client: Client,
     tq: String,
     started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
 }
@@ -680,7 +677,7 @@ impl TestWorkerSubmitterHandle {
 }
 
 pub(crate) enum TestWorkerShutdownCond {
-    GetResults(Vec<WorkflowExecutionInfo>, Arc<RetryClient<Client>>),
+    GetResults(Vec<WorkflowExecutionInfo>, Client),
     NoAutoShutdown,
 }
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
@@ -702,7 +699,7 @@ impl TestWorkerCompletionIceptor {
         if let TestWorkerShutdownCond::GetResults(ref mut wfs, ref client) = self.condition {
             let wfs = std::mem::take(wfs);
             let shutdown_h = self.shutdown_handle.clone();
-            let client = (**client).clone();
+            let client = client.clone();
             let stream = stream::iter(
                 wfs.into_iter()
                     .map(move |info| info.bind_untyped(client.clone())),
@@ -747,8 +744,8 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
     }
 }
 
-/// Returns the client options used to connect to the server used for integration tests.
-pub(crate) fn get_integ_server_options() -> ClientOptions {
+/// Returns the connection options used to connect to the server used for integration tests.
+pub(crate) fn get_integ_server_options() -> ConnectionOptions {
     let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
@@ -757,14 +754,32 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
         .map(|key_file| std::fs::read_to_string(key_file).unwrap());
     let tls_cfg = get_integ_tls_config();
 
-    ClientOptions::builder()
+    ConnectionOptions::new(url)
         .identity(INTEG_CLIENT_IDENTITY.to_string())
-        .target_url(url)
         .client_name(INTEG_CLIENT_NAME.to_string())
         .client_version(INTEG_CLIENT_VERSION.to_string())
         .maybe_api_key(api_key)
         .maybe_tls_options(tls_cfg)
         .build()
+}
+
+/// Helper to create a connection using the default integ test options
+pub(crate) async fn get_integ_connection(
+    meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
+) -> Connection {
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = meter;
+    Connection::connect(opts).await.expect("Must connect")
+}
+
+/// Helper to create a namespaced client using the default integ test options
+pub(crate) async fn get_integ_client(
+    namespace: String,
+    meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
+) -> Client {
+    let connection = get_integ_connection(meter).await;
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
+    Client::new(connection, client_opts)
 }
 
 pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
@@ -841,7 +856,7 @@ pub(crate) trait WorkflowHandleExt {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<R> WorkflowHandleExt for WorkflowHandle<RetryClient<Client>, R>
+impl<R> WorkflowHandleExt for WorkflowHandle<Client, R>
 where
     R: FromPayloadsExt,
 {

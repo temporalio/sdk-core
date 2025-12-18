@@ -1,6 +1,6 @@
-use crate::common::{CoreWfStarter, NAMESPACE, get_integ_server_options};
+use crate::common::{CoreWfStarter, NAMESPACE, get_integ_connection};
 use std::time::Duration;
-use temporalio_client::WorkflowClientTrait;
+use temporalio_client::{Client, WorkflowClientTrait};
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
 
@@ -33,10 +33,9 @@ async fn eager_wf_start_different_clients() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), eager_wf);
 
-    let client = get_integ_server_options()
-        .connect(NAMESPACE.to_string(), None)
-        .await
-        .expect("Should connect");
+    let connection = get_integ_connection(None).await;
+    let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
+    let client = Client::new(connection, client_opts);
     let w = starter.get_worker().await;
     let res = client
         .start_workflow(

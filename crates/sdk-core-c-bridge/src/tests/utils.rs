@@ -4,7 +4,7 @@ use crate::{
     runtime::{Runtime, temporal_core_byte_array_free},
 };
 use std::ops::Deref;
-use temporalio_client::ClientOptions;
+use temporalio_client::ConnectionOptions;
 use temporalio_sdk_core::ephemeral_server::{TemporalDevServerConfig, default_cached_download};
 use url::Url;
 
@@ -34,9 +34,8 @@ pub fn default_server_config() -> TemporalDevServerConfig {
         .build()
 }
 
-pub fn default_client_options(target: &str) -> ClientOptions {
-    ClientOptions::builder()
-        .target_url(Url::parse(&format!("http://{target}")).unwrap())
+pub fn default_connection_options(target: &str) -> ConnectionOptions {
+    ConnectionOptions::new(Url::parse(&format!("http://{target}")).unwrap())
         .client_name("core-c-bridge-tests".to_owned())
         .client_version("0.1.0".to_owned())
         .build()

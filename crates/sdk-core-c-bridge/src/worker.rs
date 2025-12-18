@@ -1,5 +1,6 @@
 use crate::{
-    ByteArray, ByteArrayRef, ByteArrayRefArray, UserDataHandle, client::Client, runtime::Runtime,
+    ByteArray, ByteArrayRef, ByteArrayRefArray, UserDataHandle, client::Connection,
+    runtime::Runtime,
 };
 use anyhow::{Context, bail};
 use crossbeam_utils::atomic::AtomicCell;
@@ -563,43 +564,45 @@ macro_rules! enter_sync {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_worker_new(
-    client: *mut Client,
+    connection: *mut Connection,
     options: *const WorkerOptions,
 ) -> WorkerOrFail {
-    let client = unsafe { &mut *client };
-    enter_sync!(client.runtime);
+    let connection = unsafe { &mut *connection };
+    enter_sync!(connection.runtime);
     let options = unsafe { &*options };
 
     let (worker, fail) = match options.try_into() {
         Err(err) => (
             std::ptr::null_mut(),
-            client
+            connection
                 .runtime
                 .alloc_utf8(&format!("Invalid options: {err}"))
                 .into_raw()
                 .cast_const(),
         ),
-        Ok(config) => match temporalio_sdk_core::init_worker(
-            &client.runtime.core,
-            config,
-            client.core.clone().into_inner(),
-        ) {
-            Err(err) => (
-                std::ptr::null_mut(),
-                client
-                    .runtime
-                    .alloc_utf8(&format!("Worker start failed: {err}"))
-                    .into_raw()
-                    .cast_const(),
-            ),
-            Ok(worker) => (
-                Box::into_raw(Box::new(Worker {
-                    worker: Some(Arc::new(worker)),
-                    runtime: client.runtime.clone(),
-                })),
-                std::ptr::null(),
-            ),
-        },
+        Ok(config) => {
+            match temporalio_sdk_core::init_worker(
+                &connection.runtime.core,
+                config,
+                connection.core.clone(),
+            ) {
+                Err(err) => (
+                    std::ptr::null_mut(),
+                    connection
+                        .runtime
+                        .alloc_utf8(&format!("Worker start failed: {err}"))
+                        .into_raw()
+                        .cast_const(),
+                ),
+                Ok(worker) => (
+                    Box::into_raw(Box::new(Worker {
+                        worker: Some(Arc::new(worker)),
+                        runtime: connection.runtime.clone(),
+                    })),
+                    std::ptr::null(),
+                ),
+            }
+        }
     };
     WorkerOrFail { worker, fail }
 }
@@ -646,14 +649,14 @@ pub extern "C" fn temporal_core_worker_validate(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_worker_replace_client(
     worker: *mut Worker,
-    new_client: *mut Client,
+    new_connection: *mut Connection,
 ) -> *const ByteArray {
     let worker = unsafe { &*worker };
     enter_sync!(worker.runtime);
     let core_worker = worker.worker.as_ref().expect("missing worker").clone();
-    let client = unsafe { &*new_client };
+    let client = unsafe { &*new_connection };
 
-    match core_worker.replace_client(client.core.get_client().clone()) {
+    match core_worker.replace_client(client.core.clone()) {
         Ok(()) => std::ptr::null(),
         Err(err) => worker
             .runtime

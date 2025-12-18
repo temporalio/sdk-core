@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, RetryClient, WfClientExt, WorkflowClientTrait, WorkflowService,
+    Client, NamespacedClient, WfClientExt, WorkflowClientTrait, WorkflowService,
 };
 use temporalio_common::{
     prost_dur,
@@ -64,11 +64,8 @@ fn to_system_time(ts: Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(ts.seconds as u64, ts.nanos as u32)
 }
 
-async fn list_worker_heartbeats(
-    client: &Arc<RetryClient<Client>>,
-    query: impl Into<String>,
-) -> Vec<WorkerHeartbeat> {
-    let mut raw_client = client.as_ref().clone();
+async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Vec<WorkerHeartbeat> {
+    let mut raw_client = client.clone();
     WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {
@@ -185,7 +182,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         tokio::time::sleep(Duration::from_millis(1500)).await;
         acts_started.notified().await;
         let client = starter.get_client().await;
-        let mut raw_client = (*client).clone();
+        let mut raw_client = client.clone();
         let workers_list = WorkflowService::list_workers(
             &mut raw_client,
             ListWorkersRequest {
@@ -225,7 +222,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     tokio::join!(test_fut, runner);
 
     let client = starter.get_client().await;
-    let mut raw_client = (*client).clone();
+    let mut raw_client = client.clone();
     let workers_list = WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {
@@ -322,7 +319,7 @@ async fn docker_worker_heartbeat_tuner() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let mut raw_client = (*client).clone();
+    let mut raw_client = client.clone();
     let workers_list = WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {
@@ -715,7 +712,7 @@ async fn worker_heartbeat_multiple_workers() {
     assert_eq!(filtered[0].worker_instance_key, worker_a_key);
 
     // Verify describe worker gives the same heartbeat as listworker
-    let mut raw_client = client.as_ref().clone();
+    let mut raw_client = client.clone();
     let describe_worker_a = WorkflowService::describe_worker(
         &mut raw_client,
         DescribeWorkerRequest {
@@ -823,7 +820,7 @@ async fn worker_heartbeat_failure_metrics() {
         let client = starter.get_client().await;
         eventually(
             || async {
-                let mut raw_client = (*client).clone();
+                let mut raw_client = client.clone();
 
                 let workers_list = WorkflowService::list_workers(
                     &mut raw_client,
@@ -869,7 +866,7 @@ async fn worker_heartbeat_failure_metrics() {
 
         eventually(
             || async {
-                let mut raw_client = (*client).clone();
+                let mut raw_client = client.clone();
                 let workers_list = WorkflowService::list_workers(
                     &mut raw_client,
                     ListWorkersRequest {
@@ -971,7 +968,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
 
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let mut raw_client = (*client).clone();
+    let mut raw_client = client.clone();
     let workers_list = WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {
@@ -1033,7 +1030,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
 
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let mut raw_client = (*client).clone();
+    let mut raw_client = client.clone();
     let workers_list = WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {

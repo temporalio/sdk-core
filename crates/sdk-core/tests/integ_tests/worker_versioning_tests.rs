@@ -74,7 +74,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         let desc_resp = eventually(
             async || {
                 client
-                    .get_client()
+                    .connection()
                     .clone()
                     .describe_worker_deployment(
                         DescribeWorkerDeploymentRequest {
@@ -93,7 +93,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
 
         #[allow(deprecated)]
         client
-            .get_client()
+            .connection()
             .clone()
             .set_worker_deployment_current_version(
                 SetWorkerDeploymentCurrentVersionRequest {
@@ -179,7 +179,7 @@ async fn activity_has_deployment_stamp() {
         let desc_resp = eventually(
             async || {
                 client
-                    .get_client()
+                    .connection()
                     .clone()
                     .describe_worker_deployment(
                         DescribeWorkerDeploymentRequest {
@@ -198,7 +198,7 @@ async fn activity_has_deployment_stamp() {
 
         #[allow(deprecated)]
         client
-            .get_client()
+            .connection()
             .clone()
             .set_worker_deployment_current_version(
                 SetWorkerDeploymentCurrentVersionRequest {
