@@ -63,7 +63,6 @@ async fn reset_workflow() {
         .unwrap();
 
     let mut client = starter.get_client().await;
-    let client = Arc::make_mut(&mut client);
     let resetter_fut = async {
         notify.notified().await;
         // Do the reset
@@ -88,7 +87,7 @@ async fn reset_workflow() {
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
         WorkflowClientTrait::signal_workflow_execution(
-            client,
+            &client,
             wf_name.to_owned(),
             "".to_owned(),
             POST_RESET_SIG.to_owned(),
@@ -186,11 +185,10 @@ async fn reset_randomseed() {
         .unwrap();
 
     let mut client = starter.get_client().await;
-    let client = Arc::make_mut(&mut client);
     let client_fur = async {
         notify.notified().await;
         WorkflowClientTrait::signal_workflow_execution(
-            client,
+            &client,
             wf_name.to_owned(),
             run_id.clone(),
             POST_FAIL_SIG.to_string(),
@@ -221,7 +219,7 @@ async fn reset_randomseed() {
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
         WorkflowClientTrait::signal_workflow_execution(
-            client,
+            &client,
             wf_name.to_owned(),
             "".to_owned(),
             POST_RESET_SIG.to_owned(),

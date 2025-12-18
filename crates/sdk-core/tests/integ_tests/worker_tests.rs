@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::WorkflowOptions;
+use temporalio_client::{Connection, WorkflowOptions};
 use temporalio_common::{
     Worker,
     errors::WorkerValidationError,
@@ -73,14 +73,12 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn worker_validation_fails_on_nonexistent_namespace() {
-    let opts = get_integ_server_options();
+    let mut opts = get_integ_server_options();
     let runtime =
         CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
             .unwrap();
-    let retrying_client = opts
-        .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
+    opts.metrics_meter = runtime.telemetry().get_temporal_metric_meter();
+    let connection = Connection::connect(opts).await.unwrap();
 
     let worker = init_worker(
         &runtime,
@@ -93,7 +91,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
             .task_types(WorkerTaskTypes::all())
             .build()
             .unwrap(),
-        retrying_client,
+        connection,
     )
     .unwrap();
 
@@ -907,12 +905,13 @@ async fn shutdown_worker_not_retried() {
     .await;
 
     let mut opts = get_integ_server_options();
-    let uri = format!("http://localhost:{}", fs.addr.port())
-        .parse()
+    opts.target = format!("http://localhost:{}", fs.addr.port())
+        .parse::<url::Url>()
         .unwrap();
-    opts.target_url = uri;
-    opts.skip_get_system_info = true;
-    let client = opts.connect("ns", None).await.unwrap();
+    opts.set_skip_get_system_info(true);
+    let connection = Connection::connect(opts).await.unwrap();
+    let client_opts = temporalio_client::ClientOptions::new("ns").build();
+    let client = temporalio_client::Client::new(connection, client_opts);
 
     let wf_type = "shutdown_worker_not_retried";
     let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));

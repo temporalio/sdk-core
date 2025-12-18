@@ -35,8 +35,7 @@ pub mod test_help;
 pub(crate) use temporalio_common::errors;
 
 pub use pollers::{
-    Client, ClientOptions, ClientTlsOptions, RetryClient, RetryOptions, TlsOptions,
-    WorkflowClientTrait,
+    Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions, WorkflowClientTrait,
 };
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
@@ -61,7 +60,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{ConfiguredClient, NamespacedClient, SharedReplaceableClient};
+use temporalio_client::{Connection, SharedReplaceableClient};
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
@@ -75,43 +74,34 @@ use temporalio_common::{
 /// After the worker is initialized, you should use [CoreRuntime::tokio_handle] to run the worker's
 /// async functions.
 ///
-/// Lang implementations may pass in a [ConfiguredClient] directly (or a
-/// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
-/// this function will always overwrite the client retry configuration, force the client to use the
-/// namespace defined in the worker config, and set the client identity appropriately. IE: Use
-/// [ClientOptions::connect_no_namespace], not [ClientOptions::connect].
-pub fn init_worker<CT>(
+/// Lang implementations must pass in a [Client] When they do so, this function will always
+/// overwrite the client retry configuration, force the client to use the namespace defined in the
+/// worker config, and set the client identity appropriately.
+pub fn init_worker(
     runtime: &CoreRuntime,
     worker_config: WorkerConfig,
-    client: CT,
-) -> Result<Worker, anyhow::Error>
-where
-    CT: Into<sealed::AnyClient>,
-{
+    mut connection: Connection,
+) -> Result<Worker, anyhow::Error> {
     let namespace = worker_config.namespace.clone();
     if namespace.is_empty() {
         bail!("Worker namespace cannot be empty");
     }
 
-    let client = RetryClient::new(
-        SharedReplaceableClient::new(init_worker_client(
-            worker_config.namespace.clone(),
-            worker_config.client_identity_override.clone(),
-            client,
-        )),
-        RetryOptions::default(),
+    *connection.retry_options_mut() = RetryOptions::default();
+    init_worker_client(
+        &mut connection,
+        worker_config.client_identity_override.clone(),
     );
-    let client_ident = client.identity();
-    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
-
+    let client = SharedReplaceableClient::new(connection);
+    let client_ident = client.inner_cow().identity().to_owned();
     if client_ident.is_empty() {
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
+    let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         namespace.clone(),
-        client_ident.clone(),
         worker_config.versioning_strategy.clone(),
     ));
 
@@ -141,19 +131,13 @@ where
     rwi.into_core_worker()
 }
 
-pub(crate) fn init_worker_client<CT>(
-    namespace: String,
+pub(crate) fn init_worker_client(
+    connection: &mut Connection,
     client_identity_override: Option<String>,
-    client: CT,
-) -> Client
-where
-    CT: Into<sealed::AnyClient>,
-{
-    let mut client = Client::new(*client.into().into_inner(), namespace.clone());
+) {
     if let Some(ref id_override) = client_identity_override {
-        client.options_mut().identity.clone_from(id_override);
+        connection.identity_mut().clone_from(id_override);
     }
-    client
 }
 
 /// Creates a unique sticky queue name for a worker, iff the config allows for 1 or more cached
@@ -173,63 +157,6 @@ pub(crate) fn sticky_q_name_for_worker(
     }
 }
 
-mod sealed {
-    use super::*;
-    use temporalio_client::{SharedReplaceableClient, TemporalServiceClient};
-
-    /// Allows passing different kinds of clients into things that want to be flexible. Motivating
-    /// use-case was worker initialization.
-    ///
-    /// Needs to exist in this crate to avoid blanket impl conflicts.
-    pub struct AnyClient {
-        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClient>>,
-    }
-    impl AnyClient {
-        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClient>> {
-            self.inner
-        }
-    }
-
-    impl From<ConfiguredClient<TemporalServiceClient>> for AnyClient {
-        fn from(c: ConfiguredClient<TemporalServiceClient>) -> Self {
-            Self { inner: Box::new(c) }
-        }
-    }
-
-    impl From<Client> for AnyClient {
-        fn from(c: Client) -> Self {
-            c.into_inner().into()
-        }
-    }
-
-    impl<T> From<RetryClient<T>> for AnyClient
-    where
-        T: Into<AnyClient>,
-    {
-        fn from(c: RetryClient<T>) -> Self {
-            c.into_inner().into()
-        }
-    }
-
-    impl<T> From<SharedReplaceableClient<T>> for AnyClient
-    where
-        T: Into<AnyClient> + Clone + Send + Sync,
-    {
-        fn from(c: SharedReplaceableClient<T>) -> Self {
-            c.inner_clone().into()
-        }
-    }
-
-    impl<T> From<Arc<T>> for AnyClient
-    where
-        T: Into<AnyClient> + Clone,
-    {
-        fn from(c: Arc<T>) -> Self {
-            Arc::unwrap_or_clone(c).into()
-        }
-    }
-}
-
 /// Holds shared state/components needed to back instances of workers and clients. More than one
 /// may be instantiated, but typically only one is needed. More than one runtime instance may be
 /// useful if multiple different telemetry settings are required.
@@ -240,7 +167,8 @@ pub struct CoreRuntime {
     heartbeat_interval: Option<Duration>,
 }
 
-/// Holds telemetry options, as well as worker heartbeat_interval. Construct with [RuntimeOptions::builder]
+/// Holds telemetry options, as well as worker heartbeat_interval. Construct with
+/// [RuntimeOptions::builder]
 #[derive(Default, bon::Builder)]
 #[builder(finish_fn(vis = "", name = build_internal))]
 #[non_exhaustive]
