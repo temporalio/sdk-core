@@ -1,8 +1,8 @@
 use crate::{
     client::{
         ClientHttpConnectProxyOptions, ClientKeepAliveOptions, ClientRetryOptions,
-        ClientTlsOptions, Connection, RpcCallOptions, temporal_core_client_connect,
-        temporal_core_client_free, temporal_core_client_rpc_call,
+        ClientTlsOptions, Connection, GrpcMetadataHolder, RpcCallOptions,
+        temporal_core_client_connect, temporal_core_client_free, temporal_core_client_rpc_call,
     },
     runtime::{
         Runtime, RuntimeOptions, RuntimeOrFail, temporal_core_byte_array_free,

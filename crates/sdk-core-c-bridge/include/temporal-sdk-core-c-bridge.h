@@ -843,7 +843,7 @@ void temporal_core_client_free(struct TemporalCoreConnection *client);
 void temporal_core_client_update_metadata(struct TemporalCoreConnection *client,
                                           TemporalCoreMetadataRef metadata);
 
-void temporal_core_client_update_binary_metadata(TemporalCoreClient *client,
+void temporal_core_client_update_binary_metadata(struct TemporalCoreConnection *client,
                                                  TemporalCoreMetadataRef metadata);
 
 void temporal_core_client_update_api_key(struct TemporalCoreConnection *client,
