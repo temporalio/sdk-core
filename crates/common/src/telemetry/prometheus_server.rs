@@ -19,7 +19,7 @@ pub struct StartedPromServer {
 }
 
 /// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
-/// Returns the meter that can be used as a [`CoreMeter`](temporalio_common::telemetry::metrics::CoreMeter).
+/// Returns the meter that can be used as a [`CoreMeter`](crate::telemetry::metrics::CoreMeter).
 ///
 /// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
 pub fn start_prometheus_metric_exporter(

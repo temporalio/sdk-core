@@ -3,14 +3,15 @@ use crate::TelemetryInstance;
 use crate::abstractions::dbg_panic;
 
 use std::{
+    collections::HashMap,
     fmt::{Debug, Display},
     iter::Iterator,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicU64},
     time::Duration,
 };
 use temporalio_common::{
     protos::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
-    telemetry::metrics::*,
+    telemetry::metrics::{core::*, *},
 };
 
 pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
@@ -21,8 +22,7 @@ pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 /// Used to track context associated with metrics, and record/update them
 #[derive(Clone)]
 pub(crate) struct MetricsContext {
-    meter: Arc<dyn CoreMeter>,
-    kvs: MetricAttributes,
+    meter: TemporalMeter,
     instruments: Arc<Instruments>,
     in_memory_metrics: Option<Arc<WorkerHeartbeatMetrics>>,
 }
@@ -68,12 +68,10 @@ struct Instruments {
 
 impl MetricsContext {
     pub(crate) fn no_op() -> Self {
-        let meter = Arc::new(NoOpCoreMeter);
-        let kvs = meter.new_attributes(Default::default());
+        let meter = TemporalMeter::no_op();
         let in_memory_metrics = Some(Arc::new(WorkerHeartbeatMetrics::default()));
-        let instruments = Arc::new(Instruments::new(meter.as_ref(), in_memory_metrics.clone()));
+        let instruments = Arc::new(Instruments::new(&meter, in_memory_metrics.clone()));
         Self {
-            kvs,
             instruments,
             meter,
             in_memory_metrics,
@@ -91,19 +89,17 @@ impl MetricsContext {
         temporal_meter: Option<TemporalMeter>,
     ) -> Self {
         if let Some(mut meter) = temporal_meter {
-            meter
-                .default_attribs
-                .attributes
-                .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
-            meter.default_attribs.attributes.push(task_queue(tq));
-            let kvs = meter.inner.new_attributes(meter.default_attribs);
+            let addtl_attributes = [
+                MetricKeyValue::new(KEY_NAMESPACE, namespace),
+                task_queue(tq),
+            ];
+            meter.merge_attributes(addtl_attributes.into());
             let in_memory_metrics = Some(Arc::new(WorkerHeartbeatMetrics::default()));
-            let mut instruments = Instruments::new(meter.inner.as_ref(), in_memory_metrics.clone());
-            instruments.update_attributes(&kvs);
+            let mut instruments = Instruments::new(&meter, in_memory_metrics.clone());
+            instruments.update_attributes(meter.get_default_attributes());
             Self {
-                kvs,
                 instruments: Arc::new(instruments),
-                meter: meter.inner,
+                meter,
                 in_memory_metrics,
             }
         } else {
@@ -116,14 +112,12 @@ impl MetricsContext {
         &self,
         new_attrs: impl IntoIterator<Item = MetricKeyValue>,
     ) -> Self {
-        let kvs = self
-            .meter
-            .extend_attributes(self.kvs.clone(), new_attrs.into());
+        let mut tm = self.meter.clone();
+        tm.merge_attributes(new_attrs.into());
         let mut instruments = (*self.instruments).clone();
-        instruments.update_attributes(&kvs);
+        instruments.update_attributes(tm.get_default_attributes());
         Self {
             instruments: Arc::new(instruments),
-            kvs,
             meter: self.meter.clone(),
             in_memory_metrics: self.in_memory_metrics.clone(),
         }
@@ -308,7 +302,7 @@ impl MetricsContext {
 }
 
 impl Instruments {
-    fn new(meter: &dyn CoreMeter, in_memory: Option<Arc<WorkerHeartbeatMetrics>>) -> Self {
+    fn new(meter: &TemporalMeter, in_memory: Option<Arc<WorkerHeartbeatMetrics>>) -> Self {
         let counter_with_in_mem = |params: MetricParameters| -> Counter {
             in_memory
                 .clone()
@@ -590,6 +584,127 @@ impl Instruments {
     }
 }
 
+#[derive(Default, Debug)]
+pub(crate) struct NumPollersMetric {
+    pub wft_current_pollers: Arc<AtomicU64>,
+    pub sticky_wft_current_pollers: Arc<AtomicU64>,
+    pub activity_current_pollers: Arc<AtomicU64>,
+    pub nexus_current_pollers: Arc<AtomicU64>,
+}
+
+impl NumPollersMetric {
+    pub(crate) fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
+        HashMap::from([
+            (
+                "workflow_task".to_string(),
+                self.wft_current_pollers.clone(),
+            ),
+            (
+                "sticky_workflow_task".to_string(),
+                self.sticky_wft_current_pollers.clone(),
+            ),
+            (
+                "activity_task".to_string(),
+                self.activity_current_pollers.clone(),
+            ),
+            ("nexus_task".to_string(), self.nexus_current_pollers.clone()),
+        ])
+    }
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct SlotMetrics {
+    pub workflow_worker: Arc<AtomicU64>,
+    pub activity_worker: Arc<AtomicU64>,
+    pub nexus_worker: Arc<AtomicU64>,
+    pub local_activity_worker: Arc<AtomicU64>,
+}
+
+impl SlotMetrics {
+    pub(crate) fn as_map(&self) -> HashMap<String, Arc<AtomicU64>> {
+        HashMap::from([
+            ("WorkflowWorker".to_string(), self.workflow_worker.clone()),
+            ("ActivityWorker".to_string(), self.activity_worker.clone()),
+            ("NexusWorker".to_string(), self.nexus_worker.clone()),
+            (
+                "LocalActivityWorker".to_string(),
+                self.local_activity_worker.clone(),
+            ),
+        ])
+    }
+}
+
+#[derive(Default, Debug)]
+pub(crate) struct WorkerHeartbeatMetrics {
+    pub sticky_cache_size: Arc<AtomicU64>,
+    pub total_sticky_cache_hit: Arc<AtomicU64>,
+    pub total_sticky_cache_miss: Arc<AtomicU64>,
+    pub num_pollers: NumPollersMetric,
+    pub worker_task_slots_used: SlotMetrics,
+    pub worker_task_slots_available: SlotMetrics,
+    pub workflow_task_execution_failed: Arc<AtomicU64>,
+    pub activity_execution_failed: Arc<AtomicU64>,
+    pub nexus_task_execution_failed: Arc<AtomicU64>,
+    pub local_activity_execution_failed: Arc<AtomicU64>,
+    pub activity_execution_latency: Arc<AtomicU64>,
+    pub local_activity_execution_latency: Arc<AtomicU64>,
+    pub workflow_task_execution_latency: Arc<AtomicU64>,
+    pub nexus_task_execution_latency: Arc<AtomicU64>,
+}
+
+impl WorkerHeartbeatMetrics {
+    pub(crate) fn get_metric(&self, name: &str) -> Option<HeartbeatMetricType> {
+        match name {
+            "sticky_cache_size" => Some(HeartbeatMetricType::Individual(
+                self.sticky_cache_size.clone(),
+            )),
+            "sticky_cache_hit" => Some(HeartbeatMetricType::Individual(
+                self.total_sticky_cache_hit.clone(),
+            )),
+            "sticky_cache_miss" => Some(HeartbeatMetricType::Individual(
+                self.total_sticky_cache_miss.clone(),
+            )),
+            "num_pollers" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "poller_type".to_string(),
+                metrics: self.num_pollers.as_map(),
+            }),
+            "worker_task_slots_used" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_used.as_map(),
+            }),
+            "worker_task_slots_available" => Some(HeartbeatMetricType::WithLabel {
+                label_key: "worker_type".to_string(),
+                metrics: self.worker_task_slots_available.as_map(),
+            }),
+            "workflow_task_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.workflow_task_execution_failed.clone(),
+            )),
+            "activity_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.activity_execution_failed.clone(),
+            )),
+            "nexus_task_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.nexus_task_execution_failed.clone(),
+            )),
+            "local_activity_execution_failed" => Some(HeartbeatMetricType::Individual(
+                self.local_activity_execution_failed.clone(),
+            )),
+            "activity_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.activity_execution_latency.clone(),
+            )),
+            "local_activity_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.local_activity_execution_latency.clone(),
+            )),
+            "workflow_task_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.workflow_task_execution_latency.clone(),
+            )),
+            "nexus_task_execution_latency" => Some(HeartbeatMetricType::Individual(
+                self.nexus_task_execution_latency.clone(),
+            )),
+            _ => None,
+        }
+    }
+}
+
 const KEY_NAMESPACE: &str = "namespace";
 const KEY_WF_TYPE: &str = "workflow_type";
 const KEY_TASK_QUEUE: &str = "task_queue";
@@ -803,7 +918,10 @@ where
     fn send(&self, value: MetricUpdateVal, attributes: &MetricAttributes) {
         let attributes = match attributes {
             MetricAttributes::Buffer(l) => l.clone(),
-            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Buffer"),
+            e => panic!(
+                "MetricsCallBuffer only works with MetricAttributes::Buffer, but used: {:?}",
+                e
+            ),
         };
         self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),
@@ -969,7 +1087,7 @@ mod tests {
     use std::any::Any;
     use temporalio_common::telemetry::{
         TelemetryOptions,
-        metrics::{BufferInstrumentRef, CustomMetricAttributes},
+        metrics::core::{BufferInstrumentRef, CustomMetricAttributes},
         telemetry_init,
     };
 
@@ -1015,17 +1133,27 @@ mod tests {
                 append_from: None,
                 attributes,
             }
-            if attributes[0].key == "service_name" &&
-               attributes[1].key == "namespace" &&
-               attributes[2].key == "task_queue"
+            if attributes[0].key == "service_name"
+            => populate_into
+        );
+        let a2 = assert_matches!(
+            &events[1],
+            MetricEvent::CreateAttributes {
+                populate_into,
+                append_from: Some(_),
+                attributes,
+            }
+            if attributes[0].key == "namespace" &&
+               attributes[1].key == "task_queue"
             => populate_into
         );
         a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
+        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
         let num_metrics = 35;
         #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
-        for metric_num in 1..=num_metrics {
+        for metric_num in 2..=num_metrics + 1 {
             let hole = assert_matches!(&events[metric_num],
                 MetricEvent::Create { populate_into, .. }
                 => populate_into
@@ -1033,18 +1161,19 @@ mod tests {
             hole.set(Arc::new(DummyInstrumentRef(metric_num))).unwrap();
         }
         assert_matches!(
-            &events[num_metrics + 1], // +1 for attrib creation (at start), then this update
+            &events[num_metrics + 2], // +2 for attrib creation (at start), then this update
             MetricEvent::Update {
                 instrument,
                 attributes,
                 update: MetricUpdateVal::Delta(1)
             }
-            if DummyCustomAttrs::as_id(attributes) == 1 && instrument.get().0 == num_metrics
+            if DummyCustomAttrs::as_id(attributes) == 2 && instrument.get().0 == num_metrics + 1
         );
         // Verify creating a new context with new attributes merges them properly
         let mc2 = mc.with_new_attrs([MetricKeyValue::new("gotta", "go fast")]);
         mc2.wf_task_latency(Duration::from_secs(1));
         let events = call_buffer.retrieve();
+        dbg!(&events);
         let a2 = assert_matches!(
             &events[0],
             MetricEvent::CreateAttributes {
@@ -1052,11 +1181,10 @@ mod tests {
                 append_from: Some(eh),
                 attributes
             }
-            if attributes[0].key == "gotta" && DummyCustomAttrs::as_id(eh) == 1
+            if attributes[0].key == "gotta" && DummyCustomAttrs::as_id(eh) == 2
             => populate_into
         );
-        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
-        dbg!(&events);
+        a2.set(Arc::new(DummyCustomAttrs(3))).unwrap();
         assert_matches!(
             &events[1],
             MetricEvent::Update {
@@ -1064,7 +1192,7 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Duration(d)
             }
-            if DummyCustomAttrs::as_id(attributes) == 2 && instrument.get().0 == 11
+            if DummyCustomAttrs::as_id(attributes) == 3 && instrument.get().0 == 12
                && d == &Duration::from_secs(1)
         );
     }

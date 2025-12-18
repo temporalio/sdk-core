@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_common::{
-    telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
+    telemetry::metrics::{GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotInfo, SlotInfoTrait, SlotKind,
         SlotKindType, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
@@ -236,7 +236,7 @@ impl MetricInstruments {
         let cpu_usage = meter.gauge_f64("resource_slots_cpu_usage".into());
         let mem_pid_output = meter.gauge_f64("resource_slots_mem_pid_output".into());
         let cpu_pid_output = meter.gauge_f64("resource_slots_cpu_pid_output".into());
-        let attribs = meter.inner.new_attributes(meter.default_attribs);
+        let attribs = meter.get_default_attributes().clone();
         Self {
             attribs,
             mem_usage,

@@ -34,8 +34,8 @@ use crate::{
     pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
     telemetry::metrics::{
-        MetricsContext, activity_poller, activity_worker_type, local_activity_worker_type,
-        nexus_poller, nexus_worker_type, workflow_worker_type,
+        MetricsContext, WorkerHeartbeatMetrics, activity_poller, activity_worker_type,
+        local_activity_worker_type, nexus_poller, nexus_worker_type, workflow_worker_type,
     },
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
@@ -86,7 +86,7 @@ use temporalio_common::{
             worker::v1::{WorkerHeartbeat, WorkerHostInfo, WorkerPollerInfo, WorkerSlotsInfo},
         },
     },
-    telemetry::metrics::{TemporalMeter, WorkerHeartbeatMetrics},
+    telemetry::metrics::TemporalMeter,
     worker::{
         ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind,
         WorkerTaskTypes, WorkflowSlotKind,

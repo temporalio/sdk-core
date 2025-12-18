@@ -139,8 +139,8 @@ async fn prometheus_metrics_exported(
     assert!(body.contains("temporal_request{"));
     // Verify non-temporal metrics meter does not prefix
     let mm = rt.telemetry().get_metric_meter().unwrap();
-    let g = mm.inner.gauge(MetricParameters::from("mygauge"));
-    let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
+    let g = mm.gauge(MetricParameters::from("mygauge"));
+    let attrs = mm.new_attributes(NewAttributes::new(vec![]));
     g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("\nmygauge{global=\"hi!\"} 42"));
