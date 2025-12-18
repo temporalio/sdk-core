@@ -21,11 +21,12 @@ mod workflow_handle;
 
 pub use crate::{
     proxy::HttpConnectProxyOptions,
-    retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient},
+    retry::{CallType, RETRYABLE_ERROR_CODES},
 };
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
+pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
     GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
@@ -39,16 +40,14 @@ use crate::{
     worker::ClientWorkerSet,
     workflow_handle::UntypedWorkflowHandle,
 };
-use backoff::{ExponentialBackoff, SystemClock, exponential};
 use http::{Uri, uri::InvalidUri};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
-    ops::{Deref, DerefMut},
     str::FromStr,
     sync::{Arc, OnceLock},
-    time::{Duration, Instant},
+    time::Duration,
 };
 use temporalio_common::{
     protos::{
@@ -104,78 +103,303 @@ pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
-/// Options for the connection to the temporal server. Construct with [ClientOptions::builder]
-#[derive(Clone, Debug, bon::Builder)]
+/// Options for [Connection::connect].
+#[derive(bon::Builder, Clone, Debug)]
 #[non_exhaustive]
-#[builder(on(String, into), state_mod(vis = "pub"))]
-pub struct ClientOptions {
-    /// The URL of the Temporal server to connect to
-    #[builder(into)]
-    pub target_url: Url,
-
-    /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
-    /// all RPC calls
-    pub client_name: String,
-
-    /// The version of the SDK being implemented on top of core. Is set as `client-version` header
-    /// in all RPC calls. The server decides if the client is supported based on this.
-    pub client_version: String,
-
+#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
+pub struct ConnectionOptions {
+    /// The server to connect to.
+    #[builder(start_fn, into)]
+    pub target: Url,
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
     pub identity: String,
-
+    // TODO [rust-sdk-branch]: Telemetry needs to be moved to common
+    /// When set, this client will record metrics using the provided meter. The meter can be
+    /// obtained from TelemetryInstance::get_temporal_metric_meter
+    pub metrics_meter: Option<TemporalMeter>,
     /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
     pub tls_options: Option<TlsOptions>,
-
-    /// Retry configuration for the server client. Default is [RetryOptions::default]
-    #[builder(default)]
-    pub retry_options: RetryOptions,
-
     /// If set, override the origin used when connecting. May be useful in rare situations where tls
     /// verification needs to use a different name from what should be set as the `:authority`
     /// header. If [TlsOptions::domain] is set, and this is not, this will be set to
     /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
     /// override.
     pub override_origin: Option<Uri>,
-
+    /// An API key to use for auth. If set, TLS will be enabled by default, but without any mTLS
+    /// specific settings.
+    pub api_key: Option<String>,
+    /// Retry configuration for the server client. Default is [RetryOptions::default]
+    #[builder(default)]
+    pub retry_options: RetryOptions,
     /// If set, HTTP2 gRPC keep alive will be enabled.
-    /// To enable with default settings, use `.keep_alive(ClientKeepAliveConfig::default())`.
+    /// To enable with default settings, use `.keep_alive(Some(ClientKeepAliveConfig::default()))`.
     #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
     pub keep_alive: Option<ClientKeepAliveOptions>,
-
     /// HTTP headers to include on every RPC call.
     ///
     /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
-    /// `-bin). To set binary headers, use [ClientOptions::binary_headers]. Invalid header keys or
-    /// values will cause an error to be returned when connecting.
+    /// `-bin). To set binary headers, use [ConnectionOptions::binary_headers]. Invalid header keys
+    /// or values will cause an error to be returned when connecting.
     pub headers: Option<HashMap<String, String>>,
-
     /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
     ///
     /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix). Invalid
     /// header keys will cause an error to be returned when connecting.
     pub binary_headers: Option<HashMap<String, Vec<u8>>>,
-
-    /// API key which is set as the "Authorization" header with "Bearer " prepended. This will only
-    /// be applied if the headers don't already have an "Authorization" header.
-    pub api_key: Option<String>,
-
     /// HTTP CONNECT proxy to use for this client.
     pub http_connect_proxy: Option<HttpConnectProxyOptions>,
-
     /// If set true, error code labels will not be included on request failure metrics.
     #[builder(default)]
     pub disable_error_code_metric_tags: bool,
+    /// If set, all gRPC calls will be routed through the provided service.
+    pub service_override: Option<callback_based::CallbackBasedGrpcService>,
 
-    /// If set true, get_system_info will not be called upon connection
+    // TODO [rust-sdk-branch]: Put behind compile time flag
+    // Internal / Core-based SDK only options below =============================================
+    /// If set true, get_system_info will not be called upon connection.
     #[builder(default)]
-    pub skip_get_system_info: bool,
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    skip_get_system_info: bool,
+    /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
+    /// all RPC calls
+    #[builder(default = "temporal-rust".to_owned())]
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    client_name: String,
+    /// The version of the SDK being implemented on top of core. Is set as `client-version` header
+    /// in all RPC calls. The server decides if the client is supported based on this.
+    #[builder(default = VERSION.to_owned())]
+    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
+    client_version: String,
+}
+
+// Setters/getters for fields that should only be touched by SDK implementers.
+#[cfg(feature = "core-based-sdk")]
+impl ConnectionOptions {
+    /// Set whether or not get_system_info will be called upon connection.
+    pub fn set_skip_get_system_info(&mut self, skip: bool) {
+        self.skip_get_system_info = skip;
+    }
+    /// Get whether or not get_system_info will be called upon connection.
+    pub fn get_skip_get_system_info(&self) -> bool {
+        self.skip_get_system_info
+    }
+    /// Get the name of the SDK being implemented on top of core.
+    pub fn get_client_name(&self) -> &str {
+        &self.client_name
+    }
+    /// Get the version of the SDK being implemented on top of core.
+    pub fn get_client_version(&self) -> &str {
+        &self.client_version
+    }
+}
+
+/// A connection to the Temporal service.
+///
+/// Cloning a connection is cheap (single Arc increment). The underlying connection is shared
+/// between clones.
+#[derive(Clone)]
+pub struct Connection {
+    inner: Arc<ConnectionInner>,
+}
+
+#[derive(Clone)]
+struct ConnectionInner {
+    service: TemporalServiceClient,
+    retry_options: RetryOptions,
+    identity: String,
+    headers: Arc<RwLock<ClientHeaders>>,
+    client_name: String,
+    client_version: String,
+    /// Capabilities as read from the `get_system_info` RPC call made on client connection
+    capabilities: Option<get_system_info_response::Capabilities>,
+    workers: Arc<ClientWorkerSet>,
+}
+
+impl Connection {
+    /// Connect to a Temporal service.
+    pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientInitError> {
+        let service = if let Some(service_override) = options.service_override {
+            GrpcMetricSvc {
+                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
+                metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                disable_errcode_label: options.disable_error_code_metric_tags,
+            }
+        } else {
+            let channel = Channel::from_shared(options.target.to_string())?;
+            let channel = add_tls_to_channel(options.tls_options.as_ref(), channel).await?;
+            let channel = if let Some(keep_alive) = options.keep_alive.as_ref() {
+                channel
+                    .keep_alive_while_idle(true)
+                    .http2_keep_alive_interval(keep_alive.interval)
+                    .keep_alive_timeout(keep_alive.timeout)
+            } else {
+                channel
+            };
+            let channel = if let Some(origin) = options.override_origin.clone() {
+                channel.origin(origin)
+            } else {
+                channel
+            };
+            // If there is a proxy, we have to connect that way
+            let channel = if let Some(proxy) = options.http_connect_proxy.as_ref() {
+                proxy.connect_endpoint(&channel).await?
+            } else {
+                channel.connect().await?
+            };
+            ServiceBuilder::new()
+                .layer_fn(move |channel| GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::Channel(channel),
+                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: options.disable_error_code_metric_tags,
+                })
+                .service(channel)
+        };
+
+        let headers = Arc::new(RwLock::new(ClientHeaders {
+            user_headers: parse_ascii_headers(options.headers.clone().unwrap_or_default())?,
+            user_binary_headers: parse_binary_headers(
+                options.binary_headers.clone().unwrap_or_default(),
+            )?,
+            api_key: options.api_key.clone(),
+        }));
+        let interceptor = ServiceCallInterceptor {
+            client_name: options.client_name.clone(),
+            client_version: options.client_version.clone(),
+            headers: headers.clone(),
+        };
+        let svc = InterceptedService::new(service, interceptor);
+        let mut svc_client = TemporalServiceClient::new(svc);
+
+        let capabilities = if !options.skip_get_system_info {
+            match svc_client
+                .get_system_info(GetSystemInfoRequest::default().into_request())
+                .await
+            {
+                Ok(sysinfo) => sysinfo.into_inner().capabilities,
+                Err(status) => match status.code() {
+                    Code::Unimplemented => None,
+                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
+                },
+            }
+        } else {
+            None
+        };
+        Ok(Self {
+            inner: Arc::new(ConnectionInner {
+                service: svc_client,
+                retry_options: options.retry_options,
+                identity: options.identity,
+                headers,
+                client_name: options.client_name,
+                client_version: options.client_version,
+                capabilities,
+                workers: Arc::new(ClientWorkerSet::new()),
+            }),
+        })
+    }
+
+    /// Set API key, overwriting any previous one.
+    pub fn set_api_key(&self, api_key: Option<String>) {
+        self.inner.headers.write().api_key = api_key;
+    }
+
+    /// Set HTTP request headers overwriting previous headers.
+    ///
+    /// This will not affect headers set via [ConnectionOptions::binary_headers].
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if any of the provided keys or values are not valid gRPC metadata.
+    /// If an error is returned, the previous headers will remain unchanged.
+    pub fn set_headers(&self, headers: HashMap<String, String>) -> Result<(), InvalidHeaderError> {
+        self.inner.headers.write().user_headers = parse_ascii_headers(headers)?;
+        Ok(())
+    }
+
+    /// Set binary HTTP request headers overwriting previous headers.
+    ///
+    /// This will not affect headers set via [ConnectionOptions::headers].
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if any of the provided keys are not valid gRPC binary metadata keys.
+    /// If an error is returned, the previous headers will remain unchanged.
+    pub fn set_binary_headers(
+        &self,
+        binary_headers: HashMap<String, Vec<u8>>,
+    ) -> Result<(), InvalidHeaderError> {
+        self.inner.headers.write().user_binary_headers = parse_binary_headers(binary_headers)?;
+        Ok(())
+    }
+
+    /// Returns the value used for the `client-name` header by this connection.
+    pub fn client_name(&self) -> &str {
+        &self.inner.client_name
+    }
+
+    /// Returns the value used for the `client-version` header by this connection.
+    pub fn client_version(&self) -> &str {
+        &self.inner.client_version
+    }
+
+    /// Returns the server capabilities we (may have) learned about when establishing an initial
+    /// connection
+    pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
+        self.inner.capabilities.as_ref()
+    }
+
+    /// Get a mutable reference to the retry options.
+    ///
+    /// Note: If this connection has been cloned, this will copy-on-write to avoid
+    /// affecting other clones.
+    pub fn retry_options_mut(&mut self) -> &mut RetryOptions {
+        &mut Arc::make_mut(&mut self.inner).retry_options
+    }
+
+    /// Get a reference to the connection identity.
+    pub fn identity(&self) -> &str {
+        &self.inner.identity
+    }
+
+    /// Get a mutable reference to the connection identity.
+    ///
+    /// Note: If this connection has been cloned, this will copy-on-write to avoid
+    /// affecting other clones.
+    pub fn identity_mut(&mut self) -> &mut String {
+        &mut Arc::make_mut(&mut self.inner).identity
+    }
+
+    /// Returns a reference to a registry with workers using this client instance.
+    pub fn workers(&self) -> Arc<ClientWorkerSet> {
+        self.inner.workers.clone()
+    }
+
+    /// Returns the client-wide key.
+    pub fn worker_grouping_key(&self) -> Uuid {
+        self.inner.workers.worker_grouping_key()
+    }
+
+    /// Get the underlying cloud service client
+    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
+        self.inner.service.cloud_svc()
+    }
+}
+
+/// Options for [Client::new].
+#[derive(Clone, Debug, bon::Builder)]
+#[non_exhaustive]
+#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
+pub struct ClientOptions {
+    /// The namespace this client will be bound to.
+    #[builder(start_fn)]
+    pub namespace: String,
 }
 
 /// Configuration options for TLS
@@ -216,93 +440,6 @@ impl Default for ClientKeepAliveOptions {
             interval: Duration::from_secs(30),
             timeout: Duration::from_secs(15),
         }
-    }
-}
-
-/// Configuration for retrying requests to the server
-#[derive(Clone, Debug, PartialEq)]
-pub struct RetryOptions {
-    /// initial wait time before the first retry.
-    pub initial_interval: Duration,
-    /// randomization jitter that is used as a multiplier for the current retry interval
-    /// and is added or subtracted from the interval length.
-    pub randomization_factor: f64,
-    /// rate at which retry time should be increased, until it reaches max_interval.
-    pub multiplier: f64,
-    /// maximum amount of time to wait between retries.
-    pub max_interval: Duration,
-    /// maximum total amount of time requests should be retried for, if None is set then no limit
-    /// will be used.
-    pub max_elapsed_time: Option<Duration>,
-    /// maximum number of retry attempts.
-    pub max_retries: usize,
-}
-
-impl Default for RetryOptions {
-    fn default() -> Self {
-        Self {
-            initial_interval: Duration::from_millis(100), // 100 ms wait by default.
-            randomization_factor: 0.2,                    // +-20% jitter.
-            multiplier: 1.7, // each next retry delay will increase by 70%
-            max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
-            max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
-            max_retries: 10,
-        }
-    }
-}
-
-impl RetryOptions {
-    pub(crate) const fn task_poll_retry_policy() -> Self {
-        Self {
-            initial_interval: Duration::from_millis(200),
-            randomization_factor: 0.2,
-            multiplier: 2.0,
-            max_interval: Duration::from_secs(10),
-            max_elapsed_time: None,
-            max_retries: 0,
-        }
-    }
-
-    pub(crate) const fn throttle_retry_policy() -> Self {
-        Self {
-            initial_interval: Duration::from_secs(1),
-            randomization_factor: 0.2,
-            multiplier: 2.0,
-            max_interval: Duration::from_secs(10),
-            max_elapsed_time: None,
-            max_retries: 0,
-        }
-    }
-
-    /// A retry policy that never retires
-    pub const fn no_retries() -> Self {
-        Self {
-            initial_interval: Duration::from_secs(0),
-            randomization_factor: 0.0,
-            multiplier: 1.0,
-            max_interval: Duration::from_secs(0),
-            max_elapsed_time: None,
-            max_retries: 1,
-        }
-    }
-
-    pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
-        exponential::ExponentialBackoff {
-            current_interval: self.initial_interval,
-            initial_interval: self.initial_interval,
-            randomization_factor: self.randomization_factor,
-            multiplier: self.multiplier,
-            max_interval: self.max_interval,
-            max_elapsed_time: self.max_elapsed_time,
-            clock,
-            start_time: Instant::now(),
-        }
-    }
-}
-
-impl From<RetryOptions> for ExponentialBackoff {
-    fn from(c: RetryOptions) -> Self {
-        c.into_exp_backoff(SystemClock::default())
     }
 }
 
@@ -363,74 +500,6 @@ pub enum InvalidHeaderError {
 }
 
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
-/// or can be used directly. Is cheap to clone.
-#[derive(Clone, Debug)]
-pub struct ConfiguredClient<C> {
-    client: C,
-    options: Arc<ClientOptions>,
-    headers: Arc<RwLock<ClientHeaders>>,
-    /// Capabilities as read from the `get_system_info` RPC call made on client connection
-    capabilities: Option<get_system_info_response::Capabilities>,
-    workers: Arc<ClientWorkerSet>,
-}
-
-impl<C> ConfiguredClient<C> {
-    /// Set HTTP request headers overwriting previous headers.
-    ///
-    /// This will not affect headers set via [ClientOptions::binary_headers].
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if any of the provided keys or values are not valid gRPC metadata.
-    /// If an error is returned, the previous headers will remain unchanged.
-    pub fn set_headers(&self, headers: HashMap<String, String>) -> Result<(), InvalidHeaderError> {
-        self.headers.write().user_headers = parse_ascii_headers(headers)?;
-        Ok(())
-    }
-
-    /// Set binary HTTP request headers overwriting previous headers.
-    ///
-    /// This will not affect headers set via [ClientOptions::headers].
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if any of the provided keys are not valid gRPC binary metadata keys.
-    /// If an error is returned, the previous headers will remain unchanged.
-    pub fn set_binary_headers(
-        &self,
-        binary_headers: HashMap<String, Vec<u8>>,
-    ) -> Result<(), InvalidHeaderError> {
-        self.headers.write().user_binary_headers = parse_binary_headers(binary_headers)?;
-        Ok(())
-    }
-
-    /// Set API key, overwriting previous
-    pub fn set_api_key(&self, api_key: Option<String>) {
-        self.headers.write().api_key = api_key;
-    }
-
-    /// Returns the options the client is configured with
-    pub fn options(&self) -> &ClientOptions {
-        &self.options
-    }
-
-    /// Returns the server capabilities we (may have) learned about when establishing an initial
-    /// connection
-    pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
-        self.capabilities.as_ref()
-    }
-
-    /// Returns a cloned reference to a registry with workers using this client instance
-    pub fn workers(&self) -> Arc<ClientWorkerSet> {
-        self.workers.clone()
-    }
-
-    /// Returns the worker grouping key, this should be unique across each client
-    pub fn worker_grouping_key(&self) -> Uuid {
-        self.workers.worker_grouping_key()
-    }
-}
-
 #[derive(Debug)]
 struct ClientHeaders {
     user_headers: HashMap<AsciiMetadataKey, AsciiMetadataValue>,
@@ -463,166 +532,42 @@ impl ClientHeaders {
     }
 }
 
-// The configured client is effectively a "smart" (dumb) pointer
-impl<C> Deref for ConfiguredClient<C> {
-    type Target = C;
+/// If TLS is configured, set the appropriate options on the provided channel and return it.
+/// Passes it through if TLS options not set.
+async fn add_tls_to_channel(
+    tls_options: Option<&TlsOptions>,
+    mut channel: Endpoint,
+) -> Result<Endpoint, ClientInitError> {
+    if let Some(tls_cfg) = tls_options {
+        let mut tls = tonic::transport::ClientTlsConfig::new();
 
-    fn deref(&self) -> &Self::Target {
-        &self.client
-    }
-}
-
-impl<C> DerefMut for ConfiguredClient<C> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.client
-    }
-}
-
-impl ClientOptions {
-    /// Attempt to establish a connection to the Temporal server in a specific namespace. The
-    /// returned client is bound to that namespace.
-    pub async fn connect(
-        &self,
-        namespace: impl Into<String>,
-        metrics_meter: Option<TemporalMeter>,
-    ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
-        let client = Client::new(client, namespace.into());
-        let retry_client = RetryClient::new(client, self.retry_options.clone());
-        Ok(retry_client)
-    }
-
-    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
-    /// intercepted with retry, default headers functionality, and metrics if provided.
-    ///
-    /// See [RetryClient] for more
-    pub async fn connect_no_namespace(
-        &self,
-        metrics_meter: Option<TemporalMeter>,
-    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClient>>, ClientInitError> {
-        self.connect_no_namespace_with_service_override(metrics_meter, None)
-            .await
-    }
-
-    /// Attempt to establish a connection to the Temporal server and return a gRPC client which is
-    /// intercepted with retry, default headers functionality, and metrics if provided. If a
-    /// service_override is present, network-specific options are ignored and the callback is
-    /// invoked for each gRPC call.
-    ///
-    /// See [RetryClient] for more
-    pub async fn connect_no_namespace_with_service_override(
-        &self,
-        metrics_meter: Option<TemporalMeter>,
-        service_override: Option<callback_based::CallbackBasedGrpcService>,
-    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClient>>, ClientInitError> {
-        let service = if let Some(service_override) = service_override {
-            GrpcMetricSvc {
-                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
-                metrics: metrics_meter.clone().map(MetricsContext::new),
-                disable_errcode_label: self.disable_error_code_metric_tags,
-            }
+        if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
+            let server_root_ca_cert = Certificate::from_pem(root_cert);
+            tls = tls.ca_certificate(server_root_ca_cert);
         } else {
-            let channel = Channel::from_shared(self.target_url.to_string())?;
-            let channel = self.add_tls_to_channel(channel).await?;
-            let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
-                channel
-                    .keep_alive_while_idle(true)
-                    .http2_keep_alive_interval(keep_alive.interval)
-                    .keep_alive_timeout(keep_alive.timeout)
-            } else {
-                channel
-            };
-            let channel = if let Some(origin) = self.override_origin.clone() {
-                channel.origin(origin)
-            } else {
-                channel
-            };
-            // If there is a proxy, we have to connect that way
-            let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
-                proxy.connect_endpoint(&channel).await?
-            } else {
-                channel.connect().await?
-            };
-            ServiceBuilder::new()
-                .layer_fn(move |channel| GrpcMetricSvc {
-                    inner: ChannelOrGrpcOverride::Channel(channel),
-                    metrics: metrics_meter.clone().map(MetricsContext::new),
-                    disable_errcode_label: self.disable_error_code_metric_tags,
-                })
-                .service(channel)
-        };
-
-        let headers = Arc::new(RwLock::new(ClientHeaders {
-            user_headers: parse_ascii_headers(self.headers.clone().unwrap_or_default())?,
-            user_binary_headers: parse_binary_headers(
-                self.binary_headers.clone().unwrap_or_default(),
-            )?,
-            api_key: self.api_key.clone(),
-        }));
-        let interceptor = ServiceCallInterceptor {
-            opts: self.clone(),
-            headers: headers.clone(),
-        };
-        let svc = InterceptedService::new(service, interceptor);
-
-        let mut client = ConfiguredClient {
-            headers,
-            client: TemporalServiceClient::new(svc),
-            options: Arc::new(self.clone()),
-            capabilities: None,
-            workers: Arc::new(ClientWorkerSet::new()),
-        };
-        if !self.skip_get_system_info {
-            match client
-                .get_system_info(GetSystemInfoRequest::default().into_request())
-                .await
-            {
-                Ok(sysinfo) => {
-                    client.capabilities = sysinfo.into_inner().capabilities;
-                }
-                Err(status) => match status.code() {
-                    Code::Unimplemented => {}
-                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
-                },
-            };
+            tls = tls.with_native_roots();
         }
-        Ok(RetryClient::new(client, self.retry_options.clone()))
-    }
 
-    /// If TLS is configured, set the appropriate options on the provided channel and return it.
-    /// Passes it through if TLS options not set.
-    async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
-        if let Some(tls_cfg) = &self.tls_options {
-            let mut tls = tonic::transport::ClientTlsConfig::new();
+        if let Some(domain) = &tls_cfg.domain {
+            tls = tls.domain_name(domain);
 
-            if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
-                let server_root_ca_cert = Certificate::from_pem(root_cert);
-                tls = tls.ca_certificate(server_root_ca_cert);
-            } else {
-                tls = tls.with_native_roots();
-            }
-
-            if let Some(domain) = &tls_cfg.domain {
-                tls = tls.domain_name(domain);
-
-                // This song and dance ultimately is just to make sure the `:authority` header ends
-                // up correct on requests while we use TLS. Setting the header directly in our
-                // interceptor doesn't work since seemingly it is overridden at some point by
-                // something lower level.
-                let uri: Uri = format!("https://{domain}").parse()?;
-                channel = channel.origin(uri);
-            }
-
-            if let Some(client_opts) = &tls_cfg.client_tls_options {
-                let client_identity =
-                    Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
-                tls = tls.identity(client_identity);
-            }
-
-            return channel.tls_config(tls).map_err(Into::into);
+            // This song and dance ultimately is just to make sure the `:authority` header ends
+            // up correct on requests while we use TLS. Setting the header directly in our
+            // interceptor doesn't work since seemingly it is overridden at some point by
+            // something lower level.
+            let uri: Uri = format!("https://{domain}").parse()?;
+            channel = channel.origin(uri);
         }
-        Ok(channel)
+
+        if let Some(client_opts) = &tls_cfg.client_tls_options {
+            let client_identity =
+                Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
+            tls = tls.identity(client_identity);
+        }
+
+        return channel.tls_config(tls).map_err(Into::into);
     }
+    Ok(channel)
 }
 
 fn parse_ascii_headers(
@@ -679,7 +624,8 @@ fn parse_binary_headers(
 /// Interceptor which attaches common metadata (like "client-name") to every outgoing call
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
-    opts: ClientOptions,
+    client_name: String,
+    client_version: String,
     /// Only accessed as a reader
     headers: Arc<RwLock<ClientHeaders>>,
 }
@@ -695,8 +641,7 @@ impl Interceptor for ServiceCallInterceptor {
         if !metadata.contains_key(CLIENT_NAME_HEADER_KEY) {
             metadata.insert(
                 CLIENT_NAME_HEADER_KEY,
-                self.opts
-                    .client_name
+                self.client_name
                     .parse()
                     .unwrap_or_else(|_| MetadataValue::from_static("")),
             );
@@ -704,8 +649,7 @@ impl Interceptor for ServiceCallInterceptor {
         if !metadata.contains_key(CLIENT_VERSION_HEADER_KEY) {
             metadata.insert(
                 CLIENT_VERSION_HEADER_KEY,
-                self.opts
-                    .client_version
+                self.client_version
                     .parse()
                     .unwrap_or_else(|_| MetadataValue::from_static("")),
             );
@@ -815,57 +759,54 @@ impl TemporalServiceClient {
     }
 }
 
-/// Contains an instance of a namespace-bound client for interacting with the Temporal server
+/// Contains an instance of a namespace-bound client for interacting with the Temporal server.
+/// Cheap to clone.
 #[derive(Clone)]
 pub struct Client {
-    /// Client for interacting with workflow service
-    inner: ConfiguredClient<TemporalServiceClient>,
-    /// The namespace this client interacts with
-    namespace: String,
+    connection: Connection,
+    options: Arc<ClientOptions>,
 }
 
 impl Client {
-    /// Create a new client from an existing configured lower level client and a namespace
-    pub fn new(client: ConfiguredClient<TemporalServiceClient>, namespace: String) -> Self {
+    /// Create a new client from a connection and options.
+    pub fn new(connection: Connection, options: ClientOptions) -> Self {
         Client {
-            inner: client,
-            namespace,
+            connection,
+            options: Arc::new(options),
         }
     }
 
     /// Return the options this client was initialized with
     pub fn options(&self) -> &ClientOptions {
-        &self.inner.options
+        &self.options
     }
 
-    /// Return the options this client was initialized with mutably
+    /// Return this client's options mutably.
+    ///
+    /// Note: If this client has been cloned, this will copy-on-write to avoid affecting other
+    /// clones.
     pub fn options_mut(&mut self) -> &mut ClientOptions {
-        Arc::make_mut(&mut self.inner.options)
+        Arc::make_mut(&mut self.options)
     }
 
-    /// Returns a reference to the underlying client
-    pub fn inner(&self) -> &ConfiguredClient<TemporalServiceClient> {
-        &self.inner
+    /// Returns a reference to the underlying connection
+    pub fn connection(&self) -> &Connection {
+        &self.connection
     }
 
-    /// Consumes self and returns the underlying client
-    pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClient> {
-        self.inner
-    }
-
-    /// Returns the client-wide key
-    pub fn worker_grouping_key(&self) -> Uuid {
-        self.inner.worker_grouping_key()
+    /// Returns a mutable reference to the underlying connection
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 
 impl NamespacedClient for Client {
     fn namespace(&self) -> String {
-        self.namespace.clone()
+        self.options.namespace.clone()
     }
 
     fn identity(&self) -> String {
-        self.inner.options.identity.clone()
+        self.connection.identity().to_owned()
     }
 }
 
@@ -1825,13 +1766,6 @@ mod tests {
 
     #[test]
     fn applies_headers() {
-        let opts = ClientOptions::builder()
-            .identity("enchicat".to_string())
-            .target_url(Url::parse("https://smolkitty").unwrap())
-            .client_name("cute-kitty".to_string())
-            .client_version("0.1.0".to_string())
-            .build();
-
         // Initial header set
         let headers = Arc::new(RwLock::new(ClientHeaders {
             user_headers: HashMap::new(),
@@ -1847,7 +1781,8 @@ mod tests {
             vec![1, 2, 3].try_into().unwrap(),
         );
         let mut interceptor = ServiceCallInterceptor {
-            opts,
+            client_name: "cute-kitty".to_string(),
+            client_version: "0.1.0".to_string(),
             headers: headers.clone(),
         };
 
@@ -1959,9 +1894,8 @@ mod tests {
 
     #[test]
     fn keep_alive_defaults() {
-        let opts = ClientOptions::builder()
+        let opts = ConnectionOptions::new(Url::parse("https://smolkitty").unwrap())
             .identity("enchicat".to_string())
-            .target_url(Url::parse("https://smolkitty").unwrap())
             .client_name("cute-kitty".to_string())
             .client_version("0.1.0".to_string())
             .build();
@@ -1975,9 +1909,8 @@ mod tests {
         );
 
         // Can be explicitly set to None
-        let opts = ClientOptions::builder()
+        let opts = ConnectionOptions::new(Url::parse("https://smolkitty").unwrap())
             .identity("enchicat".to_string())
-            .target_url(Url::parse("https://smolkitty").unwrap())
             .client_name("cute-kitty".to_string())
             .client_version("0.1.0".to_string())
             .keep_alive(None)

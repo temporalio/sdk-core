@@ -1,4 +1,4 @@
-use crate::common::{CoreWfStarter, NAMESPACE, eventually, get_integ_server_options};
+use crate::common::{CoreWfStarter, NAMESPACE, eventually, get_integ_client};
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{Namespace, RegisterNamespaceOptions, WorkflowClientTrait};
@@ -113,12 +113,7 @@ async fn client_list_open_closed_workflow_executions() {
 
 #[tokio::test]
 async fn client_create_namespace() {
-    let client = Arc::new(
-        get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None)
-            .await
-            .expect("Must connect"),
-    );
+    let client = Arc::new(get_integ_client(NAMESPACE.to_string(), None).await);
 
     let register_options = RegisterNamespaceOptions::builder()
         .namespace(uuid::Uuid::new_v4().to_string())
@@ -159,12 +154,7 @@ async fn client_create_namespace() {
 
 #[tokio::test]
 async fn client_describe_namespace() {
-    let client = Arc::new(
-        get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None)
-            .await
-            .expect("Must connect"),
-    );
+    let client = Arc::new(get_integ_client(NAMESPACE.to_string(), None).await);
 
     let namespace_result = client
         .describe_namespace(Namespace::Name(NAMESPACE.to_owned()))

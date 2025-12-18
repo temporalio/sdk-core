@@ -93,7 +93,7 @@ async fn nexus_basic(
     });
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
 
-    let client = starter.get_client().await.get_client().clone();
+    let client = starter.get_client().await;
     let nexus_task_handle = async {
         let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         match outcome {
@@ -268,7 +268,7 @@ async fn nexus_async(
     let submitter = worker.get_submitter_handle();
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
 
-    let client = starter.get_client().await.get_client().clone();
+    let client = starter.get_client().await;
     let nexus_task_handle = async {
         let mut nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         // Verify request header key for timeout exists and is lowercase
@@ -668,7 +668,7 @@ async fn nexus_cancellation_types(
     });
     let submitter = worker.get_submitter_handle();
     let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
-    let client = starter.get_client().await.get_client().clone();
+    let client = starter.get_client().await;
     let (handler_wf_id_tx, mut handler_wf_id_rx) = tokio::sync::oneshot::channel();
     let completer_id = &format!("completer-{}", rand_6_chars());
     let nexus_task_handle = async {

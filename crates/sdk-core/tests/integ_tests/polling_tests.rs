@@ -1,6 +1,6 @@
 use crate::{
     common::{
-        CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_server_options,
+        CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_client,
         init_core_and_create_wf, init_integ_telem, integ_dev_server_config, integ_worker_config,
     },
     integ_tests::activity_functions::echo,
@@ -15,7 +15,9 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    Client, Connection, ConnectionOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
     Worker, prost_dur,
     protos::{
@@ -34,7 +36,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptions,
+    CoreRuntime, RuntimeOptions,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker,
     telemetry::CoreLogStreamConsumer,
@@ -145,24 +147,25 @@ async fn switching_worker_client_changes_poll() {
     let result = std::panic::AssertUnwindSafe(async {
         // Connect clients to both servers
         info!("Connecting clients");
-        let client1 = ClientOptions::builder()
-            .identity("integ_tester".to_owned())
-            .client_name("temporal-core".to_owned())
-            .client_version("0.1.0".to_owned())
-            .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
-            .build()
-            .connect("default", None)
-            .await
-            .unwrap();
-        let client2 = ClientOptions::builder()
-            .identity("integ_tester".to_owned())
-            .client_name("temporal-core".to_owned())
-            .client_version("0.1.0".to_owned())
-            .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
-            .build()
-            .connect("default", None)
-            .await
-            .unwrap();
+        let opts1 =
+            ConnectionOptions::new(Url::parse(&format!("http://{}", server1.target)).unwrap())
+                .identity("integ_tester".to_owned())
+                .client_name("temporal-core".to_owned())
+                .client_version("0.1.0".to_owned())
+                .build();
+        let connection1 = Connection::connect(opts1).await.unwrap();
+        let client_opts1 = temporalio_client::ClientOptions::new("default").build();
+        let client1 = Client::new(connection1, client_opts1);
+
+        let opts2 =
+            ConnectionOptions::new(Url::parse(&format!("http://{}", server2.target)).unwrap())
+                .identity("integ_tester".to_owned())
+                .client_name("temporal-core".to_owned())
+                .client_version("0.1.0".to_owned())
+                .build();
+        let connection2 = Connection::connect(opts2).await.unwrap();
+        let client_opts2 = temporalio_client::ClientOptions::new("default").build();
+        let client2 = Client::new(connection2, client_opts2);
 
         // Start a workflow on both servers
         info!("Starting workflows");
@@ -193,7 +196,12 @@ async fn switching_worker_client_changes_poll() {
         let mut config = integ_worker_config("my-task-queue");
         // We want a cache so we don't get extra remove-job activations
         config.max_cached_workflows = 100_usize;
-        let worker = init_worker(init_integ_telem().unwrap(), config, client1.clone()).unwrap();
+        let worker = init_worker(
+            init_integ_telem().unwrap(),
+            config,
+            client1.connection().clone(),
+        )
+        .unwrap();
 
         // Poll for first task, confirm it's first wf, complete, and wait for complete
         info!("Doing initial poll");
@@ -210,9 +218,7 @@ async fn switching_worker_client_changes_poll() {
 
         // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
         info!("Replacing client and polling again");
-        worker
-            .replace_client(client2.get_client().inner().clone())
-            .unwrap();
+        worker.replace_client(client2.connection().clone()).unwrap();
         let act2 = worker.poll_workflow_activation().await.unwrap();
         assert_eq!(wf2.run_id, act2.run_id);
         worker.complete_execution(&act2.run_id).await;
@@ -378,23 +384,23 @@ async fn replace_client_works_after_polling_failure() {
                 "http://{}",
                 initial_server.lock().unwrap().as_ref().unwrap().target
             );
-            let client_for_initial_server = ClientOptions::builder()
+            let opts = ConnectionOptions::new(Url::parse(&initial_server_target).unwrap())
                 .identity("client_for_initial_server".to_string())
-                .target_url(Url::parse(&initial_server_target).unwrap())
                 .client_name(INTEG_CLIENT_NAME.to_string())
                 .client_version(INTEG_CLIENT_VERSION.to_string())
-                .build()
-                .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-                .await
-                .unwrap();
+                .build();
+            let connection = Connection::connect(opts).await.unwrap();
+            let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
+            let client_for_initial_server = Client::new(connection, client_opts);
 
             let wf_name = "replace_client_works_after_polling_failure";
             let task_queue = format!("{wf_name}_tq");
 
             let mut config = integ_worker_config(&task_queue);
             config.max_cached_workflows = 100_usize;
-            let worker =
-                Arc::new(init_worker(&rt, config, client_for_initial_server.clone()).unwrap());
+            let worker = Arc::new(
+                init_worker(&rt, config, client_for_initial_server.connection().clone()).unwrap(),
+            );
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server
@@ -436,10 +442,11 @@ async fn replace_client_works_after_polling_failure() {
                 .unwrap();
 
             // Start a new WF on main integration server.
-            let client_for_integ_server = get_integ_server_options()
-                .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-                .await
-                .unwrap();
+            let client_for_integ_server = get_integ_client(
+                NAMESPACE.to_string(),
+                rt.telemetry().get_temporal_metric_meter(),
+            )
+            .await;
             let wf_2 = client_for_integ_server
                 .start_workflow(
                     vec![],
@@ -457,7 +464,9 @@ async fn replace_client_works_after_polling_failure() {
 
             // Switch worker over to the main integration server.
             // The polling started on the initial server should complete with a task from the new server.
-            worker.replace_client(client_for_integ_server).unwrap();
+            worker
+                .replace_client(client_for_integ_server.connection().clone())
+                .unwrap();
             let act_2 = tokio::time::timeout(Duration::from_secs(60), poll_join_handle)
                 .await
                 .unwrap()

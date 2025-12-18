@@ -32,7 +32,7 @@ mod integ_tests {
         get_integ_telem_options, rand_6_chars,
     };
     use std::time::Duration;
-    use temporalio_client::{NamespacedClient, WorkflowService};
+    use temporalio_client::{Connection, NamespacedClient, OperatorService, WorkflowService};
     use temporalio_common::{
         protos::temporal::api::{
             nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
@@ -52,10 +52,7 @@ mod integ_tests {
         let runtime =
             CoreRuntime::new_assume_tokio(get_integ_runtime_options(get_integ_telem_options()))
                 .unwrap();
-        let mut retrying_client = opts
-            .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
-            .await
-            .unwrap();
+        let mut connection = Connection::connect(opts).await.unwrap();
 
         let _worker = init_worker(
             &runtime,
@@ -68,13 +65,12 @@ mod integ_tests {
                 })
                 .build()
                 .unwrap(),
-            // clone the client if you intend to use it later. Strip off the retry wrapper since
-            // worker will assert its own
-            retrying_client.clone(),
+            // clone the connection if you intend to use it later
+            connection.clone(),
         );
 
-        // Do things with worker or client
-        let _ = retrying_client
+        // Do things with worker or connection
+        let _ = connection
             .list_namespaces(ListNamespacesRequest::default().into_request())
             .await;
     }
@@ -82,8 +78,9 @@ mod integ_tests {
     pub(crate) async fn mk_nexus_endpoint(starter: &mut CoreWfStarter) -> String {
         let client = starter.get_client().await;
         let endpoint = format!("mycoolendpoint-{}", rand_6_chars());
-        let mut op_client = client.get_client().inner().operator_svc();
-        op_client
+        client
+            .connection()
+            .clone()
             .create_nexus_endpoint(
                 CreateNexusEndpointRequest {
                     spec: Some(EndpointSpec {

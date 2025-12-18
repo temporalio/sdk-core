@@ -126,6 +126,7 @@ features = ["otel_impls", "history_builders", "test-utilities"]
 
 [dependencies.temporalio-client]
 path = "../client"
+features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
 path = "../macros"

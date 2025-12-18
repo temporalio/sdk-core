@@ -11,9 +11,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{
-    Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
-};
+use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait, WorkflowService};
 use temporalio_common::{
     Worker, prost_dur,
     protos::{
@@ -75,7 +73,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         will_fail,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 
@@ -109,7 +107,7 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 
@@ -118,7 +116,7 @@ async fn reapplied_updates_due_to_reset() {
 
     let mut client_mut = client.clone();
     let reset_response = WorkflowService::reset_workflow_execution(
-        Arc::make_mut(&mut client_mut),
+        &mut client_mut,
         #[allow(deprecated)]
         ResetWorkflowExecutionRequest {
             namespace: client.namespace(),
@@ -149,7 +147,7 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::Yes,
         core.as_ref(),
-        client.as_ref(),
+        &client,
     )
     .await;
 
@@ -200,7 +198,7 @@ async fn send_and_handle_update(
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
-    client: &RetryClient<Client>,
+    client: &Client,
 ) -> String {
     // Complete first task with no commands
     let act = core.poll_workflow_activation().await.unwrap();

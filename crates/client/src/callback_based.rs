@@ -46,6 +46,11 @@ pub struct CallbackBasedGrpcService {
             + Sync,
     >,
 }
+impl std::fmt::Debug for CallbackBasedGrpcService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallbackBasedGrpcService").finish()
+    }
+}
 
 impl Service<Request<tonic::body::Body>> for CallbackBasedGrpcService {
     type Response = http::Response<tonic::body::Body>;

@@ -1,7 +1,8 @@
 use crate::{
     common::{
         ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
-        get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, prom_metrics,
+        get_integ_client, get_integ_connection, get_integ_runtime_options,
+        get_integ_server_options, get_integ_telem_options, prom_metrics,
     },
     integ_tests::mk_nexus_endpoint,
 };
@@ -15,7 +16,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
+    Connection, REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions,
+    WorkflowService,
 };
 use temporalio_common::{
     Worker,
@@ -101,14 +103,12 @@ async fn prometheus_metrics_exported(
         .build();
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let opts = get_integ_server_options();
-    let mut raw_client = opts
-        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
-    assert!(raw_client.get_client().capabilities().is_some());
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+    let mut connection = Connection::connect(opts).await.unwrap();
+    assert!(connection.capabilities().is_some());
 
-    let _ = raw_client
+    let _ = connection
         .list_namespaces(ListNamespacesRequest::default().into_request())
         .await
         .unwrap();
@@ -170,13 +170,9 @@ async fn one_slot_worker_reports_available_slot() {
         .build()
         .unwrap();
 
-    let client = Arc::new(
-        get_integ_server_options()
-            .connect(worker_cfg.namespace.clone(), None)
-            .await
-            .expect("Must connect"),
-    );
-    let worker = init_worker(&rt, worker_cfg, client.clone()).expect("Worker inits cleanly");
+    let connection = get_integ_connection(None).await;
+    let client = Arc::new(get_integ_client(worker_cfg.namespace.clone(), None).await);
+    let worker = init_worker(&rt, worker_cfg, connection).expect("Worker inits cleanly");
     let wf_task_barr = Barrier::new(2);
     let act_task_barr = Barrier::new(2);
 
@@ -538,13 +534,11 @@ fn runtime_new() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
         .attach_late_init_metrics(telemopts.metrics.unwrap());
-    let opts = get_integ_server_options();
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
     handle.block_on(async {
-        let mut raw_client = opts
-            .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-            .await
-            .unwrap();
-        assert!(raw_client.get_client().capabilities().is_some());
+        let mut raw_client = Connection::connect(opts).await.unwrap();
+        assert!(raw_client.capabilities().is_some());
         let _ = raw_client
             .list_namespaces(ListNamespacesRequest::default().into_request())
             .await
@@ -632,11 +626,11 @@ async fn latency_metrics(
 async fn request_fail_codes() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let opts = get_integ_server_options();
-    let mut client = opts
-        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
+    let mut client = get_integ_client(
+        NAMESPACE.to_string(),
+        rt.telemetry().get_temporal_metric_meter(),
+    )
+    .await;
 
     // Describe namespace w/ invalid argument (unset namespace field)
     WorkflowService::describe_namespace(
@@ -674,11 +668,11 @@ async fn request_fail_codes_otel() {
     let exporter = Arc::new(exporter);
     let telemopts = TelemetryOptions::builder().metrics(exporter as Arc<dyn CoreMeter>);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build())).unwrap();
-    let opts = get_integ_server_options();
-    let mut client = opts
-        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
+    let mut client = get_integ_client(
+        NAMESPACE.to_string(),
+        rt.telemetry().get_temporal_metric_meter(),
+    )
+    .await;
 
     for _ in 0..10 {
         // Describe namespace w/ invalid argument (unset namespace field)
