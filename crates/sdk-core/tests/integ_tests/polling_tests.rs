@@ -31,7 +31,7 @@ use temporalio_common::{
         temporal::api::enums::v1::EventType,
         test_utils::schedule_activity_cmd,
     },
-    telemetry::{Logger, TelemetryOptions},
+    telemetry::{CoreLogStreamConsumer, Logger, TelemetryOptions},
     worker::PollerBehavior,
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
@@ -39,7 +39,6 @@ use temporalio_sdk_core::{
     CoreRuntime, RuntimeOptions,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker,
-    telemetry::CoreLogStreamConsumer,
     test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{sync::Notify, time::timeout};

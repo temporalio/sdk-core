@@ -26,7 +26,6 @@ use crate::{
     telemetry::{
         VecDisplayer,
         metrics::{self, FailureReason},
-        set_trace_subscriber_for_current_thread,
     },
     worker::{
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -88,6 +87,7 @@ use temporalio_common::{
             workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
         },
     },
+    telemetry::set_trace_subscriber_for_current_thread,
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use tokio::{

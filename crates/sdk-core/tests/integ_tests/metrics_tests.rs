@@ -51,10 +51,10 @@ use temporalio_common::{
     },
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
-        TaskQueueLabelStrategy, TelemetryOptions,
+        TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
-            MetricParameters, NewAttributes,
+            MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
     },
     worker::{
@@ -69,7 +69,6 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::{
     CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
-    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;

@@ -4,6 +4,10 @@
 //! This crate contains base-level functionality needed by the other crates in the Temporal Core and
 //! Rust SDK.
 
+#[allow(unused_imports)] // Not used by all flag combinations, which is fine.
+#[macro_use]
+extern crate tracing;
+
 mod activity_definition;
 pub mod data_converters;
 #[cfg(feature = "envconfig")]

@@ -10,14 +10,13 @@ use std::{
 };
 use temporalio_common::{
     protos::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
-    telemetry::metrics::{
-        BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, CounterBase, Gauge, GaugeBase,
-        GaugeF64, GaugeF64Base, Histogram, HistogramBase, HistogramDuration, HistogramDurationBase,
-        HistogramF64, HistogramF64Base, LazyBufferInstrument, MetricAttributable, MetricAttributes,
-        MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters,
-        MetricUpdateVal, NewAttributes, NoOpCoreMeter, TemporalMeter, WorkerHeartbeatMetrics,
-    },
+    telemetry::metrics::*,
 };
+
+pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
+pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
+pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
+pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Used to track context associated with metrics, and record/update them
 #[derive(Clone)]
@@ -669,106 +668,12 @@ pub(crate) fn failure_reason(reason: FailureReason) -> MetricKeyValue {
     MetricKeyValue::new(KEY_TASK_FAILURE_TYPE, reason.to_string())
 }
 
-/// The string name (which may be prefixed) for this metric
-pub const WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME: &str = "workflow_endtoend_latency";
-/// The string name (which may be prefixed) for this metric
-pub const WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
-    "workflow_task_schedule_to_start_latency";
-/// The string name (which may be prefixed) for this metric
-pub const WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_replay_latency";
-/// The string name (which may be prefixed) for this metric
-pub const WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_execution_latency";
-/// The string name (which may be prefixed) for this metric
-pub const ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
-    "activity_schedule_to_start_latency";
-/// The string name (which may be prefixed) for this metric
-pub const ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME: &str = "activity_execution_latency";
-pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
-pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
-pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
-pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
-
 /// Track a failure metric if the failure is not a benign application failure.
 pub(crate) fn should_record_failure_metric(failure: &Option<Failure>) -> bool {
     !failure
         .as_ref()
         .is_some_and(|f| f.is_benign_application_failure())
 }
-
-/// Helps define buckets once in terms of millis, but also generates a seconds version
-macro_rules! define_latency_buckets {
-    ($(($metric_name:pat, $name:ident, $sec_name:ident, [$($bucket:expr),*])),*) => {
-        $(
-            pub(super) static $name: &[f64] = &[$($bucket,)*];
-            pub(super) static $sec_name: &[f64] = &[$( $bucket / 1000.0, )*];
-        )*
-
-        /// Returns the default histogram buckets that lang should use for a given metric name if
-        /// they have not been overridden by the user. If `use_seconds` is true, returns buckets
-        /// in terms of seconds rather than milliseconds.
-        ///
-        /// The name must *not* be prefixed with `temporal_`
-        pub fn default_buckets_for(histo_name: &str, use_seconds: bool) -> &'static [f64] {
-            match histo_name {
-                $(
-                    $metric_name => { if use_seconds { &$sec_name } else { &$name } },
-                )*
-            }
-        }
-    };
-}
-
-define_latency_buckets!(
-    (
-        WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
-        WF_LATENCY_MS_BUCKETS,
-        WF_LATENCY_S_BUCKETS,
-        [
-            100.,
-            500.,
-            1000.,
-            1500.,
-            2000.,
-            5000.,
-            10_000.,
-            30_000.,
-            60_000.,
-            120_000.,
-            300_000.,
-            600_000.,
-            1_800_000.,  // 30 min
-            3_600_000.,  //  1 hr
-            30_600_000., // 10 hrs
-            8.64e7       // 24 hrs
-        ]
-    ),
-    (
-        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME
-            | WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
-        WF_TASK_MS_BUCKETS,
-        WF_TASK_S_BUCKETS,
-        [1., 10., 20., 50., 100., 200., 500., 1000.]
-    ),
-    (
-        ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
-        ACT_EXE_MS_BUCKETS,
-        ACT_EXE_S_BUCKETS,
-        [50., 100., 500., 1000., 5000., 10_000., 60_000.]
-    ),
-    (
-        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME
-            | ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
-        TASK_SCHED_TO_START_MS_BUCKETS,
-        TASK_SCHED_TO_START_S_BUCKETS,
-        [100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.]
-    ),
-    (
-        _,
-        DEFAULT_MS_BUCKETS,
-        DEFAULT_S_BUCKETS,
-        [50., 100., 500., 1000., 2500., 10_000.]
-    )
-);
 
 /// Buffers [MetricEvent]s for periodic consumption by lang
 #[derive(Debug)]
@@ -1058,64 +963,15 @@ where
     }
 }
 
-#[derive(Debug, derive_more::Constructor)]
-pub(crate) struct PrefixedMetricsMeter<CM> {
-    prefix: String,
-    meter: CM,
-}
-impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
-    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
-        self.meter.new_attributes(attribs)
-    }
-
-    fn extend_attributes(
-        &self,
-        existing: MetricAttributes,
-        attribs: NewAttributes,
-    ) -> MetricAttributes {
-        self.meter.extend_attributes(existing, attribs)
-    }
-
-    fn counter(&self, mut params: MetricParameters) -> Counter {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.counter(params)
-    }
-
-    fn histogram(&self, mut params: MetricParameters) -> Histogram {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.histogram(params)
-    }
-
-    fn histogram_f64(&self, mut params: MetricParameters) -> HistogramF64 {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.histogram_f64(params)
-    }
-
-    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.histogram_duration(params)
-    }
-
-    fn gauge(&self, mut params: MetricParameters) -> Gauge {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.gauge(params)
-    }
-
-    fn gauge_f64(&self, mut params: MetricParameters) -> GaugeF64 {
-        params.name = (self.prefix.clone() + &*params.name).into();
-        self.meter.gauge_f64(params)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::any::Any;
     use temporalio_common::telemetry::{
-        METRIC_PREFIX,
+        TelemetryOptions,
         metrics::{BufferInstrumentRef, CustomMetricAttributes},
+        telemetry_init,
     };
-    use tracing::subscriber::NoSubscriber;
 
     #[derive(Debug)]
     struct DummyCustomAttrs(usize);
@@ -1142,16 +998,13 @@ mod tests {
 
     #[test]
     fn test_buffered_core_context() {
-        let no_op_subscriber = Arc::new(NoSubscriber::new());
         let call_buffer = Arc::new(MetricsCallBuffer::new(100));
-        let telem_instance = TelemetryInstance::new(
-            Some(no_op_subscriber),
-            None,
-            METRIC_PREFIX.to_string(),
-            Some(call_buffer.clone()),
-            true,
-            temporalio_common::telemetry::TaskQueueLabelStrategy::UseNormal,
-        );
+        let telem_instance = telemetry_init(
+            TelemetryOptions::builder()
+                .metrics(call_buffer.clone() as Arc<dyn CoreMeter>)
+                .build(),
+        )
+        .unwrap();
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
         mc.forced_cache_eviction();
         let events = call_buffer.retrieve();

@@ -47,7 +47,7 @@ use temporalio_common::{
     },
     telemetry::{
         Logger, OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
-        metrics::CoreMeter,
+        build_otlp_metric_exporter, metrics::CoreMeter, start_prometheus_metric_exporter,
     },
     worker::{WorkerTaskTypes, WorkerVersioningStrategy},
 };
@@ -63,7 +63,6 @@ pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
     CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
 };
 use tokio::{sync::OnceCell, task::AbortHandle};

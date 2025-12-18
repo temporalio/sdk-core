@@ -12,6 +12,96 @@ use std::{
     time::Duration,
 };
 
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME: &str = "workflow_endtoend_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
+    "workflow_task_schedule_to_start_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_replay_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_execution_latency";
+/// The string name (which may be prefixed) for this metric
+pub const ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
+    "activity_schedule_to_start_latency";
+/// The string name (which may be prefixed) for this metric
+pub const ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME: &str = "activity_execution_latency";
+
+/// Helps define buckets once in terms of millis, but also generates a seconds version
+macro_rules! define_latency_buckets {
+    ($(($metric_name:pat, $name:ident, $sec_name:ident, [$($bucket:expr),*])),*) => {
+        $(
+            pub(super) static $name: &[f64] = &[$($bucket,)*];
+            pub(super) static $sec_name: &[f64] = &[$( $bucket / 1000.0, )*];
+        )*
+
+        /// Returns the default histogram buckets that lang should use for a given metric name if
+        /// they have not been overridden by the user. If `use_seconds` is true, returns buckets
+        /// in terms of seconds rather than milliseconds.
+        ///
+        /// The name must *not* be prefixed with `temporal_`
+        pub fn default_buckets_for(histo_name: &str, use_seconds: bool) -> &'static [f64] {
+            match histo_name {
+                $(
+                    $metric_name => { if use_seconds { &$sec_name } else { &$name } },
+                )*
+            }
+        }
+    };
+}
+
+define_latency_buckets!(
+    (
+        WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
+        WF_LATENCY_MS_BUCKETS,
+        WF_LATENCY_S_BUCKETS,
+        [
+            100.,
+            500.,
+            1000.,
+            1500.,
+            2000.,
+            5000.,
+            10_000.,
+            30_000.,
+            60_000.,
+            120_000.,
+            300_000.,
+            600_000.,
+            1_800_000.,  // 30 min
+            3_600_000.,  //  1 hr
+            30_600_000., // 10 hrs
+            8.64e7       // 24 hrs
+        ]
+    ),
+    (
+        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME
+            | WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
+        WF_TASK_MS_BUCKETS,
+        WF_TASK_S_BUCKETS,
+        [1., 10., 20., 50., 100., 200., 500., 1000.]
+    ),
+    (
+        ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
+        ACT_EXE_MS_BUCKETS,
+        ACT_EXE_S_BUCKETS,
+        [50., 100., 500., 1000., 5000., 10_000., 60_000.]
+    ),
+    (
+        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME
+            | ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+        TASK_SCHED_TO_START_MS_BUCKETS,
+        TASK_SCHED_TO_START_S_BUCKETS,
+        [100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.]
+    ),
+    (
+        _,
+        DEFAULT_MS_BUCKETS,
+        DEFAULT_S_BUCKETS,
+        [50., 100., 500., 1000., 2500., 10_000.]
+    )
+);
+
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
 /// Core has requested.
@@ -128,7 +218,7 @@ impl HeartbeatMetricType {
 fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Option<String> {
     match attributes {
         MetricAttributes::Prometheus { labels } => labels.as_prom_labels().get(key).cloned(),
-        #[cfg(feature = "otel_impls")]
+        #[cfg(feature = "otel")]
         MetricAttributes::OTel { kvs } => kvs
             .iter()
             .find(|kv| kv.key.as_str() == key)
@@ -338,7 +428,7 @@ impl CoreMeter for Arc<dyn CoreMeter> {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum MetricAttributes {
-    #[cfg(feature = "otel_impls")]
+    #[cfg(feature = "otel")]
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
@@ -1107,8 +1197,8 @@ mod tests {
     }
 }
 
-#[cfg(feature = "otel_impls")]
-mod otel_impls {
+#[cfg(feature = "otel")]
+mod otel {
     use super::*;
     use opentelemetry::{KeyValue, metrics};
 
@@ -1281,5 +1371,54 @@ impl From<NewAttributes> for OrderedPromLabelSet {
             me.add_kv(kv);
         }
         me
+    }
+}
+
+#[derive(Debug, derive_more::Constructor)]
+pub(crate) struct PrefixedMetricsMeter<CM> {
+    prefix: String,
+    meter: CM,
+}
+impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
+        self.meter.new_attributes(attribs)
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        self.meter.extend_attributes(existing, attribs)
+    }
+
+    fn counter(&self, mut params: MetricParameters) -> Counter {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.counter(params)
+    }
+
+    fn histogram(&self, mut params: MetricParameters) -> Histogram {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.histogram(params)
+    }
+
+    fn histogram_f64(&self, mut params: MetricParameters) -> HistogramF64 {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.histogram_f64(params)
+    }
+
+    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.histogram_duration(params)
+    }
+
+    fn gauge(&self, mut params: MetricParameters) -> Gauge {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.gauge(params)
+    }
+
+    fn gauge_f64(&self, mut params: MetricParameters) -> GaugeF64 {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.gauge_f64(params)
     }
 }

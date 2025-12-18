@@ -1,4 +1,4 @@
-use crate::telemetry::prometheus_meter::Registry;
+use crate::telemetry::{PrometheusExporterOptions, prometheus_meter::Registry};
 use http_body_util::Full;
 use hyper::{Method, Request, Response, body::Bytes, header::CONTENT_TYPE, service::service_fn};
 use hyper_util::{
@@ -10,7 +10,6 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
 };
-use temporalio_common::telemetry::PrometheusExporterOptions;
 use tokio::{io, task::AbortHandle};
 
 pub struct StartedPromServer {

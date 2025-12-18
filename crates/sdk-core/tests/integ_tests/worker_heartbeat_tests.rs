@@ -26,14 +26,14 @@ use temporalio_common::{
             workflowservice::v1::{DescribeWorkerRequest, ListWorkersRequest},
         },
     },
-    telemetry::{OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions},
+    telemetry::{
+        OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
+        build_otlp_metric_exporter, start_prometheus_metric_exporter,
+    },
     worker::PollerBehavior,
 };
 use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
-use temporalio_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-};
+use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions};
 use tokio::{sync::Notify, time::sleep};
 use tonic::IntoRequest;
 use url::Url;

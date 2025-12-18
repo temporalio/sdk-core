@@ -7,6 +7,7 @@ pub(crate) mod tuner;
 mod workflow;
 
 use temporalio_client::Connection;
+use temporalio_common::telemetry::TelemetryInstance;
 pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
@@ -32,12 +33,9 @@ use crate::{
     errors::CompleteWfError,
     pollers::{ActivityTaskOptions, BoxedActPoller, BoxedNexusPoller, LongPollBuffer},
     protosext::validate_activity_completion,
-    telemetry::{
-        TelemetryInstance,
-        metrics::{
-            MetricsContext, activity_poller, activity_worker_type, local_activity_worker_type,
-            nexus_poller, nexus_worker_type, workflow_worker_type,
-        },
+    telemetry::metrics::{
+        MetricsContext, activity_poller, activity_worker_type, local_activity_worker_type,
+        nexus_poller, nexus_worker_type, workflow_worker_type,
     },
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},

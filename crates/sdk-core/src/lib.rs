@@ -51,10 +51,7 @@ pub use crate::worker::client::{
 };
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
-    telemetry::{
-        TelemetryInstance, metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
-        set_trace_subscriber_for_current_thread, telemetry_init,
-    },
+    telemetry::metrics::MetricsContext,
     worker::client::WorkerClientBag,
 };
 use anyhow::bail;
@@ -65,7 +62,10 @@ use temporalio_common::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
     protos::coresdk::ActivityHeartbeat,
-    telemetry::TelemetryOptions,
+    telemetry::{
+        TelemetryInstance, TelemetryOptions, remove_trace_subscriber_for_current_thread,
+        set_trace_subscriber_for_current_thread, telemetry_init,
+    },
 };
 
 /// Initialize a worker bound to a task queue.
