@@ -1485,8 +1485,8 @@ proxier! {
         StartActivityExecutionResponse,
         |r| {
             let mut labels = namespaced_request!(r);
-            if let Some(ref options) = r.get_ref().options {
-                labels.task_q(options.task_queue.clone());
+            if let Some(ref task_queue) = r.get_ref().task_queue {
+                labels.task_q(Some(task_queue.clone()));
             }
             r.extensions_mut().insert(labels);
         }
@@ -1495,6 +1495,15 @@ proxier! {
         describe_activity_execution,
         DescribeActivityExecutionRequest,
         DescribeActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        poll_activity_execution,
+        PollActivityExecutionRequest,
+        PollActivityExecutionResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
@@ -1513,15 +1522,6 @@ proxier! {
         count_activity_executions,
         CountActivityExecutionsRequest,
         CountActivityExecutionsResponse,
-        |r| {
-            let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-        }
-    );
-    (
-        get_activity_execution_result,
-        GetActivityExecutionResultRequest,
-        GetActivityExecutionResultResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
@@ -1549,42 +1549,6 @@ proxier! {
         delete_activity_execution,
         DeleteActivityExecutionRequest,
         DeleteActivityExecutionResponse,
-        |r| {
-            let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-        }
-    );
-    (
-        pause_activity_execution,
-        PauseActivityExecutionRequest,
-        PauseActivityExecutionResponse,
-        |r| {
-            let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-        }
-    );
-    (
-        unpause_activity_execution,
-        UnpauseActivityExecutionRequest,
-        UnpauseActivityExecutionResponse,
-        |r| {
-            let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-        }
-    );
-    (
-        reset_activity_execution,
-        ResetActivityExecutionRequest,
-        ResetActivityExecutionResponse,
-        |r| {
-            let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-        }
-    );
-    (
-        update_activity_execution_options,
-        UpdateActivityExecutionOptionsRequest,
-        UpdateActivityExecutionOptionsResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
