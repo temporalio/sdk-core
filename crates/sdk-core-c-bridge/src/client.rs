@@ -235,7 +235,10 @@ pub extern "C" fn temporal_core_client_free(client: *mut Connection) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_update_metadata(client: *mut Connection, metadata: MetadataRef) {
+pub extern "C" fn temporal_core_client_update_metadata(
+    client: *mut Connection,
+    metadata: MetadataRef,
+) {
     let client = unsafe { &*client };
     let _result = client
         .core
@@ -244,13 +247,12 @@ pub extern "C" fn temporal_core_client_update_metadata(client: *mut Connection, 
 
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_client_update_binary_metadata(
-    client: *mut Client,
+    client: *mut Connection,
     metadata: MetadataRef,
 ) {
     let client = unsafe { &*client };
     let _result = client
         .core
-        .get_client()
         .set_binary_headers(metadata.to_vec_map_on_newlines());
 }
 
@@ -1207,7 +1209,7 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
                 .keep_alive(keep_alive)
                 .maybe_headers(headers)
                 .maybe_binary_headers(binary_headers)
-            .maybe_api_key(api_key)
+                .maybe_api_key(api_key)
                 .maybe_http_connect_proxy(http_connect_proxy)
                 .maybe_tls_options(tls_cfg)
                 .build(),
