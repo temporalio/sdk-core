@@ -392,7 +392,7 @@ fn test_callback_override_with_headers() {
         context.runtime_new().unwrap();
 
         // Prepare client options with headers
-        let mut client_options = default_client_options("127.0.0.1:4567");
+        let mut client_options = default_connection_options("127.0.0.1:4567");
         client_options.headers = Some(HashMap::from([(
             "x-test".to_owned(),
             "client-ascii".to_owned(),

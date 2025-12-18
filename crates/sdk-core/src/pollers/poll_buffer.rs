@@ -764,8 +764,7 @@ mod tests {
     };
     use futures_util::FutureExt;
     use std::time::Duration;
-    use tokio::select;
-    use tokio::sync::Notify;
+    use tokio::{select, sync::Notify};
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {
