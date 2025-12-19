@@ -260,15 +260,12 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        {
-            *self.status.write() = WorkerStatus::ShuttingDown;
-        }
-        // First, unregister worker from the client
+        // First, disable Eager Workflow Start
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
                 .workers()
-                .unregister_worker(self.worker_instance_key);
+                .unregister_slot_provider(self.worker_instance_key);
         }
 
         // Push a BumpStream message to the workflow activation queue. This ensures that
@@ -350,10 +347,13 @@ impl Worker {
         CT: Into<AnyClient>,
     {
         // Unregister worker from current client, register in new client at the end
+        self.client
+            .workers()
+            .unregister_slot_provider(self.worker_instance_key)?;
         let client_worker = self
             .client
             .workers()
-            .unregister_worker(self.worker_instance_key)?;
+            .finalize_unregister(self.worker_instance_key)?;
 
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
@@ -737,31 +737,35 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        if let Some(workflows) = &self.workflows
-            && let Some(name) = workflows.get_sticky_queue_name()
         {
-            let heartbeat = self
-                .client_worker_registrator
-                .heartbeat_manager
-                .as_ref()
-                .map(|hm| hm.heartbeat_callback.clone()());
-
-            // This is a best effort call and we can still shutdown the worker if it fails
-            match self.client.shutdown_worker(name, heartbeat).await {
-                Err(err)
-                    if !matches!(
-                        err.code(),
-                        tonic::Code::Unimplemented | tonic::Code::Unavailable
-                    ) =>
-                {
-                    warn!(
-                        "shutdown_worker rpc errored during worker shutdown: {:?}",
-                        err
-                    );
-                }
-                _ => {}
-            }
+            *self.status.write() = WorkerStatus::ShuttingDown;
         }
+        let heartbeat = self
+            .client_worker_registrator
+            .heartbeat_manager
+            .as_ref()
+            .map(|hm| hm.heartbeat_callback.clone()());
+        let sticky_name = self
+            .workflows
+            .as_ref()
+            .and_then(|wf| wf.get_sticky_queue_name())
+            .unwrap_or_default();
+        // This is a best effort call and we can still shutdown the worker if it fails
+        match self.client.shutdown_worker(sticky_name, heartbeat).await {
+            Err(err)
+                if !matches!(
+                    err.code(),
+                    tonic::Code::Unimplemented | tonic::Code::Unavailable
+                ) =>
+            {
+                warn!(
+                    "shutdown_worker rpc errored during worker shutdown: {:?}",
+                    err
+                );
+            }
+            _ => {}
+        }
+
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
         if let Some(la_mgr) = &self.local_act_mgr {
@@ -797,6 +801,13 @@ impl Worker {
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
+        // Only after worker is fully shutdown do we remove the heartbeat callback
+        // from SharedNamespaceWorker, allowing for accurate worker shutdown
+        // from Server POV
+        let _res = self
+            .client
+            .workers()
+            .finalize_unregister(self.worker_instance_key);
     }
 
     pub(crate) fn shutdown_token(&self) -> CancellationToken {

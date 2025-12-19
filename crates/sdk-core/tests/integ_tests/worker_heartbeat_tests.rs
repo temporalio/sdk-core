@@ -463,7 +463,7 @@ fn after_shutdown_checks(
     );
     assert_eq!(heartbeat.sdk_name, "temporal-core");
     assert_eq!(heartbeat.sdk_version, "0.1.0");
-    assert_eq!(heartbeat.status, WorkerStatus::Shutdown as i32);
+    assert_eq!(heartbeat.status, WorkerStatus::ShuttingDown as i32);
 
     assert_eq!(start_time.load().unwrap(), heartbeat.start_time.unwrap());
     assert_ne!(

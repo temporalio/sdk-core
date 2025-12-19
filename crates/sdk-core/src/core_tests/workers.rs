@@ -333,19 +333,15 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     mock.expect_identity()
         .returning(|| "test-identity".to_string());
-    if use_cache {
-        if api_success {
-            mock.expect_shutdown_worker()
-                .times(1)
-                .returning(|_, _| Ok(ShutdownWorkerResponse {}));
-        } else {
-            // worker.shutdown() should succeed even if shutdown_worker fails
-            mock.expect_shutdown_worker()
-                .times(1)
-                .returning(|_, _| Err(tonic::Status::unavailable("fake shutdown error")));
-        }
+    if api_success {
+        mock.expect_shutdown_worker()
+            .times(1)
+            .returning(|_, _| Ok(ShutdownWorkerResponse {}));
     } else {
-        mock.expect_shutdown_worker().times(0);
+        // worker.shutdown() should succeed even if shutdown_worker fails
+        mock.expect_shutdown_worker()
+            .times(1)
+            .returning(|_, _| Err(tonic::Status::unavailable("fake shutdown error")));
     }
 
     let t = canned_histories::single_timer("1");

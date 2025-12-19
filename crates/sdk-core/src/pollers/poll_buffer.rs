@@ -960,13 +960,11 @@ mod tests {
         // longer.
         assert!(
             elapsed >= Duration::from_millis(200),
-            "Should wait at least the interrupt period. Elapsed: {:?}",
-            elapsed
+            "Should wait at least the interrupt period. Elapsed: {elapsed:?}",
         );
         assert!(
             elapsed < Duration::from_secs(1),
-            "Should not wait too long. Elapsed: {:?}",
-            elapsed
+            "Should not wait too long. Elapsed: {elapsed:?}",
         );
 
         // Clean up
