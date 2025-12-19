@@ -256,22 +256,6 @@ impl ClientWorkerSetImpl {
             .remove(&worker_instance_key)
             .ok_or_else(|| anyhow::anyhow!("Worker not found in all_workers"))?;
 
-        // Worker should already be removed from slot_providers
-        let slot_key = SlotKey::new(
-            worker.namespace().to_string(),
-            worker.task_queue().to_string(),
-        );
-        if let Some(slot_vec) = self.slot_providers.get(&slot_key) {
-            if slot_vec
-                .iter()
-                .any(|info| info.worker_id == worker_instance_key)
-            {
-                return Err(anyhow::anyhow!(
-                    "Worker still in slot_providers during finalize"
-                ));
-            }
-        }
-
         if let Some(w) = self.shared_worker.get_mut(worker.namespace()) {
             let (callback, is_empty) = w.unregister_callback(worker.worker_instance_key());
             if callback.is_some() && is_empty {
