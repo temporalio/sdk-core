@@ -1479,6 +1479,81 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        start_activity_execution,
+        StartActivityExecutionRequest,
+        StartActivityExecutionResponse,
+        |r| {
+            let mut labels = namespaced_request!(r);
+            if let Some(ref task_queue) = r.get_ref().task_queue {
+                labels.task_q(Some(task_queue.clone()));
+            }
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        describe_activity_execution,
+        DescribeActivityExecutionRequest,
+        DescribeActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        poll_activity_execution,
+        PollActivityExecutionRequest,
+        PollActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        list_activity_executions,
+        ListActivityExecutionsRequest,
+        ListActivityExecutionsResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        count_activity_executions,
+        CountActivityExecutionsRequest,
+        CountActivityExecutionsResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        request_cancel_activity_execution,
+        RequestCancelActivityExecutionRequest,
+        RequestCancelActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        terminate_activity_execution,
+        TerminateActivityExecutionRequest,
+        TerminateActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        delete_activity_execution,
+        DeleteActivityExecutionRequest,
+        DeleteActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
