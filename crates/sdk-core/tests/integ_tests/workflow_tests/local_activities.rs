@@ -2956,3 +2956,267 @@ async fn cancel_after_act_starts_canned(
     });
     worker.run().await.unwrap();
 }
+
+// 2 LAs scheduled in same WFT, LA2 completes in the same WFT, LA1 completes in
+// following WFT after heartbeat.
+#[rstest]
+#[tokio::test]
+async fn mixed_la_completion_times(#[values(true, false)] replay: bool) {
+    let wft_timeout = Duration::from_millis(100);
+    let mut t = TestHistoryBuilder::default();
+    // Short WFT timeout to trigger heartbeat behavior
+    t.add_wfe_started_with_wft_timeout(wft_timeout);
+    t.add_full_wf_task();
+    // LA2 (fast, seq=2) completes in same WFT, marker recorded immediately
+    t.add_local_activity_result_marker(2, "2", b"Result".into());
+    // Heartbeat WFT (because LA1 is still running)
+    t.add_full_wf_task();
+    // LA1 (slow, seq=1) completes in this WFT
+    t.add_local_activity_result_marker(1, "1", b"Result".into());
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_worker_client();
+    let mut mock_cfg = if replay {
+        MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock)
+    } else {
+        MockPollCfg::from_hist_builder(t)
+    };
+
+    let mut aai = ActivationAssertionsInterceptor::default();
+    aai.skip_one()
+        .then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(ra)),
+                }] => assert_eq!(ra.seq, 2)
+            );
+        })
+        .then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(ra)),
+                }] => assert_eq!(ra.seq, 1)
+            );
+        });
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        if replay {
+            asserts.then(|wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        } else {
+            asserts
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                })
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 2);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                    assert_eq!(
+                        wft.commands[1].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
+        }
+    });
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.set_worker_interceptor(aai);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+        // Schedule both LAs in parallel in the same WFT
+        // LA1 (seq=1) will complete in a following WFT
+        // LA2 (seq=2) will complete in the same WFT
+        let la1 = ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            // Must be longer than WFT timeout
+            input: (wft_timeout.mul_f32(1.5).as_millis() as u64)
+                .as_json_payload()
+                .unwrap(),
+            ..Default::default()
+        });
+        let la2 = ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: 0.as_json_payload().unwrap(),
+            ..Default::default()
+        });
+        tokio::join!(la1, la2);
+        Ok(().into())
+    });
+
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |_ctx: ActContext, input: u64| async move {
+            if input != 0 {
+                tokio::time::sleep(Duration::from_millis(input)).await;
+            }
+            Ok("Result")
+        },
+    );
+    worker.run().await.unwrap();
+}
+
+/// Test: 2 LAs scheduled in same WFT, both complete in a different (later) WFT.
+/// This tests marker lookahead when multiple markers need resolution after heartbeat.
+///
+/// History structure:
+/// ```text
+/// WFT1: Schedule LA1 (seq=1) + LA2 (seq=2)
+/// WFT2: Heartbeat WFT (both LAs still running)
+///       LA1 marker recorded
+///       LA2 marker recorded
+/// WFT3: Workflow completes
+/// ```
+
+#[rstest]
+#[tokio::test]
+async fn two_las_with_heartbeat(
+    #[values(true, false)] replay: bool,
+    #[values(true, false)] complete_in_schedule_order: bool,
+) {
+    use parking_lot::Mutex;
+
+    let wft_timeout = Duration::from_millis(100);
+    let mut t = TestHistoryBuilder::default();
+    t.add_wfe_started_with_wft_timeout(wft_timeout);
+    t.add_full_wf_task();
+    // Heartbeat before resolving LA
+    t.add_full_wf_task();
+    if complete_in_schedule_order {
+        t.add_local_activity_result_marker(1, "1", b"hi".into());
+        t.add_local_activity_result_marker(2, "2", b"hi".into());
+    } else {
+        t.add_local_activity_result_marker(2, "2", b"hi".into());
+        t.add_local_activity_result_marker(1, "1", b"hi".into());
+    }
+    t.add_workflow_task_scheduled_and_started();
+    let mut mock_cfg = if replay {
+        MockPollCfg::from_resps(t, [ResponseType::AllHistory])
+    } else {
+        MockPollCfg::from_hist_builder(t)
+    };
+
+    let mut aai = ActivationAssertionsInterceptor::default();
+    aai.skip_one().then(move |a| {
+        let (first_expected_seq, second_expected_seq) = if complete_in_schedule_order {
+            (1, 2)
+        } else {
+            (2, 1)
+        };
+        // TODO: When actually executing these race depending on which future scheduling
+        // Can resolve in one or 2 activiations with different ordering. How do we fix this?
+        if replay {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(ra1))
+                 },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(ra2))
+                 }
+                ] => {
+                        assert_eq!(ra1.seq, first_expected_seq);
+                        assert_eq!(ra2.seq, second_expected_seq);
+                }
+            );
+        }
+    });
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        if replay {
+            asserts.then(|wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        } else {
+            asserts
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 0);
+                })
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 3);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                    assert_eq!(wft.commands[1].command_type(), CommandType::RecordMarker);
+                    assert_eq!(
+                        wft.commands[2].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
+        }
+    });
+
+    let la_completion_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.set_worker_interceptor(aai);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+        // Schedule both LAs in parallel in the same WFT
+        // LA1 (seq=1) will complete in a following WFT
+        // LA2 (seq=2) will complete in the same WFT
+        let la1 = ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            // Must be longer than WFT timeout
+            input: 2.as_json_payload().unwrap(),
+            ..Default::default()
+        });
+        let la2 = ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: 1.as_json_payload().unwrap(),
+            ..Default::default()
+        });
+        tokio::join!(la1, la2);
+        Ok(().into())
+    });
+    let first_finish_id = if complete_in_schedule_order { 1 } else { 2 };
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |_ctx: ActContext, act_id: u64| async move {
+            tokio::time::sleep(wft_timeout.mul_f64(1.5)).await;
+            la_completion_barr.wait().await;
+            Ok("hi")
+        },
+    );
+    worker.run().await.unwrap();
+}
+
+/// Test: LA1 scheduled in WFT1 (pending), LA2 scheduled in WFT2 (via timer), both resolve in WFT2.
+/// This tests handling of LAs from different scheduling contexts resolving together.
+///
+/// History structure:
+/// ```text
+/// WFT1: Schedule LA1 (slow, seq=1), start timer
+/// Timer fires
+/// WFT2: Schedule LA2 (fast, seq=2)
+///       LA1 marker recorded (finally completes)
+///       LA2 marker recorded (completes immediately)
+/// WFT3: Workflow completes
+/// ```
+async fn las_scheduled_different_wfts_resolve_same_wf(ctx: WfContext) -> WorkflowResult<()> {
+    // LA1 scheduled in WFT1, will take a while
+    let la1 = ctx.local_activity(LocalActivityOptions {
+        activity_type: "slow_activity".to_string(),
+        input: ().as_json_payload().unwrap(),
+        ..Default::default()
+    });
+    // Timer separates the WFTs
+    ctx.timer(Duration::from_secs(1)).await;
+    // LA2 scheduled in WFT2, completes quickly
+    let la2 = ctx.local_activity(LocalActivityOptions {
+        activity_type: "fast_activity".to_string(),
+        input: ().as_json_payload().unwrap(),
+        ..Default::default()
+    });
+    // Both should resolve now
+    tokio::join!(la1, la2);
+    Ok(().into())
+}
