@@ -635,6 +635,9 @@ impl WorkflowMachines {
         if events.is_empty() {
             self.replaying = false;
         }
+        // Track if we were replaying before processing events. We only want to record replay
+        // latency if we actually did replay work (i.e., started with replaying=true).
+        let was_replaying = self.replaying;
         let replay_start = Instant::now();
 
         if let Some(last_event) = events.last()
@@ -821,7 +824,10 @@ impl WorkflowMachines {
             }
         }
 
-        if !self.replaying {
+        // Only record replay latency if we actually did replay work. This avoids recording
+        // near-zero latencies for the first workflow task (which has no history to replay) or
+        // when there were no events to process.
+        if was_replaying && !self.replaying {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());
         }
 
