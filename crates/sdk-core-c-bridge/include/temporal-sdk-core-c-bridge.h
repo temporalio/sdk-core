@@ -692,7 +692,7 @@ typedef struct TemporalCoreCustomSlotSupplierCallbacks {
    */
   TemporalCoreCustomSlotSupplierTryReserveCallback try_reserve;
   /**
-   * Called after successful reservation to mark slot as used. See [`SlotSupplier`](temporalio_common::worker::SlotSupplier)
+   * Called after successful reservation to mark slot as used. See [`SlotSupplier`](temporalio_sdk_core::SlotSupplier)
    * trait for details.
    */
   TemporalCoreCustomSlotSupplierMarkUsedCallback mark_used;

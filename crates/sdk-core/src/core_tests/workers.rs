@@ -5,7 +5,7 @@ use crate::{
         WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
     },
     worker::{
-        self,
+        self, PollerBehavior,
         client::{
             MockWorkerClient,
             mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_worker_client},
@@ -15,7 +15,6 @@ use crate::{
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
 use temporalio_common::{
-    Worker,
     protos::{
         canned_histories,
         coresdk::{
@@ -41,7 +40,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::{PollerBehavior, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use tokio::sync::{Barrier, watch};
 

@@ -20,8 +20,6 @@ use temporalio_client::{
     WorkflowService,
 };
 use temporalio_common::{
-    Worker,
-    errors::PollError,
     prost_dur,
     protos::{
         coresdk::{
@@ -57,18 +55,17 @@ use temporalio_common::{
             MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
     },
-    worker::{
-        PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
-        WorkflowSlotKind,
-    },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
-    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
+    CoreRuntime, FixedSizeSlotSupplier, PollError, PollerBehavior, SlotKind, SlotMarkUsedContext,
+    SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    TokioRuntimeBuilder, TunerBuilder, WorkerConfig, WorkerVersioningStrategy, WorkflowSlotKind,
+    init_worker,
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;

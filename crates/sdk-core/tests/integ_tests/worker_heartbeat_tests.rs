@@ -30,10 +30,11 @@ use temporalio_common::{
         OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
         build_otlp_metric_exporter, start_prometheus_metric_exporter,
     },
-    worker::PollerBehavior,
 };
 use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
-use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions};
+use temporalio_sdk_core::{
+    CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
+};
 use tokio::{sync::Notify, time::sleep};
 use tonic::IntoRequest;
 use url::Url;

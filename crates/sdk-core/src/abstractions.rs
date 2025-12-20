@@ -2,7 +2,7 @@
 
 pub(crate) mod take_cell;
 
-use crate::MetricsContext;
+use crate::{MetricsContext, worker::*};
 use std::{
     fmt::{Debug, Formatter},
     sync::{
@@ -10,13 +10,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
-use temporalio_common::{
-    telemetry::metrics::TemporalMeter,
-    worker::{
-        SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerDeploymentVersion, WorkflowSlotKind,
-    },
-};
+use temporalio_common::{telemetry::metrics::TemporalMeter, worker::WorkerDeploymentVersion};
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -475,9 +469,11 @@ where
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{advance_fut, worker::tuner::FixedSizeSlotSupplier};
+    use crate::{
+        advance_fut,
+        worker::{WorkflowSlotKind, tuner::FixedSizeSlotSupplier},
+    };
     use futures_util::FutureExt;
-    use temporalio_common::worker::WorkflowSlotKind;
 
     pub(crate) fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
         size: usize,

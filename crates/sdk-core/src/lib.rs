@@ -32,23 +32,25 @@ mod core_tests;
 #[macro_use]
 pub mod test_help;
 
-pub(crate) use temporalio_common::errors;
-
+pub use crate::worker::client::{
+    PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
+};
 pub use pollers::{
     Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions, WorkflowClientTrait,
 };
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
 pub use worker::{
-    FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
-    ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
-    TunerHolderOptions, TunerHolderOptionsBuilder, Worker, WorkerConfig, WorkerConfigBuilder,
+    ActivitySlotKind, CompleteActivityError, CompleteNexusError, CompleteWfError,
+    FixedSizeSlotSupplier, LocalActivitySlotKind, NexusSlotKind, PollError, PollerBehavior,
+    ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner,
+    ResourceSlotOptions, SlotInfo, SlotInfoTrait, SlotKind, SlotKindType, SlotMarkUsedContext,
+    SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierOptions,
+    SlotSupplierPermit, TunerBuilder, TunerHolder, TunerHolderOptions, TunerHolderOptionsBuilder,
+    Worker, WorkerConfig, WorkerConfigBuilder, WorkerTuner, WorkerValidationError,
+    WorkerVersioningStrategy, WorkflowErrorType, WorkflowSlotKind,
 };
 
-/// Expose [WorkerClient] symbols
-pub use crate::worker::client::{
-    PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
-};
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::metrics::MetricsContext,
@@ -59,8 +61,6 @@ use futures_util::Stream;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{Connection, SharedReplaceableClient};
 use temporalio_common::{
-    Worker as WorkerTrait,
-    errors::{CompleteActivityError, PollError},
     protos::coresdk::ActivityHeartbeat,
     telemetry::{
         TelemetryInstance, TelemetryOptions, remove_trace_subscriber_for_current_thread,

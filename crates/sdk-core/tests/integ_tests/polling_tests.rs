@@ -19,7 +19,7 @@ use temporalio_client::{
     Client, Connection, ConnectionOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::{
-    Worker, prost_dur,
+    prost_dur,
     protos::{
         coresdk::{
             AsJsonPayloadExt, IntoCompletion,
@@ -32,11 +32,10 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
     telemetry::{CoreLogStreamConsumer, Logger, TelemetryOptions},
-    worker::PollerBehavior,
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    CoreRuntime, RuntimeOptions,
+    CoreRuntime, PollerBehavior, RuntimeOptions,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker,
     test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
@@ -230,7 +229,7 @@ async fn switching_worker_client_changes_poll() {
             .unwrap();
 
         // Shutdown workers and servers
-        drain_pollers_and_shutdown(&(Arc::new(worker) as Arc<dyn Worker>)).await;
+        drain_pollers_and_shutdown(&worker).await;
     })
     .catch_unwind()
     .await;

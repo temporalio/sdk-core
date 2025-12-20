@@ -1,3 +1,8 @@
+use crate::worker::{
+    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotInfo, SlotInfoTrait, SlotKind,
+    SlotKindType, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
+    SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+};
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::{
@@ -12,18 +17,11 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporalio_common::{
-    telemetry::metrics::{GaugeF64, MetricAttributes, TemporalMeter},
-    worker::{
-        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotInfo, SlotInfoTrait, SlotKind,
-        SlotKindType, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
-    },
-};
+use temporalio_common::telemetry::metrics::{GaugeF64, MetricAttributes, TemporalMeter};
 use tokio::{sync::watch, task::JoinHandle};
 
-/// Implements [WorkerTuner] and attempts to maintain certain levels of resource usage when
-/// under load.
+/// Implements [crate::worker::WorkerTuner] and attempts to maintain certain levels of resource
+/// usage when under load.
 ///
 /// It does so by using two PID controllers, one for memory and one for CPU, which are fed the
 /// current usage levels of their respective resource as measurements. The user specifies a target
@@ -726,7 +724,10 @@ impl CGroupCpuFileSystem for CgroupV2CpuFileSystem {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
+    use crate::{
+        abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext,
+        worker::WorkflowSlotKind,
+    };
     use std::{
         cell::RefCell,
         env,
@@ -738,7 +739,6 @@ mod tests {
         },
         thread::sleep,
     };
-    use temporalio_common::worker::WorkflowSlotKind;
 
     struct FakeMIS {
         used: Arc<AtomicU64>,

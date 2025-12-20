@@ -11,7 +11,7 @@ use std::{
 };
 use temporalio_client::Priority;
 use temporalio_common::{
-    ActivityDefinition, Worker,
+    ActivityDefinition,
     data_converters::{PayloadConversionError, PayloadConverter},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
@@ -19,12 +19,13 @@ use temporalio_common::{
         utilities::TryIntoOrNone,
     },
 };
+use temporalio_sdk_core::Worker as CoreWorker;
 use tokio_util::sync::CancellationToken;
 
 /// Used within activities to get info, heartbeat management etc.
 #[derive(Clone)]
 pub struct ActivityContext {
-    worker: Arc<dyn Worker>,
+    worker: Arc<CoreWorker>,
     app_data: Arc<AppData>,
     cancellation_token: CancellationToken,
     input: Vec<Payload>,
@@ -37,7 +38,7 @@ impl ActivityContext {
     /// Construct new Activity Context, returning the context and the first argument to the activity
     /// (which may be a default [Payload]).
     pub fn new(
-        worker: Arc<dyn Worker>,
+        worker: Arc<CoreWorker>,
         app_data: Arc<AppData>,
         cancellation_token: CancellationToken,
         task_queue: String,

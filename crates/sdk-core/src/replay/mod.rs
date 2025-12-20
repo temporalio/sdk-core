@@ -3,9 +3,9 @@
 //! users during testing.
 
 use crate::{
-    Worker,
+    Worker, WorkerConfig,
     worker::{
-        PostActivateHookData,
+        PollerBehavior, PostActivateHookData,
         client::mocks::{MockManualWorkerClient, mock_manual_worker_client},
     },
 };
@@ -30,7 +30,7 @@ use temporalio_common::{
             },
         },
     },
-    worker::{PollerBehavior, WorkerConfig, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use tokio::sync::{Mutex as TokioMutex, mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;

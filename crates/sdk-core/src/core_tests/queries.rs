@@ -4,7 +4,7 @@ use crate::{
         hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
     worker::{
-        LEGACY_QUERY_ID,
+        LEGACY_QUERY_ID, WorkerVersioningStrategy,
         client::{LegacyQueryResult, mocks::mock_worker_client},
     },
 };
@@ -13,33 +13,29 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
-use temporalio_common::{
-    Worker as WorkerTrait,
-    protos::{
-        TestHistoryBuilder, canned_histories,
-        coresdk::{
-            workflow_activation::{
-                WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
-            },
-            workflow_commands::{
-                ActivityCancellationType, CompleteWorkflowExecution,
-                ContinueAsNewWorkflowExecution, QueryResult, RequestCancelActivity, query_result,
-            },
-            workflow_completion::WorkflowActivationCompletion,
+use temporalio_common::protos::{
+    TestHistoryBuilder, canned_histories,
+    coresdk::{
+        workflow_activation::{
+            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
         },
-        temporal::api::{
-            common::v1::Payload,
-            enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
-            failure::v1::Failure,
-            history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
-            query::v1::WorkflowQuery,
-            workflowservice::v1::{
-                GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
-            },
+        workflow_commands::{
+            ActivityCancellationType, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
+            QueryResult, RequestCancelActivity, query_result,
         },
-        test_utils::{query_ok, schedule_activity_cmd, start_timer_cmd},
+        workflow_completion::WorkflowActivationCompletion,
     },
-    worker::WorkerVersioningStrategy,
+    temporal::api::{
+        common::v1::Payload,
+        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
+        query::v1::WorkflowQuery,
+        workflowservice::v1::{
+            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
+        },
+    },
+    test_utils::{query_ok, schedule_activity_cmd, start_timer_cmd},
 };
 
 #[rstest::rstest]

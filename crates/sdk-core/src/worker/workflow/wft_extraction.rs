@@ -2,6 +2,7 @@ use crate::{
     abstractions::OwnedMeteredSemPermit,
     protosext::ValidPollWFTQResponse,
     worker::{
+        WorkflowSlotKind,
         client::WorkerClient,
         workflow::{
             CacheMissFetchReq, HistoryUpdate, NextPageReq, PermittedWFT,
@@ -11,10 +12,7 @@ use crate::{
 };
 use futures_util::{FutureExt, Stream, StreamExt, stream, stream::PollNext};
 use std::{future, sync::Arc};
-use temporalio_common::{
-    protos::{TaskToken, coresdk::WorkflowSlotInfo},
-    worker::WorkflowSlotKind,
-};
+use temporalio_common::protos::{TaskToken, coresdk::WorkflowSlotInfo};
 use tracing::Span;
 
 /// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready

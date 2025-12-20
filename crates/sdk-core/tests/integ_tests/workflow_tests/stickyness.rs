@@ -4,8 +4,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::WorkflowOptions;
-use temporalio_common::worker::{PollerBehavior, WorkerTaskTypes};
+use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_sdk_core::PollerBehavior;
 use tokio::sync::Barrier;
 
 #[tokio::test]

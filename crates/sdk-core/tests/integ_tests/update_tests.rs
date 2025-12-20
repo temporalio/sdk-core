@@ -13,7 +13,7 @@ use std::{
 };
 use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait, WorkflowService};
 use temporalio_common::{
-    Worker, prost_dur,
+    prost_dur,
     protos::{
         coresdk::{
             ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
@@ -40,6 +40,7 @@ use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, UpdateContext, WfContext, activities::ActivityContext,
 };
 use temporalio_sdk_core::{
+    Worker,
     replay::HistoryForReplay,
     test_help::{WorkerTestHelpers, drain_pollers_and_shutdown},
 };
@@ -92,7 +93,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
         .await
         .unwrap();
-    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref(), 0).await;
+    handle_update(will_fail, CompleteWorkflow::Yes, &replay_worker, 0).await;
 }
 
 #[tokio::test]
@@ -166,13 +167,7 @@ async fn reapplied_updates_due_to_reset() {
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
-    handle_update(
-        FailUpdate::No,
-        CompleteWorkflow::No,
-        replay_worker.as_ref(),
-        2,
-    )
-    .await;
+    handle_update(FailUpdate::No, CompleteWorkflow::No, &replay_worker, 2).await;
     // Then the timer fires
     let act = replay_worker.poll_workflow_activation().await.unwrap();
     replay_worker
@@ -180,13 +175,7 @@ async fn reapplied_updates_due_to_reset() {
         .await
         .unwrap();
     // Then the client sent a second update; we handled it and completed the workflow.
-    handle_update(
-        FailUpdate::No,
-        CompleteWorkflow::Yes,
-        replay_worker.as_ref(),
-        0,
-    )
-    .await;
+    handle_update(FailUpdate::No, CompleteWorkflow::Yes, &replay_worker, 0).await;
 
     drain_pollers_and_shutdown(&replay_worker).await;
 }
@@ -197,7 +186,7 @@ async fn send_and_handle_update(
     update_id: &str,
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
-    core: &dyn Worker,
+    core: &Worker,
     client: &Client,
 ) -> String {
     // Complete first task with no commands
@@ -241,7 +230,7 @@ async fn send_and_handle_update(
 async fn handle_update(
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
-    core: &dyn Worker,
+    core: &Worker,
     update_job_index: usize,
 ) {
     let act = core.poll_workflow_activation().await.unwrap();
