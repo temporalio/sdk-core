@@ -1,7 +1,6 @@
 //! Functionality related to defining and interacting with activities
 
 use crate::{WorkerOptionsBuilder, app_data::AppData, worker_options_builder};
-
 use futures_util::future::BoxFuture;
 use prost_types::{Duration, Timestamp};
 use std::{

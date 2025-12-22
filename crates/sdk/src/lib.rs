@@ -86,8 +86,11 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::Arc,
+    time::Duration,
 };
-use temporalio_client::{ConnectionOptions, ConnectionOptionsBuilder, connection_options_builder};
+use temporalio_client::{
+    Connection, ConnectionOptions, ConnectionOptionsBuilder, connection_options_builder,
+};
 use temporalio_common::{
     ActivityDefinition,
     data_converters::{GenericPayloadConverter, SerializationContext},
@@ -116,8 +119,12 @@ use temporalio_common::{
             failure::v1::{Failure, failure},
         },
     },
+    worker::{WorkerDeploymentOptions, WorkerTaskTypes},
 };
-use temporalio_sdk_core::{PollError, Url, Worker as CoreWorker};
+use temporalio_sdk_core::{
+    CoreRuntime, PollError, PollerBehavior, Url, Worker as CoreWorker, WorkerConfig, WorkerTuner,
+    WorkerVersioningStrategy, init_worker,
+};
 use tokio::{
     sync::{
         Notify,
@@ -131,15 +138,89 @@ use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-// TODO [rust-sdk-branch]: Stubbed while working on macros
-#[allow(unused)]
+// TODO [rust-sdk-branch]: See about making clone
 /// Contains options for configuring a worker.
 #[derive(bon::Builder)]
-#[builder(state_mod(vis = "pub"))]
+#[builder(on(String, into), state_mod(vis = "pub"))]
 #[non_exhaustive]
 pub struct WorkerOptions {
     #[builder(field)]
     activities: HashMap<&'static str, ActivityInvocation>,
+
+    /// The Temporal service namespace this worker is bound to
+    pub namespace: String,
+    /// What task queue will this worker poll from? This task queue name will be used for both
+    /// workflow and activity polling.
+    pub task_queue: String,
+    /// A human-readable string that can identify this worker. Using something like sdk version
+    /// and host name is a good default. If set, overrides the identity set (if any) on the client
+    /// used by this worker.
+    pub client_identity_override: Option<String>,
+    /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
+    /// history updates are applied incrementally to suspended instances of workflow execution.
+    /// Workflows are evicted according to a least-recently-used policy once the cache maximum is
+    /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
+    /// or failures.
+    #[builder(default = 1000)]
+    pub max_cached_workflows: usize,
+    /// Set a [crate::WorkerTuner] for this worker, which controls how many slots are available for
+    /// the different kinds of tasks.
+    pub tuner: Arc<dyn WorkerTuner + Send + Sync>,
+    /// Controls how polling for Workflow tasks will happen on this worker's task queue. See also
+    /// [WorkerConfig::nonsticky_to_sticky_poll_ratio]. If using SimpleMaximum, Must be at least 2
+    /// when `max_cached_workflows` > 0, or is an error.
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
+    pub workflow_task_poller_behavior: PollerBehavior,
+    /// Only applies when using [PollerBehavior::SimpleMaximum]
+    ///
+    /// (max workflow task polls * this number) = the number of max pollers that will be allowed for
+    /// the nonsticky queue when sticky tasks are enabled. If both defaults are used, the sticky
+    /// queue will allow 4 max pollers while the nonsticky queue will allow one. The minimum for
+    /// either poller is 1, so if the maximum allowed is 1 and sticky queues are enabled, there will
+    /// be 2 concurrent polls.
+    #[builder(default = 0.2)]
+    pub nonsticky_to_sticky_poll_ratio: f32,
+    /// Controls how polling for Activity tasks will happen on this worker's task queue.
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
+    pub activity_task_poller_behavior: PollerBehavior,
+    /// Controls how polling for Nexus tasks will happen on this worker's task queue.
+    #[builder(default = PollerBehavior::SimpleMaximum(5))]
+    pub nexus_task_poller_behavior: PollerBehavior,
+    /// Specifies which task types this worker will poll for.
+    ///
+    /// Note: At least one task type must be specified or the worker will fail validation.
+    #[builder(default = WorkerTaskTypes::all())]
+    pub task_types: WorkerTaskTypes,
+    /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
+    /// and moved to the non-sticky queue where it may be picked up by any worker.
+    #[builder(default = Duration::from_secs(10))]
+    pub sticky_queue_schedule_to_start_timeout: Duration,
+    /// Longest interval for throttling activity heartbeats
+    #[builder(default = Duration::from_secs(60))]
+    pub max_heartbeat_throttle_interval: Duration,
+    /// Default interval for throttling activity heartbeats in case
+    /// `ActivityOptions.heartbeat_timeout` is unset.
+    /// When the timeout *is* set in the `ActivityOptions`, throttling is set to
+    /// `heartbeat_timeout * 0.8`.
+    #[builder(default = Duration::from_secs(30))]
+    pub default_heartbeat_throttle_interval: Duration,
+    /// Sets the maximum number of activities per second the task queue will dispatch, controlled
+    /// server-side. Note that this only takes effect upon an activity poll request. If multiple
+    /// workers on the same queue have different values set, they will thrash with the last poller
+    /// winning.
+    ///
+    /// Setting this to a nonzero value will also disable eager activity execution.
+    pub max_task_queue_activities_per_second: Option<f64>,
+    /// Limits the number of activities per second that this worker will process. The worker will
+    /// not poll for new activities if by doing so it might receive and execute an activity which
+    /// would cause it to exceed this limit. Negative, zero, or NaN values will cause building
+    /// the options to fail.
+    pub max_worker_activities_per_second: Option<f64>,
+    /// If set, the worker will issue cancels for all outstanding activities and nexus operations after
+    /// shutdown has been initiated and this amount of time has elapsed.
+    pub graceful_shutdown_period: Option<Duration>,
+    /// Set the deployment options for this worker.
+    pub deployment_options: WorkerDeploymentOptions,
 }
 
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
@@ -233,6 +314,7 @@ struct CommonWorker {
     worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
 }
 
+#[derive(Default)]
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
@@ -250,33 +332,43 @@ struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, J
     run_id: String,
 }
 
+#[derive(Default)]
 struct ActivityHalf {
+    /// Maps activity type to the function for executing activities of that type
+    activities: HashMap<&'static str, ActivityInvocation>,
     /// Maps activity type to the function for executing activities of that type
     activity_fns: HashMap<String, ActivityFunction>,
     task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
 }
 
 impl Worker {
-    // /// Create a new worker from an existing connection, and options.
-    // pub fn new(connection: Connection, options: WorkerOptions) -> Self {}
+    // TODO [rust-sdk-branch]: Not 100% sure I like passing runtime here
+    // TODO [rust-sdk-branch]: Don't use anyhow
+    /// Create a new worker from an existing connection, and options.
+    pub fn new(
+        runtime: &CoreRuntime,
+        connection: Connection,
+        mut options: WorkerOptions,
+    ) -> Result<Self, anyhow::Error> {
+        let acts = std::mem::take(&mut options.activities);
+        let wc = options.try_into().map_err(|s| anyhow::anyhow!("{s}"))?;
+        let core = init_worker(runtime, wc, connection)?;
+        let mut me = Self::new_from_core(Arc::new(core));
+        me.activity_half.activities = acts;
+        Ok(me)
+    }
 
-    /// Create a new Rust SDK worker from a core worker
-    pub fn new_from_core(worker: Arc<CoreWorker>, task_queue: impl Into<String>) -> Self {
+    /// Create a new Rust SDK worker from a Core worker. For internal testing only.
+    #[doc(hidden)]
+    pub fn new_from_core(worker: Arc<CoreWorker>) -> Self {
         Self {
             common: CommonWorker {
+                task_queue: worker.get_config().task_queue.clone(),
                 worker,
-                task_queue: task_queue.into(),
                 worker_interceptor: None,
             },
-            workflow_half: WorkflowHalf {
-                workflows: Default::default(),
-                workflow_fns: Default::default(),
-                workflow_removed_from_map: Default::default(),
-            },
-            activity_half: ActivityHalf {
-                activity_fns: Default::default(),
-                task_tokens_to_cancels: Default::default(),
-            },
+            workflow_half: Default::default(),
+            activity_half: Default::default(),
             app_data: Some(Default::default()),
         }
     }
@@ -1193,6 +1285,32 @@ impl Display for EndPrintingAttempts {
 }
 impl PrintablePanicType for EndPrintingAttempts {
     type NextType = EndPrintingAttempts;
+}
+
+impl TryFrom<WorkerOptions> for WorkerConfig {
+    type Error = String;
+    fn try_from(o: WorkerOptions) -> Result<Self, Self::Error> {
+        WorkerConfig::builder()
+            .namespace(o.namespace)
+            .task_queue(o.task_queue)
+            .maybe_client_identity_override(o.client_identity_override)
+            .max_cached_workflows(o.max_cached_workflows)
+            .tuner(o.tuner)
+            .workflow_task_poller_behavior(o.workflow_task_poller_behavior)
+            .activity_task_poller_behavior(o.activity_task_poller_behavior)
+            .nexus_task_poller_behavior(o.nexus_task_poller_behavior)
+            .task_types(o.task_types)
+            .sticky_queue_schedule_to_start_timeout(o.sticky_queue_schedule_to_start_timeout)
+            .max_heartbeat_throttle_interval(o.max_heartbeat_throttle_interval)
+            .default_heartbeat_throttle_interval(o.default_heartbeat_throttle_interval)
+            .maybe_max_task_queue_activities_per_second(o.max_task_queue_activities_per_second)
+            .maybe_max_worker_activities_per_second(o.max_worker_activities_per_second)
+            .maybe_graceful_shutdown_period(o.graceful_shutdown_period)
+            .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
+                o.deployment_options,
+            ))
+            .build()
+    }
 }
 
 #[cfg(test)]

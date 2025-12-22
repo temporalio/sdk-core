@@ -143,7 +143,7 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     let core = init_core_replay_stream("replay_worker_test", histories);
-    let mut worker = Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    let mut worker = Worker::new_from_core(Arc::new(core));
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -479,10 +479,7 @@ pub(crate) struct TestWorker {
 impl TestWorker {
     /// Create a new test worker
     pub(crate) fn new(core_worker: Arc<CoreWorker>) -> Self {
-        let inner = Worker::new_from_core(
-            core_worker.clone(),
-            core_worker.get_config().task_queue.clone(),
-        );
+        let inner = Worker::new_from_core(core_worker.clone());
         Self {
             inner,
             core_worker,
@@ -947,7 +944,7 @@ pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporalio_sdk::Worker {
         c.ignore_evicts_on_shutdown = false;
     });
     let core = mock_worker(mock);
-    let mut worker = temporalio_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    let mut worker = temporalio_sdk::Worker::new_from_core(Arc::new(core));
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
