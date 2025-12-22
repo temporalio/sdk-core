@@ -1,11 +1,8 @@
 use crate::{
     abstractions::UsedMeteredSemPermit,
     pollers::{BoxedNexusPoller, NexusPollItem, new_nexus_task_poller},
-    telemetry::{
-        metrics,
-        metrics::{FailureReason, MetricsContext},
-    },
-    worker::client::WorkerClient,
+    telemetry::metrics::{self, FailureReason, MetricsContext},
+    worker::{CompleteNexusError, NexusSlotKind, PollError, client::WorkerClient},
 };
 use anyhow::anyhow;
 use futures_util::{
@@ -20,24 +17,19 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_common::{
-    errors::{CompleteNexusError, PollError},
-    protos::{
-        TaskToken,
-        coresdk::{
-            NexusSlotInfo,
-            nexus::{
-                CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task,
-                nexus_task_completion,
-            },
+use temporalio_common::protos::{
+    TaskToken,
+    coresdk::{
+        NexusSlotInfo,
+        nexus::{
+            CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task, nexus_task_completion,
         },
-        temporal::api::nexus::{
-            self,
-            v1::{request::Variant, response, start_operation_response},
-        },
-        utilities::normalize_http_headers,
     },
-    worker::NexusSlotKind,
+    temporal::api::nexus::{
+        self,
+        v1::{request::Variant, response, start_operation_response},
+    },
+    utilities::normalize_http_headers,
 };
 use tokio::{
     join,

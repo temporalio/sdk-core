@@ -39,9 +39,9 @@ mod integ_tests {
             operatorservice::v1::CreateNexusEndpointRequest,
             workflowservice::v1::ListNamespacesRequest,
         },
-        worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
+        worker::WorkerTaskTypes,
     };
-    use temporalio_sdk_core::{CoreRuntime, init_worker};
+    use temporalio_sdk_core::{CoreRuntime, WorkerConfig, WorkerVersioningStrategy, init_worker};
     use tonic::IntoRequest;
 
     // Create a worker like a bridge would (unwraps aside)

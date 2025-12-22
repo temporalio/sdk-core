@@ -17,35 +17,31 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::{
-    Worker,
-    errors::PollError,
-    protos::{
-        DEFAULT_ACTIVITY_TYPE, canned_histories,
-        coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
-            activity_result::ActivityExecutionResult,
-            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-            workflow_commands::{
-                ActivityCancellationType, ScheduleLocalActivity, workflow_command::Variant,
-            },
-            workflow_completion,
-            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
+use temporalio_common::protos::{
+    DEFAULT_ACTIVITY_TYPE, canned_histories,
+    coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
+        activity_result::ActivityExecutionResult,
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+        workflow_commands::{
+            ActivityCancellationType, ScheduleLocalActivity, workflow_command::Variant,
         },
-        temporal::api::{
-            command::v1::{RecordMarkerCommandAttributes, command},
-            common::v1::RetryPolicy,
-            enums::v1::{
-                CommandType, EventType, TimeoutType, UpdateWorkflowExecutionLifecycleStage,
-                WorkflowTaskFailedCause,
-            },
-            failure::v1::{Failure, failure::FailureInfo},
-            history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
-            query::v1::WorkflowQuery,
-            update::v1::WaitPolicy,
-        },
-        test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
+        workflow_completion,
+        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
+    temporal::api::{
+        command::v1::{RecordMarkerCommandAttributes, command},
+        common::v1::RetryPolicy,
+        enums::v1::{
+            CommandType, EventType, TimeoutType, UpdateWorkflowExecutionLifecycleStage,
+            WorkflowTaskFailedCause,
+        },
+        failure::v1::{Failure, failure::FailureInfo},
+        history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
+        query::v1::WorkflowQuery,
+        update::v1::WaitPolicy,
+    },
+    test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
 };
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, UpdateContext, WfContext,
@@ -54,7 +50,7 @@ use temporalio_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporalio_sdk_core::{
-    prost_dur,
+    PollError, prost_dur,
     replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
     test_help::{
         LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
@@ -881,7 +877,7 @@ async fn long_local_activity_with_update(
         )],
     );
     let inner_worker = worker.inner_mut();
-    inner_worker.with_new_core_worker(replay_worker);
+    inner_worker.with_new_core_worker(Arc::new(replay_worker));
     inner_worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     inner_worker.run().await.unwrap();
 }

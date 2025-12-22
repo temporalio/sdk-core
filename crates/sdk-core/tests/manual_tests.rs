@@ -23,12 +23,11 @@ use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::{
-    protos::coresdk::AsJsonPayloadExt,
-    telemetry::PrometheusExporterOptions,
-    worker::{PollerBehavior, WorkerTaskTypes},
+    protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptions,
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
-use temporalio_sdk_core::CoreRuntime;
+use temporalio_sdk_core::{CoreRuntime, PollerBehavior};
 use tracing::info;
 
 #[tokio::test]

@@ -70,7 +70,7 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
+        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::format_task_token};
         use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.activity_task");
 
@@ -119,7 +119,7 @@ pub mod coresdk {
                 write!(
                     f,
                     "ActivityTaskCompletion(token: {}",
-                    fmt_tt(&self.task_token),
+                    format_task_token(&self.task_token),
                 )?;
                 if let Some(r) = self.result.as_ref().and_then(|r| r.status.as_ref()) {
                     write!(f, ", {r}")?;

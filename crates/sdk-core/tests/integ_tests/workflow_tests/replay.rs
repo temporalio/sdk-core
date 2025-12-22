@@ -9,7 +9,6 @@ use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use temporalio_common::{
-    errors::PollError,
     prost_dur,
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
@@ -23,6 +22,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
 use temporalio_sdk_core::{
+    PollError,
     replay::{HistoryFeeder, HistoryForReplay},
     test_help::{MockPollCfg, ResponseType, WorkerTestHelpers},
 };

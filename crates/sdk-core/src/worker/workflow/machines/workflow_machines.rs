@@ -13,6 +13,7 @@ use super::{
     workflow_task_state_machine::WorkflowTaskMachine,
 };
 use crate::{
+    WorkerConfig,
     abstractions::dbg_panic,
     internal_flags::{CoreInternalFlags, InternalFlags},
     protosext::{
@@ -72,7 +73,7 @@ use temporalio_common::{
             sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
         },
     },
-    worker::{WorkerConfig, WorkerDeploymentVersion},
+    worker::WorkerDeploymentVersion,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;

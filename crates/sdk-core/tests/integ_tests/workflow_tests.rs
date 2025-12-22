@@ -28,13 +28,13 @@ use crate::{
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 use temporalio_client::{
     WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
 };
 use temporalio_common::{
-    errors::{PollError, WorkflowErrorType},
     prost_dur,
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
@@ -57,16 +57,13 @@ use temporalio_common::{
         },
         test_utils::schedule_activity_cmd,
     },
-    worker::{
-        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes,
-        WorkerVersioningStrategy,
-    },
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
-    CoreRuntime,
+    CoreRuntime, PollError, PollerBehavior, WorkerVersioningStrategy, WorkflowErrorType,
     replay::HistoryForReplay,
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
@@ -139,7 +136,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
             attrs.first_execution_run_id = "run2".to_string();
         }
         let hist2 = HistoryForReplay::new(hist_proto, "fake".to_string());
-        init_core_replay_preloaded("fail_wf_task", [hist, hist2])
+        Arc::new(init_core_replay_preloaded("fail_wf_task", [hist, hist2]))
     } else {
         let mut starter = init_core_and_create_wf("fail_wf_task").await;
         starter.get_worker().await

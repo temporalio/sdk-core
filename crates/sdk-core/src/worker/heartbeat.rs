@@ -1,13 +1,12 @@
 use crate::{
-    WorkerClient,
-    worker::{TaskPollers, WorkerTelemetry},
+    WorkerClient, WorkerConfig,
+    worker::{PollerBehavior, TaskPollers, WorkerTelemetry, WorkerVersioningStrategy},
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use temporalio_client::worker::SharedNamespaceWorkerTrait;
 use temporalio_common::{
-    protos::temporal::api::worker::v1::WorkerHeartbeat,
-    worker::{PollerBehavior, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
+    protos::temporal::api::worker::v1::WorkerHeartbeat, worker::WorkerTaskTypes,
 };
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
@@ -161,7 +160,7 @@ mod tests {
     use crate::{
         test_help::{WorkerExt, test_worker_cfg},
         worker,
-        worker::client::mocks::mock_worker_client,
+        worker::{PollerBehavior, client::mocks::mock_worker_client},
     };
     use std::{
         sync::{
@@ -170,12 +169,9 @@ mod tests {
         },
         time::Duration,
     };
-    use temporalio_common::{
-        protos::temporal::api::{
-            namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
-            workflowservice::v1::{DescribeNamespaceResponse, RecordWorkerHeartbeatResponse},
-        },
-        worker::PollerBehavior,
+    use temporalio_common::protos::temporal::api::{
+        namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+        workflowservice::v1::{DescribeNamespaceResponse, RecordWorkerHeartbeatResponse},
     };
 
     #[tokio::test]

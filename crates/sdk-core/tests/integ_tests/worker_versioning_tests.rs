@@ -18,12 +18,10 @@ use temporalio_common::{
             },
         },
     },
-    worker::{
-        WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes, WorkerVersioningStrategy,
-    },
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
-use temporalio_sdk_core::test_help::WorkerTestHelpers;
+use temporalio_sdk_core::{WorkerVersioningStrategy, test_help::WorkerTestHelpers};
 use tokio::join;
 use tonic::IntoRequest;
 

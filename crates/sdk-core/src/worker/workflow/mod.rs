@@ -15,7 +15,7 @@ pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
-    MetricsContext,
+    MetricsContext, WorkerConfig,
     abstractions::{
         MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic,
         take_cell::TakeCell,
@@ -26,11 +26,10 @@ use crate::{
     telemetry::{
         VecDisplayer,
         metrics::{self, FailureReason},
-        set_trace_subscriber_for_current_thread,
     },
     worker::{
-        LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
-        PostActivateHookData,
+        ActivitySlotKind, CompleteWfError, LocalActRequest, LocalActivityExecutionResult,
+        LocalActivityResolution, PollError, PostActivateHookData, WorkflowSlotKind,
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{LegacyQueryResult, WorkerClient, WorkflowTaskCompletion},
         workflow::{
@@ -61,7 +60,6 @@ use std::{
 };
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
-    errors::{CompleteWfError, PollError},
     protos::{
         TaskToken,
         coresdk::{
@@ -88,7 +86,7 @@ use temporalio_common::{
             workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
         },
     },
-    worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
+    telemetry::set_trace_subscriber_for_current_thread,
 };
 use tokio::{
     sync::{

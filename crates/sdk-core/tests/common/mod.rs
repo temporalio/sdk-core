@@ -33,7 +33,6 @@ use temporalio_client::{
     WorkflowExecutionResult, WorkflowHandle, WorkflowOptions, WorkflowService,
 };
 use temporalio_common::{
-    Worker as CoreWorker,
     protos::{
         coresdk::{
             FromPayloadsExt, workflow_activation::WorkflowActivation,
@@ -47,9 +46,9 @@ use temporalio_common::{
     },
     telemetry::{
         Logger, OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
-        metrics::CoreMeter,
+        build_otlp_metric_exporter, metrics::CoreMeter, start_prometheus_metric_exporter,
     },
-    worker::{WorkerTaskTypes, WorkerVersioningStrategy},
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,
@@ -61,9 +60,9 @@ use temporalio_sdk::{
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
+    CoreRuntime, RuntimeOptions, Worker as CoreWorker, WorkerConfig, WorkerVersioningStrategy,
+    init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
@@ -116,22 +115,21 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
 }
 
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
-pub(crate) fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> CoreWorker
 where
     I: IntoIterator<Item = HistoryForReplay> + 'static,
     <I as IntoIterator>::IntoIter: Send,
 {
     init_core_replay_stream(test_name, stream::iter(histories))
 }
-pub(crate) fn init_core_replay_stream<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_stream<I>(test_name: &str, histories: I) -> CoreWorker
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     init_integ_telem();
     let worker_cfg = integ_worker_config(test_name);
-    let worker = init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
-        .expect("Replay worker must init properly");
-    Arc::new(worker)
+    init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
+        .expect("Replay worker must init properly")
 }
 pub(crate) fn replay_sdk_worker<I>(histories: I) -> Worker
 where
@@ -145,7 +143,7 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     let core = init_core_replay_stream("replay_worker_test", histories);
-    let mut worker = Worker::new_from_core(core, "replay_q".to_string());
+    let mut worker = Worker::new_from_core(Arc::new(core), "replay_q".to_string());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -227,7 +225,7 @@ pub(crate) struct CoreWfStarter {
     min_local_server_version: Option<String>,
 }
 struct InitializedWorker {
-    worker: Arc<dyn CoreWorker>,
+    worker: Arc<CoreWorker>,
     client: Client,
 }
 
@@ -330,7 +328,7 @@ impl CoreWfStarter {
         self.get_worker().await.shutdown().await;
     }
 
-    pub(crate) async fn get_worker(&mut self) -> Arc<dyn CoreWorker> {
+    pub(crate) async fn get_worker(&mut self) -> Arc<CoreWorker> {
         self.get_or_init().await.worker.clone()
     }
 
@@ -471,7 +469,7 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK (against real server or mocks)
 pub(crate) struct TestWorker {
     inner: Worker,
-    pub core_worker: Arc<dyn CoreWorker>,
+    pub core_worker: Arc<CoreWorker>,
     client: Option<Client>,
     pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
@@ -480,7 +478,7 @@ pub(crate) struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>) -> Self {
+    pub(crate) fn new(core_worker: Arc<CoreWorker>) -> Self {
         let inner = Worker::new_from_core(
             core_worker.clone(),
             core_worker.get_config().task_queue.clone(),
@@ -874,7 +872,7 @@ where
             .expect("history field must be populated");
         let with_id = HistoryForReplay::new(history, wf_id);
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
-        worker.with_new_core_worker(replay_worker);
+        worker.with_new_core_worker(Arc::new(replay_worker));
         let retval_icept = ReturnWorkflowExitValueInterceptor::default();
         let retval_handle = retval_icept.get_result_handle();
         let mut top_icept = InterceptorWithNext::new(Box::new(FailOnNondeterminismInterceptor {}));
