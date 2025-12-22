@@ -1,8 +1,8 @@
+use crate::telemetry::{CoreLog, CoreLogConsumer};
 use futures_channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::Mutex;
 use ringbuf::{HeapRb, consumer::Consumer, producer::Producer, traits::Split};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
-use temporalio_common::telemetry::{CoreLog, CoreLogConsumer};
 use tracing_subscriber::Layer;
 
 #[derive(Debug)]
@@ -215,17 +215,14 @@ impl tracing::field::Visit for JsonVisitor<'_> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        telemetry::{CoreLogStreamConsumer, construct_filter_string},
-        telemetry_init,
+    use crate::telemetry::{
+        CoreLog, CoreLogConsumer, CoreLogStreamConsumer, CoreTelemetry, Logger, TelemetryOptions,
+        construct_filter_string, telemetry_init,
     };
     use futures_util::stream::StreamExt;
     use std::{
         fmt,
         sync::{Arc, Mutex},
-    };
-    use temporalio_common::telemetry::{
-        CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptions,
     };
     use tracing::Level;
 
@@ -246,6 +243,7 @@ mod tests {
 
     fn assert_logs(logs: Vec<CoreLog>) {
         // Verify debug log was not forwarded
+        dbg!(&logs);
         assert!(!logs.iter().any(|l| l.message == "debug"));
         assert_eq!(logs.len(), 4);
         // Ensure fields are attached to events properly

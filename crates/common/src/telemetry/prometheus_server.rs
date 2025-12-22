@@ -1,4 +1,4 @@
-use crate::telemetry::prometheus_meter::Registry;
+use crate::telemetry::{PrometheusExporterOptions, prometheus_meter::Registry};
 use http_body_util::Full;
 use hyper::{Method, Request, Response, body::Bytes, header::CONTENT_TYPE, service::service_fn};
 use hyper_util::{
@@ -10,7 +10,6 @@ use std::{
     net::{SocketAddr, TcpListener},
     sync::Arc,
 };
-use temporalio_common::telemetry::PrometheusExporterOptions;
 use tokio::{io, task::AbortHandle};
 
 pub struct StartedPromServer {
@@ -20,7 +19,7 @@ pub struct StartedPromServer {
 }
 
 /// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
-/// Returns the meter that can be used as a [`CoreMeter`](temporalio_common::telemetry::metrics::CoreMeter).
+/// Returns the meter that can be used as a [`CoreMeter`](crate::telemetry::metrics::CoreMeter).
 ///
 /// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
 pub fn start_prometheus_metric_exporter(

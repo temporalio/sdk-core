@@ -20,8 +20,6 @@ use std::{
 };
 use temporalio_client::{Connection, WorkflowOptions};
 use temporalio_common::{
-    Worker,
-    errors::WorkerValidationError,
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
@@ -50,18 +48,16 @@ use temporalio_common::{
             },
         },
     },
-    worker::{
-        ActivitySlotKind, LocalActivitySlotKind, PollerBehavior, SlotInfo, SlotInfoTrait,
-        SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
-        WorkflowSlotKind,
-    },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder, init_worker,
+    ActivitySlotKind, CoreRuntime, LocalActivitySlotKind, PollError, PollerBehavior,
+    ResourceBasedTuner, ResourceSlotOptions, SlotInfo, SlotInfoTrait, SlotMarkUsedContext,
+    SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit, TunerBuilder,
+    WorkerConfig, WorkerValidationError, WorkerVersioningStrategy, WorkflowSlotKind, init_worker,
     test_help::{
         FakeWfResponses, MockPollCfg, ResponseType, build_mock_pollers, drain_pollers_and_shutdown,
         hist_to_poll_resp, mock_worker, mock_worker_client,
@@ -411,7 +407,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         core.initiate_shutdown();
         // Even though this test requests eager activity tasks, none are returned in poll responses.
         let err = core.poll_activity_task().await.unwrap_err();
-        assert_matches!(err, temporalio_common::errors::PollError::ShutDown);
+        assert_matches!(err, PollError::ShutDown);
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
@@ -664,7 +660,7 @@ impl<SK> TrackingSlotSupplier<SK> {
 #[async_trait::async_trait]
 impl<SK> SlotSupplier for TrackingSlotSupplier<SK>
 where
-    SK: temporalio_common::worker::SlotKind + Send + Sync,
+    SK: temporalio_sdk_core::SlotKind + Send + Sync,
     SK::Info: SlotInfoTrait,
 {
     type SlotKind = SK;

@@ -4,7 +4,6 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::{
-    Worker,
     protos::{
         TestHistoryBuilder, canned_histories,
         coresdk::{

@@ -186,21 +186,18 @@ mod tests {
         worker::client::mocks::mock_worker_client,
     };
     use std::collections::HashMap;
-    use temporalio_common::{
-        Worker,
-        protos::{
-            coresdk::{
-                AsJsonPayloadExt,
-                workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-                workflow_commands::SetPatchMarker,
-                workflow_completion::WorkflowActivationCompletion,
-            },
-            temporal::api::{
-                command::v1::command::Attributes,
-                common::v1::Payload,
-                enums::v1::EventType,
-                history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
-            },
+    use temporalio_common::protos::{
+        coresdk::{
+            AsJsonPayloadExt,
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::SetPatchMarker,
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            command::v1::command::Attributes,
+            common::v1::Payload,
+            enums::v1::EventType,
+            history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
     };
 

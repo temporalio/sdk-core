@@ -57,10 +57,7 @@ pub extern "C" fn temporal_core_metric_attributes_new(
     size: libc::size_t,
 ) -> *mut MetricAttributes {
     let meter = unsafe { &*meter };
-    let orig = meter
-        .core
-        .inner
-        .new_attributes(meter.core.default_attribs.clone());
+    let orig = meter.core.get_default_attributes().clone();
     Box::into_raw(Box::new(metric_attributes_append(
         meter, &orig, attrs, size,
     )))
@@ -94,7 +91,7 @@ fn metric_attributes_append(
     size: libc::size_t,
 ) -> MetricAttributes {
     let attrs = unsafe { std::slice::from_raw_parts(attrs, size) };
-    let core = meter.core.inner.extend_attributes(
+    let core = meter.core.extend_attributes(
         orig.clone(),
         metrics::NewAttributes {
             attributes: attrs.iter().map(metric_attribute_to_key_value).collect(),
@@ -158,20 +155,18 @@ pub extern "C" fn temporal_core_metric_new(
     let meter = unsafe { &*meter };
     let options = unsafe { &*options };
     Box::into_raw(Box::new(match options.kind {
-        MetricKind::CounterInteger => {
-            Metric::CounterInteger(meter.core.inner.counter(options.into()))
-        }
+        MetricKind::CounterInteger => Metric::CounterInteger(meter.core.counter(options.into())),
         MetricKind::HistogramInteger => {
-            Metric::HistogramInteger(meter.core.inner.histogram(options.into()))
+            Metric::HistogramInteger(meter.core.histogram(options.into()))
         }
         MetricKind::HistogramFloat => {
-            Metric::HistogramFloat(meter.core.inner.histogram_f64(options.into()))
+            Metric::HistogramFloat(meter.core.histogram_f64(options.into()))
         }
         MetricKind::HistogramDuration => {
-            Metric::HistogramDuration(meter.core.inner.histogram_duration(options.into()))
+            Metric::HistogramDuration(meter.core.histogram_duration(options.into()))
         }
-        MetricKind::GaugeInteger => Metric::GaugeInteger(meter.core.inner.gauge(options.into())),
-        MetricKind::GaugeFloat => Metric::GaugeFloat(meter.core.inner.gauge_f64(options.into())),
+        MetricKind::GaugeInteger => Metric::GaugeInteger(meter.core.gauge(options.into())),
+        MetricKind::GaugeFloat => Metric::GaugeFloat(meter.core.gauge_f64(options.into())),
     }))
 }
 
@@ -483,7 +478,7 @@ struct CustomMetricAttributes {
 unsafe impl Send for CustomMetricAttributes {}
 unsafe impl Sync for CustomMetricAttributes {}
 
-impl metrics::CustomMetricAttributes for CustomMetricAttributes {
+impl metrics::core::CustomMetricAttributes for CustomMetricAttributes {
     fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self as Arc<dyn Any + Send + Sync>
     }

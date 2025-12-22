@@ -11,23 +11,16 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporalio_common::{
-    Worker as CoreWorker,
-    errors::{PollError, WorkflowErrorType},
-    protos::{
-        coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, nexus::NexusTaskCompletion,
-            workflow_completion::WorkflowActivationCompletion,
-        },
-        temporal::api::history::v1::History,
+use temporalio_common::protos::{
+    coresdk::{
+        ActivityHeartbeat, ActivityTaskCompletion, nexus::NexusTaskCompletion,
+        workflow_completion::WorkflowActivationCompletion,
     },
-    worker::{
-        SlotInfoTrait, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplierPermit,
-    },
+    temporal::api::history::v1::History,
 };
 use temporalio_sdk_core::{
-    WorkerConfig,
+    PollError, SlotInfoTrait, SlotKind, SlotMarkUsedContext, SlotReleaseContext,
+    SlotReservationContext, SlotSupplierPermit, WorkerConfig, WorkflowErrorType,
     replay::{HistoryForReplay, ReplayWorkerInput},
 };
 use tokio::sync::{
@@ -98,18 +91,18 @@ pub struct PollerBehavior {
     pub autoscaling: *const PollerBehaviorAutoscaling,
 }
 
-impl TryFrom<&PollerBehavior> for temporalio_common::worker::PollerBehavior {
+impl TryFrom<&PollerBehavior> for temporalio_sdk_core::PollerBehavior {
     type Error = anyhow::Error;
     fn try_from(value: &PollerBehavior) -> Result<Self, Self::Error> {
         if !value.simple_maximum.is_null() && !value.autoscaling.is_null() {
             bail!("simple_maximum and autoscaling cannot both be non-null values");
         }
         if let Some(value) = unsafe { value.simple_maximum.as_ref() } {
-            return Ok(temporalio_common::worker::PollerBehavior::SimpleMaximum(
+            return Ok(temporalio_sdk_core::PollerBehavior::SimpleMaximum(
                 value.simple_maximum,
             ));
         } else if let Some(value) = unsafe { value.autoscaling.as_ref() } {
-            return Ok(temporalio_common::worker::PollerBehavior::Autoscaling {
+            return Ok(temporalio_sdk_core::PollerBehavior::Autoscaling {
                 minimum: value.minimum,
                 maximum: value.maximum,
                 initial: value.initial,
@@ -238,7 +231,7 @@ pub struct CustomSlotSupplierCallbacks {
     /// is arbitrary, but must be unique among live reservations as it's later used for [`mark_used`](Self::mark_used)
     /// and [`release`](Self::release) callbacks.
     pub try_reserve: CustomSlotSupplierTryReserveCallback,
-    /// Called after successful reservation to mark slot as used. See [`SlotSupplier`](temporalio_common::worker::SlotSupplier)
+    /// Called after successful reservation to mark slot as used. See [`SlotSupplier`](temporalio_sdk_core::SlotSupplier)
     /// trait for details.
     pub mark_used: CustomSlotSupplierMarkUsedCallback,
     /// Called to free a previously reserved slot.
@@ -259,8 +252,7 @@ pub struct CustomSlotSupplierCallbacks {
 impl CustomSlotSupplierCallbacksImpl {
     fn into_ss<SK: SlotKind + Send + Sync + 'static>(
         self,
-    ) -> Arc<dyn temporalio_common::worker::SlotSupplier<SlotKind = SK> + Send + Sync + 'static>
-    {
+    ) -> Arc<dyn temporalio_sdk_core::SlotSupplier<SlotKind = SK> + Send + Sync + 'static> {
         Arc::new(CustomSlotSupplier {
             inner: self,
             _pd: Default::default(),
@@ -377,9 +369,7 @@ impl<'a, SK: SlotKind + Send + Sync> Drop for CancelReserveGuard<'a, SK> {
 }
 
 #[async_trait::async_trait]
-impl<SK: SlotKind + Send + Sync> temporalio_common::worker::SlotSupplier
-    for CustomSlotSupplier<SK>
-{
+impl<SK: SlotKind + Send + Sync> temporalio_sdk_core::SlotSupplier for CustomSlotSupplier<SK> {
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
@@ -468,16 +458,12 @@ impl<SK: SlotKind + Send + Sync> CustomSlotSupplier<SK> {
     fn convert_reserve_ctx(ctx: &dyn SlotReservationContext) -> SlotReserveCtx {
         SlotReserveCtx {
             slot_type: match SK::kind() {
-                temporalio_common::worker::SlotKindType::Workflow => {
-                    SlotKindType::WorkflowSlotKindType
-                }
-                temporalio_common::worker::SlotKindType::Activity => {
-                    SlotKindType::ActivitySlotKindType
-                }
-                temporalio_common::worker::SlotKindType::LocalActivity => {
+                temporalio_sdk_core::SlotKindType::Workflow => SlotKindType::WorkflowSlotKindType,
+                temporalio_sdk_core::SlotKindType::Activity => SlotKindType::ActivitySlotKindType,
+                temporalio_sdk_core::SlotKindType::LocalActivity => {
                     SlotKindType::LocalActivitySlotKindType
                 }
-                temporalio_common::worker::SlotKindType::Nexus => SlotKindType::NexusSlotKindType,
+                temporalio_sdk_core::SlotKindType::Nexus => SlotKindType::NexusSlotKindType,
             },
             task_queue: ctx.task_queue().into(),
             worker_identity: ctx.worker_identity().into(),
@@ -490,21 +476,19 @@ impl<SK: SlotKind + Send + Sync> CustomSlotSupplier<SK> {
         }
     }
 
-    fn convert_slot_info(info: temporalio_common::worker::SlotInfo) -> SlotInfo {
+    fn convert_slot_info(info: temporalio_sdk_core::SlotInfo) -> SlotInfo {
         match info {
-            temporalio_common::worker::SlotInfo::Workflow(w) => SlotInfo::WorkflowSlotInfo {
+            temporalio_sdk_core::SlotInfo::Workflow(w) => SlotInfo::WorkflowSlotInfo {
                 workflow_type: w.workflow_type.as_str().into(),
                 is_sticky: w.is_sticky,
             },
-            temporalio_common::worker::SlotInfo::Activity(a) => SlotInfo::ActivitySlotInfo {
+            temporalio_sdk_core::SlotInfo::Activity(a) => SlotInfo::ActivitySlotInfo {
                 activity_type: a.activity_type.as_str().into(),
             },
-            temporalio_common::worker::SlotInfo::LocalActivity(a) => {
-                SlotInfo::LocalActivitySlotInfo {
-                    activity_type: a.activity_type.as_str().into(),
-                }
-            }
-            temporalio_common::worker::SlotInfo::Nexus(n) => SlotInfo::NexusSlotInfo {
+            temporalio_sdk_core::SlotInfo::LocalActivity(a) => SlotInfo::LocalActivitySlotInfo {
+                activity_type: a.activity_type.as_str().into(),
+            },
+            temporalio_sdk_core::SlotInfo::Nexus(n) => SlotInfo::NexusSlotInfo {
                 operation: n.operation.as_str().into(),
                 service: n.service.as_str().into(),
             },
@@ -1173,7 +1157,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             .versioning_strategy({
                 match &opt.versioning_strategy {
                     WorkerVersioningStrategy::None(n) => {
-                        temporalio_common::worker::WorkerVersioningStrategy::None {
+                        temporalio_sdk_core::WorkerVersioningStrategy::None {
                             build_id: n.build_id.to_string(),
                         }
                     }
@@ -1186,7 +1170,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                                 dopts.default_versioning_behavior
                             )
                         };
-                        temporalio_common::worker::WorkerVersioningStrategy::WorkerDeploymentBased(
+                        temporalio_sdk_core::WorkerVersioningStrategy::WorkerDeploymentBased(
                             temporalio_common::worker::WorkerDeploymentOptions {
                                 version: temporalio_common::worker::WorkerDeploymentVersion {
                                     deployment_name: dopts.version.deployment_name.to_string(),
@@ -1198,7 +1182,7 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                         )
                     }
                     WorkerVersioningStrategy::LegacyBuildIdBased(l) => {
-                        temporalio_common::worker::WorkerVersioningStrategy::LegacyBuildIdBased {
+                        temporalio_sdk_core::WorkerVersioningStrategy::LegacyBuildIdBased {
                             build_id: l.build_id.to_string(),
                         }
                     }
@@ -1235,14 +1219,14 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
             // auto-cancel-activity behavior or shutdown will not occur, so we
             // always set it even if 0.
             .graceful_shutdown_period(Duration::from_millis(opt.graceful_shutdown_period_millis))
-            .workflow_task_poller_behavior(temporalio_common::worker::PollerBehavior::try_from(
+            .workflow_task_poller_behavior(temporalio_sdk_core::PollerBehavior::try_from(
                 &opt.workflow_task_poller_behavior,
             )?)
             .nonsticky_to_sticky_poll_ratio(opt.nonsticky_to_sticky_poll_ratio)
-            .activity_task_poller_behavior(temporalio_common::worker::PollerBehavior::try_from(
+            .activity_task_poller_behavior(temporalio_sdk_core::PollerBehavior::try_from(
                 &opt.activity_task_poller_behavior,
             )?)
-            .nexus_task_poller_behavior(temporalio_common::worker::PollerBehavior::try_from(
+            .nexus_task_poller_behavior(temporalio_sdk_core::PollerBehavior::try_from(
                 &opt.nexus_task_poller_behavior,
             )?)
             .workflow_failure_errors(if opt.nondeterminism_as_workflow_fail {

@@ -1,5 +1,5 @@
 use crate::{
-    MetricsContext,
+    MetricsContext, WorkerConfig,
     telemetry::metrics::workflow_type,
     worker::workflow::{
         HistoryUpdate, LocalActivityRequestSink, PermittedWFT, RequestEvictMsg, RunBasics,
@@ -8,12 +8,9 @@ use crate::{
 };
 use lru::LruCache;
 use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
-use temporalio_common::{
-    protos::{
-        coresdk::workflow_activation::remove_from_cache::EvictionReason,
-        temporal::api::workflowservice::v1::get_system_info_response,
-    },
-    worker::WorkerConfig,
+use temporalio_common::protos::{
+    coresdk::workflow_activation::remove_from_cache::EvictionReason,
+    temporal::api::workflowservice::v1::get_system_info_response,
 };
 
 pub(super) struct RunCache {

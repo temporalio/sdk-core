@@ -20,8 +20,6 @@ use temporalio_client::{
     WorkflowService,
 };
 use temporalio_common::{
-    Worker,
-    errors::PollError,
     prost_dur,
     protos::{
         coresdk::{
@@ -51,25 +49,23 @@ use temporalio_common::{
     },
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
-        TaskQueueLabelStrategy, TelemetryOptions,
+        TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
-            MetricParameters, NewAttributes,
+            MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
     },
-    worker::{
-        PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
-        WorkflowSlotKind,
-    },
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
-    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
-    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
+    CoreRuntime, FixedSizeSlotSupplier, PollError, PollerBehavior, SlotKind, SlotMarkUsedContext,
+    SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    TokioRuntimeBuilder, TunerBuilder, WorkerConfig, WorkerVersioningStrategy, WorkflowSlotKind,
+    init_worker,
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;
@@ -140,8 +136,8 @@ async fn prometheus_metrics_exported(
     assert!(body.contains("temporal_request{"));
     // Verify non-temporal metrics meter does not prefix
     let mm = rt.telemetry().get_metric_meter().unwrap();
-    let g = mm.inner.gauge(MetricParameters::from("mygauge"));
-    let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
+    let g = mm.gauge(MetricParameters::from("mygauge"));
+    let attrs = mm.new_attributes(NewAttributes::new(vec![]));
     g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("\nmygauge{global=\"hi!\"} 42"));

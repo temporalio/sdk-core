@@ -30,10 +30,10 @@ use temporalio_common::{
         coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
         temporal::api::enums::v1::WorkflowIdReusePolicy,
     },
-    worker::{PollerBehavior, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
-use temporalio_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
+use temporalio_sdk_core::{CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions};
 
 #[tokio::test]
 async fn activity_load() {

@@ -43,15 +43,18 @@ use temporalio_common::{
         },
         test_utils::schedule_activity_cmd,
     },
-    worker::PollerBehavior,
 };
 use temporalio_sdk::{
     ActExitValue, ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction,
     WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk_core::test_help::{
-    MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown, mock_worker_client,
+use temporalio_sdk_core::{
+    PollerBehavior,
+    test_help::{
+        MockPollCfg, ResponseType, WorkerTestHelpers, drain_pollers_and_shutdown,
+        mock_worker_client,
+    },
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
