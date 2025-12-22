@@ -1,4 +1,12 @@
-use crate::{abstractions::dbg_panic, telemetry::default_buckets_for};
+use crate::{
+    dbg_panic,
+    telemetry::metrics::{
+        CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
+        HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
+        MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedPromLabelSet,
+        default_buckets_for,
+    },
+};
 use anyhow::anyhow;
 use parking_lot::RwLock;
 use prometheus::{
@@ -11,11 +19,6 @@ use std::{
     fmt::{Debug, Formatter},
     sync::Arc,
     time::Duration,
-};
-use temporalio_common::telemetry::metrics::{
-    CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
-    HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
-    MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedPromLabelSet,
 };
 
 #[derive(derive_more::From, derive_more::TryInto, Debug, Clone)]
@@ -459,7 +462,7 @@ pub struct CorePrometheusMeter {
     registry: Registry,
     use_seconds_for_durations: bool,
     unit_suffix: bool,
-    bucket_overrides: temporalio_common::telemetry::HistogramBucketOverrides,
+    bucket_overrides: crate::telemetry::HistogramBucketOverrides,
 }
 
 impl CorePrometheusMeter {
@@ -467,7 +470,7 @@ impl CorePrometheusMeter {
         registry: Registry,
         use_seconds_for_durations: bool,
         unit_suffix: bool,
-        bucket_overrides: temporalio_common::telemetry::HistogramBucketOverrides,
+        bucket_overrides: crate::telemetry::HistogramBucketOverrides,
     ) -> Self {
         Self {
             registry,
@@ -636,12 +639,11 @@ impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::telemetry::{TelemetryInstance, metrics::MetricsContext};
-    use prometheus::{Encoder, TextEncoder};
-    use temporalio_common::telemetry::{
-        METRIC_PREFIX,
-        metrics::{MetricKeyValue, NewAttributes},
+    use crate::telemetry::{
+        HistogramBucketOverrides, TELEM_SERVICE_NAME,
+        metrics::{MetricKeyValue, NewAttributes, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME},
     };
+    use prometheus::{Encoder, TextEncoder};
 
     #[test]
     fn test_prometheus_meter_dynamic_labels() {
@@ -650,7 +652,7 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
 
         let counter = meter.counter(MetricParameters {
@@ -690,7 +692,7 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
 
         let base_attrs = meter.new_attributes(NewAttributes::new(vec![
@@ -729,15 +731,11 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
 
         let histogram_ms = meter_ms.histogram_duration(MetricParameters {
-            name: format!(
-                "temporal_{}",
-                crate::telemetry::WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME
-            )
-            .into(),
+            name: format!("temporal_{}", WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME).into(),
             description: "Test workflow e2e latency".into(),
             unit: "duration".into(),
         });
@@ -759,15 +757,11 @@ mod tests {
             registry_s.clone(),
             true,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
 
         let histogram_s = meter_s.histogram_duration(MetricParameters {
-            name: format!(
-                "temporal_{}",
-                crate::telemetry::WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME
-            )
-            .into(),
+            name: format!("temporal_{}", WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME).into(),
             description: "Test workflow e2e latency".into(),
             unit: "duration".into(),
         });
@@ -791,7 +785,7 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
         let counter = meter.counter(MetricParameters {
             name: "no_labels".into(),
@@ -806,35 +800,40 @@ mod tests {
     }
 
     #[test]
-    fn works_with_recreated_metrics_context() {
-        let registry = Registry::new(HashMap::new());
+    fn test_overlapping_fields() {
+        let registry = Registry::new(HashMap::from([(
+            "service_name".to_string(),
+            TELEM_SERVICE_NAME.to_string(),
+        )]));
         let meter = CorePrometheusMeter::new(
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
-        let telem_instance = TelemetryInstance::new(
-            None,
-            None,
-            METRIC_PREFIX.to_string(),
-            Some(Arc::new(meter)),
-            true,
-            temporalio_common::telemetry::TaskQueueLabelStrategy::UseNormal,
-        );
-        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
-        mc.worker_registered();
-        drop(mc);
 
-        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
-        mc.worker_registered();
+        let counter = meter.counter(MetricParameters {
+            name: "temporal_worker_start".into(),
+            description: "".into(),
+            unit: "".into(),
+        });
 
-        let mc = MetricsContext::top_level("foo".to_string(), "q2".to_string(), &telem_instance);
-        mc.worker_registered();
+        let attrs1 = meter.new_attributes(NewAttributes::new(vec![
+            MetricKeyValue::new("namespace", "foo"),
+            MetricKeyValue::new("task_queue", "q"),
+        ]));
+        counter.add(2, &attrs1);
+
+        let attrs2 = meter.new_attributes(NewAttributes::new(vec![
+            MetricKeyValue::new("namespace", "foo"),
+            MetricKeyValue::new("task_queue", "q2"),
+        ]));
+        counter.add(1, &attrs2);
 
         let output = output_string(&registry);
-        assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q\"} 2"));
-        assert!(output.contains("temporal_worker_start{namespace=\"foo\",service_name=\"temporal-core-sdk\",task_queue=\"q2\"} 1"));
+
+        assert!(output.contains("temporal_worker_start{namespace=\"foo\",task_queue=\"q\",service_name=\"temporal-core-sdk\"} 2"));
+        assert!(output.contains("temporal_worker_start{namespace=\"foo\",task_queue=\"q2\",service_name=\"temporal-core-sdk\"} 1"));
     }
 
     #[test]
@@ -844,7 +843,7 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
         let dashes = meter.counter(MetricParameters {
             name: "dash-in-name".into(),
@@ -865,7 +864,7 @@ mod tests {
             registry.clone(),
             false,
             false,
-            temporalio_common::telemetry::HistogramBucketOverrides::default(),
+            HistogramBucketOverrides::default(),
         );
         let dashes = meter.counter(MetricParameters {
             name: "not@permitted:symbols".into(),

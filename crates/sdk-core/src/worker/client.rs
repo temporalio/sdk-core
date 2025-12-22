@@ -1,7 +1,7 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::protosext::legacy_query_failure;
+use crate::{protosext::legacy_query_failure, worker::WorkerVersioningStrategy};
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
 use std::{
@@ -15,32 +15,29 @@ use temporalio_client::{
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
     worker::ClientWorkerSet,
 };
-use temporalio_common::{
-    protos::{
-        TaskToken,
-        coresdk::{workflow_commands::QueryResult, workflow_completion},
-        temporal::api::{
-            command::v1::Command,
-            common::v1::{
-                MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
-                WorkflowExecution,
-            },
-            deployment,
-            enums::v1::{
-                TaskQueueKind, VersioningBehavior, WorkerStatus, WorkerVersioningMode,
-                WorkflowTaskFailedCause,
-            },
-            failure::v1::Failure,
-            nexus,
-            protocol::v1::Message as ProtocolMessage,
-            query::v1::WorkflowQueryResult,
-            sdk::v1::WorkflowTaskCompletedMetadata,
-            taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-            worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
-            workflowservice::v1::{get_system_info_response::Capabilities, *},
+use temporalio_common::protos::{
+    TaskToken,
+    coresdk::{workflow_commands::QueryResult, workflow_completion},
+    temporal::api::{
+        command::v1::Command,
+        common::v1::{
+            MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
+            WorkflowExecution,
         },
+        deployment,
+        enums::v1::{
+            TaskQueueKind, VersioningBehavior, WorkerStatus, WorkerVersioningMode,
+            WorkflowTaskFailedCause,
+        },
+        failure::v1::Failure,
+        nexus,
+        protocol::v1::Message as ProtocolMessage,
+        query::v1::WorkflowQueryResult,
+        sdk::v1::WorkflowTaskCompletedMetadata,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
+        workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
-    worker::WorkerVersioningStrategy,
 };
 use tonic::IntoRequest;
 use uuid::Uuid;

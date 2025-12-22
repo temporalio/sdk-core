@@ -13,7 +13,6 @@ use std::{
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::{
-    errors::PollError,
     protos::{
         coresdk::{
             FromJsonPayloadExt,
@@ -36,6 +35,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
+use temporalio_sdk_core::PollError;
 use tokio::{
     join,
     sync::{mpsc, watch},

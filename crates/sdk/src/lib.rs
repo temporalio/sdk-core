@@ -11,9 +11,9 @@
 //! use std::{str::FromStr, sync::Arc};
 //! use temporalio_client::{ConnectionOptions, ClientOptions, Connection, Client};
 //! use temporalio_sdk::{activities::ActivityContext, Worker};
-//! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptions};
+//! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptions, WorkerConfig, WorkerVersioningStrategy };
 //! use temporalio_common::{
-//!     worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy},
+//!     worker::WorkerTaskTypes,
 //!     telemetry::TelemetryOptions
 //! };
 //!
@@ -89,9 +89,8 @@ use std::{
 };
 use temporalio_client::{ConnectionOptions, ConnectionOptionsBuilder, connection_options_builder};
 use temporalio_common::{
-    ActivityDefinition, Worker as CoreWorker,
+    ActivityDefinition,
     data_converters::{GenericPayloadConverter, SerializationContext},
-    errors::PollError,
     protos::{
         TaskToken,
         coresdk::{
@@ -118,7 +117,7 @@ use temporalio_common::{
         },
     },
 };
-use temporalio_sdk_core::Url;
+use temporalio_sdk_core::{PollError, Url, Worker as CoreWorker};
 use tokio::{
     sync::{
         Notify,
@@ -229,7 +228,7 @@ pub struct Worker {
 }
 
 struct CommonWorker {
-    worker: Arc<dyn CoreWorker>,
+    worker: Arc<CoreWorker>,
     task_queue: String,
     worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
 }
@@ -258,12 +257,11 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    // TODO [rust-sdk-branch]: Needs new fundamental `Client` type.
-    // /// Create a new worker from an existing client, and options.
-    // pub fn new(client: ) -> Self {}
+    // /// Create a new worker from an existing connection, and options.
+    // pub fn new(connection: Connection, options: WorkerOptions) -> Self {}
 
     /// Create a new Rust SDK worker from a core worker
-    pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
+    pub fn new_from_core(worker: Arc<CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
             common: CommonWorker {
                 worker,
@@ -453,7 +451,7 @@ impl Worker {
     /// Turns this rust worker into a new worker with all the same workflows and activities
     /// registered, but with a new underlying core worker. Can be used to swap the worker for
     /// a replay worker, change task queues, etc.
-    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<dyn CoreWorker>) {
+    pub fn with_new_core_worker(&mut self, new_core_worker: Arc<CoreWorker>) {
         self.common.worker = new_core_worker;
     }
 
@@ -599,7 +597,7 @@ impl ActivityHalf {
     /// Spawns off a task to handle the provided activity task
     fn activity_task_handler(
         &mut self,
-        worker: Arc<dyn CoreWorker>,
+        worker: Arc<CoreWorker>,
         app_data: Arc<AppData>,
         task_queue: String,
         activity: ActivityTask,

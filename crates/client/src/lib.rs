@@ -118,9 +118,8 @@ pub struct ConnectionOptions {
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
     pub identity: String,
-    // TODO [rust-sdk-branch]: Telemetry needs to be moved to common
     /// When set, this client will record metrics using the provided meter. The meter can be
-    /// obtained from TelemetryInstance::get_temporal_metric_meter
+    /// obtained from [temporalio_common::telemetry::TelemetryInstance::get_temporal_metric_meter].
     pub metrics_meter: Option<TemporalMeter>,
     /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
@@ -161,7 +160,6 @@ pub struct ConnectionOptions {
     /// If set, all gRPC calls will be routed through the provided service.
     pub service_override: Option<callback_based::CallbackBasedGrpcService>,
 
-    // TODO [rust-sdk-branch]: Put behind compile time flag
     // Internal / Core-based SDK only options below =============================================
     /// If set true, get_system_info will not be called upon connection.
     #[builder(default)]

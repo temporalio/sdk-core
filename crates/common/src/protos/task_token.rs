@@ -36,13 +36,13 @@ impl TaskToken {
 
 impl Display for TaskToken {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&fmt_tt(&self.0))
+        f.write_str(&format_task_token(&self.0))
     }
 }
 
 impl Debug for TaskToken {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&format!("TaskToken({})", fmt_tt(&self.0)))
+        f.write_str(&format!("TaskToken({})", format_task_token(&self.0)))
     }
 }
 
@@ -52,6 +52,6 @@ impl Borrow<[u8]> for TaskToken {
     }
 }
 
-pub(crate) fn fmt_tt(tt: &[u8]) -> String {
+pub(crate) fn format_task_token(tt: &[u8]) -> String {
     BASE64_STANDARD.encode(tt)
 }

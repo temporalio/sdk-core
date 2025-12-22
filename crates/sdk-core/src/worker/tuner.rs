@@ -9,13 +9,16 @@ pub use resource_based::{
 
 pub(crate) use resource_based::{RealSysInfo, SystemResourceInfo};
 
-use std::sync::Arc;
-use temporalio_common::worker::{
-    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier, WorkerConfig,
-    WorkerTuner, WorkflowSlotKind,
+use crate::{
+    WorkerConfig,
+    worker::{
+        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier,
+        WorkerTuner, WorkflowSlotKind,
+    },
 };
+use std::sync::Arc;
 
-/// Allows for the composition of different slot suppliers into a [WorkerTuner]
+/// Allows for the composition of different slot suppliers into a [crate::WorkerTuner]
 pub struct TunerHolder {
     wft_supplier: Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
     act_supplier: Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
@@ -262,7 +265,7 @@ impl TunerBuilder {
         self.sys_info.clone()
     }
 
-    /// Build a [WorkerTuner] from the configured slot suppliers
+    /// Build a [crate::WorkerTuner] from the configured slot suppliers
     pub fn build(&mut self) -> TunerHolder {
         TunerHolder {
             wft_supplier: self
@@ -314,10 +317,10 @@ impl WorkerTuner for TunerHolder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use temporalio_common::worker::{
+    use crate::worker::{
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplierPermit,
     };
+    use std::time::Duration;
 
     struct TestSlotSupplier;
     #[async_trait::async_trait]

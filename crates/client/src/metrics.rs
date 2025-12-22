@@ -5,15 +5,14 @@ use futures_util::{
 };
 use std::{
     fmt,
-    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
 };
 use temporalio_common::telemetry::{
     TaskQueueLabelStrategy,
     metrics::{
-        CoreMeter, Counter, CounterBase, HistogramDuration, HistogramDurationBase,
-        MetricAttributable, MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
+        Counter, CounterBase, HistogramDuration, HistogramDurationBase, MetricAttributable,
+        MetricAttributes, MetricKeyValue, MetricParameters, TemporalMeter,
     },
 };
 use tonic::{Code, body::Body, transport::Channel};
@@ -25,16 +24,12 @@ pub static REQUEST_LATENCY_HISTOGRAM_NAME: &str = "request_latency";
 pub static LONG_REQUEST_LATENCY_HISTOGRAM_NAME: &str = "long_request_latency";
 
 /// Used to track context associated with metrics, and record/update them
-// Possible improvement: make generic over some type tag so that methods are only exposed if the
-// appropriate k/vs have already been set.
 #[derive(Clone, derive_more::Debug)]
-#[debug("MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
+#[debug("MetricsContext {{ poll_is_long: {poll_is_long} }}")]
 pub(crate) struct MetricsContext {
-    meter: Arc<dyn CoreMeter>,
-    kvs: MetricAttributes,
+    meter: TemporalMeter,
     poll_is_long: bool,
     instruments: Instruments,
-    task_queue_label_strategy: TaskQueueLabelStrategy,
 }
 #[derive(Clone)]
 struct Instruments {
@@ -49,75 +44,70 @@ struct Instruments {
 
 impl MetricsContext {
     pub(crate) fn new(tm: TemporalMeter) -> Self {
-        let meter = tm.inner;
-        let task_queue_label_strategy = tm.task_queue_label_strategy;
-        let kvs = meter.new_attributes(tm.default_attribs);
         let instruments = Instruments {
-            svc_request: meter.counter(MetricParameters {
+            svc_request: tm.counter(MetricParameters {
                 name: "request".into(),
                 description: "Count of client request successes by rpc name".into(),
                 unit: "".into(),
             }),
-            svc_request_failed: meter.counter(MetricParameters {
+            svc_request_failed: tm.counter(MetricParameters {
                 name: "request_failure".into(),
                 description: "Count of client request failures by rpc name".into(),
                 unit: "".into(),
             }),
-            long_svc_request: meter.counter(MetricParameters {
+            long_svc_request: tm.counter(MetricParameters {
                 name: "long_request".into(),
                 description: "Count of long-poll request successes by rpc name".into(),
                 unit: "".into(),
             }),
-            long_svc_request_failed: meter.counter(MetricParameters {
+            long_svc_request_failed: tm.counter(MetricParameters {
                 name: "long_request_failure".into(),
                 description: "Count of long-poll request failures by rpc name".into(),
                 unit: "".into(),
             }),
-            svc_request_latency: meter.histogram_duration(MetricParameters {
+            svc_request_latency: tm.histogram_duration(MetricParameters {
                 name: REQUEST_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of client request latencies".into(),
             }),
-            long_svc_request_latency: meter.histogram_duration(MetricParameters {
+            long_svc_request_latency: tm.histogram_duration(MetricParameters {
                 name: LONG_REQUEST_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of client long-poll request latencies".into(),
             }),
         };
         Self {
-            kvs,
             poll_is_long: false,
             instruments,
-            meter,
-            task_queue_label_strategy,
+            meter: tm,
         }
     }
 
     /// Mutate this metrics context with new attributes
     pub(crate) fn with_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
-        self.kvs = self
-            .meter
-            .extend_attributes(self.kvs.clone(), new_kvs.into());
+        self.meter.merge_attributes(new_kvs.into());
 
         let _ = self
             .instruments
             .svc_request
-            .with_attributes(&self.kvs)
+            .with_attributes(self.meter.get_default_attributes())
             .and_then(|v| {
                 self.instruments.svc_request = v;
-                self.instruments.long_svc_request.with_attributes(&self.kvs)
+                self.instruments
+                    .long_svc_request
+                    .with_attributes(self.meter.get_default_attributes())
             })
             .and_then(|v| {
                 self.instruments.long_svc_request = v;
                 self.instruments
                     .svc_request_latency
-                    .with_attributes(&self.kvs)
+                    .with_attributes(self.meter.get_default_attributes())
             })
             .and_then(|v| {
                 self.instruments.svc_request_latency = v;
                 self.instruments
                     .long_svc_request_latency
-                    .with_attributes(&self.kvs)
+                    .with_attributes(self.meter.get_default_attributes())
             })
             .map(|v| {
                 self.instruments.long_svc_request_latency = v;
@@ -144,12 +134,13 @@ impl MetricsContext {
     pub(crate) fn svc_request_failed(&self, code: Option<Code>) {
         let refme: MetricAttributes;
         let kvs = if let Some(c) = code {
-            refme = self
-                .meter
-                .extend_attributes(self.kvs.clone(), [status_code_kv(c)].into());
+            refme = self.meter.extend_attributes(
+                self.meter.get_default_attributes().clone(),
+                [status_code_kv(c)].into(),
+            );
             &refme
         } else {
-            &self.kvs
+            self.meter.get_default_attributes()
         };
         if self.poll_is_long {
             self.instruments.long_svc_request_failed.add(1, kvs);
@@ -261,7 +252,7 @@ impl Service<http::Request<Body>> for GrpcMetricSvc {
                     if other_labels.normal_task_queue.is_some()
                         || other_labels.sticky_task_queue.is_some()
                     {
-                        let task_queue_name = match m.task_queue_label_strategy {
+                        let task_queue_name = match m.meter.get_task_queue_label_strategy() {
                             TaskQueueLabelStrategy::UseNormal => other_labels.normal_task_queue,
                             TaskQueueLabelStrategy::UseNormalAndSticky => other_labels
                                 .sticky_task_queue
