@@ -3,7 +3,7 @@ use crate::{
         ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
         eventually, init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
-    integ_tests::activity_functions::echo,
+    integ_tests::activity_functions::{StdActivities, echo},
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
@@ -73,10 +73,12 @@ pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn one_activity_only() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity("echo_activity", echo);
 
     let run_id = worker
         .submit_wf(
