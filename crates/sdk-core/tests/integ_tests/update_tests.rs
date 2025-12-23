@@ -1183,7 +1183,7 @@ async fn update_lost_on_activity_mismatch() {
         |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
     );
 
-    let core_worker = worker.core_worker.clone();
+    let core_worker = worker.core_worker();
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let wf_id = starter.get_task_queue().to_string();

@@ -3,7 +3,7 @@ use crate::{
         ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
         eventually, init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
-    integ_tests::activity_functions::echo,
+    integ_tests::activity_functions::{StdActivities, echo},
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
@@ -58,25 +58,31 @@ use temporalio_sdk_core::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.activity(ActivityOptions {
-        activity_type: "echo_activity".to_string(),
-        start_to_close_timeout: Some(Duration::from_secs(5)),
-        input: "hi!".as_json_payload().expect("serializes fine"),
-        ..Default::default()
-    })
-    .await;
-    Ok(().into())
+async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
+    // TODO [rust-sdk-branch]: activities need to return deserialzied results
+    let r = ctx
+        .activity(ActivityOptions {
+            // TODO [rust-sdk-branch]: shouldn't be "Echo" but "echo"?
+            activity_type: "std_activities::Echo".to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        })
+        .await
+        .unwrap_ok_payload();
+    Ok(r.into())
 }
 
 #[tokio::test]
 async fn one_activity_only() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity("echo_activity", echo);
 
     let run_id = worker
         .submit_wf(
@@ -93,7 +99,9 @@ async fn one_activity_only() {
         .get_workflow_result(Default::default())
         .await
         .unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let p = Payload::from_json_payload(&r[0]).unwrap();
+    assert_eq!(String::from_json_payload(&p).unwrap(), "hi!");
 }
 
 #[tokio::test]
@@ -1020,7 +1028,7 @@ async fn it_can_complete_async() {
                 let task_token = &activity_info.task_token;
                 let mut shared = shared_token_ref.lock().await;
                 *shared = Some(task_token.clone());
-                Ok::<ActExitValue<()>, _>(ActExitValue::WillCompleteAsync)
+                Err::<ActExitValue<()>, _>(ActivityError::WillCompleteAsync)
             }
         },
     );

@@ -305,7 +305,7 @@ async fn evict_while_la_running_no_interference() {
             )
             .await
             .unwrap();
-        let cw = worker.core_worker.clone();
+        let cw = worker.core_worker();
         let client = client.clone();
         subfs.push(async move {
             // Evict the workflow

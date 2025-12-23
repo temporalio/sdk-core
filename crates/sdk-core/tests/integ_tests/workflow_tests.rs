@@ -774,7 +774,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
         Ok(().into())
     });
     let client = starter.get_client().await;
-    let core_worker = worker.core_worker.clone();
+    let core_worker = worker.core_worker();
     starter.start_with_worker(wf_name, &mut worker).await;
 
     let stopper = async {

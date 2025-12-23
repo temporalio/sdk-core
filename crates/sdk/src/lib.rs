@@ -60,6 +60,7 @@ mod workflow_future;
 
 pub use temporalio_client::Namespace;
 use tracing::{Instrument, Span, field};
+use uuid::Uuid;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
@@ -68,7 +69,7 @@ pub use workflow_context::{
 
 use crate::{
     activities::{
-        ActivityContext, ActivityError, ActivityImplementer, ActivityInvocation,
+        ActivityContext, ActivityDefinitions, ActivityError, ActivityImplementer,
         ExecutableActivity, HasOnlyStaticMethods,
     },
     interceptors::WorkerInterceptor,
@@ -93,7 +94,7 @@ use temporalio_client::{
 };
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::{GenericPayloadConverter, SerializationContext},
+    data_converters::PayloadConverter,
     protos::{
         TaskToken,
         coresdk::{
@@ -122,8 +123,8 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerTaskTypes},
 };
 use temporalio_sdk_core::{
-    CoreRuntime, PollError, PollerBehavior, Url, Worker as CoreWorker, WorkerConfig, WorkerTuner,
-    WorkerVersioningStrategy, init_worker,
+    CoreRuntime, PollError, PollerBehavior, TunerBuilder, Url, Worker as CoreWorker, WorkerConfig,
+    WorkerTuner, WorkerVersioningStrategy, init_worker,
 };
 use tokio::{
     sync::{
@@ -138,20 +139,22 @@ use tokio_util::sync::CancellationToken;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-// TODO [rust-sdk-branch]: See about making clone
 /// Contains options for configuring a worker.
-#[derive(bon::Builder)]
-#[builder(on(String, into), state_mod(vis = "pub"))]
+#[derive(bon::Builder, Clone)]
+#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
 #[non_exhaustive]
 pub struct WorkerOptions {
-    #[builder(field)]
-    activities: HashMap<&'static str, ActivityInvocation>,
-
-    /// The Temporal service namespace this worker is bound to
-    pub namespace: String,
     /// What task queue will this worker poll from? This task queue name will be used for both
     /// workflow and activity polling.
+    #[builder(start_fn)]
     pub task_queue: String,
+
+    #[builder(field)]
+    activities: ActivityDefinitions,
+
+    // TODO [rust-sdk-branch]: Other SDKs are pulling from client
+    /// The Temporal service namespace this worker is bound to
+    pub namespace: String,
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client
     /// used by this worker.
@@ -165,6 +168,7 @@ pub struct WorkerOptions {
     pub max_cached_workflows: usize,
     /// Set a [crate::WorkerTuner] for this worker, which controls how many slots are available for
     /// the different kinds of tasks.
+    #[builder(default = Arc::new(TunerBuilder::default().build()))]
     pub tuner: Arc<dyn WorkerTuner + Send + Sync>,
     /// Controls how polling for Workflow tasks will happen on this worker's task queue. See also
     /// [WorkerConfig::nonsticky_to_sticky_poll_ratio]. If using SimpleMaximum, Must be at least 2
@@ -223,70 +227,68 @@ pub struct WorkerOptions {
     pub deployment_options: WorkerDeploymentOptions,
 }
 
+// TODO [rust-sdk-branch]: Traitify this?
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
-    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
-    ///
     /// Registers all activities on an activity implementer that don't take a receiver.
     pub fn register_activities_static<AI>(&mut self) -> &mut Self
     where
         AI: ActivityImplementer + HasOnlyStaticMethods,
     {
-        AI::register_all_static(self);
+        self.activities.register_activities_static::<AI>();
         self
     }
-    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
-    ///
     /// Registers all activities on an activity implementer that take a receiver.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
-        AI::register_all_static(self);
-        let arcd = Arc::new(instance);
-        AI::register_all_instance(arcd, self);
+        self.activities.register_activities::<AI>(instance);
         self
     }
-    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
-    ///
     /// Registers a specific activitiy that does not take a receiver.
     pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
-        self.activities.insert(
-            AD::name(),
-            Box::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
-                let pc2 = pc.clone();
-                Ok(AD::execute(None, c, deserialized)
-                    .map(move |v| match v {
-                        Ok(okv) => pc2
-                            .to_payload(&okv, &SerializationContext::Activity)
-                            .map_err(|_| todo!()),
-                        Err(e) => Err(e),
-                    })
-                    .boxed())
-            }),
-        );
+        self.activities.register_activity::<AD>();
         self
     }
-    /// You shouldn't have to call this directly, instead rely on the `#[activities]` macro.
-    ///
     /// Registers a specific activitiy that takes a receiver.
     pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
         &mut self,
         instance: Arc<AD::Implementer>,
     ) -> &mut Self {
-        self.activities.insert(
-            AD::name(),
-            Box::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
-                let pc2 = pc.clone();
-                Ok(AD::execute(Some(instance.clone()), c, deserialized)
-                    .map(move |v| match v {
-                        Ok(okv) => pc2
-                            .to_payload(&okv, &SerializationContext::Activity)
-                            .map_err(|_| todo!()),
-                        Err(e) => Err(e),
-                    })
-                    .boxed())
-            }),
-        );
+        self.activities
+            .register_activity_with_instance::<AD>(instance);
         self
+    }
+}
+
+impl WorkerOptions {
+    /// Registers all activities on an activity implementer that don't take a receiver.
+    pub fn register_activities_static<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        self.activities.register_activities_static::<AI>();
+        self
+    }
+    /// Registers all activities on an activity implementer that take a receiver.
+    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
+        self.activities.register_activities::<AI>(instance);
+        self
+    }
+    /// Registers a specific activitiy that does not take a receiver.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
+        self.activities.register_activity::<AD>();
+        self
+    }
+    /// Registers a specific activitiy that takes a receiver.
+    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+        &mut self,
+        instance: Arc<AD::Implementer>,
+    ) -> &mut Self {
+        self.activities
+            .register_activity_with_instance::<AD>(instance);
+        self
+    }
+    /// Returns all the registered activities by cloning the current set.
+    pub fn activities(&self) -> ActivityDefinitions {
+        self.activities.clone()
     }
 }
 
@@ -335,7 +337,7 @@ struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, J
 #[derive(Default)]
 struct ActivityHalf {
     /// Maps activity type to the function for executing activities of that type
-    activities: HashMap<&'static str, ActivityInvocation>,
+    activities: ActivityDefinitions,
     /// Maps activity type to the function for executing activities of that type
     activity_fns: HashMap<String, ActivityFunction>,
     task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
@@ -358,9 +360,18 @@ impl Worker {
         Ok(me)
     }
 
-    /// Create a new Rust SDK worker from a Core worker. For internal testing only.
+    // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
     pub fn new_from_core(worker: Arc<CoreWorker>) -> Self {
+        Self::new_from_core_activities(worker, Default::default())
+    }
+
+    // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
+    #[doc(hidden)]
+    pub fn new_from_core_activities(
+        worker: Arc<CoreWorker>,
+        activities: ActivityDefinitions,
+    ) -> Self {
         Self {
             common: CommonWorker {
                 task_queue: worker.get_config().task_queue.clone(),
@@ -368,7 +379,10 @@ impl Worker {
                 worker_interceptor: None,
             },
             workflow_half: Default::default(),
-            activity_half: Default::default(),
+            activity_half: ActivityHalf {
+                activities,
+                ..Default::default()
+            },
             app_data: Some(Default::default()),
         }
     }
@@ -502,7 +516,7 @@ impl Worker {
             // Only poll on the activity queue if activity functions have been registered. This
             // makes tests which use mocks dramatically more manageable.
             async {
-                if !act_half.activity_fns.is_empty() {
+                if !act_half.activity_fns.is_empty() || !act_half.activities.is_empty() {
                     loop {
                         let activity = common.worker.poll_activity_task().await;
                         if matches!(activity, Err(PollError::ShutDown)) {
@@ -551,6 +565,16 @@ impl Worker {
     /// is not the same as understood by core, though they *should* always be in sync.
     pub fn cached_workflows(&self) -> usize {
         self.workflow_half.workflows.borrow().len()
+    }
+
+    /// Returns the instance key for this worker, used for worker heartbeating.
+    pub fn worker_instance_key(&self) -> Uuid {
+        self.common.worker.worker_instance_key()
+    }
+
+    #[doc(hidden)]
+    pub fn core_worker(&self) -> Arc<CoreWorker> {
+        self.common.worker.clone()
     }
 
     fn split_apart(
@@ -696,16 +720,31 @@ impl ActivityHalf {
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let act_fn = self
-                    .activity_fns
-                    .get(&start.activity_type)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "No function registered for activity type {}",
-                            start.activity_type
-                        )
-                    })?
-                    .clone();
+                let act_fn = if let Some(fun) = self.activities.get(&start.activity_type) {
+                    fun
+                } else {
+                    let fun = self
+                        .activity_fns
+                        .get(&start.activity_type)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "No function registered for activity type {}",
+                                start.activity_type
+                            )
+                        })?
+                        .clone()
+                        .act_func;
+                    Arc::new(move |p, _pc, ac| {
+                        let fun = fun.clone();
+                        Ok(async move {
+                            fun(ac, p).await.map(|aev| match aev {
+                                ActExitValue::WillCompleteAsync => todo!("get rid of this"),
+                                ActExitValue::Normal(p) => p,
+                            })
+                        }
+                        .boxed())
+                    })
+                };
                 let span = info_span!(
                     "RunActivity",
                     "otel.name" = format!("RunActivity:{}", start.activity_type),
@@ -727,6 +766,8 @@ impl ActivityHalf {
                     task_token.clone(),
                     start,
                 );
+                // TODO [rust-sdk-branch]: Get payload converter from client
+                let payload_converter = PayloadConverter::serde_json();
 
                 tokio::spawn(async move {
                     let act_fut = async move {
@@ -735,7 +776,7 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn.act_func)(ctx, arg).await
+                        (act_fn)(arg, payload_converter, ctx)?.await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
@@ -744,10 +785,7 @@ impl ActivityHalf {
                             format!("Activity function panicked: {}", panic_formatter(e)),
                             true,
                         )),
-                        Ok(Ok(ActExitValue::Normal(p))) => ActivityExecutionResult::ok(p),
-                        Ok(Ok(ActExitValue::WillCompleteAsync)) => {
-                            ActivityExecutionResult::will_complete_async()
-                        }
+                        Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
                             ActivityError::Retryable {
                                 source,
@@ -768,6 +806,9 @@ impl ActivityHalf {
                             ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
                                 Failure::application_failure_from_error(nre, true),
                             ),
+                            ActivityError::WillCompleteAsync => {
+                                ActivityExecutionResult::will_complete_async()
+                            }
                         },
                     };
                     worker
@@ -1331,6 +1372,6 @@ mod tests {
     #[test]
     fn test_activity_registration() {
         let act_instance = MyActivities {};
-        WorkerOptions::builder().register_activities(act_instance);
+        WorkerOptions::new("task_q").register_activities(act_instance);
     }
 }

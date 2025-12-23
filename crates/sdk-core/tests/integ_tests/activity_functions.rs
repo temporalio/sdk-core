@@ -5,7 +5,7 @@ pub(crate) async fn echo(_ctx: ActivityContext, e: String) -> Result<String, Act
     Ok(e)
 }
 
-struct StdActivities {}
+pub(crate) struct StdActivities {}
 
 #[activities]
 impl StdActivities {

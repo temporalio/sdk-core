@@ -48,10 +48,10 @@ use temporalio_common::{
         Logger, OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
         build_otlp_metric_exporter, metrics::CoreMeter, start_prometheus_metric_exporter,
     },
-    worker::WorkerTaskTypes,
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
-    IntoActivityFunc, Worker, WorkflowFunction,
+    IntoActivityFunc, Worker, WorkerOptions, WorkflowFunction,
     interceptors::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
@@ -112,6 +112,21 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
         .skip_client_worker_set_check(true)
         .build()
         .expect("Configuration options construct properly")
+}
+
+pub(crate) fn integ_sdk_config(tq: &str) -> WorkerOptions {
+    WorkerOptions::new(tq)
+        .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
+        .deployment_options(WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_owned(),
+                build_id: "test_build_id".to_owned(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
+        })
+        .task_types(WorkerTaskTypes::all())
+        .build()
 }
 
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
@@ -216,7 +231,9 @@ pub(crate) async fn get_cloud_client() -> Client {
 pub(crate) struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
+    // TODO [rust-sdk-branch]: Get rid of worker config
     pub worker_config: WorkerConfig,
+    pub sdk_config: WorkerOptions,
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
@@ -291,9 +308,11 @@ impl CoreWfStarter {
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = integ_worker_config(&task_queue);
         worker_config.max_cached_workflows = 1000_usize;
+        let sdk_config = integ_sdk_config(&task_queue);
         Self {
             task_queue_name: task_queue,
             worker_config,
+            sdk_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
@@ -308,6 +327,7 @@ impl CoreWfStarter {
         Self {
             task_queue_name: self.task_queue_name.clone(),
             worker_config: self.worker_config.clone(),
+            sdk_config: self.sdk_config.clone(),
             workflow_options: self.workflow_options.clone(),
             runtime_override: self.runtime_override.clone(),
             client_override: self.client_override.clone(),
@@ -317,8 +337,9 @@ impl CoreWfStarter {
     }
 
     pub(crate) async fn worker(&mut self) -> TestWorker {
-        let w = self.get_worker().await;
-        let mut w = TestWorker::new(w);
+        let worker = self.get_worker().await;
+        let sdk = Worker::new_from_core_activities(worker, self.sdk_config.activities());
+        let mut w = TestWorker::new(sdk);
         w.client = Some(self.get_client().await);
 
         w
@@ -469,7 +490,6 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK (against real server or mocks)
 pub(crate) struct TestWorker {
     inner: Worker,
-    pub core_worker: Arc<CoreWorker>,
     client: Option<Client>,
     pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
@@ -478,11 +498,9 @@ pub(crate) struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub(crate) fn new(core_worker: Arc<CoreWorker>) -> Self {
-        let inner = Worker::new_from_core(core_worker.clone());
+    pub(crate) fn new(sdk: Worker) -> Self {
         Self {
-            inner,
-            core_worker,
+            inner: sdk,
             client: None,
             started_workflows: Arc::new(Mutex::new(vec![])),
             fetch_results: true,
@@ -494,7 +512,7 @@ impl TestWorker {
     }
 
     pub(crate) fn worker_instance_key(&self) -> Uuid {
-        self.core_worker.worker_instance_key()
+        self.inner.worker_instance_key()
     }
 
     // TODO: Maybe trait-ify?
@@ -628,6 +646,10 @@ impl TestWorker {
         self.inner.set_worker_interceptor(iceptor);
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
         Ok(())
+    }
+
+    pub(crate) fn core_worker(&self) -> Arc<temporalio_sdk_core::Worker> {
+        self.inner.core_worker()
     }
 }
 
@@ -961,7 +983,7 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(Arc::new(core))
+    TestWorker::new(temporalio_sdk::Worker::new_from_core(Arc::new(core)))
 }
 
 #[derive(Default)]

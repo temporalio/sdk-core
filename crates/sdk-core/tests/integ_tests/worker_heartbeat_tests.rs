@@ -545,7 +545,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
     let worker_key = worker.worker_instance_key().to_string();
-    let worker_core = worker.core_worker.clone();
+    let worker_core = worker.core_worker();
     let submitter = worker.get_submitter_handle();
     let wf_opts = starter.workflow_options.clone();
     let client = starter.get_client().await;

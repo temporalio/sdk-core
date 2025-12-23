@@ -320,7 +320,7 @@ impl ActivitiesDefinition {
                 let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
                 quote! {
-                    worker_options.register_activity::<#struct_ident>();
+                    defs.register_activity::<#struct_ident>();
                 }
             })
             .collect();
@@ -333,7 +333,7 @@ impl ActivitiesDefinition {
                 let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
                 quote! {
-                    worker_options.register_activity_with_instance::<#struct_ident>(self.clone());
+                    defs.register_activity_with_instance::<#struct_ident>(self.clone());
                 }
             })
             .collect();
@@ -346,15 +346,15 @@ impl ActivitiesDefinition {
 
         quote! {
             impl ::temporalio_sdk::activities::ActivityImplementer for #impl_type {
-                fn register_all_static<S: ::temporalio_sdk::worker_options_builder::State>(
-                    worker_options: &mut ::temporalio_sdk::WorkerOptionsBuilder<S>,
+                fn register_all_static(
+                    defs: &mut ::temporalio_sdk::activities::ActivityDefinitions,
                 ) {
                     #(#static_activities)*
                 }
 
-                fn register_all_instance<S: ::temporalio_sdk::worker_options_builder::State>(
+                fn register_all_instance(
                     self: ::std::sync::Arc<Self>,
-                    worker_options: &mut ::temporalio_sdk::WorkerOptionsBuilder<S>,
+                    defs: &mut ::temporalio_sdk::activities::ActivityDefinitions,
                 ) {
                     #register_instance_body
                 }

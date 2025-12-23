@@ -1104,7 +1104,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         wc.max_cached_workflows = 1;
         wc.max_outstanding_workflow_tasks = Some(1);
     });
-    let core = worker.core_worker.clone();
+    let core = worker.core_worker();
 
     let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 

@@ -47,9 +47,28 @@ impl PayloadConverter {
     // TODO [rust-sdk-branch]: Proto binary, other standard built-ins
 }
 
+#[derive(Debug)]
 pub enum PayloadConversionError {
     WrongEncoding,
-    EncodingError(Box<dyn std::error::Error>),
+    EncodingError(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl std::fmt::Display for PayloadConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PayloadConversionError::WrongEncoding => write!(f, "Wrong encoding"),
+            PayloadConversionError::EncodingError(err) => write!(f, "Encoding error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for PayloadConversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PayloadConversionError::WrongEncoding => None,
+            PayloadConversionError::EncodingError(err) => Some(err.as_ref()),
+        }
+    }
 }
 
 pub trait FailureConverter {

@@ -351,7 +351,8 @@ async fn activity_tasks_from_completion_reserve_slots() {
         cfg.max_outstanding_activities = Some(2);
     });
     let core = Arc::new(mock_worker(mock));
-    let mut worker = crate::common::TestWorker::new(core.clone());
+    let mut worker =
+        crate::common::TestWorker::new(temporalio_sdk::Worker::new_from_core(core.clone()));
 
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();
