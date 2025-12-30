@@ -270,9 +270,6 @@ message PollWorkflowTaskQueueRequest {
     // Worker deployment options that user has set in the worker.
     // Experimental. Worker Deployments are experimental and might significantly change in the future.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
-
-    // Worker info to be sent to the server.
-    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -444,10 +441,6 @@ message PollActivityTaskQueueRequest {
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
-
-    // Worker info to be sent to the server.
-    temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 7;
-
 }
 
 message PollActivityTaskQueueResponse {
@@ -2049,6 +2042,9 @@ message UpdateWorkflowExecutionOptionsRequest {
     // Controls which fields from `workflow_execution_options` will be applied.
     // To unset a field, set it to null and use the update mask to indicate that it should be mutated.
     google.protobuf.FieldMask update_mask = 4;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 5;
 }
 
 message UpdateWorkflowExecutionOptionsResponse {
@@ -2188,7 +2184,11 @@ message SetWorkerDeploymentCurrentVersionResponse {
     // Deprecated. Use `previous_deployment_version`.
     string previous_version = 2 [deprecated = true];
     // The version that was current before executing this operation.
-    temporal.api.deployment.v1.WorkerDeploymentVersion previous_deployment_version = 3;
+    // Deprecated in favor of idempotency of the API. Use `DescribeWorkerDeployment` to get the
+    // Current version info before calling this API. By passing the `conflict_token` got from the
+    // `DescribeWorkerDeployment` call to this API you can ensure there is no interfering changes
+    // between the two calls.
+    temporal.api.deployment.v1.WorkerDeploymentVersion previous_deployment_version = 3 [deprecated = true];
 }
 
 // Set/unset the Ramping Version of a Worker Deployment and its ramp percentage.
@@ -2244,9 +2244,17 @@ message SetWorkerDeploymentRampingVersionResponse {
     // Deprecated. Use `previous_deployment_version`.
     string previous_version = 2 [deprecated = true];
     // The version that was ramping before executing this operation.
-    temporal.api.deployment.v1.WorkerDeploymentVersion previous_deployment_version = 4;
+    // Deprecated in favor of idempotency of the API. Use `DescribeWorkerDeployment` to get the
+    // Ramping version info before calling this API. By passing the `conflict_token` got from the
+    // `DescribeWorkerDeployment` call to this API you can ensure there is no interfering changes
+    // between the two calls.
+    temporal.api.deployment.v1.WorkerDeploymentVersion previous_deployment_version = 4 [deprecated = true];
     // The ramping version percentage before executing this operation.
-    float previous_percentage = 3;
+    // Deprecated in favor of idempotency of the API. Use `DescribeWorkerDeployment` to get the
+    // Ramping version info before calling this API. By passing the `conflict_token` got from the
+    // `DescribeWorkerDeployment` call to this API you can ensure there is no interfering changes
+    // between the two calls.
+    float previous_percentage = 3 [deprecated = true];
 }
 
 message ListWorkerDeploymentsRequest {
@@ -2359,7 +2367,11 @@ message SetWorkerDeploymentManagerResponse {
     bytes conflict_token = 1;
 
     // What the `manager_identity` field was before this change.
-    string previous_manager_identity = 2;
+    // Deprecated in favor of idempotency of the API. Use `DescribeWorkerDeployment` to get the
+    // manager identity before calling this API. By passing the `conflict_token` got from the
+    // `DescribeWorkerDeployment` call to this API you can ensure there is no interfering changes
+    // between the two calls.
+    string previous_manager_identity = 2 [deprecated = true];
 }
 
 // Returns the Current Deployment of a deployment series.
@@ -2534,6 +2546,13 @@ message UpdateTaskQueueConfigRequest {
     // If not set, this configuration is unchanged.
     // If the `rate_limit` field in the `RateLimitUpdate` is missing, remove the existing rate limit.
     RateLimitUpdate update_fairness_key_rate_limit_default = 6;
+    // If set, overrides the fairness weight for each specified fairness key.
+    // Fairness keys not listed in this map will keep their existing overrides (if any).
+    map<string, float> set_fairness_weight_overrides = 7;
+    // If set, removes any existing fairness weight overrides for each specified fairness key.
+    // Fairness weights for corresponding keys fall back to the values set during task creation (if any),
+    // or to the default weight of 1.0.
+    repeated string unset_fairness_weight_overrides = 8;
 }
 
 message UpdateTaskQueueConfigResponse {
@@ -2602,6 +2621,42 @@ message DescribeWorkerResponse {
     temporal.api.worker.v1.WorkerInfo worker_info = 1;
 }
 
+// Request to pause a workflow execution.
+message PauseWorkflowExecutionRequest {
+    // Namespace of the workflow to pause.
+    string namespace = 1;
+    // ID of the workflow execution to be paused. Required.
+    string workflow_id = 2;
+    // Run ID of the workflow execution to be paused. Optional. If not provided, the current run of the workflow will be paused.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Reason to pause the workflow execution.
+    string reason = 5;
+    // A unique identifier for this pause request for idempotence. Typically UUIDv4.
+    string request_id = 6;
+}
+
+// Response to a successful PauseWorkflowExecution request.
+message PauseWorkflowExecutionResponse { }
+
+message UnpauseWorkflowExecutionRequest {
+    // Namespace of the workflow to unpause.
+    string namespace = 1;
+    // ID of the workflow execution to be paused. Required.
+    string workflow_id = 2;
+    // Run ID of the workflow execution to be paused. Optional. If not provided, the current run of the workflow will be paused.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Reason to unpause the workflow execution.
+    string reason = 5;
+    // A unique identifier for this unpause request for idempotence. Typically UUIDv4.
+    string request_id = 6;
+}
+
+// Response to a successful UnpauseWorkflowExecution request.
+message UnpauseWorkflowExecutionResponse { }
 
 message StartActivityExecutionRequest {
     string namespace = 1;
@@ -2803,4 +2858,57 @@ message DeleteActivityExecutionRequest {
 }
 
 message DeleteActivityExecutionResponse {
+}
+
+message CreateStreamRequest {
+    // The stream's namespace. Required.
+    string namespace = 1;
+    // Identifier for the stream. Required. This identifier should be meaningful in the user's
+    // own system.
+    string stream_id = 2;
+    // Optional run ID for idempotency. If not provided, a new run ID will be generated.
+    string run_id = 3;
+    // Optional initial messages to add to the stream upon creation.
+    repeated temporal.api.common.v1.Payload messages = 4;
+    bool non_durable = 5;
+}
+
+message CreateStreamResponse {
+    string run_id = 1;
+}
+
+message AddToStreamRequest {
+    // The namespace stream's namespace. Required.
+    string namespace = 1;
+    // Identifier for the stream. Required. This identifier should be meaningful in the user's
+    // own system.
+    string stream_id = 2;
+    string run_id = 3;
+    repeated temporal.api.common.v1.Payload messages = 4;
+    bool non_durable = 5;
+}
+
+message AddToStreamResponse {
+    string run_id = 1;
+}
+
+message PollStreamRequest {
+    string namespace = 1;
+    string stream_id = 2;
+    string run_id = 3;
+    // Opaque cursor token returned from previous PollStreamResponse.
+    // If empty/nil, polling starts from the beginning (message ID 0).
+    // Server controls the cursor format - clients must treat as opaque.
+    bytes cursor = 4;
+    // Maximum number of messages to return in a single response.
+    // If not set or exceeds server limit, server will apply default/max limit.
+    int32 max_messages = 5;
+}
+
+message PollStreamResponse {
+    repeated temporal.api.common.v1.Payload messages = 4;
+    // Opaque cursor token to use in the next PollStreamRequest.
+    // Points to the position AFTER the last message in this response.
+    // Client should pass this as-is in the next poll request.
+    bytes next_cursor = 5;
 }

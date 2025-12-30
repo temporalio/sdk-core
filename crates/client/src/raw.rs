@@ -870,6 +870,24 @@ proxier! {
         }
     );
     (
+        pause_workflow_execution,
+        PauseWorkflowExecutionRequest,
+        PauseWorkflowExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        unpause_workflow_execution,
+        UnpauseWorkflowExecutionRequest,
+        UnpauseWorkflowExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         list_open_workflow_executions,
         ListOpenWorkflowExecutionsRequest,
         ListOpenWorkflowExecutionsResponse,
@@ -1549,6 +1567,33 @@ proxier! {
         delete_activity_execution,
         DeleteActivityExecutionRequest,
         DeleteActivityExecutionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        create_stream,
+        CreateStreamRequest,
+        CreateStreamResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        add_to_stream,
+        AddToStreamRequest,
+        AddToStreamResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        poll_stream,
+        PollStreamRequest,
+        PollStreamResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

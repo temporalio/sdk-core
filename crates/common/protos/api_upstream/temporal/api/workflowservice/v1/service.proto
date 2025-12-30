@@ -397,8 +397,9 @@ service WorkflowService {
 
     // ResetWorkflowExecution will reset an existing workflow execution to a specified
     // `WORKFLOW_TASK_COMPLETED` event (exclusive). It will immediately terminate the current
-    // execution instance.
-    // TODO: Does exclusive here mean *just* the completed event, or also WFT started? Otherwise the task is doomed to time out?
+    // execution instance. "Exclusive" means the identified completed event itself is not replayed
+    // in the reset history; the preceding `WORKFLOW_TASK_STARTED` event remains and will be marked as failed
+    // immediately, and a new workflow task will be scheduled to retry it.
     rpc ResetWorkflowExecution (ResetWorkflowExecutionRequest) returns (ResetWorkflowExecutionResponse) {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/reset"
@@ -1275,6 +1276,33 @@ service WorkflowService {
         };
     }
 
+    // Note: This is an experimental API and the behavior may change in a future release.
+    // PauseWorkflowExecution pauses the workflow execution specified in the request. Pausing a workflow execution results in
+    // - The workflow execution status changes to `PAUSED` and a new WORKFLOW_EXECUTION_PAUSED event is added to the history
+    // - No new workflow tasks or activity tasks are dispatched.
+    //   - Any workflow task currently executing on the worker will be allowed to complete.
+    //   - Any activity task currently executing will be paused.
+    // - All server-side events will continue to be processed by the server.
+    // - Queries & Updates on a paused workflow will be rejected.
+    rpc PauseWorkflowExecution (PauseWorkflowExecutionRequest) returns (PauseWorkflowExecutionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workflows/{workflow_id}/pause"
+            body: "*"
+        };
+    }
+
+    // Note: This is an experimental API and the behavior may change in a future release.
+    // UnpauseWorkflowExecution unpauses a previously paused workflow execution specified in the request.
+    // Unpausing a workflow execution results in
+    // - The workflow execution status changes to `RUNNING` and a new WORKFLOW_EXECUTION_UNPAUSED event is added to the history
+    // - Workflow tasks and activity tasks are resumed.
+    rpc UnpauseWorkflowExecution (UnpauseWorkflowExecutionRequest) returns (UnpauseWorkflowExecutionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workflows/{workflow_id}/unpause"
+            body: "*"
+        };
+    }
+
     // StartActivityExecution starts a new activity execution.
     //
     // Returns an `ActivityExecutionAlreadyStarted` error if an instance already exists with same activity ID in this namespace
@@ -1375,4 +1403,49 @@ service WorkflowService {
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: Activity deletion not exposed to HTTP, users should use cancel or terminate. --)
     rpc DeleteActivityExecution (DeleteActivityExecutionRequest) returns (DeleteActivityExecutionResponse) {}
+
+    // CreateStream creates a new stream with optional initial messages.
+    //
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: Stream operations use custom patterns. --)
+    rpc CreateStream(CreateStreamRequest) returns (CreateStreamResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/streams:create"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/streams:create"
+                body: "*"
+            }
+        };
+    }
+
+    // AddToStream pushes messages to the stream.
+    //
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: Stream operations use custom patterns. --)
+    rpc AddToStream(AddToStreamRequest) returns (AddToStreamResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/streams/{stream_id}"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/streams/{stream_id}"
+                body: "*"
+            }
+        };
+    }
+
+    // PollStream long-polls for new messages on the stream.
+    //
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: Stream operations use custom patterns. --)
+    rpc PollStream(PollStreamRequest) returns (PollStreamResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/streams/{stream_id}/outcome"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/streams/{stream_id}/outcome"
+            }
+        };
+    }
+
 }
+
