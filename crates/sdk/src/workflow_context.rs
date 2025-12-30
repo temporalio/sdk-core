@@ -29,6 +29,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
+    ActivityDefinition,
+    data_converters::{
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+    },
     protos::{
         coresdk::{
             activity_result::{ActivityResolution, activity_resolution},
@@ -213,10 +217,14 @@ impl WfContext {
     }
 
     /// Request to run an activity
-    pub fn activity(
+    pub fn activity<AD: ActivityDefinition>(
         &self,
+        input: AD::Input,
         mut opts: ActivityOptions,
-    ) -> impl CancellableFuture<ActivityResolution> {
+    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+        // TODO [rust-sdk-branch]: Get payload converter properly
+        let pc = PayloadConverter::serde_json();
+        let payload = pc.to_payload(&input, &SerializationContext::Workflow)?;
         if opts.task_queue.is_none() {
             opts.task_queue = Some(self.task_queue.clone());
         }
@@ -224,12 +232,12 @@ impl WfContext {
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(seq),
+                cmd: opts.into_command(payload, seq),
                 unblocker,
             }
             .into(),
         );
-        cmd
+        Ok(cmd)
     }
 
     /// Request to run a local activity

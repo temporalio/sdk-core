@@ -76,8 +76,8 @@ pub struct ActivityOptions {
     pub do_not_eagerly_execute: bool,
 }
 
-impl IntoWorkflowCommand for ActivityOptions {
-    fn into_command(self, seq: u32) -> WorkflowCommand {
+impl ActivityOptions {
+    pub(crate) fn into_command(self, input: Payload, seq: u32) -> WorkflowCommand {
         WorkflowCommand {
             variant: Some(
                 ScheduleActivity {

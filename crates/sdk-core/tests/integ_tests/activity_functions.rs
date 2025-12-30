@@ -10,7 +10,7 @@ pub(crate) struct StdActivities {}
 #[activities]
 impl StdActivities {
     #[activity]
-    async fn echo(_ctx: ActivityContext, e: String) -> Result<String, ActivityError> {
+    pub(crate) async fn echo(_ctx: ActivityContext, e: String) -> Result<String, ActivityError> {
         Ok(e)
     }
 }

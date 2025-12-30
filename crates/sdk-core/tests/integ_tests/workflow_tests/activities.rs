@@ -3,7 +3,7 @@ use crate::{
         ActivationAssertionsInterceptor, CoreWfStarter, INTEG_CLIENT_IDENTITY, build_fake_sdk,
         eventually, init_core_and_create_wf, mock_sdk, mock_sdk_cfg,
     },
-    integ_tests::activity_functions::{StdActivities, echo},
+    integ_tests::activity_functions::{StdActivities, echo, std_activities},
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
@@ -61,13 +61,13 @@ use tokio::{join, sync::Semaphore, time::sleep};
 async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     // TODO [rust-sdk-branch]: activities need to return deserialzied results
     let r = ctx
-        .activity(ActivityOptions {
-            // TODO [rust-sdk-branch]: shouldn't be "Echo" but "echo"?
-            activity_type: "std_activities::Echo".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        })
+        .activity::<std_activities::Echo>(
+            "hi!",
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await
         .unwrap_ok_payload();
     Ok(r.into())
