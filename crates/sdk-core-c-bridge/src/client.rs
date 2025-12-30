@@ -570,10 +570,15 @@ async fn call_workflow_service(
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
+        "AddToStream" => rpc_call_on_trait!(client, call, WorkflowService, add_to_stream),
+        "CountActivityExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, count_activity_executions)
+        }
         "CountWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
         }
         "CreateSchedule" => rpc_call_on_trait!(client, call, WorkflowService, create_schedule),
+        "CreateStream" => rpc_call_on_trait!(client, call, WorkflowService, create_stream),
         "CreateWorkflowRule" => {
             rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
         }
@@ -589,6 +594,9 @@ async fn call_workflow_service(
                 delete_worker_deployment_version
             )
         }
+        "DeleteActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
+        }
         "DeleteWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_workflow_execution)
         }
@@ -597,6 +605,9 @@ async fn call_workflow_service(
         }
         "DeprecateNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, deprecate_namespace)
+        }
+        "DescribeActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_activity_execution)
         }
         "DescribeBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_batch_operation)
@@ -684,6 +695,9 @@ async fn call_workflow_service(
                 list_archived_workflow_executions
             )
         }
+        "ListActivityExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_activity_executions)
+        }
         "ListBatchOperations" => {
             rpc_call_on_trait!(client, call, WorkflowService, list_batch_operations)
         }
@@ -717,6 +731,12 @@ async fn call_workflow_service(
         }
         "PatchSchedule" => rpc_call_on_trait!(client, call, WorkflowService, patch_schedule),
         "PauseActivity" => rpc_call_on_trait!(client, call, WorkflowService, pause_activity),
+        "PauseWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, pause_workflow_execution)
+        }
+        "PollActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, poll_activity_execution)
+        }
         "PollActivityTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_activity_task_queue)
         }
@@ -732,6 +752,7 @@ async fn call_workflow_service(
         "PollWorkflowTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_workflow_task_queue)
         }
+        "PollStream" => rpc_call_on_trait!(client, call, WorkflowService, poll_stream),
         "QueryWorkflow" => rpc_call_on_trait!(client, call, WorkflowService, query_workflow),
         "RecordActivityTaskHeartbeat" => rpc_call_on_trait!(
             client,
@@ -752,6 +773,14 @@ async fn call_workflow_service(
         }
         "RegisterNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, register_namespace)
+        }
+        "RequestCancelActivityExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_activity_execution
+            )
         }
         "RequestCancelWorkflowExecution" => {
             rpc_call_on_trait!(
@@ -865,11 +894,17 @@ async fn call_workflow_service(
         "StartWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
         }
+        "StartActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, start_activity_execution)
+        }
         "StartBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
         }
         "StopBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, stop_batch_operation)
+        }
+        "TerminateActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, terminate_activity_execution)
         }
         "TerminateWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_workflow_execution)
@@ -879,6 +914,9 @@ async fn call_workflow_service(
         }
         "UnpauseActivity" => {
             rpc_call_on_trait!(client, call, WorkflowService, unpause_activity)
+        }
+        "UnpauseWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, unpause_workflow_execution)
         }
         "UpdateActivityOptions" => {
             rpc_call_on_trait!(client, call, WorkflowService, update_activity_options)

@@ -301,7 +301,6 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -339,7 +338,6 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
