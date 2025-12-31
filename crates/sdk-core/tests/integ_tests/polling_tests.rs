@@ -1,9 +1,8 @@
-use crate::{
-    common::{
-        CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, get_integ_client,
-        init_core_and_create_wf, init_integ_telem, integ_dev_server_config, integ_worker_config,
-    },
-    integ_tests::activity_functions::echo,
+use crate::common::{
+    CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION,
+    activity_functions::{StdActivities, std_activities},
+    get_integ_client, init_core_and_create_wf, init_integ_telem, integ_dev_server_config,
+    integ_worker_config,
 };
 use assert_matches::assert_matches;
 use futures_util::{FutureExt, StreamExt, future::join_all};
@@ -22,7 +21,7 @@ use temporalio_common::{
     prost_dur,
     protos::{
         coresdk::{
-            AsJsonPayloadExt, IntoCompletion,
+            IntoCompletion,
             activity_task::activity_task as act_task,
             workflow_activation::{FireTimer, WorkflowActivationJob, workflow_activation_job},
             workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
@@ -261,20 +260,25 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     starter.worker_config.max_outstanding_local_activities = Some(1_usize);
     starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
     starter.worker_config.max_outstanding_activities = Some(1_usize);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
+
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity(ActivityOptions {
-                activity_type: "echo_activity".to_string(),
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                ..Default::default()
-            })
+            ctx.activity::<std_activities::Echo>(
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
             .await;
         }
         Ok(().into())
     });
-    worker.register_activity("echo_activity", echo);
     worker
         .submit_wf(
             starter.get_task_queue(),

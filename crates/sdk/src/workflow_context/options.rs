@@ -33,10 +33,6 @@ pub struct ActivityOptions {
     ///
     /// If `None` use the context's sequence number
     pub activity_id: Option<String>,
-    /// Type of activity to schedule
-    pub activity_type: String,
-    /// Input to the activity
-    pub input: Payload,
     /// Task queue to schedule the activity in
     ///
     /// If `None`, use the same task queue as the parent workflow.
@@ -77,7 +73,12 @@ pub struct ActivityOptions {
 }
 
 impl ActivityOptions {
-    pub(crate) fn into_command(self, input: Payload, seq: u32) -> WorkflowCommand {
+    pub(crate) fn into_command(
+        self,
+        activity_type: String,
+        input: Payload,
+        seq: u32,
+    ) -> WorkflowCommand {
         WorkflowCommand {
             variant: Some(
                 ScheduleActivity {
@@ -86,7 +87,7 @@ impl ActivityOptions {
                         None => seq.to_string(),
                         Some(aid) => aid,
                     },
-                    activity_type: self.activity_type,
+                    activity_type,
                     task_queue: self.task_queue.unwrap_or_default(),
                     schedule_to_close_timeout: self
                         .schedule_to_close_timeout
@@ -99,7 +100,8 @@ impl ActivityOptions {
                         .and_then(|d| d.try_into().ok()),
                     heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
                     cancellation_type: self.cancellation_type as i32,
-                    arguments: vec![self.input],
+                    // TODO [rust-sdk-branch]: Handle multi-args
+                    arguments: vec![input],
                     retry_policy: self.retry_policy,
                     priority: self.priority.map(Into::into),
                     do_not_eagerly_execute: self.do_not_eagerly_execute,
@@ -124,11 +126,6 @@ pub struct LocalActivityOptions {
     ///
     /// If `None` use the context's sequence number
     pub activity_id: Option<String>,
-    /// Type of activity to schedule
-    pub activity_type: String,
-    /// Input to the activity
-    // TODO: Make optional
-    pub input: Payload,
     /// Retry policy
     pub retry_policy: RetryPolicy,
     /// Override attempt number rather than using 1.
@@ -160,8 +157,13 @@ pub struct LocalActivityOptions {
     pub summary: Option<String>,
 }
 
-impl IntoWorkflowCommand for LocalActivityOptions {
-    fn into_command(mut self, seq: u32) -> WorkflowCommand {
+impl LocalActivityOptions {
+    pub(crate) fn into_command(
+        mut self,
+        activity_type: String,
+        input: Payload,
+        seq: u32,
+    ) -> WorkflowCommand {
         // Allow tests to avoid extra verbosity when they don't care about timeouts
         // TODO: Builderize LA options
         self.schedule_to_close_timeout
@@ -177,8 +179,8 @@ impl IntoWorkflowCommand for LocalActivityOptions {
                         None => seq.to_string(),
                         Some(aid) => aid,
                     },
-                    activity_type: self.activity_type,
-                    arguments: vec![self.input],
+                    activity_type,
+                    arguments: vec![input],
                     retry_policy: Some(self.retry_policy),
                     local_retry_threshold: self
                         .timer_backoff_threshold

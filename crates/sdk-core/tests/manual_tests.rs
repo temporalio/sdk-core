@@ -22,13 +22,26 @@ use std::{
 use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
-use temporalio_common::{
-    protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptions,
-    worker::WorkerTaskTypes,
+use temporalio_common::{telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes};
+use temporalio_macros::activities;
+use temporalio_sdk::{
+    ActivityOptions, WfContext,
+    activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior};
 use tracing::info;
+
+struct JitteryEchoActivities {}
+#[activities]
+impl JitteryEchoActivities {
+    #[activity]
+    async fn echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
+        // Add some jitter to completions
+        let rand_millis = rand::rng().random_range(0..500);
+        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
+        Ok(echo)
+    }
+}
 
 #[tokio::test]
 async fn poller_load_spiky() {
@@ -62,18 +75,22 @@ async fn poller_load_spiky() {
     };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
+
+    worker.register_activities_static::<JitteryEchoActivities>();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.activity::<jittery_echo_activities::Echo>(
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -83,12 +100,6 @@ async fn poller_load_spiky() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 
@@ -305,18 +316,22 @@ async fn poller_load_spike_then_sustained() {
     };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
+
+    worker.register_activities_static::<JitteryEchoActivities>();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.activity::<jittery_echo_activities::Echo>(
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -326,12 +341,6 @@ async fn poller_load_spike_then_sustained() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 

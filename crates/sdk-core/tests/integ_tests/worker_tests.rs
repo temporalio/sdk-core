@@ -1,7 +1,9 @@
 use crate::{
     common::{
-        CoreWfStarter, fake_grpc_server::fake_server, get_integ_runtime_options,
-        get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
+        CoreWfStarter,
+        activity_functions::{StdActivities, std_activities},
+        fake_grpc_server::fake_server,
+        get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
     shared_tests,
 };
@@ -31,15 +33,17 @@ use temporalio_common::{
         },
         temporal::api::{
             command::v1::command::Attributes,
-            common::v1::WorkerVersionStamp,
+            common::v1::{Payload, WorkerVersionStamp},
             enums::v1::{
-                EventType, WorkflowTaskFailedCause, WorkflowTaskFailedCause::GrpcMessageTooLarge,
+                EventType,
+                WorkflowTaskFailedCause::{self, GrpcMessageTooLarge},
             },
             failure::v1::Failure as InnerFailure,
             history::v1::{
-                ActivityTaskScheduledEventAttributes, history_event,
-                history_event::Attributes::{
-                    self as EventAttributes, WorkflowTaskFailedEventAttributes,
+                ActivityTaskScheduledEventAttributes,
+                history_event::{
+                    self,
+                    Attributes::{self as EventAttributes, WorkflowTaskFailedEventAttributes},
                 },
             },
             workflowservice::v1::{
@@ -363,15 +367,17 @@ async fn activity_tasks_from_completion_reserve_slots() {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
         let complete_token = workflow_complete_token.clone();
         async move {
-            ctx.activity(ActivityOptions {
-                activity_type: "act1".to_string(),
-                ..Default::default()
-            })
+            ctx.activity_untyped(
+                "act1".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
             .await;
-            ctx.activity(ActivityOptions {
-                activity_type: "act2".to_string(),
-                ..Default::default()
-            })
+            ctx.activity_untyped(
+                "act2".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
             .await;
             complete_token.cancel();
             Ok(().into())
@@ -710,6 +716,9 @@ async fn test_custom_slot_supplier_simple() {
     starter.worker_config.max_outstanding_local_activities = None;
     starter.worker_config.max_outstanding_activities = None;
     starter.worker_config.max_outstanding_nexus_tasks = None;
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
 
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(wf_supplier.clone());
@@ -719,26 +728,26 @@ async fn test_custom_slot_supplier_simple() {
 
     let mut worker = starter.worker().await;
 
-    worker.register_activity(
-        "SlotSupplierActivity",
-        |_: temporalio_sdk::activities::ActivityContext, _: ()| async move { Ok(()) },
-    );
     worker.register_wf(
         "SlotSupplierWorkflow".to_owned(),
         |ctx: WfContext| async move {
             let _result = ctx
-                .activity(ActivityOptions {
-                    activity_type: "SlotSupplierActivity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(10)),
-                    ..Default::default()
-                })
+                .activity::<std_activities::NoOp>(
+                    (),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(10)),
+                        ..Default::default()
+                    },
+                )?
                 .await;
             let _result = ctx
-                .local_activity(LocalActivityOptions {
-                    activity_type: "SlotSupplierActivity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(10)),
-                    ..Default::default()
-                })
+                .local_activity::<std_activities::NoOp>(
+                    (),
+                    LocalActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(10)),
+                        ..Default::default()
+                    },
+                )?
                 .await;
             Ok(().into())
         },
@@ -820,7 +829,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type == "SlotSupplierActivity"))
+                                } if act_type.contains("NoOp")))
     );
     assert!(
         local_activity_events
@@ -829,7 +838,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "local_activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type == "SlotSupplierActivity"))
+                                } if act_type.contains("NoOp")))
     );
     assert!(wf_events.iter().any(|e| matches!(
         e,

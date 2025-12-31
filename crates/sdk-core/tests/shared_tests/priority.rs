@@ -3,13 +3,29 @@ use std::time::Duration;
 use temporalio_client::{
     GetWorkflowResultOptions, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
-use temporalio_common::protos::{
-    coresdk::AsJsonPayloadExt,
-    temporal::api::{common, history::v1::history_event::Attributes},
-};
+use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
+use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, ChildWorkflowOptions, WfContext, activities::ActivityContext,
+    ActivityOptions, ChildWorkflowOptions, WfContext,
+    activities::{ActivityContext, ActivityError},
 };
+
+struct PriorityActivities {}
+#[activities]
+impl PriorityActivities {
+    #[activity]
+    async fn echo(ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
+        assert_eq!(
+            ctx.get_info().priority,
+            Priority {
+                priority_key: 5,
+                fairness_key: "fair-act".to_string(),
+                fairness_weight: 1.1
+            }
+        );
+        Ok(echo_me)
+    }
+}
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =
@@ -26,7 +42,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     });
     let mut worker = starter.worker().await;
     let child_type = "child-wf";
-
+    worker.register_activities_static::<PriorityActivities>();
     worker.register_wf(starter.get_task_queue(), move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: format!("{}-child", ctx.task_queue()),
@@ -47,19 +63,22 @@ pub(crate) async fn priority_values_sent_to_server() {
             .await
             .into_started()
             .expect("Child should start OK");
-        let activity = ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hello".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            priority: Some(Priority {
-                priority_key: 5,
-                fairness_key: "fair-act".to_string(),
-                fairness_weight: 1.1,
-            }),
-            // Currently no priority info attached to eagerly run activities
-            do_not_eagerly_execute: true,
-            ..Default::default()
-        });
+        let activity = ctx
+            .activity::<priority_activities::Echo>(
+                "hello".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    priority: Some(Priority {
+                        priority_key: 5,
+                        fairness_key: "fair-act".to_string(),
+                        fairness_weight: 1.1,
+                    }),
+                    // Currently no priority info attached to eagerly run activities
+                    do_not_eagerly_execute: true,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         started.result().await;
         activity.await.unwrap_ok_payload();
         Ok(().into())
@@ -74,17 +93,6 @@ pub(crate) async fn priority_values_sent_to_server() {
             })
         );
         Ok(().into())
-    });
-    worker.register_activity("echo", |ctx: ActivityContext, echo_me: String| async move {
-        assert_eq!(
-            ctx.get_info().priority,
-            Priority {
-                priority_key: 5,
-                fairness_key: "fair-act".to_string(),
-                fairness_weight: 1.1
-            }
-        );
-        Ok(echo_me)
     });
 
     starter

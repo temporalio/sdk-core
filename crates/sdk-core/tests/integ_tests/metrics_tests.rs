@@ -23,7 +23,7 @@ use temporalio_common::{
     prost_dur,
     protos::{
         coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt,
+            ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
             nexus::{NexusTaskCompletion, nexus_task, nexus_task_completion},
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
@@ -57,6 +57,7 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
+use temporalio_macros::activities;
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
     activities::{ActivityContext, ActivityError},
@@ -764,6 +765,22 @@ async fn docker_metrics_with_prometheus(
     }
 }
 
+struct PassFailActivities {}
+#[activities]
+impl PassFailActivities {
+    #[activity(name = "pass_fail_act")]
+    async fn pass_fail_act(ctx: ActivityContext, i: String) -> Result<String, ActivityError> {
+        match i.as_str() {
+            "pass" => Ok("pass".to_string()),
+            "cancel" => {
+                ctx.cancelled().await;
+                Err(ActivityError::cancelled())
+            }
+            _ => Err(anyhow!("fail").into()),
+        }
+    }
+}
+
 #[tokio::test]
 async fn activity_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
@@ -771,69 +788,66 @@ async fn activity_metrics() {
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.graceful_shutdown_period = Some(Duration::from_secs(1));
+    starter
+        .sdk_config
+        .register_activities_static::<PassFailActivities>();
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        let normal_act_pass = ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        });
-        let normal_act_fail = ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "fail".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            retry_policy: Some(RetryPolicy {
-                maximum_attempts: 1,
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
+        let normal_act_pass = ctx
+            .activity::<pass_fail_activities::PassFailAct>(
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let normal_act_fail = ctx
+            .activity::<pass_fail_activities::PassFailAct>(
+                "fail".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         join!(normal_act_pass, normal_act_fail);
-        let local_act_pass = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        });
-        let local_act_fail = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "fail".as_json_payload().expect("serializes fine"),
-            retry_policy: RetryPolicy {
-                maximum_attempts: 1,
+        let local_act_pass = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+            "pass".to_string(),
+            LocalActivityOptions::default(),
+        )?;
+        let local_act_fail = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+            "fail".to_string(),
+            LocalActivityOptions {
+                retry_policy: RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        });
-        let local_act_cancel = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "cancel".as_json_payload().expect("serializes fine"),
-            retry_policy: RetryPolicy {
-                maximum_attempts: 1,
+        )?;
+        let local_act_cancel = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+            "cancel".to_string(),
+            LocalActivityOptions {
+                retry_policy: RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        });
+        )?;
         join!(local_act_pass, local_act_fail);
         // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
         local_act_cancel.cancel(&ctx);
         local_act_cancel.await;
         Ok(().into())
     });
-    worker.register_activity(
-        "pass_fail_act",
-        |ctx: ActivityContext, i: String| async move {
-            match i.as_str() {
-                "pass" => Ok("pass"),
-                "cancel" => {
-                    ctx.cancelled().await;
-                    Err(ActivityError::cancelled())
-                }
-                _ => Err(anyhow!("fail").into()),
-            }
-        },
-    );
 
     worker
         .submit_wf(

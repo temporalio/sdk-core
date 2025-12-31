@@ -1,4 +1,8 @@
-use crate::common::{ANY_PORT, CoreWfStarter, eventually, get_integ_telem_options};
+use crate::common::{
+    ANY_PORT, CoreWfStarter,
+    activity_functions::{StdActivities, std_activities},
+    eventually, get_integ_telem_options,
+};
 use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::StreamExt;
@@ -31,7 +35,11 @@ use temporalio_common::{
         build_otlp_metric_exporter, start_prometheus_metric_exporter,
     },
 };
-use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
+use temporalio_macros::activities;
+use temporalio_sdk::{
+    ActivityOptions, WfContext,
+    activities::{ActivityContext, ActivityError},
+};
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
 };
@@ -84,6 +92,24 @@ async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Ve
     .into_iter()
     .filter_map(|info| info.worker_heartbeat)
     .collect()
+}
+
+struct NotifyActivities {
+    acts_started: Arc<Notify>,
+    acts_done: Arc<Notify>,
+}
+#[activities]
+impl NotifyActivities {
+    #[activity]
+    async fn pass_fail_act(
+        self: Arc<Self>,
+        _ctx: ActivityContext,
+        i: String,
+    ) -> Result<String, ActivityError> {
+        self.acts_started.notify_one();
+        self.acts_done.notified().await;
+        Ok(i)
+    }
 }
 
 // Tests that rely on Prometheus running in a docker container need to start
@@ -142,33 +168,26 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     ]
     .into_iter()
     .collect();
+    let acts_started = Arc::new(Notify::new());
+    let acts_done = Arc::new(Notify::new());
+    starter.sdk_config.register_activities(NotifyActivities {
+        acts_started: acts_started.clone(),
+        acts_done: acts_done.clone(),
+    });
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.activity::<notify_activities::PassFailAct>(
+            "pass".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         Ok(().into())
-    });
-
-    let acts_started = Arc::new(Notify::new());
-    let acts_done = Arc::new(Notify::new());
-
-    let acts_started_act = acts_started.clone();
-    let acts_done_act = acts_done.clone();
-    worker.register_activity("pass_fail_act", move |_ctx: ActivityContext, i: String| {
-        let acts_started = acts_started_act.clone();
-        let acts_done = acts_done_act.clone();
-        async move {
-            acts_started.notify_one();
-            acts_done.notified().await;
-            Ok(i)
-        }
     });
 
     starter
@@ -297,24 +316,25 @@ async fn docker_worker_heartbeat_tuner() {
     starter.worker_config.max_outstanding_activities = None;
     starter.worker_config.max_outstanding_nexus_tasks = None;
     starter.worker_config.tuner = Some(Arc::new(tuner));
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     // Run a workflow
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "pass".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         Ok(().into())
     });
-    worker.register_activity(
-        "pass_fail_act",
-        |_ctx: ActivityContext, i: String| async move { Ok(i) },
-    );
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
@@ -535,12 +555,42 @@ fn after_shutdown_checks(
     );
 }
 
+static HISTORY_WF1_ACTIVITY_STARTED: Notify = Notify::const_new();
+static HISTORY_WF1_ACTIVITY_FINISH: Notify = Notify::const_new();
+static HISTORY_WF2_ACTIVITY_STARTED: Notify = Notify::const_new();
+static HISTORY_WF2_ACTIVITY_FINISH: Notify = Notify::const_new();
+struct StickyCacheActivities;
+#[activities]
+impl StickyCacheActivities {
+    #[activity]
+    async fn sticky_cache_history_act(
+        _ctx: ActivityContext,
+        marker: String,
+    ) -> Result<String, ActivityError> {
+        match marker.as_str() {
+            "wf1" => {
+                HISTORY_WF1_ACTIVITY_STARTED.notify_one();
+                HISTORY_WF1_ACTIVITY_FINISH.notified().await;
+            }
+            "wf2" => {
+                HISTORY_WF2_ACTIVITY_STARTED.notify_one();
+                HISTORY_WF2_ACTIVITY_FINISH.notified().await;
+            }
+            _ => {}
+        }
+        Ok(marker)
+    }
+}
+
 #[tokio::test]
 async fn worker_heartbeat_sticky_cache_miss() {
     let wf_name = "worker_heartbeat_cache_miss";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.worker_config.max_cached_workflows = 1_usize;
     starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
+    starter
+        .sdk_config
+        .register_activities_static::<StickyCacheActivities>();
 
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
@@ -551,11 +601,6 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let client = starter.get_client().await;
     let client_for_orchestrator = client.clone();
 
-    static HISTORY_WF1_ACTIVITY_STARTED: Notify = Notify::const_new();
-    static HISTORY_WF1_ACTIVITY_FINISH: Notify = Notify::const_new();
-    static HISTORY_WF2_ACTIVITY_STARTED: Notify = Notify::const_new();
-    static HISTORY_WF2_ACTIVITY_FINISH: Notify = Notify::const_new();
-
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let wf_marker = ctx
             .get_args()
@@ -563,33 +608,18 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .and_then(|p| String::from_json_payload(p).ok())
             .unwrap_or_else(|| "wf1".to_string());
 
-        ctx.activity(ActivityOptions {
-            activity_type: "sticky_cache_history_act".to_string(),
-            input: wf_marker.clone().as_json_payload().expect("serialize"),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.activity::<sticky_cache_activities::StickyCacheHistoryAct>(
+            wf_marker.clone(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
 
         Ok(().into())
     });
-    worker.register_activity(
-        "sticky_cache_history_act",
-        |_ctx: ActivityContext, marker: String| async move {
-            match marker.as_str() {
-                "wf1" => {
-                    HISTORY_WF1_ACTIVITY_STARTED.notify_one();
-                    HISTORY_WF1_ACTIVITY_FINISH.notified().await;
-                }
-                "wf2" => {
-                    HISTORY_WF2_ACTIVITY_STARTED.notify_one();
-                    HISTORY_WF2_ACTIVITY_FINISH.notified().await;
-                }
-                _ => {}
-            }
-            Ok(marker)
-        },
-    );
 
     let wf1_id = format!("{wf_name}_wf1");
     let wf2_id = format!("{wf_name}_wf2");
@@ -659,6 +689,9 @@ async fn worker_heartbeat_multiple_workers() {
     let mut starter = new_no_metrics_starter(wf_name);
     starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
     starter.worker_config.max_cached_workflows = 5_usize;
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
 
     let client = starter.get_client().await;
     let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
@@ -667,20 +700,12 @@ async fn worker_heartbeat_multiple_workers() {
     worker_a.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
         Ok(().into())
     });
-    worker_a.register_activity(
-        "failing_act",
-        |_ctx: ActivityContext, _: String| async move { Ok(()) },
-    );
 
     let mut starter_b = starter.clone_no_worker();
     let mut worker_b = starter_b.worker().await;
     worker_b.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
         Ok(().into())
     });
-    worker_b.register_activity(
-        "failing_act",
-        |_ctx: ActivityContext, _: String| async move { Ok(()) },
-    );
 
     let worker_a_key = worker_a.worker_instance_key().to_string();
     let worker_b_key = worker_b.worker_instance_key().to_string();
@@ -753,6 +778,24 @@ async fn worker_heartbeat_multiple_workers() {
     assert_eq!(describe_worker_b, filtered_b[0]);
 }
 
+static ACT_COUNT: AtomicU64 = AtomicU64::new(0);
+static WF_COUNT: AtomicU64 = AtomicU64::new(0);
+static ACT_FAIL: Notify = Notify::const_new();
+static WF_FAIL: Notify = Notify::const_new();
+struct FailingActivities;
+#[activities]
+impl FailingActivities {
+    #[activity]
+    async fn failing_act(_ctx: ActivityContext, _: String) -> Result<(), ActivityError> {
+        if ACT_COUNT.load(Ordering::Relaxed) == 3 {
+            return Ok(());
+        }
+        ACT_COUNT.fetch_add(1, Ordering::Relaxed);
+        ACT_FAIL.notify_one();
+        Err(anyhow!("Expected error").into())
+    }
+}
+
 #[tokio::test]
 async fn worker_heartbeat_failure_metrics() {
     const WORKFLOW_CONTINUE_SIGNAL: &str = "workflow-continue";
@@ -760,27 +803,29 @@ async fn worker_heartbeat_failure_metrics() {
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.worker_config.max_outstanding_activities = Some(5_usize);
+    starter
+        .sdk_config
+        .register_activities_static::<FailingActivities>();
 
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
-    static ACT_COUNT: AtomicU64 = AtomicU64::new(0);
-    static WF_COUNT: AtomicU64 = AtomicU64::new(0);
-    static ACT_FAIL: Notify = Notify::const_new();
-    static WF_FAIL: Notify = Notify::const_new();
+
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let _ = ctx
-            .activity(ActivityOptions {
-                activity_type: "failing_act".to_string(),
-                input: "boom".as_json_payload().expect("serialize"),
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                retry_policy: Some(RetryPolicy {
-                    initial_interval: Some(prost_dur!(from_millis(10))),
-                    backoff_coefficient: 1.0,
-                    maximum_attempts: 4,
+            .activity::<failing_activities::FailingAct>(
+                "boom".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    retry_policy: Some(RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(10))),
+                        backoff_coefficient: 1.0,
+                        maximum_attempts: 4,
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            })
+                },
+            )
+            .unwrap()
             .await;
 
         if WF_COUNT.load(Ordering::Relaxed) == 0 {
@@ -795,18 +840,6 @@ async fn worker_heartbeat_failure_metrics() {
         proceed_signal.next().await.unwrap();
         Ok(().into())
     });
-
-    worker.register_activity(
-        "failing_act",
-        |_ctx: ActivityContext, _: String| async move {
-            if ACT_COUNT.load(Ordering::Relaxed) == 3 {
-                return Ok(());
-            }
-            ACT_COUNT.fetch_add(1, Ordering::Relaxed);
-            ACT_FAIL.notify_one();
-            Err(anyhow!("Expected error").into())
-        },
-    );
 
     let worker_key = worker_instance_key.to_string();
     starter.workflow_options.retry_policy = Some(RetryPolicy {
@@ -944,24 +977,24 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "pass".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         Ok(().into())
     });
-
-    worker.register_activity(
-        "pass_fail_act",
-        |_ctx: ActivityContext, i: String| async move { Ok(i) },
-    );
 
     starter
         .start_with_worker(wf_name.to_owned(), &mut worker)
@@ -1006,24 +1039,24 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.worker_config.skip_client_worker_set_check = true;
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "pass".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         Ok(().into())
     });
-
-    worker.register_activity(
-        "pass_fail_act",
-        |_ctx: ActivityContext, i: String| async move { Ok(i) },
-    );
 
     starter
         .start_with_worker(wf_name.to_owned(), &mut worker)

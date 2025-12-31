@@ -338,8 +338,6 @@ struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, J
 struct ActivityHalf {
     /// Maps activity type to the function for executing activities of that type
     activities: ActivityDefinitions,
-    /// Maps activity type to the function for executing activities of that type
-    activity_fns: HashMap<String, ActivityFunction>,
     task_tokens_to_cancels: HashMap<TaskToken, CancellationToken>,
 }
 
@@ -412,19 +410,37 @@ impl Worker {
             .insert(workflow_type.into(), wf_function.into());
     }
 
-    /// Register an Activity function to invoke when the Worker is asked to run an activity of
-    /// `activity_type`
-    pub fn register_activity<A, R, O>(
+    /// Registers all activities on an activity implementer that don't take a receiver.
+    pub fn register_activities_static<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        self.activity_half
+            .activities
+            .register_activities_static::<AI>();
+        self
+    }
+    /// Registers all activities on an activity implementer that take a receiver.
+    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
+        self.activity_half
+            .activities
+            .register_activities::<AI>(instance);
+        self
+    }
+    /// Registers a specific activitiy that does not take a receiver.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
+        self.activity_half.activities.register_activity::<AD>();
+        self
+    }
+    /// Registers a specific activitiy that takes a receiver.
+    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
         &mut self,
-        activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
-    ) {
-        self.activity_half.activity_fns.insert(
-            activity_type.into(),
-            ActivityFunction {
-                act_func: act_function.into_activity_fn(),
-            },
-        );
+        instance: Arc<AD::Implementer>,
+    ) -> &mut Self {
+        self.activity_half
+            .activities
+            .register_activity_with_instance::<AD>(instance);
+        self
     }
 
     /// Insert Custom App Context for Workflows and Activities
@@ -516,7 +532,7 @@ impl Worker {
             // Only poll on the activity queue if activity functions have been registered. This
             // makes tests which use mocks dramatically more manageable.
             async {
-                if !act_half.activity_fns.is_empty() || !act_half.activities.is_empty() {
+                if !act_half.activities.is_empty() {
                     loop {
                         let activity = common.worker.poll_activity_task().await;
                         if matches!(activity, Err(PollError::ShutDown)) {
@@ -720,31 +736,12 @@ impl ActivityHalf {
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
             Some(activity_task::Variant::Start(start)) => {
-                let act_fn = if let Some(fun) = self.activities.get(&start.activity_type) {
-                    fun
-                } else {
-                    let fun = self
-                        .activity_fns
-                        .get(&start.activity_type)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "No function registered for activity type {}",
-                                start.activity_type
-                            )
-                        })?
-                        .clone()
-                        .act_func;
-                    Arc::new(move |p, _pc, ac| {
-                        let fun = fun.clone();
-                        Ok(async move {
-                            fun(ac, p).await.map(|aev| match aev {
-                                ActExitValue::WillCompleteAsync => todo!("get rid of this"),
-                                ActExitValue::Normal(p) => p,
-                            })
-                        }
-                        .boxed())
-                    })
-                };
+                let act_fn = self.activities.get(&start.activity_type).ok_or_else(|| {
+                    anyhow!(
+                        "No function registered for activity type {}",
+                        start.activity_type
+                    )
+                })?;
                 let span = info_span!(
                     "RunActivity",
                     "otel.name" = format!("RunActivity:{}", start.activity_type),
@@ -1165,12 +1162,6 @@ type BoxActFn = Arc<
         + Send
         + Sync,
 >;
-
-/// Container for user-defined activity functions
-#[derive(Clone)]
-pub struct ActivityFunction {
-    act_func: BoxActFn,
-}
 
 /// Closures / functions which can be turned into activity functions implement this trait
 pub trait IntoActivityFunc<Args, Res, Out> {

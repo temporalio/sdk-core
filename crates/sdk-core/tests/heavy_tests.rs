@@ -7,7 +7,10 @@ mod fuzzy_workflow;
 
 use crate::common::get_integ_runtime_options;
 use common::{
-    CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
+    CoreWfStarter,
+    activity_functions::{StdActivities, std_activities},
+    init_integ_telem, prom_metrics, rand_6_chars,
+    workflows::la_problem_workflow,
 };
 use futures_util::{
     StreamExt,
@@ -24,6 +27,7 @@ use std::{
 use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
+use temporalio_macros::activities;
 
 use temporalio_common::{
     protos::{
@@ -32,7 +36,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
+use temporalio_sdk::{
+    ActivityOptions, WfContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
+};
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions};
 
 #[tokio::test]
@@ -44,6 +51,9 @@ async fn activity_load() {
     starter.worker_config.max_cached_workflows = CONCURRENCY;
     starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
     starter.worker_config.max_outstanding_activities = Some(CONCURRENCY);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -52,21 +62,26 @@ async fn activity_load() {
 
     let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();
-        let payload = "yo".as_json_payload().unwrap();
+        let input_str = "yo".to_string();
         async move {
-            let activity = ActivityOptions {
-                activity_id: Some(activity_id.to_string()),
-                activity_type: "test_activity".to_string(),
-                input: payload.clone(),
-                task_queue,
-                schedule_to_start_timeout: Some(activity_timeout),
-                start_to_close_timeout: Some(activity_timeout),
-                schedule_to_close_timeout: Some(activity_timeout),
-                heartbeat_timeout: Some(activity_timeout),
-                cancellation_type: ActivityCancellationType::TryCancel,
-                ..Default::default()
-            };
-            let res = ctx.activity(activity).await.unwrap_ok_payload();
+            let res = ctx
+                .activity::<std_activities::Echo>(
+                    input_str.clone(),
+                    ActivityOptions {
+                        activity_id: Some(activity_id.to_string()),
+                        task_queue,
+                        schedule_to_start_timeout: Some(activity_timeout),
+                        start_to_close_timeout: Some(activity_timeout),
+                        schedule_to_close_timeout: Some(activity_timeout),
+                        heartbeat_timeout: Some(activity_timeout),
+                        cancellation_type: ActivityCancellationType::TryCancel,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await
+                .unwrap_ok_payload();
+            let payload = input_str.as_json_payload().unwrap();
             assert_eq!(res.data, payload.data);
             Ok(().into())
         }
@@ -75,10 +90,6 @@ async fn activity_load() {
     let starting = Instant::now();
     let wf_type = "activity_load";
     worker.register_wf(wf_type.to_owned(), wf_fn);
-    worker.register_activity(
-        "test_activity",
-        |_ctx: ActivityContext, echo: String| async move { Ok(echo) },
-    );
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
         let wf_id = format!("activity_load_{i}");
@@ -103,6 +114,25 @@ async fn activity_load() {
     dbg!(running.elapsed());
 }
 
+struct ChunkyActivities {}
+#[activities]
+impl ChunkyActivities {
+    #[activity]
+    async fn chunky_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
+        tokio::task::spawn_blocking(move || {
+            // Allocate a gig and then do some CPU stuff on it
+            let mut mem = vec![0_u8; 1000 * 1024 * 1024];
+            for _ in 1..10 {
+                for i in 0..mem.len() {
+                    mem[i] &= mem[mem.len() - 1 - i]
+                }
+            }
+            Ok(echo)
+        })
+        .await?
+    }
+}
+
 #[tokio::test]
 async fn chunky_activities_resource_based() {
     const WORKFLOWS: usize = 100;
@@ -123,22 +153,30 @@ async fn chunky_activities_resource_based() {
         ))
         .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
     starter.worker_config.tuner = Some(Arc::new(tuner));
+    starter
+        .sdk_config
+        .register_activities_static::<ChunkyActivities>();
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(30);
 
     let wf_fn = move |ctx: WfContext| {
-        let payload = "yo".as_json_payload().unwrap();
+        let input_str = "yo".to_string();
         async move {
-            let activity = ActivityOptions {
-                activity_id: Some(activity_id.to_string()),
-                activity_type: "test_activity".to_string(),
-                input: payload.clone(),
-                start_to_close_timeout: Some(activity_timeout),
-                ..Default::default()
-            };
-            let res = ctx.activity(activity).await.unwrap_ok_payload();
+            let res = ctx
+                .activity::<chunky_activities::ChunkyEcho>(
+                    input_str.clone(),
+                    ActivityOptions {
+                        activity_id: Some(activity_id.to_string()),
+                        start_to_close_timeout: Some(activity_timeout),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await
+                .unwrap_ok_payload();
+            let payload = input_str.as_json_payload().unwrap();
             assert_eq!(res.data, payload.data);
             Ok(().into())
         }
@@ -147,22 +185,6 @@ async fn chunky_activities_resource_based() {
     let starting = Instant::now();
     let wf_type = "chunky_activity_wf";
     worker.register_wf(wf_type.to_owned(), wf_fn);
-    worker.register_activity(
-        "test_activity",
-        |_ctx: ActivityContext, echo: String| async move {
-            tokio::task::spawn_blocking(move || {
-                // Allocate a gig and then do some CPU stuff on it
-                let mut mem = vec![0_u8; 1000 * 1024 * 1024];
-                for _ in 1..10 {
-                    for i in 0..mem.len() {
-                        mem[i] &= mem[mem.len() - 1 - i]
-                    }
-                }
-                Ok(echo)
-            })
-            .await?
-        },
-    );
     join_all((0..WORKFLOWS).map(|i| {
         let worker = &worker;
         let wf_id = format!("chunk_activity_{i}");
@@ -206,6 +228,9 @@ async fn workflow_load() {
     starter.worker_config.max_cached_workflows = 200;
     starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
     starter.worker_config.max_outstanding_activities = Some(100);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -213,12 +238,14 @@ async fn workflow_load() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo_activity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.activity::<std_activities::Echo>(
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
                 ctx.timer(Duration::from_secs(1)).await;
             }
@@ -230,10 +257,6 @@ async fn workflow_load() {
 
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-    );
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];
@@ -284,13 +307,12 @@ async fn evict_while_la_running_no_interference() {
     // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
     // introduces more instability that can be useful in the test.
     // starter.max_wft(20);
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActivityContext, _: String| async {
-        tokio::time::sleep(Duration::from_secs(15)).await;
-        Ok(())
-    });
 
     let client = starter.get_client().await;
     let subfs = FuturesUnordered::new();
@@ -381,6 +403,18 @@ async fn can_paginate_long_history() {
     worker.run_until_done().await.unwrap();
 }
 
+struct JitteryActivities {}
+#[activities]
+impl JitteryActivities {
+    #[activity]
+    async fn jittery_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
+        // Add some jitter to completions
+        let rand_millis = rand::rng().random_range(0..500);
+        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
+        Ok(echo)
+    }
+}
+
 #[tokio::test]
 async fn poller_autoscaling_basic_loadtest() {
     const SIGNAME: &str = "signame";
@@ -400,6 +434,9 @@ async fn poller_autoscaling_basic_loadtest() {
         maximum: 200,
         initial: 5,
     };
+    starter
+        .sdk_config
+        .register_activities_static::<JitteryActivities>();
     let mut worker = starter.worker().await;
     let shutdown_handle = worker.inner_mut().shutdown_handle();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -408,12 +445,14 @@ async fn poller_autoscaling_basic_loadtest() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.activity::<jittery_activities::JitteryEcho>(
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -423,12 +462,6 @@ async fn poller_autoscaling_basic_loadtest() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 

@@ -4,6 +4,7 @@ use syn::parse_macro_input;
 mod definitions;
 mod fsm_impl;
 
+// TODO [rust-sdk-branch]: Example docstring
 #[proc_macro_attribute]
 pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let def: definitions::ActivitiesDefinition =

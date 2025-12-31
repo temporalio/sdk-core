@@ -1,6 +1,7 @@
 //! Common integration testing utilities
 //! These utilities are specific to integration tests and depend on the full temporal-client stack.
 
+pub(crate) mod activity_functions;
 pub(crate) mod fake_grpc_server;
 pub(crate) mod http_proxy;
 pub(crate) mod workflows;
@@ -51,7 +52,8 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
-    IntoActivityFunc, Worker, WorkerOptions, WorkflowFunction,
+    Worker, WorkerOptions, WorkflowFunction,
+    activities::{ActivityImplementer, HasOnlyStaticMethods},
     interceptors::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
@@ -524,12 +526,19 @@ impl TestWorker {
         self.inner.register_wf(workflow_type, wf_function)
     }
 
-    pub(crate) fn register_activity<A, R, O>(
+    pub(crate) fn register_activities_static<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        self.inner.register_activities_static::<AI>();
+        self
+    }
+    pub(crate) fn register_activities<AI: ActivityImplementer>(
         &mut self,
-        activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
-    ) {
-        self.inner.register_activity(activity_type, act_function)
+        instance: AI,
+    ) -> &mut Self {
+        self.inner.register_activities::<AI>(instance);
+        self
     }
 
     /// Create a handle that can be used to submit workflows. Useful when workflows need to be

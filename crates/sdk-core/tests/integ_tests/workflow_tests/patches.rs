@@ -21,7 +21,7 @@ use temporalio_common::protos::{
             RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
-        common::v1::ActivityType,
+        common::v1::{ActivityType, Payload},
         enums::v1::{CommandType, EventType, IndexedValueType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
@@ -313,26 +313,38 @@ fn patch_marker_single_activity(
 }
 
 async fn v1(ctx: &mut WfContext) {
-    ctx.activity(ActivityOptions {
-        activity_id: Some("no_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("no_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
 async fn v2(ctx: &mut WfContext) -> bool {
     if ctx.patched(MY_PATCH_ID) {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("had_change".to_owned()),
-            ..Default::default()
-        })
+        ctx.activity_untyped(
+            "".to_string(),
+            Payload::default(),
+            ActivityOptions {
+                activity_id: Some("had_change".to_owned()),
+                ..Default::default()
+            },
+        )
         .await;
         true
     } else {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("no_change".to_owned()),
-            ..Default::default()
-        })
+        ctx.activity_untyped(
+            "".to_string(),
+            Payload::default(),
+            ActivityOptions {
+                activity_id: Some("no_change".to_owned()),
+                ..Default::default()
+            },
+        )
         .await;
         false
     }
@@ -340,18 +352,26 @@ async fn v2(ctx: &mut WfContext) -> bool {
 
 async fn v3(ctx: &mut WfContext) {
     ctx.deprecate_patch(MY_PATCH_ID);
-    ctx.activity(ActivityOptions {
-        activity_id: Some("had_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
 async fn v4(ctx: &mut WfContext) {
-    ctx.activity(ActivityOptions {
-        activity_id: Some("had_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
@@ -642,13 +662,23 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity(ActivityOptions::default()).await;
+            ctx.activity_untyped(
+                "".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
+            .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity(ActivityOptions::default()).await;
+            ctx.activity_untyped(
+                "".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
+            .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }

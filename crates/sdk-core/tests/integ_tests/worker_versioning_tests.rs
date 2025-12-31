@@ -1,13 +1,14 @@
-use crate::{
-    common::{CoreWfStarter, eventually},
-    integ_tests::activity_functions::echo,
+use crate::common::{
+    CoreWfStarter,
+    activity_functions::{StdActivities, std_activities},
+    eventually,
 };
 use std::time::Duration;
 use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
 use temporalio_common::{
     protos::{
         coresdk::{
-            AsJsonPayloadExt, workflow_commands::CompleteWorkflowExecution, workflow_completion,
+            workflow_commands::CompleteWorkflowExecution, workflow_completion,
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
@@ -157,19 +158,24 @@ async fn activity_has_deployment_stamp() {
             use_worker_versioning: true,
             default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
         });
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
+
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "echo_activity".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "hi!".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         Ok(().into())
     });
-    worker.register_activity("echo_activity", echo);
     let submitter = worker.get_submitter_handle();
     let shutdown_handle = worker.inner_mut().shutdown_handle();
 

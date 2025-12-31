@@ -7,7 +7,7 @@ use temporalio_common::{
     protos::{
         DEFAULT_ACTIVITY_TYPE,
         coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
             activity_result::{
                 self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
             },
@@ -25,7 +25,11 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
+use temporalio_macros::activities;
+use temporalio_sdk::{
+    ActivityOptions, WfContext,
+    activities::{ActivityContext, ActivityError},
+};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
@@ -179,32 +183,44 @@ async fn many_act_fails_with_heartbeats() {
     drain_pollers_and_shutdown(&core).await;
 }
 
+pub(crate) struct SlowEchoActivities {}
+#[activities]
+impl SlowEchoActivities {
+    #[activity]
+    async fn echo_activity(
+        _ctx: ActivityContext,
+        echo_me: String,
+    ) -> Result<String, ActivityError> {
+        sleep(Duration::from_secs(4)).await;
+        Ok(echo_me)
+    }
+}
+
 #[tokio::test]
 async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let wf_name = "activity_doesnt_heartbeat_hits_timeout_then_completes";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .sdk_config
+        .register_activities_static::<SlowEchoActivities>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActivityContext, echo_me: String| async move {
-            sleep(Duration::from_secs(4)).await;
-            Ok(echo_me)
-        },
-    );
+
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .activity(ActivityOptions {
-                activity_type: "echo_activity".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                start_to_close_timeout: Some(Duration::from_secs(10)),
-                heartbeat_timeout: Some(Duration::from_secs(2)),
-                retry_policy: Some(RetryPolicy {
-                    maximum_attempts: 1,
+            .activity::<slow_echo_activities::EchoActivity>(
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(10)),
+                    heartbeat_timeout: Some(Duration::from_secs(2)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            })
+                },
+            )
+            .unwrap()
             .await;
         assert_eq!(res.timed_out(), Some(TimeoutType::Heartbeat));
         Ok(().into())

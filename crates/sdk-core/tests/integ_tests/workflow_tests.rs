@@ -20,10 +20,12 @@ mod upsert_search_attrs;
 
 use crate::{
     common::{
-        CoreWfStarter, get_integ_runtime_options, history_from_proto_binary,
-        init_core_and_create_wf, init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
+        CoreWfStarter,
+        activity_functions::{StdActivities, std_activities},
+        get_integ_runtime_options, history_from_proto_binary, init_core_and_create_wf,
+        init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
     },
-    integ_tests::{activity_functions::echo, metrics_tests},
+    integ_tests::metrics_tests,
 };
 use assert_matches::assert_matches;
 use std::{
@@ -39,7 +41,7 @@ use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            ActivityTaskCompletion, IntoCompletion,
             activity_result::ActivityExecutionResult,
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
             workflow_commands::{
@@ -473,20 +475,24 @@ async fn slow_completes_with_small_cache() {
     starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
     starter.worker_config.max_cached_workflows = 5_usize;
     let mut worker = starter.worker().await;
+
+    worker.register_activities_static::<StdActivities>();
+
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity(ActivityOptions {
-                activity_type: "echo_activity".to_string(),
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                ..Default::default()
-            })
+            ctx.activity::<std_activities::Echo>(
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
             .await;
             ctx.timer(Duration::from_secs(1)).await;
         }
         Ok(().into())
     });
-    worker.register_activity("echo_activity", echo);
     for i in 0..20 {
         worker
             .submit_wf(
@@ -799,13 +805,18 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 
     // Restart the worker with a new, incompatible wf definition which will cause nondeterminism
     let mut starter = starter.clone_no_worker();
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "echo_activity".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "hi".to_owned(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await;
         Ok(().into())
     });
@@ -843,49 +854,53 @@ async fn history_out_of_order_on_restart() {
 
     static HIT_SLEEP: Notify = Notify::const_new();
 
+    worker.register_activities_static::<StdActivities>();
+    worker2.register_activities_static::<StdActivities>();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(LocalActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.local_activity::<std_activities::Echo>(
+            "hi".to_string(),
+            LocalActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await;
-        ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "hi".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await;
         // Interrupt this sleep on first go
         HIT_SLEEP.notify_one();
         ctx.timer(Duration::from_secs(5)).await;
         Ok(().into())
     });
-    worker.register_activity("echo", echo);
 
     worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(LocalActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.local_activity::<std_activities::Echo>(
+            "hi".to_string(),
+            LocalActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await;
         // Timer is added after restarting workflow
         ctx.timer(Duration::from_secs(1)).await;
-        ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
+        ctx.activity::<std_activities::Echo>(
+            "hi".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )?
         .await;
         ctx.timer(Duration::from_secs(2)).await;
         Ok(().into())
     });
-    worker2.register_activity("echo", echo);
     worker
         .submit_wf(
             wf_name.to_owned(),

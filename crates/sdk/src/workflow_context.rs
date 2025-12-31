@@ -220,44 +220,75 @@ impl WfContext {
     pub fn activity<AD: ActivityDefinition>(
         &self,
         input: AD::Input,
-        mut opts: ActivityOptions,
+        opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
         // TODO [rust-sdk-branch]: Get payload converter properly
         let pc = PayloadConverter::serde_json();
         let payload = pc.to_payload(&input, &SerializationContext::Workflow)?;
+        Ok(self.activity_untyped(AD::name().to_string(), payload, opts))
+    }
+
+    /// Request to run an activity with an explicit name and payload
+    pub fn activity_untyped(
+        &self,
+        activity_type: String,
+        input: Payload,
+        mut opts: ActivityOptions,
+    ) -> impl CancellableFuture<ActivityResolution> {
+        let seq = self.seq_nums.write().next_activity_seq();
+        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         if opts.task_queue.is_none() {
             opts.task_queue = Some(self.task_queue.clone());
         }
-        let seq = self.seq_nums.write().next_activity_seq();
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(payload, seq),
+                cmd: opts.into_command(activity_type, input, seq),
                 unblocker,
             }
             .into(),
         );
-        Ok(cmd)
+        cmd
     }
 
     /// Request to run a local activity
-    pub fn local_activity(
+    pub fn local_activity<AD: ActivityDefinition>(
         &self,
+        input: AD::Input,
+        opts: LocalActivityOptions,
+    ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
+        // TODO [rust-sdk-branch]: Get payload converter properly
+        let pc = PayloadConverter::serde_json();
+        let payload = pc.to_payload(&input, &SerializationContext::Workflow)?;
+        Ok(LATimerBackoffFut::new(
+            AD::name().to_string(),
+            payload,
+            opts,
+            self,
+        ))
+    }
+
+    /// Request to run a local activity with an explicit name and payload
+    pub fn local_activity_untyped(
+        &self,
+        activity_type: String,
+        input: Payload,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> + '_ {
-        LATimerBackoffFut::new(opts, self)
+        LATimerBackoffFut::new(activity_type, input, opts, self)
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
     fn local_activity_no_timer_retry(
         &self,
+        activity_type: String,
+        input: Payload,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::LocalActivity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(seq),
+                cmd: opts.into_command(activity_type, input, seq),
                 unblocker,
             }
             .into(),
@@ -676,6 +707,8 @@ where
 
 struct LATimerBackoffFut<'a> {
     la_opts: LocalActivityOptions,
+    activity_type: String,
+    input: Payload,
     current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Send + Unpin + 'a>>,
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
     ctx: &'a WfContext,
@@ -684,10 +717,17 @@ struct LATimerBackoffFut<'a> {
     did_cancel: AtomicBool,
 }
 impl<'a> LATimerBackoffFut<'a> {
-    pub(crate) fn new(opts: LocalActivityOptions, ctx: &'a WfContext) -> Self {
+    pub(crate) fn new(
+        activity_type: String,
+        input: Payload,
+        opts: LocalActivityOptions,
+        ctx: &'a WfContext,
+    ) -> Self {
         Self {
             la_opts: opts.clone(),
-            current_fut: Box::pin(ctx.local_activity_no_timer_retry(opts)),
+            activity_type: activity_type.clone(),
+            input: input.clone(),
+            current_fut: Box::pin(ctx.local_activity_no_timer_retry(activity_type, input, opts)),
             timer_fut: None,
             ctx,
             next_attempt: 1,
@@ -712,7 +752,11 @@ impl Future for LATimerBackoffFut<'_> {
                         opts.attempt = Some(self.next_attempt);
                         opts.original_schedule_time
                             .clone_from(&self.next_sched_time);
-                        self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
+                        self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(
+                            self.activity_type.clone(),
+                            self.input.clone(),
+                            opts,
+                        ));
                         Poll::Pending
                     } else {
                         Poll::Ready(ActivityResolution {

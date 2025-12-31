@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    FnArg, ImplItem, ItemImpl, ReturnType, Type, TypePath,
+    Attribute, FnArg, ImplItem, ItemImpl, ReturnType, Type, TypePath,
     parse::{Parse, ParseStream},
     spanned::Spanned,
 };
@@ -12,8 +12,14 @@ pub(crate) struct ActivitiesDefinition {
     activities: Vec<ActivityMethod>,
 }
 
+#[derive(Default)]
+struct ActivityAttributes {
+    name_override: Option<syn::Expr>,
+}
+
 struct ActivityMethod {
     method: syn::ImplItemFn,
+    attributes: ActivityAttributes,
     is_async: bool,
     is_static: bool,
     input_type: Option<Type>,
@@ -48,6 +54,7 @@ impl Parse for ActivitiesDefinition {
 }
 
 fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod> {
+    let attributes = extract_activity_attributes(method.attrs.as_slice())?;
     let is_async = method.sig.asyncness.is_some();
 
     // Determine if static (no self receiver) or instance (Arc<Self>)
@@ -72,11 +79,33 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
 
     Ok(ActivityMethod {
         method: method.clone(),
+        attributes,
         is_async,
         is_static,
         input_type,
         output_type,
     })
+}
+
+fn extract_activity_attributes(attrs: &[Attribute]) -> syn::Result<ActivityAttributes> {
+    let mut activity_attributes = ActivityAttributes::default();
+
+    for attr in attrs {
+        if attr.path().is_ident("activity") && attr.meta.require_list().is_ok() {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("name") {
+                    let value = meta.value()?;
+                    let expr: syn::Expr = value.parse()?;
+                    activity_attributes.name_override = Some(expr);
+                    Ok(())
+                } else {
+                    Err(meta.error("unsupported activity attribute"))
+                }
+            })?;
+        }
+    }
+
+    Ok(activity_attributes)
 }
 
 fn validate_arc_self_type(ty: &Type) -> syn::Result<()> {
@@ -168,10 +197,17 @@ impl ActivitiesDefinition {
             .activities
             .iter()
             .map(|act| {
-                let visibility = &act.method.vis;
+                // Default to pub(super) since the method structs need to be visible outside the
+                // generated module.
+                let visibility = match &act.method.vis {
+                    syn::Visibility::Inherited => &syn::parse_quote!(pub(super)),
+                    o => o,
+                };
+
                 let struct_name = method_name_to_pascal_case(&act.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
-                quote! {
+                let span = act.method.span();
+                quote_spanned! { span=>
                     #visibility struct #struct_ident;
                 }
             })
@@ -233,7 +269,12 @@ impl ActivitiesDefinition {
             .map(|t| quote! { #t })
             .unwrap_or(quote! { () });
 
-        let activity_name = format!("{}::{}", module_name, struct_name);
+        let activity_name = if let Some(ref name_expr) = activity.attributes.name_override {
+            quote! { #name_expr }
+        } else {
+            let default_name = format!("{}::{}", module_name, struct_name);
+            quote! { #default_name }
+        };
 
         let receiver_pattern = if activity.is_static {
             quote! { _receiver }
