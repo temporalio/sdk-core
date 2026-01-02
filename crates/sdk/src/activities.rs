@@ -362,7 +362,7 @@ impl ActivityDefinitions {
                     .map(move |v| match v {
                         Ok(okv) => pc2
                             .to_payload(&okv, &SerializationContext::Activity)
-                            .map_err(|_| todo!()),
+                            .map_err(|e| e.into()),
                         Err(e) => Err(e),
                     })
                     .boxed())
@@ -384,7 +384,7 @@ impl ActivityDefinitions {
                     .map(move |v| match v {
                         Ok(okv) => pc2
                             .to_payload(&okv, &SerializationContext::Activity)
-                            .map_err(|_| todo!()),
+                            .map_err(|e| e.into()),
                         Err(e) => Err(e),
                     })
                     .boxed())
