@@ -1,4 +1,8 @@
-use crate::common::{CoreWfStarter, init_core_and_create_wf};
+use crate::common::{
+    CoreWfStarter,
+    activity_functions::{StdActivities, std_activities},
+    init_core_and_create_wf,
+};
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WfClientExt, WorkflowOptions};
@@ -25,11 +29,7 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_macros::activities;
-use temporalio_sdk::{
-    ActivityOptions, WfContext,
-    activities::{ActivityContext, ActivityError},
-};
+use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
@@ -183,33 +183,20 @@ async fn many_act_fails_with_heartbeats() {
     drain_pollers_and_shutdown(&core).await;
 }
 
-pub(crate) struct SlowEchoActivities {}
-#[activities]
-impl SlowEchoActivities {
-    #[activity]
-    async fn echo_activity(
-        _ctx: ActivityContext,
-        echo_me: String,
-    ) -> Result<String, ActivityError> {
-        sleep(Duration::from_secs(4)).await;
-        Ok(echo_me)
-    }
-}
-
 #[tokio::test]
 async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let wf_name = "activity_doesnt_heartbeat_hits_timeout_then_completes";
     let mut starter = CoreWfStarter::new(wf_name);
     starter
         .sdk_config
-        .register_activities_static::<SlowEchoActivities>();
+        .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .activity::<slow_echo_activities::EchoActivity>(
-                "hi!".to_string(),
+            .activity::<std_activities::Delay>(
+                Duration::from_secs(4),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(10)),
                     heartbeat_timeout: Some(Duration::from_secs(2)),

@@ -44,12 +44,12 @@ version = "0.1"
 path = "../client"
 version = "0.1"
 
-[dev-dependencies]
-futures = "0.3"
-
-[dev-dependencies.temporalio-macros]
+[dependencies.temporalio-macros]
 path = "../macros"
 version = "0.1"
+
+[dev-dependencies]
+futures = "0.3"
 
 [features]
 default = []

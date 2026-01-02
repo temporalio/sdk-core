@@ -8,40 +8,58 @@
 //!
 //! An example of running an activity worker:
 //! ```no_run
-//! use std::{str::FromStr, sync::Arc};
-//! use temporalio_client::{ConnectionOptions, ClientOptions, Connection, Client};
-//! use temporalio_sdk::{activities::ActivityContext, Worker};
-//! use temporalio_sdk_core::{init_worker, Url, CoreRuntime, RuntimeOptions, WorkerConfig, WorkerVersioningStrategy };
+//! use std::str::FromStr;
+//! use temporalio_client::{Connection, ConnectionOptions};
 //! use temporalio_common::{
-//!     worker::WorkerTaskTypes,
-//!     telemetry::TelemetryOptions
+//!     telemetry::TelemetryOptions,
+//!     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 //! };
+//! use temporalio_macros::activities;
+//! use temporalio_sdk::{
+//!     Worker, WorkerOptions,
+//!     activities::{ActivityContext, ActivityError},
+//! };
+//! use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
+//!
+//! #[activities]
+//! impl MyActivities {
+//!     #[activity]
+//!     pub(crate) async fn echo(
+//!         _ctx: ActivityContext,
+//!         e: String,
+//!     ) -> Result<String, ActivityError> {
+//!         Ok(e)
+//!     }
+//! }
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let connection_options = ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build();
+//!     let connection_options =
+//!         ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build();
 //!     let telemetry_options = TelemetryOptions::builder().build();
-//!     let runtime_options = RuntimeOptions::builder().telemetry_options(telemetry_options).build().unwrap();
+//!     let runtime_options = RuntimeOptions::builder()
+//!         .telemetry_options(telemetry_options)
+//!         .build()
+//!         .unwrap();
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let connection = Connection::connect(connection_options).await?;
 //!
-//!     let worker_config = WorkerConfig::builder()
+//!     let worker_options = WorkerOptions::new("task_queue")
 //!         .namespace("default")
-//!         .task_queue("task_queue")
 //!         .task_types(WorkerTaskTypes::activity_only())
-//!         .versioning_strategy(WorkerVersioningStrategy::None { build_id: "rust-sdk".to_owned() })
-//!         .build()
-//!         .unwrap();
+//!         .deployment_options(WorkerDeploymentOptions {
+//!             version: WorkerDeploymentVersion {
+//!                 deployment_name: "my_deployment".to_owned(),
+//!                 build_id: "my_build_id".to_owned(),
+//!             },
+//!             use_worker_versioning: false,
+//!             default_versioning_behavior: None,
+//!         })
+//!         .register_activities_static::<MyActivities>()
+//!         .build();
 //!
-//!     let core_worker = init_worker(&runtime, worker_config, connection)?;
-//!
-//!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
-//!     worker.register_activity(
-//!         "echo_activity",
-//!         |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-//!     );
-//!
+//!     let worker = Worker::new(&runtime, connection, worker_options)?;
 //!     worker.run().await?;
 //!
 //!     Ok(())
@@ -59,8 +77,6 @@ mod workflow_context;
 mod workflow_future;
 
 pub use temporalio_client::Namespace;
-use tracing::{Instrument, Span, field};
-use uuid::Uuid;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
@@ -136,6 +152,8 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tracing::{Instrument, Span, field};
+use uuid::Uuid;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -155,6 +173,9 @@ pub struct WorkerOptions {
     // TODO [rust-sdk-branch]: Other SDKs are pulling from client
     /// The Temporal service namespace this worker is bound to
     pub namespace: String,
+    // TODO [rust-sdk-branch]: Provide defaults?
+    /// Set the deployment options for this worker.
+    pub deployment_options: WorkerDeploymentOptions,
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client
     /// used by this worker.
@@ -223,8 +244,6 @@ pub struct WorkerOptions {
     /// If set, the worker will issue cancels for all outstanding activities and nexus operations after
     /// shutdown has been initiated and this amount of time has elapsed.
     pub graceful_shutdown_period: Option<Duration>,
-    /// Set the deployment options for this worker.
-    pub deployment_options: WorkerDeploymentOptions,
 }
 
 // TODO [rust-sdk-branch]: Traitify this?
@@ -302,7 +321,7 @@ pub fn sdk_connection_options(
 }
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
-/// and activity tasks by using [ActivityFunction]s
+/// and activity tasks by using activities defined with [temporalio_macros::activities].
 pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,

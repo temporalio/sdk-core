@@ -1063,8 +1063,6 @@ async fn worker_restarted_in_middle_of_update() {
 
 #[tokio::test]
 async fn update_after_empty_wft() {
-    use crate::common::activity_functions::{StdActivities, std_activities};
-
     let wf_name = "update_after_empty_wft";
     let mut starter = CoreWfStarter::new(wf_name);
     starter
@@ -1157,8 +1155,6 @@ async fn update_after_empty_wft() {
 
 #[tokio::test]
 async fn update_lost_on_activity_mismatch() {
-    use crate::common::activity_functions::{StdActivities, std_activities};
-
     let wf_name = "update_lost_on_activity_mismatch";
     let mut starter = CoreWfStarter::new(wf_name);
     starter
