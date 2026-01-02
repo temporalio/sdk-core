@@ -57,7 +57,7 @@ use temporalio_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporalio_sdk_core::{
-    PollError, prost_dur,
+    PollError, TunerHolder, prost_dur,
     replay::{DEFAULT_WORKFLOW_TYPE, HistoryForReplay, TestHistoryBuilder, default_wes_attribs},
     test_help::{
         LEGACY_QUERY_ID, MockPollCfg, ResponseType, WorkerExt, WorkerTestHelpers,
@@ -184,7 +184,7 @@ pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn local_act_fanout() {
     let wf_name = "local_act_fanout";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.max_outstanding_local_activities = Some(1_usize);
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 1, 1, 1));
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();
@@ -520,7 +520,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     );
     let mut starter = CoreWfStarter::new(&wf_name);
     if !cached {
-        starter.worker_config.max_cached_workflows = 0_usize;
+        starter.sdk_config.max_cached_workflows = 0_usize;
     }
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -561,7 +561,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
 async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
     let wf_name = format!("eviction_wont_make_local_act_get_dropped_{short_wft_timeout}");
     let mut starter = CoreWfStarter::new(&wf_name);
-    starter.worker_config.max_cached_workflows = 0_usize;
+    starter.sdk_config.max_cached_workflows = 0_usize;
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();
@@ -782,7 +782,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         .sdk_config
         .register_activities_static::<DelayWithCancellation>();
     // The activity won't get a chance to receive the cancel so make sure we still exit fast
-    starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(100));
+    starter.sdk_config.graceful_shutdown_period = Some(Duration::from_millis(100));
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -2392,7 +2392,7 @@ impl ActivityWithExplicitBackoff {
         let last_attempt = self.attempts.fetch_add(1, Ordering::Relaxed);
         if 0 == last_attempt {
             Err(ActivityError::Retryable {
-                source: anyhow!("Explicit backoff error"),
+                source: anyhow!("Explicit backoff error").into_boxed_dyn_error(),
                 explicit_delay: Some(Duration::from_millis(300)),
             })
         } else if 2 == last_attempt {

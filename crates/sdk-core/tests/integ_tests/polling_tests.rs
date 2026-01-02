@@ -34,7 +34,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
 use temporalio_sdk_core::{
-    CoreRuntime, PollerBehavior, RuntimeOptions,
+    CoreRuntime, PollerBehavior, RuntimeOptions, TunerHolder,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
     init_worker,
     test_help::{NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown},
@@ -248,18 +248,16 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     let wf_name = "only_one_workflow_slot_and_two_pollers";
     let mut starter = CoreWfStarter::new(wf_name);
     if use_autoscaling {
-        starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+        starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
             minimum: 1,
             maximum: 5,
             initial: 1,
         };
     } else {
-        starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(2);
+        starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(2);
     }
-    starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
-    starter.worker_config.max_outstanding_local_activities = Some(1_usize);
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
-    starter.worker_config.max_outstanding_activities = Some(1_usize);
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(2, 1, 1, 1));
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();

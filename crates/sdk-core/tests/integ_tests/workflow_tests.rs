@@ -65,7 +65,7 @@ use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, PollError, PollerBehavior, WorkerVersioningStrategy, WorkflowErrorType,
+    CoreRuntime, PollError, PollerBehavior, TunerHolder, WorkflowErrorType,
     replay::HistoryForReplay,
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
@@ -77,7 +77,7 @@ use tokio::{join, sync::Notify, time::sleep};
 async fn parallel_workflows_same_queue() {
     let wf_name = "parallel_workflows_same_queue";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
     core.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -364,9 +364,9 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let signal_at_complete = "at-complete";
     let mut wf_starter = CoreWfStarter::new("wft_timeout_doesnt_create_unsolvable_autocomplete");
     // Test needs eviction on and a short timeout
-    wf_starter.worker_config.max_cached_workflows = 0_usize;
-    wf_starter.worker_config.max_outstanding_workflow_tasks = Some(1_usize);
-    wf_starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
+    wf_starter.sdk_config.max_cached_workflows = 0_usize;
+    wf_starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1, 1, 1, 1));
+    wf_starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
     wf_starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
     let client = wf_starter.get_client().await;
@@ -472,8 +472,8 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 async fn slow_completes_with_small_cache() {
     let wf_name = "slow_completes_with_small_cache";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
-    starter.worker_config.max_cached_workflows = 5_usize;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 10, 1, 1));
+    starter.sdk_config.max_cached_workflows = 5_usize;
     let mut worker = starter.worker().await;
 
     worker.register_activities_static::<StdActivities>();
@@ -525,22 +525,26 @@ async fn slow_completes_with_small_cache() {
 async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_build_id: bool) {
     let wf_type = "deployment_version_correct_in_wf_info";
     let mut starter = CoreWfStarter::new(wf_type);
-    let version_strat = if use_only_build_id {
-        WorkerVersioningStrategy::None {
-            build_id: "1.0".to_owned(),
+    starter.sdk_config.deployment_options = if use_only_build_id {
+        WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_string(),
+                build_id: "1.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
         }
     } else {
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+        WorkerDeploymentOptions {
             version: WorkerDeploymentVersion {
                 deployment_name: "deployment-1".to_string(),
                 build_id: "1.0".to_string(),
             },
             use_worker_versioning: false,
             default_versioning_behavior: None,
-        })
+        }
     };
-    starter.worker_config.versioning_strategy = version_strat;
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let core = starter.get_worker().await;
     starter.start_wf().await;
     let client = starter.get_client().await;
@@ -630,21 +634,25 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
         .unwrap();
 
     let mut starter = starter.clone_no_worker();
-    let version_strat = if use_only_build_id {
-        WorkerVersioningStrategy::None {
-            build_id: "2.0".to_owned(),
+    starter.sdk_config.deployment_options = if use_only_build_id {
+        WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_string(),
+                build_id: "2.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
         }
     } else {
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+        WorkerDeploymentOptions {
             version: WorkerDeploymentVersion {
                 deployment_name: "deployment-1".to_string(),
                 build_id: "2.0".to_string(),
             },
             use_worker_versioning: false,
             default_versioning_behavior: None,
-        })
+        }
     };
-    starter.worker_config.versioning_strategy = version_strat;
 
     let core = starter.get_worker().await;
 
@@ -763,12 +771,12 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
-        starter.worker_config.workflow_failure_errors = typeset;
+        starter.sdk_config.workflow_failure_errors = typeset;
     } else {
-        starter.worker_config.workflow_types_to_failure_errors =
+        starter.sdk_config.workflow_types_to_failure_errors =
             HashMap::from([(wf_name.to_owned(), typeset)]);
     }
     let wf_id = starter.get_task_queue().to_owned();
@@ -846,8 +854,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 async fn history_out_of_order_on_restart() {
     let wf_name = "history_out_of_order_on_restart";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.workflow_failure_errors =
-        HashSet::from([WorkflowErrorType::Nondeterminism]);
+    starter.sdk_config.workflow_failure_errors = HashSet::from([WorkflowErrorType::Nondeterminism]);
     let mut worker = starter.worker().await;
     let mut starter2 = starter.clone_no_worker();
     let mut worker2 = starter2.worker().await;

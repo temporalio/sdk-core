@@ -194,8 +194,7 @@ pub struct ActivityInfo {
     pub priority: Priority,
 }
 
-// TODO [rust-sdk-branch]: Remove anyhow from public interfaces
-/// Returned as errors from activity functions
+/// Returned as errors from activity functions.
 #[derive(Debug)]
 pub enum ActivityError {
     /// This error can be returned from activities to allow the explicit configuration of certain
@@ -203,7 +202,7 @@ pub enum ActivityError {
     /// into.
     Retryable {
         /// The underlying error
-        source: anyhow::Error,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
         /// If specified, the next retry (if there is one) will occur after this delay
         explicit_delay: Option<StdDuration>,
     },
@@ -213,7 +212,7 @@ pub enum ActivityError {
         details: Option<Payload>,
     },
     /// Return this error to indicate that the activity should not be retried.
-    NonRetryable(anyhow::Error),
+    NonRetryable(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Return this error to indicate that the activity will be completed outside of this activity
     /// definition, by an external client.
     WillCompleteAsync,
@@ -232,7 +231,7 @@ where
 {
     fn from(source: E) -> Self {
         Self::Retryable {
-            source: source.into(),
+            source: source.into().into_boxed_dyn_error(),
             explicit_delay: None,
         }
     }

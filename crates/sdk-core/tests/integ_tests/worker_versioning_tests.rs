@@ -22,7 +22,7 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{ActivityOptions, WfContext};
-use temporalio_sdk_core::{WorkerVersioningStrategy, test_help::WorkerTestHelpers};
+use temporalio_sdk_core::test_help::WorkerTestHelpers;
 use tokio::join;
 use tonic::IntoRequest;
 
@@ -36,13 +36,12 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         deployment_name: deploy_name.clone(),
         build_id: "1.0".to_string(),
     };
-    starter.worker_config.versioning_strategy =
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
-            version: version.clone(),
-            use_worker_versioning: true,
-            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
-        });
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.deployment_options = WorkerDeploymentOptions {
+        version: version.clone(),
+        use_worker_versioning: true,
+        default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+    };
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 
@@ -149,15 +148,14 @@ async fn activity_has_deployment_stamp() {
     let wf_name = "activity_has_deployment_stamp";
     let mut starter = CoreWfStarter::new(wf_name);
     let deploy_name = format!("deployment-{}", starter.get_task_queue());
-    starter.worker_config.versioning_strategy =
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
-            version: WorkerDeploymentVersion {
-                deployment_name: deploy_name.clone(),
-                build_id: "1.0".to_string(),
-            },
-            use_worker_versioning: true,
-            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
-        });
+    starter.sdk_config.deployment_options = WorkerDeploymentOptions {
+        version: WorkerDeploymentVersion {
+            deployment_name: deploy_name.clone(),
+            build_id: "1.0".to_string(),
+        },
+        use_worker_versioning: true,
+        default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+    };
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();

@@ -17,6 +17,7 @@ use rand::{Rng, SeedableRng};
 use std::{
     mem,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporalio_client::{
@@ -28,7 +29,7 @@ use temporalio_sdk::{
     ActivityOptions, WfContext,
     activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk_core::{CoreRuntime, PollerBehavior};
+use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
 use tracing::info;
 
 struct JitteryEchoActivities {}
@@ -60,15 +61,14 @@ async fn poller_load_spiky() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.max_outstanding_activities = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 1000, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
@@ -214,14 +214,14 @@ async fn poller_load_sustained() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 100, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -302,14 +302,14 @@ async fn poller_load_spike_then_sustained() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 100, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,

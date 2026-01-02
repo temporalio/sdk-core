@@ -26,6 +26,23 @@ pub struct TunerHolder {
     nexus_supplier: Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>,
 }
 
+impl TunerHolder {
+    /// Create a tuner with fixed size slot suppliers for all slot kinds.
+    pub fn fixed_size(
+        workflow_slots: usize,
+        activity_slots: usize,
+        local_activity_slots: usize,
+        nexus_slots: usize,
+    ) -> Self {
+        Self {
+            wft_supplier: Arc::new(FixedSizeSlotSupplier::new(workflow_slots)),
+            act_supplier: Arc::new(FixedSizeSlotSupplier::new(activity_slots)),
+            la_supplier: Arc::new(FixedSizeSlotSupplier::new(local_activity_slots)),
+            nexus_supplier: Arc::new(FixedSizeSlotSupplier::new(nexus_slots)),
+        }
+    }
+}
+
 /// Can be used to construct a [TunerHolder] without needing to manually construct each
 /// [SlotSupplier]. Useful for lang bridges to allow more easily passing through user options.
 #[derive(Clone, Debug, bon::Builder)]

@@ -98,7 +98,7 @@ use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter},
     future::Future,
     panic::AssertUnwindSafe,
@@ -140,7 +140,7 @@ use temporalio_common::{
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, TunerBuilder, Url, Worker as CoreWorker, WorkerConfig,
-    WorkerTuner, WorkerVersioningStrategy, init_worker,
+    WorkerTuner, WorkerVersioningStrategy, WorkflowErrorType, init_worker,
 };
 use tokio::{
     sync::{
@@ -241,6 +241,14 @@ pub struct WorkerOptions {
     /// would cause it to exceed this limit. Negative, zero, or NaN values will cause building
     /// the options to fail.
     pub max_worker_activities_per_second: Option<f64>,
+    /// Any error types listed here will cause any workflow being processed by this worker to fail,
+    /// rather than simply failing the workflow task.
+    #[builder(default)]
+    pub workflow_failure_errors: HashSet<WorkflowErrorType>,
+    /// Like [WorkerConfig::workflow_failure_errors], but specific to certain workflow types (the
+    /// map key).
+    #[builder(default)]
+    pub workflow_types_to_failure_errors: HashMap<String, HashSet<WorkflowErrorType>>,
     /// If set, the worker will issue cancels for all outstanding activities and nexus operations after
     /// shutdown has been initiated and this amount of time has elapsed.
     pub graceful_shutdown_period: Option<Duration>,
@@ -807,7 +815,10 @@ impl ActivityHalf {
                                 source,
                                 explicit_delay,
                             } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(source, false);
+                                let mut f = Failure::application_failure_from_error(
+                                    anyhow::Error::from_boxed(source),
+                                    false,
+                                );
                                 if let Some(d) = explicit_delay
                                     && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
                                         f.failure_info.as_mut()
@@ -820,7 +831,10 @@ impl ActivityHalf {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
                             ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(nre, true),
+                                Failure::application_failure_from_error(
+                                    anyhow::Error::from_boxed(nre),
+                                    true,
+                                ),
                             ),
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
@@ -1210,7 +1224,9 @@ where
                                 }
                                 ActExitValue::Normal(x) => match x.as_json_payload() {
                                     Ok(v) => Ok(ActExitValue::Normal(v)),
-                                    Err(e) => Err(ActivityError::NonRetryable(e)),
+                                    Err(e) => {
+                                        Err(ActivityError::NonRetryable(e.into_boxed_dyn_error()))
+                                    }
                                 },
                             }
                         })
@@ -1360,6 +1376,8 @@ impl TryFrom<WorkerOptions> for WorkerConfig {
             .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
                 o.deployment_options,
             ))
+            .workflow_failure_errors(o.workflow_failure_errors)
+            .workflow_types_to_failure_errors(o.workflow_types_to_failure_errors)
             .build()
     }
 }

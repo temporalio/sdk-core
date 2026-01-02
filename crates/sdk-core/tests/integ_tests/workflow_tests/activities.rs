@@ -1103,7 +1103,7 @@ impl SleeperActivities {
 async fn graceful_shutdown() {
     let wf_name = "graceful_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(500));
+    starter.sdk_config.graceful_shutdown_period = Some(Duration::from_millis(500));
     starter
         .sdk_config
         .register_activities_static::<SleeperActivities>();
@@ -1178,7 +1178,8 @@ impl CancellableEchoActivities {
 async fn activity_can_be_cancelled_by_local_timeout() {
     let wf_name = "activity_can_be_cancelled_by_local_timeout";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.local_timeout_buffer_for_activities = Duration::from_secs(0);
+    starter
+        .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
     starter
         .sdk_config
         .register_activities_static::<CancellableEchoActivities>();
@@ -1214,17 +1215,18 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 async fn long_activity_timeout_repro() {
     let wf_name = "long_activity_timeout_repro";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 10,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 10,
         initial: 5,
     };
-    starter.worker_config.local_timeout_buffer_for_activities = Duration::from_secs(0);
+    starter
+        .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();

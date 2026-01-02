@@ -233,8 +233,6 @@ pub(crate) async fn get_cloud_client() -> Client {
 pub(crate) struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    // TODO [rust-sdk-branch]: Get rid of worker config
-    pub worker_config: WorkerConfig,
     pub sdk_config: WorkerOptions,
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
@@ -242,6 +240,9 @@ pub(crate) struct CoreWfStarter {
     runtime_override: Option<Arc<CoreRuntime>>,
     client_override: Option<Client>,
     min_local_server_version: Option<String>,
+    /// Run when initializing, allows for altering the config used to init the core worker
+    #[allow(clippy::type_complexity)] // It's not tho
+    core_config_mutator: Option<Arc<dyn Fn(&mut WorkerConfig)>>,
 }
 struct InitializedWorker {
     worker: Arc<CoreWorker>,
@@ -308,18 +309,16 @@ impl CoreWfStarter {
     ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
-        let mut worker_config = integ_worker_config(&task_queue);
-        worker_config.max_cached_workflows = 1000_usize;
         let sdk_config = integ_sdk_config(&task_queue);
         Self {
             task_queue_name: task_queue,
-            worker_config,
             sdk_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
             client_override,
             min_local_server_version: None,
+            core_config_mutator: None,
         }
     }
 
@@ -328,13 +327,13 @@ impl CoreWfStarter {
     pub(crate) fn clone_no_worker(&self) -> Self {
         Self {
             task_queue_name: self.task_queue_name.clone(),
-            worker_config: self.worker_config.clone(),
             sdk_config: self.sdk_config.clone(),
             workflow_options: self.workflow_options.clone(),
             runtime_override: self.runtime_override.clone(),
             client_override: self.client_override.clone(),
             min_local_server_version: self.min_local_server_version.clone(),
             initted_worker: Default::default(),
+            core_config_mutator: self.core_config_mutator.clone(),
         }
     }
 
@@ -345,6 +344,10 @@ impl CoreWfStarter {
         w.client = Some(self.get_client().await);
 
         w
+    }
+
+    pub(crate) fn set_core_cfg_mutator(&mut self, mutator: impl Fn(&mut WorkerConfig) + 'static) {
+        self.core_config_mutator = Some(Arc::new(mutator))
     }
 
     pub(crate) async fn shutdown(&mut self) {
@@ -464,7 +467,6 @@ impl CoreWfStarter {
                 } else {
                     init_integ_telem().unwrap()
                 };
-                let cfg = self.worker_config.clone();
                 let (connection, client) = if let Some(client) = self.client_override.take() {
                     // Extract the connection from the client to pass to init_worker
                     let connection = client.connection().clone();
@@ -475,11 +477,20 @@ impl CoreWfStarter {
                     opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
                     let connection = Connection::connect(opts).await.expect("Must connect");
                     let client_opts =
-                        temporalio_client::ClientOptions::new(cfg.namespace.clone()).build();
+                        temporalio_client::ClientOptions::new(self.sdk_config.namespace.clone())
+                            .build();
                     let client = Client::new(connection.clone(), client_opts);
                     (connection, client)
                 };
-                let worker = init_worker(rt, cfg, connection).expect("Worker inits cleanly");
+                let worker = init_worker(
+                    rt,
+                    self.sdk_config
+                        .clone()
+                        .try_into()
+                        .expect("sdk config converts to core config"),
+                    connection,
+                )
+                .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,

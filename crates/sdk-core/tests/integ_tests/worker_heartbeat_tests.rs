@@ -42,6 +42,7 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, RuntimeOptions,
+    TunerHolder,
 };
 use tokio::{sync::Notify, time::sleep};
 use tonic::IntoRequest;
@@ -153,21 +154,22 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     }
     let wf_name = format!("worker_heartbeat_basic_{backing}");
     let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
-    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
-    starter.worker_config.max_cached_workflows = 5_usize;
-    starter.worker_config.max_outstanding_activities = Some(5_usize);
-    starter.worker_config.plugins = vec![
-        PluginInfo {
-            name: "plugin1".to_string(),
-            version: "1".to_string(),
-        },
-        PluginInfo {
-            name: "plugin2".to_string(),
-            version: "2".to_string(),
-        },
-    ]
-    .into_iter()
-    .collect();
+    starter.sdk_config.max_cached_workflows = 5_usize;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 5, 1, 1));
+    starter.set_core_cfg_mutator(|c| {
+        c.plugins = vec![
+            PluginInfo {
+                name: "plugin1".to_string(),
+                version: "1".to_string(),
+            },
+            PluginInfo {
+                name: "plugin2".to_string(),
+                version: "2".to_string(),
+            },
+        ]
+        .into_iter()
+        .collect();
+    });
     let acts_started = Arc::new(Notify::new());
     let acts_done = Arc::new(Notify::new());
     starter.sdk_config.register_activities(NotifyActivities {
@@ -301,21 +303,17 @@ async fn docker_worker_heartbeat_tuner() {
     tuner
         .with_workflow_slots_options(ResourceSlotOptions::new(2, 10, Duration::from_millis(0)))
         .with_activity_slots_options(ResourceSlotOptions::new(5, 10, Duration::from_millis(50)));
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.nexus_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.nexus_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
-    starter.worker_config.tuner = Some(Arc::new(tuner));
+    starter.sdk_config.tuner = Arc::new(tuner);
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();
@@ -586,8 +584,8 @@ impl StickyCacheActivities {
 async fn worker_heartbeat_sticky_cache_miss() {
     let wf_name = "worker_heartbeat_cache_miss";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter.worker_config.max_cached_workflows = 1_usize;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(2_usize);
+    starter.sdk_config.max_cached_workflows = 1_usize;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(2, 10, 10, 10));
     starter
         .sdk_config
         .register_activities_static::<StickyCacheActivities>();
@@ -687,8 +685,8 @@ async fn worker_heartbeat_sticky_cache_miss() {
 async fn worker_heartbeat_multiple_workers() {
     let wf_name = "worker_heartbeat_multi_workers";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
-    starter.worker_config.max_cached_workflows = 5_usize;
+    starter.sdk_config.max_cached_workflows = 5_usize;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 10, 10, 10));
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();
@@ -802,7 +800,7 @@ async fn worker_heartbeat_failure_metrics() {
 
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
-    starter.worker_config.max_outstanding_activities = Some(5_usize);
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
     starter
         .sdk_config
         .register_activities_static::<FailingActivities>();
@@ -1038,7 +1036,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.skip_client_worker_set_check = true;
+    starter.set_core_cfg_mutator(|m| m.skip_client_worker_set_check = true);
     starter
         .sdk_config
         .register_activities_static::<StdActivities>();
