@@ -55,7 +55,8 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, WfContext, WorkerOptions,
+    interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
     ActivitySlotKind, CoreRuntime, LocalActivitySlotKind, PollError, PollerBehavior,
@@ -916,4 +917,11 @@ async fn shutdown_worker_not_retried() {
     let worker = starter.get_worker().await;
     drain_pollers_and_shutdown(&worker).await;
     assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn test_default_build_id() {
+    let o = WorkerOptions::new("task_queue").build();
+    assert!(!o.deployment_options.version.build_id.is_empty());
+    assert_ne!(o.deployment_options.version.build_id, "undetermined");
 }

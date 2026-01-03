@@ -137,7 +137,7 @@ use temporalio_common::{
             failure::v1::{Failure, failure},
         },
     },
-    worker::{WorkerDeploymentOptions, WorkerTaskTypes},
+    worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, TunerBuilder, Url, Worker as CoreWorker, WorkerConfig,
@@ -171,8 +171,9 @@ pub struct WorkerOptions {
     #[builder(field)]
     activities: ActivityDefinitions,
 
-    // TODO [rust-sdk-branch]: Provide defaults?
-    /// Set the deployment options for this worker.
+    /// Set the deployment options for this worker. Defaults to a hash of the currently running
+    /// executable.
+    #[builder(default = WorkerDeploymentOptions::from_build_id(build_id_from_current_exe().to_owned()))]
     pub deployment_options: WorkerDeploymentOptions,
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client

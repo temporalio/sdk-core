@@ -2,7 +2,12 @@
 //! with workers.
 
 use crate::protos::{coresdk, temporal, temporal::api::enums::v1::VersioningBehavior};
-use std::str::FromStr;
+use std::{
+    fs::File,
+    io::{self, BufReader, Read},
+    str::FromStr,
+    sync::OnceLock,
+};
 
 /// Specifies which task types a worker will poll for.
 ///
@@ -84,6 +89,19 @@ pub struct WorkerDeploymentOptions {
     pub default_versioning_behavior: Option<VersioningBehavior>,
 }
 
+impl WorkerDeploymentOptions {
+    pub fn from_build_id(build_id: String) -> Self {
+        Self {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_owned(),
+                build_id,
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct WorkerDeploymentVersion {
     /// Name of the deployment
@@ -137,4 +155,34 @@ impl From<temporal::api::deployment::v1::WorkerDeploymentVersion> for WorkerDepl
             build_id: v.build_id,
         }
     }
+}
+
+static CACHED_BUILD_ID: OnceLock<String> = OnceLock::new();
+
+/// Build ID derived from hashing the on-disk bytes of the current executable.
+/// Deterministic across machines for the same binary. Cached per-process.
+pub fn build_id_from_current_exe() -> &'static str {
+    CACHED_BUILD_ID
+        .get_or_init(|| compute_crc32_exe_id().unwrap_or_else(|_| "undetermined".to_owned()))
+}
+
+fn compute_crc32_exe_id() -> io::Result<String> {
+    let exe_path = std::env::current_exe()?;
+    let file = File::open(exe_path)?;
+    let mut reader = BufReader::new(file);
+
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = [0u8; 128 * 1024];
+
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+
+    let crc = hasher.finalize();
+
+    Ok(format!("{:08x}", crc))
 }
