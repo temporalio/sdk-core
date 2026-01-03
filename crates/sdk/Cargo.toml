@@ -29,6 +29,7 @@ tokio = { version = "1.47", features = [
 tokio-util = { version = "0.7" }
 tokio-stream = "0.1"
 tracing = "0.1"
+uuid = { version = "1.18", features = ["v4"] }
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
@@ -43,12 +44,12 @@ version = "0.1"
 path = "../client"
 version = "0.1"
 
-[dev-dependencies]
-futures = "0.3"
-
-[dev-dependencies.temporalio-macros]
+[dependencies.temporalio-macros]
 path = "../macros"
 version = "0.1"
+
+[dev-dependencies]
+futures = "0.3"
 
 [features]
 default = []

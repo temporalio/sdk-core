@@ -1,18 +1,20 @@
 //! Functionality related to defining and interacting with activities
 
-use crate::{WorkerOptionsBuilder, app_data::AppData, worker_options_builder};
-
-use futures_util::future::BoxFuture;
+use crate::app_data::AppData;
+use futures_util::{FutureExt, future::BoxFuture};
 use prost_types::{Duration, Timestamp};
 use std::{
     collections::HashMap,
+    fmt::Debug,
     sync::Arc,
     time::{Duration as StdDuration, SystemTime},
 };
 use temporalio_client::Priority;
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::{PayloadConversionError, PayloadConverter},
+    data_converters::{
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+    },
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -192,8 +194,7 @@ pub struct ActivityInfo {
     pub priority: Priority,
 }
 
-// TODO [rust-sdk-branch]: Remove anyhow from public interfaces
-/// Returned as errors from activity functions
+/// Returned as errors from activity functions.
 #[derive(Debug)]
 pub enum ActivityError {
     /// This error can be returned from activities to allow the explicit configuration of certain
@@ -201,7 +202,7 @@ pub enum ActivityError {
     /// into.
     Retryable {
         /// The underlying error
-        source: anyhow::Error,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
         /// If specified, the next retry (if there is one) will occur after this delay
         explicit_delay: Option<StdDuration>,
     },
@@ -211,7 +212,10 @@ pub enum ActivityError {
         details: Option<Payload>,
     },
     /// Return this error to indicate that the activity should not be retried.
-    NonRetryable(anyhow::Error),
+    NonRetryable(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Return this error to indicate that the activity will be completed outside of this activity
+    /// definition, by an external client.
+    WillCompleteAsync,
 }
 
 impl ActivityError {
@@ -227,7 +231,7 @@ where
 {
     fn from(source: E) -> Self {
         Self::Retryable {
-            source: source.into(),
+            source: source.into().into_boxed_dyn_error(),
             explicit_delay: None,
         }
     }
@@ -295,29 +299,26 @@ fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
     })
 }
 
-pub(crate) type ActivityInvocation = Box<
+pub(crate) type ActivityInvocation = Arc<
     dyn Fn(
-        Payload,
-        PayloadConverter,
-        ActivityContext,
-    )
-        -> Result<BoxFuture<'static, Result<Payload, ActivityError>>, PayloadConversionError>,
+            Payload,
+            PayloadConverter,
+            ActivityContext,
+        )
+            -> Result<BoxFuture<'static, Result<Payload, ActivityError>>, PayloadConversionError>
+        + Send
+        + Sync,
 >;
 
 #[doc(hidden)]
 pub trait ActivityImplementer {
-    fn register_all_static<S: worker_options_builder::State>(
-        worker_options: &mut WorkerOptionsBuilder<S>,
-    );
-    fn register_all_instance<S: worker_options_builder::State>(
-        self: Arc<Self>,
-        worker_options: &mut WorkerOptionsBuilder<S>,
-    );
+    fn register_all_static(defs: &mut ActivityDefinitions);
+    fn register_all_instance(self: Arc<Self>, defs: &mut ActivityDefinitions);
 }
 
 #[doc(hidden)]
 pub trait ExecutableActivity: ActivityDefinition {
-    type Implementer: ActivityImplementer + 'static;
+    type Implementer: ActivityImplementer + Send + Sync + 'static;
     fn execute(
         receiver: Option<Arc<Self::Implementer>>,
         ctx: ActivityContext,
@@ -327,3 +328,84 @@ pub trait ExecutableActivity: ActivityDefinition {
 
 #[doc(hidden)]
 pub trait HasOnlyStaticMethods {}
+
+/// Contains activity registrations in a form ready for execution by workers.
+#[derive(Default, Clone)]
+pub struct ActivityDefinitions {
+    activities: HashMap<&'static str, ActivityInvocation>,
+}
+
+impl ActivityDefinitions {
+    /// Registers all activities on an activity implementer that don't take a receiver.
+    pub fn register_activities_static<AI>(&mut self) -> &mut Self
+    where
+        AI: ActivityImplementer + HasOnlyStaticMethods,
+    {
+        AI::register_all_static(self);
+        self
+    }
+    /// Registers all activities on an activity implementer that take a receiver.
+    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
+        AI::register_all_static(self);
+        let arcd = Arc::new(instance);
+        AI::register_all_instance(arcd, self);
+        self
+    }
+    /// Registers a specific activitiy that does not take a receiver.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Arc::new(move |p, pc, c| {
+                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
+                let pc2 = pc.clone();
+                Ok(AD::execute(None, c, deserialized)
+                    .map(move |v| match v {
+                        Ok(okv) => pc2
+                            .to_payload(&okv, &SerializationContext::Activity)
+                            .map_err(|e| e.into()),
+                        Err(e) => Err(e),
+                    })
+                    .boxed())
+            }),
+        );
+        self
+    }
+    /// Registers a specific activitiy that takes a receiver.
+    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+        &mut self,
+        instance: Arc<AD::Implementer>,
+    ) -> &mut Self {
+        self.activities.insert(
+            AD::name(),
+            Arc::new(move |p, pc, c| {
+                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
+                let pc2 = pc.clone();
+                Ok(AD::execute(Some(instance.clone()), c, deserialized)
+                    .map(move |v| match v {
+                        Ok(okv) => pc2
+                            .to_payload(&okv, &SerializationContext::Activity)
+                            .map_err(|e| e.into()),
+                        Err(e) => Err(e),
+                    })
+                    .boxed())
+            }),
+        );
+        self
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.activities.is_empty()
+    }
+
+    pub(crate) fn get(&self, act_type: &str) -> Option<ActivityInvocation> {
+        self.activities.get(act_type).cloned()
+    }
+}
+
+impl Debug for ActivityDefinitions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ActivityDefinitions")
+            .field("activities", &self.activities.keys())
+            .finish()
+    }
+}

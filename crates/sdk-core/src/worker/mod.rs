@@ -130,7 +130,7 @@ pub struct WorkerConfig {
     pub client_identity_override: Option<String>,
     /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
     /// history updates are applied incrementally to suspended instances of workflow execution.
-    /// Workflows are evicted according to a least-recently-used policy one the cache maximum is
+    /// Workflows are evicted according to a least-recently-used policy once the cache maximum is
     /// reached. Workflows may also be explicitly evicted at any time, or as a result of errors
     /// or failures.
     #[builder(default = 0)]

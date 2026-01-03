@@ -9,7 +9,7 @@ use crate::data_converters::{TemporalDeserializable, TemporalSerializable};
 /// Implement on a marker struct to define an activity.
 pub trait ActivityDefinition {
     /// Type of the input argument to the workflow
-    type Input: TemporalDeserializable + 'static;
+    type Input: TemporalDeserializable + TemporalSerializable + 'static;
     /// Type of the output of the workflow
     type Output: TemporalSerializable + 'static;
 

@@ -1,7 +1,9 @@
 use crate::{
     common::{
-        CoreWfStarter, fake_grpc_server::fake_server, get_integ_runtime_options,
-        get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
+        CoreWfStarter,
+        activity_functions::{StdActivities, std_activities},
+        fake_grpc_server::fake_server,
+        get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
     shared_tests,
 };
@@ -31,15 +33,17 @@ use temporalio_common::{
         },
         temporal::api::{
             command::v1::command::Attributes,
-            common::v1::WorkerVersionStamp,
+            common::v1::{Payload, WorkerVersionStamp},
             enums::v1::{
-                EventType, WorkflowTaskFailedCause, WorkflowTaskFailedCause::GrpcMessageTooLarge,
+                EventType,
+                WorkflowTaskFailedCause::{self, GrpcMessageTooLarge},
             },
             failure::v1::Failure as InnerFailure,
             history::v1::{
-                ActivityTaskScheduledEventAttributes, history_event,
-                history_event::Attributes::{
-                    self as EventAttributes, WorkflowTaskFailedEventAttributes,
+                ActivityTaskScheduledEventAttributes,
+                history_event::{
+                    self,
+                    Attributes::{self as EventAttributes, WorkflowTaskFailedEventAttributes},
                 },
             },
             workflowservice::v1::{
@@ -51,7 +55,8 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, WfContext, WorkerOptions,
+    interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
     ActivitySlotKind, CoreRuntime, LocalActivitySlotKind, PollError, PollerBehavior,
@@ -170,17 +175,13 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
 async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     let wf_name = "resource_based_few_pollers_guarantees_non_sticky_poll";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(3_usize);
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(3_usize);
     // Set the limits to zero so it's essentially unwilling to hand out slots
     let mut tuner = ResourceBasedTuner::new(0.0, 0.0);
     tuner.with_workflow_slots_options(ResourceSlotOptions::new(2, 10, Duration::from_millis(0)));
-    starter.worker_config.tuner = Some(Arc::new(tuner));
+    starter.sdk_config.tuner = Arc::new(tuner);
     let mut worker = starter.worker().await;
 
     // Workflow doesn't actually need to do anything. We just need to see that we don't get stuck
@@ -211,7 +212,7 @@ async fn oversize_grpc_message() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let runtime = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, runtime);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
@@ -351,7 +352,8 @@ async fn activity_tasks_from_completion_reserve_slots() {
         cfg.max_outstanding_activities = Some(2);
     });
     let core = Arc::new(mock_worker(mock));
-    let mut worker = crate::common::TestWorker::new(core.clone());
+    let mut worker =
+        crate::common::TestWorker::new(temporalio_sdk::Worker::new_from_core(core.clone()));
 
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();
@@ -362,15 +364,17 @@ async fn activity_tasks_from_completion_reserve_slots() {
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
         let complete_token = workflow_complete_token.clone();
         async move {
-            ctx.activity(ActivityOptions {
-                activity_type: "act1".to_string(),
-                ..Default::default()
-            })
+            ctx.activity_untyped(
+                "act1".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
             .await;
-            ctx.activity(ActivityOptions {
-                activity_type: "act2".to_string(),
-                ..Default::default()
-            })
+            ctx.activity_untyped(
+                "act2".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
             .await;
             complete_token.cancel();
             Ok(().into())
@@ -705,39 +709,38 @@ async fn test_custom_slot_supplier_simple() {
     ));
 
     let mut starter = CoreWfStarter::new("test_custom_slot_supplier_simple");
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
+    starter
+        .sdk_config
+        .register_activities_static::<StdActivities>();
 
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(wf_supplier.clone());
     tb.activity_slot_supplier(activity_supplier.clone());
     tb.local_activity_slot_supplier(local_activity_supplier.clone());
-    starter.worker_config.tuner = Some(Arc::new(tb.build()));
+    starter.sdk_config.tuner = Arc::new(tb.build());
 
     let mut worker = starter.worker().await;
 
-    worker.register_activity(
-        "SlotSupplierActivity",
-        |_: temporalio_sdk::activities::ActivityContext, _: ()| async move { Ok(()) },
-    );
     worker.register_wf(
         "SlotSupplierWorkflow".to_owned(),
         |ctx: WfContext| async move {
             let _result = ctx
-                .activity(ActivityOptions {
-                    activity_type: "SlotSupplierActivity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(10)),
-                    ..Default::default()
-                })
+                .activity::<std_activities::NoOp>(
+                    (),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(10)),
+                        ..Default::default()
+                    },
+                )?
                 .await;
             let _result = ctx
-                .local_activity(LocalActivityOptions {
-                    activity_type: "SlotSupplierActivity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(10)),
-                    ..Default::default()
-                })
+                .local_activity::<std_activities::NoOp>(
+                    (),
+                    LocalActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(10)),
+                        ..Default::default()
+                    },
+                )?
                 .await;
             Ok(().into())
         },
@@ -819,7 +822,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type == "SlotSupplierActivity"))
+                                } if act_type.contains("NoOp")))
     );
     assert!(
         local_activity_events
@@ -828,7 +831,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "local_activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type == "SlotSupplierActivity"))
+                                } if act_type.contains("NoOp")))
     );
     assert!(wf_events.iter().any(|e| matches!(
         e,
@@ -914,4 +917,11 @@ async fn shutdown_worker_not_retried() {
     let worker = starter.get_worker().await;
     drain_pollers_and_shutdown(&worker).await;
     assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn test_default_build_id() {
+    let o = WorkerOptions::new("task_queue").build();
+    assert!(!o.deployment_options.version.build_id.is_empty());
+    assert_ne!(o.deployment_options.version.build_id, "undetermined");
 }

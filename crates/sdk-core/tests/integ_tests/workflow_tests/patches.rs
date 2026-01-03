@@ -21,7 +21,7 @@ use temporalio_common::protos::{
             RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
-        common::v1::ActivityType,
+        common::v1::{ActivityType, Payload},
         enums::v1::{CommandType, EventType, IndexedValueType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
@@ -57,7 +57,7 @@ pub(crate) async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), changes_wf);
 
@@ -91,7 +91,7 @@ pub(crate) async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<(
 async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
@@ -115,7 +115,7 @@ pub(crate) async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResu
 async fn replaying_with_patch_marker() {
     let wf_name = "replaying_with_patch_marker";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
 
@@ -131,8 +131,8 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     let wf_name = "timer_patched_timer";
     let mut starter = CoreWfStarter::new(wf_name);
     // Disable caching to force replay from beginning
-    starter.worker_config.max_cached_workflows = 0_usize;
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.max_cached_workflows = 0_usize;
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     // Include a task failure as well to make sure that works
     static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
@@ -155,7 +155,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
 async fn can_remove_deprecated_patch_near_other_patch() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
@@ -186,7 +186,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
 async fn deprecated_patch_removal() {
     let wf_name = "deprecated_patch_removal";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     let wf_id = starter.get_task_queue().to_string();
@@ -313,26 +313,38 @@ fn patch_marker_single_activity(
 }
 
 async fn v1(ctx: &mut WfContext) {
-    ctx.activity(ActivityOptions {
-        activity_id: Some("no_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("no_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
 async fn v2(ctx: &mut WfContext) -> bool {
     if ctx.patched(MY_PATCH_ID) {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("had_change".to_owned()),
-            ..Default::default()
-        })
+        ctx.activity_untyped(
+            "".to_string(),
+            Payload::default(),
+            ActivityOptions {
+                activity_id: Some("had_change".to_owned()),
+                ..Default::default()
+            },
+        )
         .await;
         true
     } else {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("no_change".to_owned()),
-            ..Default::default()
-        })
+        ctx.activity_untyped(
+            "".to_string(),
+            Payload::default(),
+            ActivityOptions {
+                activity_id: Some("no_change".to_owned()),
+                ..Default::default()
+            },
+        )
         .await;
         false
     }
@@ -340,18 +352,26 @@ async fn v2(ctx: &mut WfContext) -> bool {
 
 async fn v3(ctx: &mut WfContext) {
     ctx.deprecate_patch(MY_PATCH_ID);
-    ctx.activity(ActivityOptions {
-        activity_id: Some("had_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
 async fn v4(ctx: &mut WfContext) {
-    ctx.activity(ActivityOptions {
-        activity_id: Some("had_change".to_owned()),
-        ..Default::default()
-    })
+    ctx.activity_untyped(
+        "".to_string(),
+        Payload::default(),
+        ActivityOptions {
+            activity_id: Some("had_change".to_owned()),
+            ..Default::default()
+        },
+    )
     .await;
 }
 
@@ -642,13 +662,23 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity(ActivityOptions::default()).await;
+            ctx.activity_untyped(
+                "".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
+            .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity(ActivityOptions::default()).await;
+            ctx.activity_untyped(
+                "".to_string(),
+                Payload::default(),
+                ActivityOptions::default(),
+            )
+            .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }
