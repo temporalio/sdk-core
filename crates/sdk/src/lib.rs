@@ -105,10 +105,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporalio_client::{
-    Client, ConnectionOptions, ConnectionOptionsBuilder, NamespacedClient,
-    connection_options_builder,
-};
+use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
     ActivityDefinition,
     data_converters::PayloadConverter,
@@ -140,7 +137,7 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
 };
 use temporalio_sdk_core::{
-    CoreRuntime, PollError, PollerBehavior, TunerBuilder, Url, Worker as CoreWorker, WorkerConfig,
+    CoreRuntime, PollError, PollerBehavior, TunerBuilder, Worker as CoreWorker, WorkerConfig,
     WorkerTuner, WorkerVersioningStrategy, WorkflowErrorType, init_worker,
 };
 use tokio::{
@@ -155,8 +152,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, Span, field};
 use uuid::Uuid;
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Contains options for configuring a worker.
 #[derive(bon::Builder, Clone)]
@@ -342,15 +337,6 @@ impl WorkerOptions {
             .workflow_types_to_failure_errors(self.workflow_types_to_failure_errors.clone())
             .build()
     }
-}
-
-/// Returns connection options with required fields set to appropriate values for the Rust SDK.
-pub fn sdk_connection_options(
-    url: impl Into<Url>,
-) -> ConnectionOptionsBuilder<impl connection_options_builder::IsComplete> {
-    ConnectionOptions::new(url)
-        .client_name("temporal-rust".to_string())
-        .client_version(VERSION.to_string())
 }
 
 /// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
