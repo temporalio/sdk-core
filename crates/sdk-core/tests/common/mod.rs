@@ -100,9 +100,13 @@ pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
+pub(crate) fn integ_namespace() -> String {
+    env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string())
+}
+
 pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
     WorkerConfig::builder()
-        .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
+        .namespace(integ_namespace())
         .task_queue(tq)
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
@@ -118,7 +122,6 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
 
 pub(crate) fn integ_sdk_config(tq: &str) -> WorkerOptions {
     WorkerOptions::new(tq)
-        .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
         .deployment_options(WorkerDeploymentOptions {
             version: WorkerDeploymentVersion {
                 deployment_name: "".to_owned(),
@@ -477,16 +480,14 @@ impl CoreWfStarter {
                     opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
                     let connection = Connection::connect(opts).await.expect("Must connect");
                     let client_opts =
-                        temporalio_client::ClientOptions::new(self.sdk_config.namespace.clone())
-                            .build();
+                        temporalio_client::ClientOptions::new(integ_namespace()).build();
                     let client = Client::new(connection.clone(), client_opts);
                     (connection, client)
                 };
                 let worker = init_worker(
                     rt,
                     self.sdk_config
-                        .clone()
-                        .try_into()
+                        .to_core_options(client.namespace())
                         .expect("sdk config converts to core config"),
                     connection,
                 )

@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::str::FromStr;
-//! use temporalio_client::{Connection, ConnectionOptions};
+//! use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
 //! use temporalio_common::{
 //!     telemetry::TelemetryOptions,
 //!     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
@@ -44,9 +44,9 @@
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let connection = Connection::connect(connection_options).await?;
+//!     let client = Client::new(connection, ClientOptions::new("my_namespace").build());
 //!
 //!     let worker_options = WorkerOptions::new("task_queue")
-//!         .namespace("default")
 //!         .task_types(WorkerTaskTypes::activity_only())
 //!         .deployment_options(WorkerDeploymentOptions {
 //!             version: WorkerDeploymentVersion {
@@ -59,7 +59,7 @@
 //!         .register_activities_static::<MyActivities>()
 //!         .build();
 //!
-//!     let worker = Worker::new(&runtime, connection, worker_options)?;
+//!     let worker = Worker::new(&runtime, client, worker_options)?;
 //!     worker.run().await?;
 //!
 //!     Ok(())
@@ -106,7 +106,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, ConnectionOptions, ConnectionOptionsBuilder, connection_options_builder,
+    Client, ConnectionOptions, ConnectionOptionsBuilder, NamespacedClient,
+    connection_options_builder,
 };
 use temporalio_common::{
     ActivityDefinition,
@@ -170,9 +171,6 @@ pub struct WorkerOptions {
     #[builder(field)]
     activities: ActivityDefinitions,
 
-    // TODO [rust-sdk-branch]: Other SDKs are pulling from client
-    /// The Temporal service namespace this worker is bound to
-    pub namespace: String,
     // TODO [rust-sdk-branch]: Provide defaults?
     /// Set the deployment options for this worker.
     pub deployment_options: WorkerDeploymentOptions,
@@ -317,6 +315,32 @@ impl WorkerOptions {
     pub fn activities(&self) -> ActivityDefinitions {
         self.activities.clone()
     }
+
+    #[doc(hidden)]
+    pub fn to_core_options(&self, namespace: String) -> Result<WorkerConfig, String> {
+        WorkerConfig::builder()
+            .namespace(namespace)
+            .task_queue(self.task_queue.clone())
+            .maybe_client_identity_override(self.client_identity_override.clone())
+            .max_cached_workflows(self.max_cached_workflows)
+            .tuner(self.tuner.clone())
+            .workflow_task_poller_behavior(self.workflow_task_poller_behavior)
+            .activity_task_poller_behavior(self.activity_task_poller_behavior)
+            .nexus_task_poller_behavior(self.nexus_task_poller_behavior)
+            .task_types(self.task_types)
+            .sticky_queue_schedule_to_start_timeout(self.sticky_queue_schedule_to_start_timeout)
+            .max_heartbeat_throttle_interval(self.max_heartbeat_throttle_interval)
+            .default_heartbeat_throttle_interval(self.default_heartbeat_throttle_interval)
+            .maybe_max_task_queue_activities_per_second(self.max_task_queue_activities_per_second)
+            .maybe_max_worker_activities_per_second(self.max_worker_activities_per_second)
+            .maybe_graceful_shutdown_period(self.graceful_shutdown_period)
+            .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
+                self.deployment_options.clone(),
+            ))
+            .workflow_failure_errors(self.workflow_failure_errors.clone())
+            .workflow_types_to_failure_errors(self.workflow_types_to_failure_errors.clone())
+            .build()
+    }
 }
 
 /// Returns connection options with required fields set to appropriate values for the Rust SDK.
@@ -370,16 +394,17 @@ struct ActivityHalf {
 
 impl Worker {
     // TODO [rust-sdk-branch]: Not 100% sure I like passing runtime here
-    // TODO [rust-sdk-branch]: Don't use anyhow
     /// Create a new worker from an existing connection, and options.
     pub fn new(
         runtime: &CoreRuntime,
-        connection: Connection,
+        client: Client,
         mut options: WorkerOptions,
-    ) -> Result<Self, anyhow::Error> {
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let acts = std::mem::take(&mut options.activities);
-        let wc = options.try_into().map_err(|s| anyhow::anyhow!("{s}"))?;
-        let core = init_worker(runtime, wc, connection)?;
+        let wc = options
+            .to_core_options(client.namespace())
+            .map_err(|s| anyhow::anyhow!("{s}"))?;
+        let core = init_worker(runtime, wc, client.connection().clone())?;
         let mut me = Self::new_from_core(Arc::new(core));
         me.activity_half.activities = acts;
         Ok(me)
@@ -1352,34 +1377,6 @@ impl Display for EndPrintingAttempts {
 }
 impl PrintablePanicType for EndPrintingAttempts {
     type NextType = EndPrintingAttempts;
-}
-
-impl TryFrom<WorkerOptions> for WorkerConfig {
-    type Error = String;
-    fn try_from(o: WorkerOptions) -> Result<Self, Self::Error> {
-        WorkerConfig::builder()
-            .namespace(o.namespace)
-            .task_queue(o.task_queue)
-            .maybe_client_identity_override(o.client_identity_override)
-            .max_cached_workflows(o.max_cached_workflows)
-            .tuner(o.tuner)
-            .workflow_task_poller_behavior(o.workflow_task_poller_behavior)
-            .activity_task_poller_behavior(o.activity_task_poller_behavior)
-            .nexus_task_poller_behavior(o.nexus_task_poller_behavior)
-            .task_types(o.task_types)
-            .sticky_queue_schedule_to_start_timeout(o.sticky_queue_schedule_to_start_timeout)
-            .max_heartbeat_throttle_interval(o.max_heartbeat_throttle_interval)
-            .default_heartbeat_throttle_interval(o.default_heartbeat_throttle_interval)
-            .maybe_max_task_queue_activities_per_second(o.max_task_queue_activities_per_second)
-            .maybe_max_worker_activities_per_second(o.max_worker_activities_per_second)
-            .maybe_graceful_shutdown_period(o.graceful_shutdown_period)
-            .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
-                o.deployment_options,
-            ))
-            .workflow_failure_errors(o.workflow_failure_errors)
-            .workflow_types_to_failure_errors(o.workflow_types_to_failure_errors)
-            .build()
-    }
 }
 
 #[cfg(test)]
