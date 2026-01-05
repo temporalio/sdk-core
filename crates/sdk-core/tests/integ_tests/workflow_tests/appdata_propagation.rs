@@ -15,7 +15,8 @@ struct Data {
 }
 
 pub(crate) async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.activity::<appdata_activities::Echo>(
+    ctx.activity(
+        AppdataActivities::echo,
         "hi!".to_string(),
         ActivityOptions {
             start_to_close_timeout: Some(Duration::from_secs(5)),

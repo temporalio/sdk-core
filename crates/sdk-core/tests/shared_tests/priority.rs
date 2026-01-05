@@ -10,23 +10,6 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 
-struct PriorityActivities {}
-#[activities]
-impl PriorityActivities {
-    #[activity]
-    async fn echo(ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
-        assert_eq!(
-            ctx.get_info().priority,
-            Priority {
-                priority_key: 5,
-                fairness_key: "fair-act".to_string(),
-                fairness_weight: 1.1
-            }
-        );
-        Ok(echo_me)
-    }
-}
-
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =
         CoreWfStarter::new_cloud_or_local("priority_values_sent_to_server", ">=1.29.0-139.2").await
@@ -42,6 +25,24 @@ pub(crate) async fn priority_values_sent_to_server() {
     });
     let mut worker = starter.worker().await;
     let child_type = "child-wf";
+
+    struct PriorityActivities {}
+    #[activities]
+    impl PriorityActivities {
+        #[activity]
+        async fn echo(ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
+            assert_eq!(
+                ctx.get_info().priority,
+                Priority {
+                    priority_key: 5,
+                    fairness_key: "fair-act".to_string(),
+                    fairness_weight: 1.1
+                }
+            );
+            Ok(echo_me)
+        }
+    }
+
     worker.register_activities_static::<PriorityActivities>();
     worker.register_wf(starter.get_task_queue(), move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {
@@ -64,7 +65,8 @@ pub(crate) async fn priority_values_sent_to_server() {
             .into_started()
             .expect("Child should start OK");
         let activity = ctx
-            .activity::<priority_activities::Echo>(
+            .activity(
+                PriorityActivities::echo,
                 "hello".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),

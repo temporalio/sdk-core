@@ -7,9 +7,7 @@ mod fuzzy_workflow;
 
 use crate::common::get_integ_runtime_options;
 use common::{
-    CoreWfStarter,
-    activity_functions::{StdActivities, std_activities},
-    init_integ_telem, prom_metrics, rand_6_chars,
+    CoreWfStarter, activity_functions::StdActivities, init_integ_telem, prom_metrics, rand_6_chars,
     workflows::la_problem_workflow,
 };
 use futures_util::{
@@ -67,7 +65,8 @@ async fn activity_load() {
         let input_str = "yo".to_string();
         async move {
             let res = ctx
-                .activity::<std_activities::Echo>(
+                .activity(
+                    StdActivities::echo,
                     input_str.clone(),
                     ActivityOptions {
                         activity_id: Some(activity_id.to_string()),
@@ -116,25 +115,6 @@ async fn activity_load() {
     dbg!(running.elapsed());
 }
 
-struct ChunkyActivities {}
-#[activities]
-impl ChunkyActivities {
-    #[activity]
-    async fn chunky_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
-        tokio::task::spawn_blocking(move || {
-            // Allocate a gig and then do some CPU stuff on it
-            let mut mem = vec![0_u8; 1000 * 1024 * 1024];
-            for _ in 1..10 {
-                for i in 0..mem.len() {
-                    mem[i] &= mem[mem.len() - 1 - i]
-                }
-            }
-            Ok(echo)
-        })
-        .await?
-    }
-}
-
 #[tokio::test]
 async fn chunky_activities_resource_based() {
     const WORKFLOWS: usize = 100;
@@ -151,6 +131,26 @@ async fn chunky_activities_resource_based() {
         ))
         .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
     starter.sdk_config.tuner = Arc::new(tuner);
+
+    struct ChunkyActivities {}
+    #[activities]
+    impl ChunkyActivities {
+        #[activity]
+        async fn chunky_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
+            tokio::task::spawn_blocking(move || {
+                // Allocate a gig and then do some CPU stuff on it
+                let mut mem = vec![0_u8; 1000 * 1024 * 1024];
+                for _ in 1..10 {
+                    for i in 0..mem.len() {
+                        mem[i] &= mem[mem.len() - 1 - i]
+                    }
+                }
+                Ok(echo)
+            })
+            .await?
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<ChunkyActivities>();
@@ -163,7 +163,8 @@ async fn chunky_activities_resource_based() {
         let input_str = "yo".to_string();
         async move {
             let res = ctx
-                .activity::<chunky_activities::ChunkyEcho>(
+                .activity(
+                    ChunkyActivities::chunky_echo,
                     input_str.clone(),
                     ActivityOptions {
                         activity_id: Some(activity_id.to_string()),
@@ -235,7 +236,8 @@ async fn workflow_load() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity::<std_activities::Echo>(
+                ctx.activity(
+                    StdActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -400,18 +402,6 @@ async fn can_paginate_long_history() {
     worker.run_until_done().await.unwrap();
 }
 
-struct JitteryActivities {}
-#[activities]
-impl JitteryActivities {
-    #[activity]
-    async fn jittery_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
-    }
-}
-
 #[tokio::test]
 async fn poller_autoscaling_basic_loadtest() {
     const SIGNAME: &str = "signame";
@@ -430,6 +420,22 @@ async fn poller_autoscaling_basic_loadtest() {
         maximum: 200,
         initial: 5,
     };
+
+    struct JitteryActivities {}
+    #[activities]
+    impl JitteryActivities {
+        #[activity]
+        async fn jittery_echo(
+            _ctx: ActivityContext,
+            echo: String,
+        ) -> Result<String, ActivityError> {
+            // Add some jitter to completions
+            let rand_millis = rand::rng().random_range(0..500);
+            tokio::time::sleep(Duration::from_millis(rand_millis)).await;
+            Ok(echo)
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<JitteryActivities>();
@@ -441,7 +447,8 @@ async fn poller_autoscaling_basic_loadtest() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity::<jittery_activities::JitteryEcho>(
+                ctx.activity(
+                    JitteryActivities::jittery_echo,
                     "hi!".to_string(),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),

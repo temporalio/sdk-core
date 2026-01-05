@@ -1,8 +1,4 @@
-use crate::common::{
-    CoreWfStarter,
-    activity_functions::{StdActivities, std_activities},
-    eventually,
-};
+use crate::common::{CoreWfStarter, activity_functions::StdActivities, eventually};
 use std::time::Duration;
 use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
 use temporalio_common::{
@@ -163,7 +159,8 @@ async fn activity_has_deployment_stamp() {
     let client = starter.get_client().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "hi!".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),

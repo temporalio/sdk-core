@@ -83,7 +83,8 @@ async fn poller_load_spiky() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity::<jittery_echo_activities::Echo>(
+                ctx.activity(
+                    JitteryEchoActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -324,7 +325,8 @@ async fn poller_load_spike_then_sustained() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity::<jittery_echo_activities::Echo>(
+                ctx.activity(
+                    JitteryEchoActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),

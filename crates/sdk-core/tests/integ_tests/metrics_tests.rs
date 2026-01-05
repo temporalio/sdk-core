@@ -765,22 +765,6 @@ async fn docker_metrics_with_prometheus(
     }
 }
 
-struct PassFailActivities {}
-#[activities]
-impl PassFailActivities {
-    #[activity(name = "pass_fail_act")]
-    async fn pass_fail_act(ctx: ActivityContext, i: String) -> Result<String, ActivityError> {
-        match i.as_str() {
-            "pass" => Ok("pass".to_string()),
-            "cancel" => {
-                ctx.cancelled().await;
-                Err(ActivityError::cancelled())
-            }
-            _ => Err(anyhow!("fail").into()),
-        }
-    }
-}
-
 #[tokio::test]
 async fn activity_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
@@ -788,6 +772,23 @@ async fn activity_metrics() {
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.sdk_config.graceful_shutdown_period = Some(Duration::from_secs(1));
+
+    struct PassFailActivities {}
+    #[activities]
+    impl PassFailActivities {
+        #[activity(name = "pass_fail_act")]
+        async fn pass_fail_act(ctx: ActivityContext, i: String) -> Result<String, ActivityError> {
+            match i.as_str() {
+                "pass" => Ok("pass".to_string()),
+                "cancel" => {
+                    ctx.cancelled().await;
+                    Err(ActivityError::cancelled())
+                }
+                _ => Err(anyhow!("fail").into()),
+            }
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<PassFailActivities>();
@@ -796,7 +797,8 @@ async fn activity_metrics() {
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let normal_act_pass = ctx
-            .activity::<pass_fail_activities::PassFailAct>(
+            .activity(
+                PassFailActivities::pass_fail_act,
                 "pass".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(1)),
@@ -805,7 +807,8 @@ async fn activity_metrics() {
             )
             .unwrap();
         let normal_act_fail = ctx
-            .activity::<pass_fail_activities::PassFailAct>(
+            .activity(
+                PassFailActivities::pass_fail_act,
                 "fail".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(1)),
@@ -818,11 +821,13 @@ async fn activity_metrics() {
             )
             .unwrap();
         join!(normal_act_pass, normal_act_fail);
-        let local_act_pass = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+        let local_act_pass = ctx.local_activity(
+            PassFailActivities::pass_fail_act,
             "pass".to_string(),
             LocalActivityOptions::default(),
         )?;
-        let local_act_fail = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+        let local_act_fail = ctx.local_activity(
+            PassFailActivities::pass_fail_act,
             "fail".to_string(),
             LocalActivityOptions {
                 retry_policy: RetryPolicy {
@@ -832,7 +837,8 @@ async fn activity_metrics() {
                 ..Default::default()
             },
         )?;
-        let local_act_cancel = ctx.local_activity::<pass_fail_activities::PassFailAct>(
+        let local_act_cancel = ctx.local_activity(
+            PassFailActivities::pass_fail_act,
             "cancel".to_string(),
             LocalActivityOptions {
                 retry_policy: RetryPolicy {

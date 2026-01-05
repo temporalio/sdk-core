@@ -1,8 +1,4 @@
-use crate::common::{
-    CoreWfStarter,
-    activity_functions::{StdActivities, std_activities},
-    init_core_and_create_wf,
-};
+use crate::common::{CoreWfStarter, activity_functions::StdActivities, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::{WfClientExt, WorkflowOptions};
@@ -195,7 +191,8 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .activity::<std_activities::Delay>(
+            .activity(
+                StdActivities::delay,
                 Duration::from_secs(4),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(10)),

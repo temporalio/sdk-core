@@ -20,10 +20,9 @@ mod upsert_search_attrs;
 
 use crate::{
     common::{
-        CoreWfStarter,
-        activity_functions::{StdActivities, std_activities},
-        get_integ_runtime_options, history_from_proto_binary, init_core_and_create_wf,
-        init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
+        CoreWfStarter, activity_functions::StdActivities, get_integ_runtime_options,
+        history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
+        mock_sdk_cfg, prom_metrics,
     },
     integ_tests::metrics_tests,
 };
@@ -480,7 +479,8 @@ async fn slow_completes_with_small_cache() {
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity::<std_activities::Echo>(
+            ctx.activity(
+                StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -818,7 +818,8 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
         .register_activities_static::<StdActivities>();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "hi".to_owned(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -864,7 +865,8 @@ async fn history_out_of_order_on_restart() {
     worker.register_activities_static::<StdActivities>();
     worker2.register_activities_static::<StdActivities>();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity::<std_activities::Echo>(
+        ctx.local_activity(
+            StdActivities::echo,
             "hi".to_string(),
             LocalActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -872,7 +874,8 @@ async fn history_out_of_order_on_restart() {
             },
         )?
         .await;
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "hi".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -887,7 +890,8 @@ async fn history_out_of_order_on_restart() {
     });
 
     worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity::<std_activities::Echo>(
+        ctx.local_activity(
+            StdActivities::echo,
             "hi".to_string(),
             LocalActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -897,7 +901,8 @@ async fn history_out_of_order_on_restart() {
         .await;
         // Timer is added after restarting workflow
         ctx.timer(Duration::from_secs(1)).await;
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "hi".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),

@@ -219,6 +219,7 @@ impl WfContext {
     /// Request to run an activity
     pub fn activity<AD: ActivityDefinition>(
         &self,
+        _activity: AD,
         input: AD::Input,
         opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
@@ -253,6 +254,7 @@ impl WfContext {
     /// Request to run a local activity
     pub fn local_activity<AD: ActivityDefinition>(
         &self,
+        _activity: AD,
         input: AD::Input,
         opts: LocalActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {

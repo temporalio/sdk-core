@@ -21,6 +21,8 @@
 //! };
 //! use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
 //!
+//! struct MyActivities;
+//!
 //! #[activities]
 //! impl MyActivities {
 //!     #[activity]
@@ -59,7 +61,7 @@
 //!         .register_activities_static::<MyActivities>()
 //!         .build();
 //!
-//!     let worker = Worker::new(&runtime, client, worker_options)?;
+//!     let mut worker = Worker::new(&runtime, client, worker_options)?;
 //!     worker.run().await?;
 //!
 //!     Ok(())
@@ -251,7 +253,7 @@ pub struct WorkerOptions {
 // TODO [rust-sdk-branch]: Traitify this?
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
     /// Registers all activities on an activity implementer that don't take a receiver.
-    pub fn register_activities_static<AI>(&mut self) -> &mut Self
+    pub fn register_activities_static<AI>(mut self) -> Self
     where
         AI: ActivityImplementer + HasOnlyStaticMethods,
     {
@@ -259,20 +261,20 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         self
     }
     /// Registers all activities on an activity implementer that take a receiver.
-    pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
+    pub fn register_activities<AI: ActivityImplementer>(mut self, instance: AI) -> Self {
         self.activities.register_activities::<AI>(instance);
         self
     }
     /// Registers a specific activitiy that does not take a receiver.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(mut self) -> Self {
         self.activities.register_activity::<AD>();
         self
     }
     /// Registers a specific activitiy that takes a receiver.
     pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
-        &mut self,
+        mut self,
         instance: Arc<AD::Implementer>,
-    ) -> &mut Self {
+    ) -> Self {
         self.activities
             .register_activity_with_instance::<AD>(instance);
         self
@@ -1379,11 +1381,39 @@ mod tests {
         async fn my_activity(_ctx: ActivityContext) -> Result<(), ActivityError> {
             Ok(())
         }
+
+        #[activity]
+        async fn takes_self(
+            self: Arc<Self>,
+            _ctx: ActivityContext,
+            _: String,
+        ) -> Result<(), ActivityError> {
+            Ok(())
+        }
     }
 
     #[test]
     fn test_activity_registration() {
         let act_instance = MyActivities {};
-        WorkerOptions::new("task_q").register_activities(act_instance);
+        let _ = WorkerOptions::new("task_q").register_activities(act_instance);
+    }
+
+    // Compile-only test for workflow context invocation
+    #[allow(dead_code, unreachable_code, unused, clippy::diverging_sub_expression)]
+    fn test_activity_via_workflow_context() {
+        let wf_ctx: WfContext = unimplemented!();
+        wf_ctx.activity(MyActivities::my_activity, (), ActivityOptions::default());
+        wf_ctx.activity(
+            MyActivities::takes_self,
+            "Hi".to_owned(),
+            ActivityOptions::default(),
+        );
+    }
+
+    // Compile-only test for direct invocation via .run()
+    #[allow(dead_code, unreachable_code, unused, clippy::diverging_sub_expression)]
+    async fn test_activity_direct_invocation() {
+        let ctx: ActivityContext = unimplemented!();
+        let _result = MyActivities::my_activity.run(ctx).await;
     }
 }

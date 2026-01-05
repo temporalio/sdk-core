@@ -1,7 +1,6 @@
 use crate::common::{
-    CoreWfStarter, WorkflowHandleExt,
-    activity_functions::{StdActivities, std_activities},
-    init_core_and_create_wf, init_core_replay_preloaded,
+    CoreWfStarter, WorkflowHandleExt, activity_functions::StdActivities, init_core_and_create_wf,
+    init_core_replay_preloaded,
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
@@ -654,7 +653,8 @@ async fn update_with_local_acts() {
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .local_activity::<std_activities::Delay>(
+                    .local_activity(
+                        StdActivities::delay,
                         Duration::from_secs(3),
                         LocalActivityOptions::default(),
                     )?
@@ -956,24 +956,25 @@ async fn task_failure_after_update() {
 
 static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(2));
 static ACT_RAN: AtomicBool = AtomicBool::new(false);
-struct BlockingActivities {}
-#[activities]
-impl BlockingActivities {
-    #[activity]
-    async fn blocks(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
-        BARR.wait().await;
-        if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
-            // On first run fail the task so we'll get retried on the new worker
-            return Err(anyhow!("Fail first time").into());
-        }
-        Ok(echo_me)
-    }
-}
-
 #[tokio::test]
 async fn worker_restarted_in_middle_of_update() {
     let wf_name = "worker_restarted_in_middle_of_update";
     let mut starter = CoreWfStarter::new(wf_name);
+
+    struct BlockingActivities {}
+    #[activities]
+    impl BlockingActivities {
+        #[activity]
+        async fn blocks(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
+            BARR.wait().await;
+            if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
+                // On first run fail the task so we'll get retried on the new worker
+                return Err(anyhow!("Fail first time").into());
+            }
+            Ok(echo_me)
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<BlockingActivities>();
@@ -986,7 +987,8 @@ async fn worker_restarted_in_middle_of_update() {
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .activity::<blocking_activities::Blocks>(
+                    .activity(
+                        BlockingActivities::blocks,
                         "hi!".to_string(),
                         ActivityOptions {
                             start_to_close_timeout: Some(Duration::from_secs(2)),
@@ -1081,7 +1083,8 @@ async fn update_after_empty_wft() {
                     return Ok(());
                 }
                 ctx.wf_ctx
-                    .activity::<std_activities::Echo>(
+                    .activity(
+                        StdActivities::echo,
                         "hi!".to_string(),
                         ActivityOptions {
                             start_to_close_timeout: Some(Duration::from_secs(2)),
@@ -1097,7 +1100,8 @@ async fn update_after_empty_wft() {
         let sig_handle = async {
             sig.next().await;
             ACT_STARTED.store(true, Ordering::Release);
-            ctx.activity::<std_activities::Echo>(
+            ctx.activity(
+                StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(2)),
@@ -1180,7 +1184,8 @@ async fn update_lost_on_activity_mismatch() {
         for _ in 1..=3 {
             let cr = can_run.clone();
             ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
-            ctx.activity::<std_activities::Echo>(
+            ctx.activity(
+                StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(2)),

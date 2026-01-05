@@ -1,8 +1,6 @@
 use crate::{
     common::{
-        CoreWfStarter,
-        activity_functions::{StdActivities, std_activities},
-        fake_grpc_server::fake_server,
+        CoreWfStarter, activity_functions::StdActivities, fake_grpc_server::fake_server,
         get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
     shared_tests,
@@ -725,7 +723,8 @@ async fn test_custom_slot_supplier_simple() {
         "SlotSupplierWorkflow".to_owned(),
         |ctx: WfContext| async move {
             let _result = ctx
-                .activity::<std_activities::NoOp>(
+                .activity(
+                    StdActivities::no_op,
                     (),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(10)),
@@ -734,7 +733,8 @@ async fn test_custom_slot_supplier_simple() {
                 )?
                 .await;
             let _result = ctx
-                .local_activity::<std_activities::NoOp>(
+                .local_activity(
+                    StdActivities::no_op,
                     (),
                     LocalActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(10)),
@@ -822,7 +822,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type.contains("NoOp")))
+                                } if act_type.contains("no_op")))
     );
     assert!(
         local_activity_events
@@ -831,7 +831,7 @@ async fn test_custom_slot_supplier_simple() {
                                     slot_type: "local_activity",
                                     activity_type: Some(act_type),
                                     ..
-                                } if act_type.contains("NoOp")))
+                                } if act_type.contains("no_op")))
     );
     assert!(wf_events.iter().any(|e| matches!(
         e,

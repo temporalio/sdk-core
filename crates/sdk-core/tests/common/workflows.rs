@@ -1,10 +1,11 @@
-use crate::common::activity_functions::std_activities;
+use crate::common::activity_functions::StdActivities;
 use std::time::Duration;
 use temporalio_common::{prost_dur, protos::temporal::api::common::v1::RetryPolicy};
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 
 pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity::<std_activities::Delay>(
+    ctx.local_activity(
+        StdActivities::delay,
         Duration::from_secs(15),
         LocalActivityOptions {
             retry_policy: RetryPolicy {
@@ -19,7 +20,8 @@ pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
         },
     )?
     .await;
-    ctx.activity::<std_activities::Delay>(
+    ctx.activity(
+        StdActivities::delay,
         Duration::from_secs(15),
         ActivityOptions {
             start_to_close_timeout: Some(Duration::from_secs(20)),

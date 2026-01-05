@@ -1,7 +1,4 @@
-use crate::common::{
-    CoreWfStarter, NAMESPACE,
-    activity_functions::{StdActivities, std_activities},
-};
+use crate::common::{CoreWfStarter, NAMESPACE, activity_functions::StdActivities};
 use futures_util::StreamExt;
 use std::{
     sync::{
@@ -150,7 +147,8 @@ async fn reset_randomseed() {
             if RAND_SEED.load(Ordering::Relaxed) == ctx.random_seed() {
                 ctx.timer(Duration::from_millis(100)).await;
             } else {
-                ctx.local_activity::<std_activities::Echo>(
+                ctx.local_activity(
+                    StdActivities::echo,
                     "hi!".to_string(),
                     LocalActivityOptions::default(),
                 )?

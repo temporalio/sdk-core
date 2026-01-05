@@ -1,6 +1,5 @@
 use crate::common::{
-    CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION,
-    activity_functions::{StdActivities, std_activities},
+    CoreWfStarter, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, activity_functions::StdActivities,
     get_integ_client, init_core_and_create_wf, init_integ_telem, integ_dev_server_config,
     integ_worker_config,
 };
@@ -265,7 +264,8 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity::<std_activities::Echo>(
+            ctx.activity(
+                StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),

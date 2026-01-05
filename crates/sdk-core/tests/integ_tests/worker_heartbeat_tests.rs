@@ -1,7 +1,5 @@
 use crate::common::{
-    ANY_PORT, CoreWfStarter,
-    activity_functions::{StdActivities, std_activities},
-    eventually, get_integ_telem_options,
+    ANY_PORT, CoreWfStarter, activity_functions::StdActivities, eventually, get_integ_telem_options,
 };
 use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
@@ -95,24 +93,6 @@ async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Ve
     .collect()
 }
 
-struct NotifyActivities {
-    acts_started: Arc<Notify>,
-    acts_done: Arc<Notify>,
-}
-#[activities]
-impl NotifyActivities {
-    #[activity]
-    async fn pass_fail_act(
-        self: Arc<Self>,
-        _ctx: ActivityContext,
-        i: String,
-    ) -> Result<String, ActivityError> {
-        self.acts_started.notify_one();
-        self.acts_done.notified().await;
-        Ok(i)
-    }
-}
-
 // Tests that rely on Prometheus running in a docker container need to start
 // with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
 #[rstest::rstest]
@@ -172,6 +152,25 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     });
     let acts_started = Arc::new(Notify::new());
     let acts_done = Arc::new(Notify::new());
+
+    struct NotifyActivities {
+        acts_started: Arc<Notify>,
+        acts_done: Arc<Notify>,
+    }
+    #[activities]
+    impl NotifyActivities {
+        #[activity]
+        async fn pass_fail_act(
+            self: Arc<Self>,
+            _ctx: ActivityContext,
+            i: String,
+        ) -> Result<String, ActivityError> {
+            self.acts_started.notify_one();
+            self.acts_done.notified().await;
+            Ok(i)
+        }
+    }
+
     starter.sdk_config.register_activities(NotifyActivities {
         acts_started: acts_started.clone(),
         acts_done: acts_done.clone(),
@@ -180,7 +179,8 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity::<notify_activities::PassFailAct>(
+        ctx.activity(
+            NotifyActivities::pass_fail_act,
             "pass".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -322,7 +322,8 @@ async fn docker_worker_heartbeat_tuner() {
 
     // Run a workflow
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(1)),
@@ -557,35 +558,36 @@ static HISTORY_WF1_ACTIVITY_STARTED: Notify = Notify::const_new();
 static HISTORY_WF1_ACTIVITY_FINISH: Notify = Notify::const_new();
 static HISTORY_WF2_ACTIVITY_STARTED: Notify = Notify::const_new();
 static HISTORY_WF2_ACTIVITY_FINISH: Notify = Notify::const_new();
-struct StickyCacheActivities;
-#[activities]
-impl StickyCacheActivities {
-    #[activity]
-    async fn sticky_cache_history_act(
-        _ctx: ActivityContext,
-        marker: String,
-    ) -> Result<String, ActivityError> {
-        match marker.as_str() {
-            "wf1" => {
-                HISTORY_WF1_ACTIVITY_STARTED.notify_one();
-                HISTORY_WF1_ACTIVITY_FINISH.notified().await;
-            }
-            "wf2" => {
-                HISTORY_WF2_ACTIVITY_STARTED.notify_one();
-                HISTORY_WF2_ACTIVITY_FINISH.notified().await;
-            }
-            _ => {}
-        }
-        Ok(marker)
-    }
-}
-
 #[tokio::test]
 async fn worker_heartbeat_sticky_cache_miss() {
     let wf_name = "worker_heartbeat_cache_miss";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.max_cached_workflows = 1_usize;
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(2, 10, 10, 10));
+
+    struct StickyCacheActivities;
+    #[activities]
+    impl StickyCacheActivities {
+        #[activity]
+        async fn sticky_cache_history_act(
+            _ctx: ActivityContext,
+            marker: String,
+        ) -> Result<String, ActivityError> {
+            match marker.as_str() {
+                "wf1" => {
+                    HISTORY_WF1_ACTIVITY_STARTED.notify_one();
+                    HISTORY_WF1_ACTIVITY_FINISH.notified().await;
+                }
+                "wf2" => {
+                    HISTORY_WF2_ACTIVITY_STARTED.notify_one();
+                    HISTORY_WF2_ACTIVITY_FINISH.notified().await;
+                }
+                _ => {}
+            }
+            Ok(marker)
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<StickyCacheActivities>();
@@ -606,7 +608,8 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .and_then(|p| String::from_json_payload(p).ok())
             .unwrap_or_else(|| "wf1".to_string());
 
-        ctx.activity::<sticky_cache_activities::StickyCacheHistoryAct>(
+        ctx.activity(
+            StickyCacheActivities::sticky_cache_history_act,
             wf_marker.clone(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -780,20 +783,6 @@ static ACT_COUNT: AtomicU64 = AtomicU64::new(0);
 static WF_COUNT: AtomicU64 = AtomicU64::new(0);
 static ACT_FAIL: Notify = Notify::const_new();
 static WF_FAIL: Notify = Notify::const_new();
-struct FailingActivities;
-#[activities]
-impl FailingActivities {
-    #[activity]
-    async fn failing_act(_ctx: ActivityContext, _: String) -> Result<(), ActivityError> {
-        if ACT_COUNT.load(Ordering::Relaxed) == 3 {
-            return Ok(());
-        }
-        ACT_COUNT.fetch_add(1, Ordering::Relaxed);
-        ACT_FAIL.notify_one();
-        Err(anyhow!("Expected error").into())
-    }
-}
-
 #[tokio::test]
 async fn worker_heartbeat_failure_metrics() {
     const WORKFLOW_CONTINUE_SIGNAL: &str = "workflow-continue";
@@ -801,6 +790,21 @@ async fn worker_heartbeat_failure_metrics() {
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
+
+    struct FailingActivities;
+    #[activities]
+    impl FailingActivities {
+        #[activity]
+        async fn failing_act(_ctx: ActivityContext, _: String) -> Result<(), ActivityError> {
+            if ACT_COUNT.load(Ordering::Relaxed) == 3 {
+                return Ok(());
+            }
+            ACT_COUNT.fetch_add(1, Ordering::Relaxed);
+            ACT_FAIL.notify_one();
+            Err(anyhow!("Expected error").into())
+        }
+    }
+
     starter
         .sdk_config
         .register_activities_static::<FailingActivities>();
@@ -810,7 +814,8 @@ async fn worker_heartbeat_failure_metrics() {
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let _ = ctx
-            .activity::<failing_activities::FailingAct>(
+            .activity(
+                FailingActivities::failing_act,
                 "boom".to_string(),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -982,7 +987,8 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(1)),
@@ -1044,7 +1050,8 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(1)),

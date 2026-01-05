@@ -1,7 +1,4 @@
-use crate::common::{
-    CoreWfStarter,
-    activity_functions::{StdActivities, std_activities},
-};
+use crate::common::{CoreWfStarter, activity_functions::StdActivities};
 use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, sync::Arc, time::Duration};
@@ -43,7 +40,8 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
         .take_until(done.cancelled())
         .for_each_concurrent(None, |action| match action {
             FuzzyWfAction::DoAct => ctx
-                .activity::<std_activities::Echo>(
+                .activity(
+                    StdActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -54,7 +52,8 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                 .map(|_| ())
                 .boxed(),
             FuzzyWfAction::DoLocalAct => ctx
-                .local_activity::<std_activities::Echo>(
+                .local_activity(
+                    StdActivities::echo,
                     "hi!".to_string(),
                     LocalActivityOptions {
                         start_to_close_timeout: Some(Duration::from_secs(5)),

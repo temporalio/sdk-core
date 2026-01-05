@@ -1,6 +1,4 @@
-use crate::common::{
-    CoreWfStarter, WorkflowHandleExt, activity_functions::std_activities, mock_sdk, mock_sdk_cfg,
-};
+use crate::common::{CoreWfStarter, WorkflowHandleExt, mock_sdk, mock_sdk_cfg};
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -83,7 +81,8 @@ async fn task_fail_causes_replay_unset_too_soon() {
         if DID_FAIL.load(Ordering::Relaxed) {
             assert!(ctx.is_replaying());
         }
-        ctx.activity::<std_activities::Echo>(
+        ctx.activity(
+            StdActivities::echo,
             "hi!".to_string(),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(2)),
