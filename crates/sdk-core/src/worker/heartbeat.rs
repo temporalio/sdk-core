@@ -75,7 +75,7 @@ impl SharedNamespaceWorker {
                         .map(|caps| caps.worker_heartbeats)
                         != Some(true)
                     {
-                        warn!(
+                        trace!(
                             "Worker heartbeating configured for runtime, but server version does not support it."
                         );
                         worker.shutdown().await;
