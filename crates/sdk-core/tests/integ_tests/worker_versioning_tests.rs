@@ -152,14 +152,12 @@ async fn activity_has_deployment_stamp() {
         use_worker_versioning: true,
         default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
     };
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "hi!".to_string(),
             ActivityOptions {

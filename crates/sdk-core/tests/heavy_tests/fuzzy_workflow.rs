@@ -40,7 +40,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
         .take_until(done.cancelled())
         .for_each_concurrent(None, |action| match action {
             FuzzyWfAction::DoAct => ctx
-                .activity(
+                .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
@@ -52,7 +52,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                 .map(|_| ())
                 .boxed(),
             FuzzyWfAction::DoLocalAct => ctx
-                .local_activity(
+                .start_local_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
                     LocalActivityOptions {
@@ -83,9 +83,7 @@ async fn fuzzy_workflow() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
 
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
 
     let client = starter.get_client().await;
 

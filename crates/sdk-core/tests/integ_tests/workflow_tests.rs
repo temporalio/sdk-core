@@ -475,11 +475,11 @@ async fn slow_completes_with_small_cache() {
     starter.sdk_config.max_cached_workflows = 5_usize;
     let mut worker = starter.worker().await;
 
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity(
+            ctx.start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
@@ -813,12 +813,10 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 
     // Restart the worker with a new, incompatible wf definition which will cause nondeterminism
     let mut starter = starter.clone_no_worker();
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "hi".to_owned(),
             ActivityOptions {
@@ -862,10 +860,10 @@ async fn history_out_of_order_on_restart() {
 
     static HIT_SLEEP: Notify = Notify::const_new();
 
-    worker.register_activities_static::<StdActivities>();
-    worker2.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
+    worker2.register_activities(StdActivities);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(
+        ctx.start_local_activity(
             StdActivities::echo,
             "hi".to_string(),
             LocalActivityOptions {
@@ -874,7 +872,7 @@ async fn history_out_of_order_on_restart() {
             },
         )?
         .await;
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "hi".to_string(),
             ActivityOptions {
@@ -890,7 +888,7 @@ async fn history_out_of_order_on_restart() {
     });
 
     worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(
+        ctx.start_local_activity(
             StdActivities::echo,
             "hi".to_string(),
             LocalActivityOptions {
@@ -901,7 +899,7 @@ async fn history_out_of_order_on_restart() {
         .await;
         // Timer is added after restarting workflow
         ctx.timer(Duration::from_secs(1)).await;
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "hi".to_string(),
             ActivityOptions {

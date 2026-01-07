@@ -257,14 +257,12 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     }
     starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(2, 1, 1, 1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
-            ctx.activity(
+            ctx.start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {

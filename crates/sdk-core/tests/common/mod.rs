@@ -53,7 +53,7 @@ use temporalio_common::{
 };
 use temporalio_sdk::{
     Worker, WorkerOptions, WorkflowFunction,
-    activities::{ActivityImplementer, HasOnlyStaticMethods},
+    activities::ActivityImplementer,
     interceptors::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
@@ -529,7 +529,6 @@ impl TestWorker {
         self.inner.worker_instance_key()
     }
 
-    // TODO: Maybe trait-ify?
     pub(crate) fn register_wf<F: Into<WorkflowFunction>>(
         &mut self,
         workflow_type: impl Into<String>,
@@ -538,13 +537,6 @@ impl TestWorker {
         self.inner.register_wf(workflow_type, wf_function)
     }
 
-    pub(crate) fn register_activities_static<AI>(&mut self) -> &mut Self
-    where
-        AI: ActivityImplementer + HasOnlyStaticMethods,
-    {
-        self.inner.register_activities_static::<AI>();
-        self
-    }
     pub(crate) fn register_activities<AI: ActivityImplementer>(
         &mut self,
         instance: AI,

@@ -1,4 +1,51 @@
 //! Functionality related to defining and interacting with activities
+//!
+//!
+//! An example of defining an activity:
+//! ```
+//! use std::sync::{
+//!     Arc,
+//!     atomic::{AtomicUsize, Ordering},
+//! };
+//! use temporalio_macros::activities;
+//! use temporalio_sdk::activities::{ActivityContext, ActivityError};
+//!
+//! struct MyActivities {
+//!     counter: AtomicUsize,
+//! }
+//!
+//! #[activities]
+//! impl MyActivities {
+//!     #[activity]
+//!     async fn echo(_ctx: ActivityContext, e: String) -> Result<String, ActivityError> {
+//!         Ok(e)
+//!     }
+//!
+//!     #[activity]
+//!     async fn uses_self(self: Arc<Self>, _ctx: ActivityContext) -> Result<(), ActivityError> {
+//!         self.counter.fetch_add(1, Ordering::Relaxed);
+//!         Ok(())
+//!     }
+//! }
+//!
+//! // If you need to refer to an activity that is defined externally, in a different codebase or
+//! // possibly a differenet language, you can simply leave the function body unimplemented like so:
+//!
+//! struct ExternalActivities;
+//! #[activities]
+//! impl ExternalActivities {
+//!     #[activity(name = "foo")]
+//!     async fn foo(_ctx: ActivityContext, _: String) -> Result<String, ActivityError> {
+//!         unimplemented!()
+//!     }
+//! }
+//! ```
+//!
+//! This will allows you to call the activity from workflow code still, but the actual function
+//! will never be invoked, since you won't have registered it with the worker.
+
+#[doc(inline)]
+pub use temporalio_macros::activities;
 
 use crate::app_data::AppData;
 use futures_util::{FutureExt, future::BoxFuture};
@@ -312,8 +359,7 @@ pub(crate) type ActivityInvocation = Arc<
 
 #[doc(hidden)]
 pub trait ActivityImplementer {
-    fn register_all_static(defs: &mut ActivityDefinitions);
-    fn register_all_instance(self: Arc<Self>, defs: &mut ActivityDefinitions);
+    fn register_all(self: Arc<Self>, defs: &mut ActivityDefinitions);
 }
 
 #[doc(hidden)]
@@ -336,54 +382,26 @@ pub struct ActivityDefinitions {
 }
 
 impl ActivityDefinitions {
-    /// Registers all activities on an activity implementer that don't take a receiver.
-    pub fn register_activities_static<AI>(&mut self) -> &mut Self
-    where
-        AI: ActivityImplementer + HasOnlyStaticMethods,
-    {
-        AI::register_all_static(self);
-        self
-    }
-    /// Registers all activities on an activity implementer that take a receiver.
+    /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
-        AI::register_all_static(self);
         let arcd = Arc::new(instance);
-        AI::register_all_instance(arcd, self);
+        AI::register_all(arcd, self);
         self
     }
-    /// Registers a specific activitiy that does not take a receiver.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
-        self.activities.insert(
-            AD::name(),
-            Arc::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
-                let pc2 = pc.clone();
-                Ok(AD::execute(None, c, deserialized)
-                    .map(move |v| match v {
-                        Ok(okv) => pc2
-                            .to_payload(&okv, &SerializationContext::Activity)
-                            .map_err(|e| e.into()),
-                        Err(e) => Err(e),
-                    })
-                    .boxed())
-            }),
-        );
-        self
-    }
-    /// Registers a specific activitiy that takes a receiver.
-    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+    /// Registers a specific activitiy.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
         &mut self,
         instance: Arc<AD::Implementer>,
     ) -> &mut Self {
         self.activities.insert(
             AD::name(),
             Arc::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(p, &SerializationContext::Activity)?;
+                let deserialized = pc.from_payload(&SerializationContext::Activity, p)?;
                 let pc2 = pc.clone();
                 Ok(AD::execute(Some(instance.clone()), c, deserialized)
                     .map(move |v| match v {
                         Ok(okv) => pc2
-                            .to_payload(&okv, &SerializationContext::Activity)
+                            .to_payload(&SerializationContext::Activity, &okv)
                             .map_err(|e| e.into()),
                         Err(e) => Err(e),
                     })

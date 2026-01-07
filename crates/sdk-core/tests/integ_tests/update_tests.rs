@@ -641,9 +641,7 @@ async fn update_with_local_acts() {
     let mut starter = CoreWfStarter::new(wf_name);
     // Short task timeout to get activities to heartbeat without taking ages
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -653,7 +651,7 @@ async fn update_with_local_acts() {
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .local_activity(
+                    .start_local_activity(
                         StdActivities::delay,
                         Duration::from_secs(3),
                         LocalActivityOptions::default(),
@@ -961,7 +959,7 @@ async fn worker_restarted_in_middle_of_update() {
     let wf_name = "worker_restarted_in_middle_of_update";
     let mut starter = CoreWfStarter::new(wf_name);
 
-    struct BlockingActivities {}
+    struct BlockingActivities;
     #[activities]
     impl BlockingActivities {
         #[activity]
@@ -975,9 +973,7 @@ async fn worker_restarted_in_middle_of_update() {
         }
     }
 
-    starter
-        .sdk_config
-        .register_activities_static::<BlockingActivities>();
+    starter.sdk_config.register_activities(BlockingActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -987,7 +983,7 @@ async fn worker_restarted_in_middle_of_update() {
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .activity(
+                    .start_activity(
                         BlockingActivities::blocks,
                         "hi!".to_string(),
                         ActivityOptions {
@@ -1067,9 +1063,7 @@ async fn worker_restarted_in_middle_of_update() {
 async fn update_after_empty_wft() {
     let wf_name = "update_after_empty_wft";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -1083,7 +1077,7 @@ async fn update_after_empty_wft() {
                     return Ok(());
                 }
                 ctx.wf_ctx
-                    .activity(
+                    .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
                         ActivityOptions {
@@ -1100,7 +1094,7 @@ async fn update_after_empty_wft() {
         let sig_handle = async {
             sig.next().await;
             ACT_STARTED.store(true, Ordering::Release);
-            ctx.activity(
+            ctx.start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {
@@ -1161,9 +1155,7 @@ async fn update_after_empty_wft() {
 async fn update_lost_on_activity_mismatch() {
     let wf_name = "update_lost_on_activity_mismatch";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -1184,7 +1176,7 @@ async fn update_lost_on_activity_mismatch() {
         for _ in 1..=3 {
             let cr = can_run.clone();
             ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
-            ctx.activity(
+            ctx.start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
                 ActivityOptions {

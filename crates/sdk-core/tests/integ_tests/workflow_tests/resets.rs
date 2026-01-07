@@ -147,7 +147,7 @@ async fn reset_randomseed() {
             if RAND_SEED.load(Ordering::Relaxed) == ctx.random_seed() {
                 ctx.timer(Duration::from_millis(100)).await;
             } else {
-                ctx.local_activity(
+                ctx.start_local_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
                     LocalActivityOptions::default(),
@@ -166,7 +166,7 @@ async fn reset_randomseed() {
             Ok(().into())
         }
     });
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
 
     let run_id = worker
         .submit_wf(

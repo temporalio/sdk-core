@@ -510,28 +510,14 @@ impl ActivitiesDefinition {
         impl_type: &Type,
         module_ident: &syn::Ident,
     ) -> TokenStream2 {
-        let static_activities: Vec<_> = self
-            .activities
-            .iter()
-            .filter(|a| a.is_static)
-            .map(|a| {
-                let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
-                let struct_ident = format_ident!("{}", struct_name);
-                quote! {
-                    defs.register_activity::<#module_ident::#struct_ident>();
-                }
-            })
-            .collect();
-
         let instance_activities: Vec<_> = self
             .activities
             .iter()
-            .filter(|a| !a.is_static)
             .map(|a| {
                 let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
                 quote! {
-                    defs.register_activity_with_instance::<#module_ident::#struct_ident>(self.clone());
+                    defs.register_activity::<#module_ident::#struct_ident>(self.clone());
                 }
             })
             .collect();
@@ -544,13 +530,7 @@ impl ActivitiesDefinition {
 
         quote! {
             impl ::temporalio_sdk::activities::ActivityImplementer for #impl_type {
-                fn register_all_static(
-                    defs: &mut ::temporalio_sdk::activities::ActivityDefinitions,
-                ) {
-                    #(#static_activities)*
-                }
-
-                fn register_all_instance(
+                fn register_all(
                     self: ::std::sync::Arc<Self>,
                     defs: &mut ::temporalio_sdk::activities::ActivityDefinitions,
                 ) {

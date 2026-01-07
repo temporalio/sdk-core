@@ -26,7 +26,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     let mut worker = starter.worker().await;
     let child_type = "child-wf";
 
-    struct PriorityActivities {}
+    struct PriorityActivities;
     #[activities]
     impl PriorityActivities {
         #[activity]
@@ -43,7 +43,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         }
     }
 
-    worker.register_activities_static::<PriorityActivities>();
+    worker.register_activities(PriorityActivities);
     worker.register_wf(starter.get_task_queue(), move |ctx: WfContext| async move {
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: format!("{}-child", ctx.task_queue()),
@@ -65,7 +65,7 @@ pub(crate) async fn priority_values_sent_to_server() {
             .into_started()
             .expect("Child should start OK");
         let activity = ctx
-            .activity(
+            .start_activity(
                 PriorityActivities::echo,
                 "hello".to_string(),
                 ActivityOptions {

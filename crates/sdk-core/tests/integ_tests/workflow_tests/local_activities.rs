@@ -64,7 +64,7 @@ use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");
-    ctx.local_activity(
+    ctx.start_local_activity(
         StdActivities::echo,
         "hi!".to_string(),
         LocalActivityOptions::default(),
@@ -79,9 +79,7 @@ pub(crate) async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> 
 async fn one_local_activity() {
     let wf_name = "one_local_activity";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), one_local_activity_wf);
 
@@ -94,7 +92,7 @@ async fn one_local_activity() {
 }
 
 pub(crate) async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
-    let la = ctx.local_activity(
+    let la = ctx.start_local_activity(
         StdActivities::echo,
         "hi!".to_string(),
         LocalActivityOptions::default(),
@@ -108,9 +106,7 @@ pub(crate) async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> Workfl
 async fn local_act_concurrent_with_timer() {
     let wf_name = "local_act_concurrent_with_timer";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_concurrent_with_timer_wf);
 
@@ -122,12 +118,10 @@ async fn local_act_concurrent_with_timer() {
 async fn local_act_then_timer_then_wait_result() {
     let wf_name = "local_act_then_timer_then_wait_result";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let la = ctx.local_activity(
+        let la = ctx.start_local_activity(
             StdActivities::echo,
             "hi!".to_string(),
             LocalActivityOptions::default(),
@@ -143,7 +137,7 @@ async fn local_act_then_timer_then_wait_result() {
 }
 
 pub(crate) async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()> {
-    let la = ctx.local_activity(
+    let la = ctx.start_local_activity(
         StdActivities::delay,
         Duration::from_secs(4),
         LocalActivityOptions::default(),
@@ -159,9 +153,7 @@ async fn long_running_local_act_with_timer() {
     let wf_name = "long_running_local_act_with_timer";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
 
@@ -172,7 +164,7 @@ async fn long_running_local_act_with_timer() {
 pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
     let las: Vec<_> = (1..=50)
         .map(|i| {
-            ctx.local_activity(StdActivities::echo, format!("Hi {i}"), Default::default())
+            ctx.start_local_activity(StdActivities::echo, format!("Hi {i}"), Default::default())
                 .expect("serializes fine")
         })
         .collect();
@@ -186,9 +178,7 @@ async fn local_act_fanout() {
     let wf_name = "local_act_fanout";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 1, 1, 1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_fanout_wf);
 
@@ -200,13 +190,11 @@ async fn local_act_fanout() {
 async fn local_act_retry_timer_backoff() {
     let wf_name = "local_act_retry_timer_backoff";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .local_activity(
+            .start_local_activity(
                 StdActivities::always_fail,
                 (),
                 LocalActivityOptions {
@@ -285,7 +273,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         });
     let mut worker = starter.worker().await;
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
-        let la = ctx.local_activity(
+        let la = ctx.start_local_activity(
             EchoWithManualCancel::echo,
             "hi".to_string(),
             LocalActivityOptions {
@@ -401,7 +389,7 @@ async fn cancel_after_act_starts(
     let mut worker = starter.worker().await;
     let bo_dur = cancel_on_backoff.unwrap_or_else(|| Duration::from_secs(1));
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
-        let la = ctx.local_activity(
+        let la = ctx.start_local_activity(
             EchoWithManualCancelAndBackoff::echo,
             "hi".to_string(),
             LocalActivityOptions {
@@ -472,7 +460,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
 
     starter
         .sdk_config
-        .register_activities_static::<LongRunningWithCancellation>();
+        .register_activities(LongRunningWithCancellation);
     let mut worker = starter.worker().await;
     let (sched, start) = if is_schedule {
         (Some(Duration::from_secs(2)), None)
@@ -487,7 +475,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         let res = ctx
-            .local_activity(
+            .start_local_activity(
                 LongRunningWithCancellation::go,
                 (),
                 LocalActivityOptions {
@@ -529,7 +517,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .local_activity(
+            .start_local_activity(
                 FailWithAtomicCounter::go,
                 "hi".to_string(),
                 LocalActivityOptions {
@@ -580,9 +568,7 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
     let wf_name = format!("eviction_wont_make_local_act_get_dropped_{short_wft_timeout}");
     let mut starter = CoreWfStarter::new(&wf_name);
     starter.sdk_config.max_cached_workflows = 0_usize;
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
 
@@ -605,12 +591,10 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
 async fn timer_backoff_concurrent_with_non_timer_backoff() {
     let wf_name = "timer_backoff_concurrent_with_non_timer_backoff";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let r1 = ctx.local_activity(
+        let r1 = ctx.start_local_activity(
             StdActivities::always_fail,
             (),
             LocalActivityOptions {
@@ -625,7 +609,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
                 ..Default::default()
             },
         )?;
-        let r2 = ctx.local_activity(
+        let r2 = ctx.start_local_activity(
             StdActivities::always_fail,
             (),
             LocalActivityOptions {
@@ -654,14 +638,12 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
 async fn repro_nondeterminism_with_timer_bug() {
     let wf_name = "repro_nondeterminism_with_timer_bug";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let t1 = ctx.timer(Duration::from_secs(30));
-        let r1 = ctx.local_activity(
+        let r1 = ctx.start_local_activity(
             StdActivities::delay,
             Duration::from_secs(2),
             LocalActivityOptions {
@@ -726,7 +708,7 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker.run().await.unwrap();
 }
 
@@ -747,7 +729,7 @@ async fn second_weird_la_nondeterminism_repro() {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker.run().await.unwrap();
 }
 
@@ -766,7 +748,7 @@ async fn third_weird_la_nondeterminism_repro() {
         "evict_while_la_running_no_interference",
         la_problem_workflow,
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker.run().await.unwrap();
 }
 
@@ -802,14 +784,14 @@ async fn la_resolve_same_time_as_other_cancel() {
 
     starter
         .sdk_config
-        .register_activities_static::<DelayWithCancellation>();
+        .register_activities(DelayWithCancellation);
     // The activity won't get a chance to receive the cancel so make sure we still exit fast
     starter.sdk_config.graceful_shutdown_period = Some(Duration::from_millis(100));
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let normal_act = ctx
-            .activity(
+            .start_activity(
                 DelayWithCancellation::delay,
                 Duration::from_secs(9),
                 ActivityOptions {
@@ -823,7 +805,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         ctx.timer(Duration::from_millis(1)).await;
 
         // Start LA and cancel the activity at the same time
-        let local_act = ctx.local_activity(
+        let local_act = ctx.start_local_activity(
             DelayWithCancellation::delay,
             Duration::from_millis(100),
             LocalActivityOptions {
@@ -874,9 +856,7 @@ async fn long_local_activity_with_update(
     let wf_name = format!("{}-{}", ctx.name, ctx.case.unwrap());
     let mut starter = CoreWfStarter::new(&wf_name);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -899,7 +879,7 @@ async fn long_local_activity_with_update(
                 }
             },
         );
-        ctx.local_activity(
+        ctx.start_local_activity(
             StdActivities::delay,
             Duration::from_secs(6),
             LocalActivityOptions::default(),
@@ -966,9 +946,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
     let wf_name = "local_activity_with_heartbeat_only_causes_one_wakeup";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
@@ -976,7 +954,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         let la_resolved = AtomicBool::new(false);
         tokio::join!(
             async {
-                ctx.local_activity(
+                ctx.start_local_activity(
                     StdActivities::delay,
                     Duration::from_secs(6),
                     LocalActivityOptions::default(),
@@ -1011,7 +989,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
 }
 
 pub(crate) async fn local_activity_with_summary_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity(
+    ctx.start_local_activity(
         StdActivities::echo,
         "hi".to_string(),
         LocalActivityOptions {
@@ -1027,9 +1005,7 @@ pub(crate) async fn local_activity_with_summary_wf(ctx: WfContext) -> WorkflowRe
 async fn local_activity_with_summary() {
     let wf_name = "local_activity_with_summary";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_activity_with_summary_wf);
 
@@ -1100,13 +1076,13 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            let la = ctx.local_activity(StdActivities::default, (), Default::default())?;
+            let la = ctx.start_local_activity(StdActivities::default, (), Default::default())?;
             ctx.timer(Duration::from_secs(1)).await;
             la.await;
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1139,7 +1115,7 @@ async fn local_act_many_concurrent() {
     let mut worker = mock_sdk(mh);
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1186,7 +1162,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            ctx.local_activity(
+            ctx.start_local_activity(
                 EchoWithConditionalBarrier::echo,
                 "hi".to_string(),
                 LocalActivityOptions::default(),
@@ -1262,7 +1238,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         move |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     EventuallyPassingActivity::echo,
                     "hi".to_string(),
                     LocalActivityOptions {
@@ -1363,7 +1339,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     StdActivities::always_fail,
                     (),
                     LocalActivityOptions {
@@ -1385,7 +1361,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1416,12 +1392,12 @@ async fn local_act_null_result() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            ctx.local_activity(StdActivities::no_op, (), LocalActivityOptions::default())?
+            ctx.start_local_activity(StdActivities::no_op, (), LocalActivityOptions::default())?
                 .await;
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1455,13 +1431,13 @@ async fn local_act_command_immediately_follows_la_marker() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            ctx.local_activity(StdActivities::no_op, (), LocalActivityOptions::default())?
+            ctx.start_local_activity(StdActivities::no_op, (), LocalActivityOptions::default())?
                 .await;
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1745,7 +1721,7 @@ async fn test_schedule_to_start_timeout() {
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     StdActivities::echo,
                     "hi".to_string(),
                     LocalActivityOptions {
@@ -1768,7 +1744,7 @@ async fn test_schedule_to_start_timeout() {
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1832,7 +1808,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         move |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     StdActivities::echo,
                     "hi".to_string(),
                     LocalActivityOptions {
@@ -1857,7 +1833,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1904,7 +1880,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         move |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     ActivityWithRetriesAndCancellation::go,
                     (),
                     LocalActivityOptions {
@@ -1993,8 +1969,11 @@ async fn wft_failure_cancels_running_las() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            let la_handle =
-                ctx.local_activity(ActivityThatExpectsCancellation::go, (), Default::default())?;
+            let la_handle = ctx.start_local_activity(
+                ActivityThatExpectsCancellation::go,
+                (),
+                Default::default(),
+            )?;
             tokio::join!(
                 async {
                     ctx.timer(Duration::from_secs(1)).await;
@@ -2019,7 +1998,7 @@ async fn wft_failure_cancels_running_las() {
         }
     }
 
-    worker.register_activities_static::<ActivityThatExpectsCancellation>();
+    worker.register_activities(ActivityThatExpectsCancellation);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -2062,7 +2041,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         WorkflowFunction::new::<_, _, ()>(|ctx: WfContext| async move {
-            ctx.local_activity(
+            ctx.start_local_activity(
                 StdActivities::echo,
                 "hi".to_string(),
                 LocalActivityOptions {
@@ -2073,7 +2052,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
             panic!()
         }),
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -2116,7 +2095,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            ctx.local_activity(
+            ctx.start_local_activity(
                 StdActivities::always_fail,
                 (),
                 LocalActivityOptions {
@@ -2134,7 +2113,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
             Ok(().into())
         },
     );
-    worker.register_activities_static::<StdActivities>();
+    worker.register_activities(StdActivities);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -2435,7 +2414,7 @@ async fn local_act_retry_explicit_delay() {
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         move |ctx: WfContext| async move {
             let la_res = ctx
-                .local_activity(
+                .start_local_activity(
                     ActivityWithExplicitBackoff::go,
                     (),
                     LocalActivityOptions {
@@ -2498,9 +2477,9 @@ async fn local_act_retry_explicit_delay() {
 }
 
 async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity_untyped(
-        DEFAULT_ACTIVITY_TYPE.to_string(),
-        ().as_json_payload().expect("serializes fine"),
+    ctx.start_local_activity(
+        StdActivities::default,
+        (),
         LocalActivityOptions {
             retry_policy: RetryPolicy {
                 maximum_attempts: 1,
@@ -2508,7 +2487,7 @@ async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
             },
             ..Default::default()
         },
-    )
+    )?
     .await;
     Ok(().into())
 }
@@ -2613,33 +2592,17 @@ async fn one_la_success(#[case] replay: bool, #[case] completes_ok: bool) {
 }
 
 async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity_untyped(
-        DEFAULT_ACTIVITY_TYPE.to_string(),
-        ().as_json_payload().expect("serializes fine"),
-        LocalActivityOptions::default(),
-    )
-    .await;
-    ctx.local_activity_untyped(
-        DEFAULT_ACTIVITY_TYPE.to_string(),
-        ().as_json_payload().expect("serializes fine"),
-        LocalActivityOptions::default(),
-    )
-    .await;
+    ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?
+        .await;
+    ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?
+        .await;
     Ok(().into())
 }
 
 async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
     tokio::join!(
-        ctx.local_activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            ().as_json_payload().expect("serializes fine"),
-            LocalActivityOptions::default(),
-        ),
-        ctx.local_activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            ().as_json_payload().expect("serializes fine"),
-            LocalActivityOptions::default(),
-        )
+        ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?,
+        ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?
     );
     Ok(().into())
 }
@@ -2743,24 +2706,16 @@ async fn two_sequential_las(
     } else {
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, two_la_wf);
     }
-    worker.register_activities_static::<ResolvedActivity>();
+    worker.register_activities(ResolvedActivity);
     worker.run().await.unwrap();
 }
 
 async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity_untyped(
-        DEFAULT_ACTIVITY_TYPE.to_string(),
-        ().as_json_payload().expect("serializes fine"),
-        LocalActivityOptions::default(),
-    )
-    .await;
+    ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?
+        .await;
     ctx.timer(Duration::from_secs(5)).await;
-    ctx.local_activity_untyped(
-        DEFAULT_ACTIVITY_TYPE.to_string(),
-        ().as_json_payload().expect("serializes fine"),
-        LocalActivityOptions::default(),
-    )
-    .await;
+    ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())?
+        .await;
     Ok(().into())
 }
 
@@ -2835,7 +2790,7 @@ async fn las_separated_by_timer(#[case] replay: bool) {
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_timer_la);
-    worker.register_activities_static::<ResolvedActivity>();
+    worker.register_activities(ResolvedActivity);
     worker.run().await.unwrap();
 }
 
@@ -2867,7 +2822,7 @@ async fn one_la_heartbeating_wft_failure_still_executes() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
-    worker.register_activities_static::<ResolvedActivity>();
+    worker.register_activities(ResolvedActivity);
     worker.run().await.unwrap();
 }
 
@@ -2901,14 +2856,14 @@ async fn immediate_cancel(
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        let la = ctx.local_activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            ().as_json_payload().expect("serializes fine"),
+        let la = ctx.start_local_activity(
+            StdActivities::default,
+            (),
             LocalActivityOptions {
                 cancel_type,
                 ..Default::default()
             },
-        );
+        )?;
         la.cancel(&ctx);
         la.await;
         Ok(().into())
@@ -3002,7 +2957,7 @@ async fn cancel_after_act_starts_canned(
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        let la = ctx.local_activity(
+        let la = ctx.start_local_activity(
             ActivityWithConditionalCancelWait::echo,
             (),
             LocalActivityOptions {

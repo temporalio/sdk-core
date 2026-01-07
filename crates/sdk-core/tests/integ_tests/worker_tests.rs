@@ -31,7 +31,7 @@ use temporalio_common::{
         },
         temporal::api::{
             command::v1::command::Attributes,
-            common::v1::{Payload, WorkerVersionStamp},
+            common::v1::WorkerVersionStamp,
             enums::v1::{
                 EventType,
                 WorkflowTaskFailedCause::{self, GrpcMessageTooLarge},
@@ -52,8 +52,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
+use temporalio_macros::activities;
 use temporalio_sdk::{
     ActivityOptions, LocalActivityOptions, WfContext, WorkerOptions,
+    activities::{ActivityContext, ActivityError},
     interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
@@ -359,21 +361,27 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let workflow_complete_token = CancellationToken::new();
     let workflow_complete_token_clone = workflow_complete_token.clone();
 
+    struct FakeAct;
+    #[activities]
+    impl FakeAct {
+        #[activity(name = "act1")]
+        fn act1(_: ActivityContext) -> Result<(), ActivityError> {
+            unimplemented!()
+        }
+
+        #[activity(name = "act2")]
+        fn act2(_: ActivityContext) -> Result<(), ActivityError> {
+            unimplemented!()
+        }
+    }
+
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
         let complete_token = workflow_complete_token.clone();
         async move {
-            ctx.activity_untyped(
-                "act1".to_string(),
-                Payload::default(),
-                ActivityOptions::default(),
-            )
-            .await;
-            ctx.activity_untyped(
-                "act2".to_string(),
-                Payload::default(),
-                ActivityOptions::default(),
-            )
-            .await;
+            ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())?
+                .await;
+            ctx.start_activity(FakeAct::act2, (), ActivityOptions::default())?
+                .await;
             complete_token.cancel();
             Ok(().into())
         }
@@ -707,9 +715,7 @@ async fn test_custom_slot_supplier_simple() {
     ));
 
     let mut starter = CoreWfStarter::new("test_custom_slot_supplier_simple");
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
 
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(wf_supplier.clone());
@@ -723,7 +729,7 @@ async fn test_custom_slot_supplier_simple() {
         "SlotSupplierWorkflow".to_owned(),
         |ctx: WfContext| async move {
             let _result = ctx
-                .activity(
+                .start_activity(
                     StdActivities::no_op,
                     (),
                     ActivityOptions {
@@ -733,7 +739,7 @@ async fn test_custom_slot_supplier_simple() {
                 )?
                 .await;
             let _result = ctx
-                .local_activity(
+                .start_local_activity(
                     StdActivities::no_op,
                     (),
                     LocalActivityOptions {

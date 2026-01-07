@@ -59,22 +59,10 @@ use temporalio_sdk_core::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-pub(crate) struct SleepyActivities {}
-
-#[activities]
-impl SleepyActivities {
-    /// Activity that echoes input after sleeping for 2 seconds
-    #[activity]
-    async fn sleepy_echo(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
-        sleep(Duration::from_secs(2)).await;
-        Ok(echo_me)
-    }
-}
-
 async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     // TODO [rust-sdk-branch]: activities need to return deserialzied results
     let r = ctx
-        .activity(
+        .start_activity(
             StdActivities::echo,
             "hi!".to_string(),
             ActivityOptions {
@@ -91,9 +79,7 @@ async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
 async fn one_activity_only() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
@@ -913,16 +899,14 @@ async fn activity_heartbeat_not_flushed_on_success() {
 async fn one_activity_abandon_cancelled_before_started() {
     let wf_name = "one_activity_abandon_cancelled_before_started";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<SleepyActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let act_fut = ctx
-            .activity(
-                SleepyActivities::sleepy_echo,
-                "hi!".to_string(),
+            .start_activity(
+                StdActivities::delay,
+                Duration::from_secs(2),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     cancellation_type: ActivityCancellationType::Abandon,
@@ -957,16 +941,14 @@ async fn one_activity_abandon_cancelled_before_started() {
 async fn one_activity_abandon_cancelled_after_complete() {
     let wf_name = "one_activity_abandon_cancelled_after_complete";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<SleepyActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let act_fut = ctx
-            .activity(
-                SleepyActivities::sleepy_echo,
-                "hi!".to_string(),
+            .start_activity(
+                StdActivities::delay,
+                Duration::from_secs(2),
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     cancellation_type: ActivityCancellationType::Abandon,
@@ -1035,7 +1017,7 @@ async fn it_can_complete_async() {
 
     worker.register_wf(wf_name.clone(), move |ctx: WfContext| async move {
         let activity_resolution = ctx
-            .activity(
+            .start_activity(
                 AsyncActivities::complete_async_activity,
                 "hi".to_string(),
                 ActivityOptions {
@@ -1097,7 +1079,7 @@ async fn graceful_shutdown() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.graceful_shutdown_period = Some(Duration::from_millis(500));
 
-    struct SleeperActivities {}
+    struct SleeperActivities;
     #[activities]
     impl SleeperActivities {
         #[activity]
@@ -1110,14 +1092,12 @@ async fn graceful_shutdown() {
         }
     }
 
-    starter
-        .sdk_config
-        .register_activities_static::<SleeperActivities>();
+    starter.sdk_config.register_activities(SleeperActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let act_futs = (1..=10).map(|_| {
-            ctx.activity(
+            ctx.start_activity(
                 SleeperActivities::sleeper,
                 "hi".to_string(),
                 ActivityOptions {
@@ -1173,7 +1153,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
     starter
         .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
 
-    struct CancellableEchoActivities {}
+    struct CancellableEchoActivities;
     #[activities]
     impl CancellableEchoActivities {
         #[activity]
@@ -1190,11 +1170,11 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 
     starter
         .sdk_config
-        .register_activities_static::<CancellableEchoActivities>();
+        .register_activities(CancellableEchoActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
-            .activity(
+            .start_activity(
                 CancellableEchoActivities::cancellable_echo,
                 "hi!".to_string(),
                 ActivityOptions {
@@ -1236,15 +1216,13 @@ async fn long_activity_timeout_repro() {
     };
     starter
         .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let mut iter = 1;
         loop {
             let res = ctx
-                .activity(
+                .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
@@ -1302,14 +1280,14 @@ async fn pass_activity_summary_to_metadata() {
 
     let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
     worker.register_wf(wf_type, |ctx: WfContext| async move {
-        ctx.activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            Payload::default(),
+        ctx.start_activity(
+            StdActivities::default,
+            (),
             ActivityOptions {
                 summary: Some("activity summary".to_string()),
                 ..Default::default()
             },
-        )
+        )?
         .await;
         Ok(().into())
     });
@@ -1354,15 +1332,15 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
 
     worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
-        let act_fut = ctx.activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            Payload::default(),
+        let act_fut = ctx.start_activity(
+            StdActivities::default,
+            (),
             ActivityOptions {
                 start_to_close_timeout: Some(Duration::from_secs(5)),
                 cancellation_type: ActivityCancellationType::Abandon,
                 ..Default::default()
             },
-        );
+        )?;
         ctx.timer(Duration::from_secs(1)).await;
         act_fut.cancel(&ctx);
         ctx.timer(Duration::from_secs(3)).await;
@@ -1379,11 +1357,8 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
 #[tokio::test]
 async fn immediate_activity_cancelation() {
     let func = WorkflowFunction::new(|ctx: WfContext| async move {
-        let cancel_activity_future = ctx.activity_untyped(
-            DEFAULT_ACTIVITY_TYPE.to_string(),
-            Payload::default(),
-            ActivityOptions::default(),
-        );
+        let cancel_activity_future =
+            ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?;
         // Immediately cancel the activity
         cancel_activity_future.cancel(&ctx);
         cancel_activity_future.await;

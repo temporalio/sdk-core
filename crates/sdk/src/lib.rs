@@ -58,7 +58,7 @@
 //!             use_worker_versioning: false,
 //!             default_versioning_behavior: None,
 //!         })
-//!         .register_activities_static::<MyActivities>()
+//!         .register_activities(MyActivities)
 //!         .build();
 //!
 //!     let mut worker = Worker::new(&runtime, client, worker_options)?;
@@ -88,7 +88,7 @@ pub use workflow_context::{
 use crate::{
     activities::{
         ActivityContext, ActivityDefinitions, ActivityError, ActivityImplementer,
-        ExecutableActivity, HasOnlyStaticMethods,
+        ExecutableActivity,
     },
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
@@ -170,7 +170,7 @@ pub struct WorkerOptions {
 
     /// Set the deployment options for this worker. Defaults to a hash of the currently running
     /// executable.
-    #[builder(default = WorkerDeploymentOptions::from_build_id(build_id_from_current_exe().to_owned()))]
+    #[builder(default = def_build_id())]
     pub deployment_options: WorkerDeploymentOptions,
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client
@@ -250,63 +250,39 @@ pub struct WorkerOptions {
     pub graceful_shutdown_period: Option<Duration>,
 }
 
-// TODO [rust-sdk-branch]: Traitify this?
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
-    /// Registers all activities on an activity implementer that don't take a receiver.
-    pub fn register_activities_static<AI>(mut self) -> Self
-    where
-        AI: ActivityImplementer + HasOnlyStaticMethods,
-    {
-        self.activities.register_activities_static::<AI>();
-        self
-    }
-    /// Registers all activities on an activity implementer that take a receiver.
+    /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(mut self, instance: AI) -> Self {
         self.activities.register_activities::<AI>(instance);
         self
     }
-    /// Registers a specific activitiy that does not take a receiver.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(mut self) -> Self {
-        self.activities.register_activity::<AD>();
-        self
-    }
-    /// Registers a specific activitiy that takes a receiver.
-    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+    /// Registers a specific activitiy.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
         mut self,
         instance: Arc<AD::Implementer>,
     ) -> Self {
-        self.activities
-            .register_activity_with_instance::<AD>(instance);
+        self.activities.register_activity::<AD>(instance);
         self
     }
 }
 
+// Needs to exist to avoid https://github.com/elastio/bon/issues/359
+fn def_build_id() -> WorkerDeploymentOptions {
+    WorkerDeploymentOptions::from_build_id(build_id_from_current_exe().to_owned())
+}
+
 impl WorkerOptions {
-    /// Registers all activities on an activity implementer that don't take a receiver.
-    pub fn register_activities_static<AI>(&mut self) -> &mut Self
-    where
-        AI: ActivityImplementer + HasOnlyStaticMethods,
-    {
-        self.activities.register_activities_static::<AI>();
-        self
-    }
-    /// Registers all activities on an activity implementer that take a receiver.
+    /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
         self.activities.register_activities::<AI>(instance);
         self
     }
-    /// Registers a specific activitiy that does not take a receiver.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
-        self.activities.register_activity::<AD>();
-        self
-    }
-    /// Registers a specific activitiy that takes a receiver.
-    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+    /// Registers a specific activitiy.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
         &mut self,
         instance: Arc<AD::Implementer>,
     ) -> &mut Self {
-        self.activities
-            .register_activity_with_instance::<AD>(instance);
+        self.activities.register_activity::<AD>(instance);
         self
     }
     /// Returns all the registered activities by cloning the current set.
@@ -451,36 +427,21 @@ impl Worker {
             .insert(workflow_type.into(), wf_function.into());
     }
 
-    /// Registers all activities on an activity implementer that don't take a receiver.
-    pub fn register_activities_static<AI>(&mut self) -> &mut Self
-    where
-        AI: ActivityImplementer + HasOnlyStaticMethods,
-    {
-        self.activity_half
-            .activities
-            .register_activities_static::<AI>();
-        self
-    }
-    /// Registers all activities on an activity implementer that take a receiver.
+    /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
         self.activity_half
             .activities
             .register_activities::<AI>(instance);
         self
     }
-    /// Registers a specific activitiy that does not take a receiver.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(&mut self) -> &mut Self {
-        self.activity_half.activities.register_activity::<AD>();
-        self
-    }
-    /// Registers a specific activitiy that takes a receiver.
-    pub fn register_activity_with_instance<AD: ActivityDefinition + ExecutableActivity>(
+    /// Registers a specific activitiy.
+    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
         &mut self,
         instance: Arc<AD::Implementer>,
     ) -> &mut Self {
         self.activity_half
             .activities
-            .register_activity_with_instance::<AD>(instance);
+            .register_activity::<AD>(instance);
         self
     }
 
@@ -1402,8 +1363,8 @@ mod tests {
     #[allow(dead_code, unreachable_code, unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
         let wf_ctx: WfContext = unimplemented!();
-        wf_ctx.activity(MyActivities::my_activity, (), ActivityOptions::default());
-        wf_ctx.activity(
+        wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
+        wf_ctx.start_activity(
             MyActivities::takes_self,
             "Hi".to_owned(),
             ActivityOptions::default(),

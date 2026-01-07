@@ -4,7 +4,7 @@ use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 use tokio::time::sleep;
 
-pub(crate) struct StdActivities {}
+pub(crate) struct StdActivities;
 
 #[activities]
 impl StdActivities {

@@ -15,7 +15,7 @@ struct Data {
 }
 
 pub(crate) async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.activity(
+    ctx.start_activity(
         AppdataActivities::echo,
         "hi!".to_string(),
         ActivityOptions {
@@ -28,7 +28,7 @@ pub(crate) async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-struct AppdataActivities {}
+struct AppdataActivities;
 #[activities]
 impl AppdataActivities {
     #[activity]
@@ -43,9 +43,7 @@ impl AppdataActivities {
 async fn appdata_access_in_activities_and_workflows() {
     let wf_name = "appdata_activity";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .sdk_config
-        .register_activities_static::<AppdataActivities>();
+    starter.sdk_config.register_activities(AppdataActivities);
     let mut worker = starter.worker().await;
     worker.inner_mut().insert_app_data(Data {
         message: TEST_APPDATA_MESSAGE.to_owned(),

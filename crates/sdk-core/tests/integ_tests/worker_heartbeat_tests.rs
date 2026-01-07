@@ -179,7 +179,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             NotifyActivities::pass_fail_act,
             "pass".to_string(),
             ActivityOptions {
@@ -314,15 +314,13 @@ async fn docker_worker_heartbeat_tuner() {
         initial: 5,
     };
     starter.sdk_config.tuner = Arc::new(tuner);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     // Run a workflow
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {
@@ -590,7 +588,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
 
     starter
         .sdk_config
-        .register_activities_static::<StickyCacheActivities>();
+        .register_activities(StickyCacheActivities);
 
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
@@ -608,7 +606,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .and_then(|p| String::from_json_payload(p).ok())
             .unwrap_or_else(|| "wf1".to_string());
 
-        ctx.activity(
+        ctx.start_activity(
             StickyCacheActivities::sticky_cache_history_act,
             wf_marker.clone(),
             ActivityOptions {
@@ -690,9 +688,7 @@ async fn worker_heartbeat_multiple_workers() {
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.max_cached_workflows = 5_usize;
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 10, 10, 10));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
 
     let client = starter.get_client().await;
     let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
@@ -805,16 +801,14 @@ async fn worker_heartbeat_failure_metrics() {
         }
     }
 
-    starter
-        .sdk_config
-        .register_activities_static::<FailingActivities>();
+    starter.sdk_config.register_activities(FailingActivities);
 
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
         let _ = ctx
-            .activity(
+            .start_activity(
                 FailingActivities::failing_act,
                 "boom".to_string(),
                 ActivityOptions {
@@ -980,14 +974,12 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
         .unwrap();
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {
@@ -1043,14 +1035,12 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let rt = CoreRuntime::new_assume_tokio(runtimeopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.set_core_cfg_mutator(|m| m.skip_client_worker_set_check = true);
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(
+        ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),
             ActivityOptions {

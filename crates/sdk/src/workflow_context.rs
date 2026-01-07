@@ -217,25 +217,15 @@ impl WfContext {
     }
 
     /// Request to run an activity
-    pub fn activity<AD: ActivityDefinition>(
+    pub fn start_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
         input: AD::Input,
-        opts: ActivityOptions,
+        mut opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
         // TODO [rust-sdk-branch]: Get payload converter properly
         let pc = PayloadConverter::serde_json();
-        let payload = pc.to_payload(&input, &SerializationContext::Workflow)?;
-        Ok(self.activity_untyped(AD::name().to_string(), payload, opts))
-    }
-
-    /// Request to run an activity with an explicit name and payload
-    pub fn activity_untyped(
-        &self,
-        activity_type: String,
-        input: Payload,
-        mut opts: ActivityOptions,
-    ) -> impl CancellableFuture<ActivityResolution> {
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         if opts.task_queue.is_none() {
@@ -243,16 +233,16 @@ impl WfContext {
         }
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(activity_type, input, seq),
+                cmd: opts.into_command(AD::name().to_string(), payload, seq),
                 unblocker,
             }
             .into(),
         );
-        cmd
+        Ok(cmd)
     }
 
     /// Request to run a local activity
-    pub fn local_activity<AD: ActivityDefinition>(
+    pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
         input: AD::Input,
@@ -260,23 +250,13 @@ impl WfContext {
     ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
         // TODO [rust-sdk-branch]: Get payload converter properly
         let pc = PayloadConverter::serde_json();
-        let payload = pc.to_payload(&input, &SerializationContext::Workflow)?;
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
         Ok(LATimerBackoffFut::new(
             AD::name().to_string(),
             payload,
             opts,
             self,
         ))
-    }
-
-    /// Request to run a local activity with an explicit name and payload
-    pub fn local_activity_untyped(
-        &self,
-        activity_type: String,
-        input: Payload,
-        opts: LocalActivityOptions,
-    ) -> impl CancellableFuture<ActivityResolution> + '_ {
-        LATimerBackoffFut::new(activity_type, input, opts, self)
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.

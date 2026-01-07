@@ -32,7 +32,7 @@ use temporalio_sdk::{
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
 use tracing::info;
 
-struct JitteryEchoActivities {}
+struct JitteryEchoActivities;
 #[activities]
 impl JitteryEchoActivities {
     #[activity]
@@ -76,14 +76,14 @@ async fn poller_load_spiky() {
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
 
-    worker.register_activities_static::<JitteryEchoActivities>();
+    worker.register_activities(JitteryEchoActivities);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(
+                ctx.start_activity(
                     JitteryEchoActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
@@ -318,14 +318,14 @@ async fn poller_load_spike_then_sustained() {
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
 
-    worker.register_activities_static::<JitteryEchoActivities>();
+    worker.register_activities(JitteryEchoActivities);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(
+                ctx.start_activity(
                     JitteryEchoActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {

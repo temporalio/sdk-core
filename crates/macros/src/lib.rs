@@ -4,7 +4,10 @@ use syn::parse_macro_input;
 mod definitions;
 mod fsm_impl;
 
-// TODO [rust-sdk-branch]: Example docstring
+/// Can be used to define Activities for invocation and execution. Using this macro requires that
+/// you also depend on the `temporalio_sdk` crate.
+///
+/// For a usage example, see that crate's documentation.
 #[proc_macro_attribute]
 pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let def: definitions::ActivitiesDefinition =

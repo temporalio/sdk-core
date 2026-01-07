@@ -21,7 +21,7 @@ use temporalio_common::protos::{
             RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
-        common::v1::{ActivityType, Payload},
+        common::v1::ActivityType,
         enums::v1::{CommandType, EventType, IndexedValueType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
@@ -31,7 +31,11 @@ use temporalio_common::protos::{
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporalio_macros::activities;
+use temporalio_sdk::{
+    ActivityOptions, WfContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
+};
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
 use tokio::{join, sync::Notify};
 use tokio_stream::StreamExt;
@@ -312,39 +316,51 @@ fn patch_marker_single_activity(
     t
 }
 
+struct FakeAct;
+#[activities]
+impl FakeAct {
+    #[activity(name = "")]
+    fn nameless(_: ActivityContext) -> Result<(), ActivityError> {
+        unimplemented!()
+    }
+}
+
 async fn v1(ctx: &mut WfContext) {
-    ctx.activity_untyped(
-        "".to_string(),
-        Payload::default(),
+    ctx.start_activity(
+        FakeAct::nameless,
+        (),
         ActivityOptions {
             activity_id: Some("no_change".to_owned()),
             ..Default::default()
         },
     )
+    .unwrap()
     .await;
 }
 
 async fn v2(ctx: &mut WfContext) -> bool {
     if ctx.patched(MY_PATCH_ID) {
-        ctx.activity_untyped(
-            "".to_string(),
-            Payload::default(),
+        ctx.start_activity(
+            FakeAct::nameless,
+            (),
             ActivityOptions {
                 activity_id: Some("had_change".to_owned()),
                 ..Default::default()
             },
         )
+        .unwrap()
         .await;
         true
     } else {
-        ctx.activity_untyped(
-            "".to_string(),
-            Payload::default(),
+        ctx.start_activity(
+            FakeAct::nameless,
+            (),
             ActivityOptions {
                 activity_id: Some("no_change".to_owned()),
                 ..Default::default()
             },
         )
+        .unwrap()
         .await;
         false
     }
@@ -352,26 +368,28 @@ async fn v2(ctx: &mut WfContext) -> bool {
 
 async fn v3(ctx: &mut WfContext) {
     ctx.deprecate_patch(MY_PATCH_ID);
-    ctx.activity_untyped(
-        "".to_string(),
-        Payload::default(),
+    ctx.start_activity(
+        FakeAct::nameless,
+        (),
         ActivityOptions {
             activity_id: Some("had_change".to_owned()),
             ..Default::default()
         },
     )
+    .unwrap()
     .await;
 }
 
 async fn v4(ctx: &mut WfContext) {
-    ctx.activity_untyped(
-        "".to_string(),
-        Payload::default(),
+    ctx.start_activity(
+        FakeAct::nameless,
+        (),
         ActivityOptions {
             activity_id: Some("had_change".to_owned()),
             ..Default::default()
         },
     )
+    .unwrap()
     .await;
 }
 
@@ -662,23 +680,15 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity_untyped(
-                "".to_string(),
-                Payload::default(),
-                ActivityOptions::default(),
-            )
-            .await;
+            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+                .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
-            ctx.activity_untyped(
-                "".to_string(),
-                Payload::default(),
-                ActivityOptions::default(),
-            )
-            .await;
+            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+                .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }

@@ -4,7 +4,7 @@ use temporalio_common::{prost_dur, protos::temporal::api::common::v1::RetryPolic
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 
 pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity(
+    ctx.start_local_activity(
         StdActivities::delay,
         Duration::from_secs(15),
         LocalActivityOptions {
@@ -20,7 +20,7 @@ pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
         },
     )?
     .await;
-    ctx.activity(
+    ctx.start_activity(
         StdActivities::delay,
         Duration::from_secs(15),
         ActivityOptions {

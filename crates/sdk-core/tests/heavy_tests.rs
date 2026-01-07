@@ -51,9 +51,7 @@ async fn activity_load() {
     starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
     starter.sdk_config.tuner =
         Arc::new(TunerHolder::fixed_size(CONCURRENCY, CONCURRENCY, 100, 100));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -65,7 +63,7 @@ async fn activity_load() {
         let input_str = "yo".to_string();
         async move {
             let res = ctx
-                .activity(
+                .start_activity(
                     StdActivities::echo,
                     input_str.clone(),
                     ActivityOptions {
@@ -132,7 +130,7 @@ async fn chunky_activities_resource_based() {
         .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
     starter.sdk_config.tuner = Arc::new(tuner);
 
-    struct ChunkyActivities {}
+    struct ChunkyActivities;
     #[activities]
     impl ChunkyActivities {
         #[activity]
@@ -151,9 +149,7 @@ async fn chunky_activities_resource_based() {
         }
     }
 
-    starter
-        .sdk_config
-        .register_activities_static::<ChunkyActivities>();
+    starter.sdk_config.register_activities(ChunkyActivities);
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -163,7 +159,7 @@ async fn chunky_activities_resource_based() {
         let input_str = "yo".to_string();
         async move {
             let res = ctx
-                .activity(
+                .start_activity(
                     ChunkyActivities::chunky_echo,
                     input_str.clone(),
                     ActivityOptions {
@@ -226,9 +222,7 @@ async fn workflow_load() {
     starter.sdk_config.max_cached_workflows = 200;
     starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 100, 100, 100));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -236,7 +230,7 @@ async fn workflow_load() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(
+                ctx.start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
                     ActivityOptions {
@@ -306,9 +300,7 @@ async fn evict_while_la_running_no_interference() {
     // introduces more instability that can be useful in the test.
     // starter.max_wft(20);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(100, 10, 20, 1));
-    starter
-        .sdk_config
-        .register_activities_static::<StdActivities>();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
@@ -421,7 +413,7 @@ async fn poller_autoscaling_basic_loadtest() {
         initial: 5,
     };
 
-    struct JitteryActivities {}
+    struct JitteryActivities;
     #[activities]
     impl JitteryActivities {
         #[activity]
@@ -436,9 +428,7 @@ async fn poller_autoscaling_basic_loadtest() {
         }
     }
 
-    starter
-        .sdk_config
-        .register_activities_static::<JitteryActivities>();
+    starter.sdk_config.register_activities(JitteryActivities);
     let mut worker = starter.worker().await;
     let shutdown_handle = worker.inner_mut().shutdown_handle();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -447,7 +437,7 @@ async fn poller_autoscaling_basic_loadtest() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(
+                ctx.start_activity(
                     JitteryActivities::jittery_echo,
                     "hi!".to_string(),
                     ActivityOptions {
