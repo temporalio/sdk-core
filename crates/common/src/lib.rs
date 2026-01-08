@@ -17,8 +17,12 @@ pub mod fsm_trait;
 pub mod protos;
 pub mod telemetry;
 pub mod worker;
+mod workflow_definition;
 
 pub use activity_definition::ActivityDefinition;
+pub use workflow_definition::{
+    QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
+};
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {

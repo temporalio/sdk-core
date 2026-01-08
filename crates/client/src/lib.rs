@@ -986,8 +986,6 @@ pub trait WorkflowClientTrait: NamespacedClient {
     ) -> Result<SignalWorkflowExecutionResponse>;
 
     /// Send signal and start workflow transcationally
-    //#TODO maybe lift the Signal type from sdk::workflow_context::options
-    #[allow(clippy::too_many_arguments)]
     async fn signal_with_start_workflow_execution(
         &self,
         options: SignalWithStartOptions,
