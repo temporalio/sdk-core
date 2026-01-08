@@ -484,14 +484,15 @@ impl CoreWfStarter {
                     let client = Client::new(connection.clone(), client_opts);
                     (connection, client)
                 };
-                let worker = init_worker(
-                    rt,
-                    self.sdk_config
-                        .to_core_options(client.namespace())
-                        .expect("sdk config converts to core config"),
-                    connection,
-                )
-                .expect("Worker inits cleanly");
+                let mut core_config = self
+                    .sdk_config
+                    .to_core_options(client.namespace())
+                    .expect("sdk config converts to core config");
+                if let Some(ref ccm) = self.core_config_mutator {
+                    ccm(&mut core_config);
+                }
+                let worker =
+                    init_worker(rt, core_config, connection).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
