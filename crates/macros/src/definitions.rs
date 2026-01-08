@@ -1,8 +1,8 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{
-    FnArg, ImplItem, ItemImpl, ReturnType, Type, TypePath,
+    Attribute, FnArg, ImplItem, ItemImpl, ReturnType, Type, TypePath,
     parse::{Parse, ParseStream},
     spanned::Spanned,
 };
@@ -12,8 +12,14 @@ pub(crate) struct ActivitiesDefinition {
     activities: Vec<ActivityMethod>,
 }
 
+#[derive(Default)]
+struct ActivityAttributes {
+    name_override: Option<syn::Expr>,
+}
+
 struct ActivityMethod {
     method: syn::ImplItemFn,
+    attributes: ActivityAttributes,
     is_async: bool,
     is_static: bool,
     input_type: Option<Type>,
@@ -48,6 +54,7 @@ impl Parse for ActivitiesDefinition {
 }
 
 fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod> {
+    let attributes = extract_activity_attributes(method.attrs.as_slice())?;
     let is_async = method.sig.asyncness.is_some();
 
     // Determine if static (no self receiver) or instance (Arc<Self>)
@@ -72,11 +79,33 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
 
     Ok(ActivityMethod {
         method: method.clone(),
+        attributes,
         is_async,
         is_static,
         input_type,
         output_type,
     })
+}
+
+fn extract_activity_attributes(attrs: &[Attribute]) -> syn::Result<ActivityAttributes> {
+    let mut activity_attributes = ActivityAttributes::default();
+
+    for attr in attrs {
+        if attr.path().is_ident("activity") && attr.meta.require_list().is_ok() {
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("name") {
+                    let value = meta.value()?;
+                    let expr: syn::Expr = value.parse()?;
+                    activity_attributes.name_override = Some(expr);
+                    Ok(())
+                } else {
+                    Err(meta.error("unsupported activity attribute"))
+                }
+            })?;
+        }
+    }
+
+    Ok(activity_attributes)
 }
 
 fn validate_arc_self_type(ty: &Type) -> syn::Result<()> {
@@ -150,40 +179,99 @@ fn extract_output_type(sig: &syn::Signature) -> Option<Type> {
 impl ActivitiesDefinition {
     pub(crate) fn codegen(&self) -> TokenStream {
         let impl_type = &self.impl_block.self_ty;
+        let impl_type_name = type_name_string(impl_type);
         let module_name = type_to_snake_case(impl_type);
         let module_ident = format_ident!("{}", module_name);
 
-        // Generate the original impl block with #[activity] attributes stripped. We need that since
-        // it's what's actually going to get called by the worker to run them.
+        // Generate the original impl block with:
+        // - #[activity] attributes stripped
+        // - Activity methods renamed with __ prefix
         let mut cleaned_impl = self.impl_block.clone();
         for item in &mut cleaned_impl.items {
             if let ImplItem::Fn(method) = item {
+                let is_activity = method
+                    .attrs
+                    .iter()
+                    .any(|attr| attr.path().is_ident("activity"));
+
                 method
                     .attrs
                     .retain(|attr| !attr.path().is_ident("activity"));
+
+                // Rename activity methods with __ prefix
+                if is_activity {
+                    let new_name = format_ident!("__{}", method.sig.ident);
+                    method.sig.ident = new_name;
+                }
             }
         }
 
+        // Generate marker structs (inside module, no external references)
         let activity_structs: Vec<_> = self
             .activities
             .iter()
             .map(|act| {
-                let visibility = &act.method.vis;
+                let visibility = match &act.method.vis {
+                    syn::Visibility::Inherited => &syn::parse_quote!(pub(super)),
+                    o => o,
+                };
+
                 let struct_name = method_name_to_pascal_case(&act.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
-                quote! {
+                let span = act.method.span();
+                quote_spanned! { span=>
                     #visibility struct #struct_ident;
                 }
             })
             .collect();
 
+        // Generate consts in impl block pointing to marker structs
+        let activity_consts: Vec<_> = self
+            .activities
+            .iter()
+            .map(|act| {
+                let visibility = &act.method.vis;
+                let method_ident = &act.method.sig.ident;
+                let struct_name = method_name_to_pascal_case(&act.method.sig.ident);
+                let struct_ident = format_ident!("{}", struct_name);
+                let span = act.method.span();
+                // Copy #[allow(...)] attributes from the method to the const
+                let allow_attrs: Vec<_> = act
+                    .method
+                    .attrs
+                    .iter()
+                    .filter(|attr| attr.path().is_ident("allow"))
+                    .collect();
+                quote_spanned! { span=>
+                    #[allow(non_upper_case_globals)]
+                    #(#allow_attrs)*
+                    #visibility const #method_ident: #module_ident::#struct_ident = #module_ident::#struct_ident;
+                }
+            })
+            .collect();
+
+        // Generate run methods on marker structs (outside module to reference impl_type)
+        let run_impls: Vec<_> = self
+            .activities
+            .iter()
+            .map(|act| self.generate_run_impl(act, impl_type, &module_ident))
+            .collect();
+
+        // Generate ActivityDefinition and ExecutableActivity impls (outside module)
         let activity_impls: Vec<_> = self
             .activities
             .iter()
-            .map(|act| self.generate_activity_definition_impl(act, impl_type, &module_name))
+            .map(|act| {
+                self.generate_activity_definition_impl(
+                    act,
+                    impl_type,
+                    &impl_type_name,
+                    &module_ident,
+                )
+            })
             .collect();
 
-        let implementer_impl = self.generate_activity_implementer_impl(impl_type);
+        let implementer_impl = self.generate_activity_implementer_impl(impl_type, &module_ident);
 
         let has_only_static = if self.activities.iter().all(|a| a.is_static) {
             quote! {
@@ -193,34 +281,135 @@ impl ActivitiesDefinition {
             quote! {}
         };
 
-        let output = quote! {
-            #cleaned_impl
-
-            pub mod #module_ident {
-                use super::*;
-
-                #(#activity_structs)*
-
-                #(#activity_impls)*
-
-                #implementer_impl
-
-                #has_only_static
+        // Generate impl block with consts
+        let const_impl = quote! {
+            impl #impl_type {
+                #(#activity_consts)*
             }
         };
 
+        let output = quote! {
+            #cleaned_impl
+
+            #const_impl
+
+            // Module contains only the marker structs (no use super::*)
+            mod #module_ident {
+                #(#activity_structs)*
+            }
+
+            // Run methods, trait impls are outside the module
+            #(#run_impls)*
+
+            #(#activity_impls)*
+
+            #implementer_impl
+
+            #has_only_static
+        };
+
         output.into()
+    }
+
+    fn generate_run_impl(
+        &self,
+        activity: &ActivityMethod,
+        impl_type: &Type,
+        module_ident: &syn::Ident,
+    ) -> TokenStream2 {
+        let struct_name = method_name_to_pascal_case(&activity.method.sig.ident);
+        let struct_ident = format_ident!("{}", struct_name);
+        let prefixed_method = format_ident!("__{}", activity.method.sig.ident);
+
+        let input_type = activity
+            .input_type
+            .as_ref()
+            .map(|t| quote! { #t })
+            .unwrap_or(quote! { () });
+        let output_type = activity
+            .output_type
+            .as_ref()
+            .map(|t| quote! { #t })
+            .unwrap_or(quote! { () });
+
+        // Build the parameters and call based on static vs instance and input
+        let (params, method_call) = if activity.is_static {
+            let params = if activity.input_type.is_some() {
+                quote! { self, ctx: ::temporalio_sdk::activities::ActivityContext, input: #input_type }
+            } else {
+                quote! { self, ctx: ::temporalio_sdk::activities::ActivityContext }
+            };
+            let call = if activity.input_type.is_some() {
+                quote! { #impl_type::#prefixed_method(ctx, input) }
+            } else {
+                quote! { #impl_type::#prefixed_method(ctx) }
+            };
+            (params, call)
+        } else {
+            let params = if activity.input_type.is_some() {
+                quote! { self, instance: ::std::sync::Arc<#impl_type>, ctx: ::temporalio_sdk::activities::ActivityContext, input: #input_type }
+            } else {
+                quote! { self, instance: ::std::sync::Arc<#impl_type>, ctx: ::temporalio_sdk::activities::ActivityContext }
+            };
+            let call = if activity.input_type.is_some() {
+                quote! { #impl_type::#prefixed_method(instance, ctx, input) }
+            } else {
+                quote! { #impl_type::#prefixed_method(instance, ctx) }
+            };
+            (params, call)
+        };
+
+        let return_type =
+            quote! { Result<#output_type, ::temporalio_sdk::activities::ActivityError> };
+
+        // If the method returns void (no return type), wrap with Ok(())
+        let result_wrapper = if activity.output_type.is_none() {
+            quote! { ; Ok(()) }
+        } else {
+            quote! {}
+        };
+
+        // Common methods for all marker structs
+        let common_methods = quote! {
+            /// Returns the activity name (delegates to ActivityDefinition::name())
+            pub fn name(&self) -> &'static str {
+                <Self as ::temporalio_common::ActivityDefinition>::name()
+            }
+        };
+
+        if activity.is_async {
+            quote! {
+                impl #module_ident::#struct_ident {
+                    #common_methods
+
+                    pub async fn run(#params) -> #return_type {
+                        #method_call.await #result_wrapper
+                    }
+                }
+            }
+        } else {
+            quote! {
+                impl #module_ident::#struct_ident {
+                    #common_methods
+
+                    pub fn run(#params) -> #return_type {
+                        #method_call #result_wrapper
+                    }
+                }
+            }
+        }
     }
 
     fn generate_activity_definition_impl(
         &self,
         activity: &ActivityMethod,
         impl_type: &Type,
-        module_name: &str,
+        impl_type_name: &str,
+        module_ident: &syn::Ident,
     ) -> TokenStream2 {
         let struct_name = method_name_to_pascal_case(&activity.method.sig.ident);
         let struct_ident = format_ident!("{}", struct_name);
-        let method_ident = &activity.method.sig.ident;
+        let prefixed_method = format_ident!("__{}", activity.method.sig.ident);
 
         let input_type = activity
             .input_type
@@ -233,7 +422,12 @@ impl ActivitiesDefinition {
             .map(|t| quote! { #t })
             .unwrap_or(quote! { () });
 
-        let activity_name = format!("{}::{}", module_name, struct_name);
+        let activity_name = if let Some(ref name_expr) = activity.attributes.name_override {
+            quote! { #name_expr }
+        } else {
+            let default_name = format!("{}::{}", impl_type_name, activity.method.sig.ident);
+            quote! { #default_name }
+        };
 
         let receiver_pattern = if activity.is_static {
             quote! { _receiver }
@@ -243,14 +437,14 @@ impl ActivitiesDefinition {
 
         let method_call = if activity.input_type.is_some() {
             if activity.is_static {
-                quote! { #impl_type::#method_ident(ctx, input) }
+                quote! { #impl_type::#prefixed_method(ctx, input) }
             } else {
-                quote! { #impl_type::#method_ident(receiver.unwrap(), ctx, input) }
+                quote! { #impl_type::#prefixed_method(receiver.unwrap(), ctx, input) }
             }
         } else if activity.is_static {
-            quote! { #impl_type::#method_ident(ctx) }
+            quote! { #impl_type::#prefixed_method(ctx) }
         } else {
-            quote! { #impl_type::#method_ident(receiver.unwrap(), ctx) }
+            quote! { #impl_type::#prefixed_method(receiver.unwrap(), ctx) }
         };
 
         // Add input parameter to execute signature only if needed
@@ -281,7 +475,7 @@ impl ActivitiesDefinition {
         };
 
         quote! {
-            impl ::temporalio_common::ActivityDefinition for #struct_ident {
+            impl ::temporalio_common::ActivityDefinition for #module_ident::#struct_ident {
                 type Input = #input_type;
                 type Output = #output_type;
 
@@ -293,7 +487,7 @@ impl ActivitiesDefinition {
                 }
             }
 
-            impl ::temporalio_sdk::activities::ExecutableActivity for #struct_ident {
+            impl ::temporalio_sdk::activities::ExecutableActivity for #module_ident::#struct_ident {
                 type Implementer = #impl_type;
 
                 fn execute(
@@ -311,29 +505,19 @@ impl ActivitiesDefinition {
         }
     }
 
-    fn generate_activity_implementer_impl(&self, impl_type: &Type) -> TokenStream2 {
-        let static_activities: Vec<_> = self
-            .activities
-            .iter()
-            .filter(|a| a.is_static)
-            .map(|a| {
-                let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
-                let struct_ident = format_ident!("{}", struct_name);
-                quote! {
-                    worker_options.register_activity::<#struct_ident>();
-                }
-            })
-            .collect();
-
+    fn generate_activity_implementer_impl(
+        &self,
+        impl_type: &Type,
+        module_ident: &syn::Ident,
+    ) -> TokenStream2 {
         let instance_activities: Vec<_> = self
             .activities
             .iter()
-            .filter(|a| !a.is_static)
             .map(|a| {
                 let struct_name = method_name_to_pascal_case(&a.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
                 quote! {
-                    worker_options.register_activity_with_instance::<#struct_ident>(self.clone());
+                    defs.register_activity::<#module_ident::#struct_ident>(self.clone());
                 }
             })
             .collect();
@@ -346,15 +530,9 @@ impl ActivitiesDefinition {
 
         quote! {
             impl ::temporalio_sdk::activities::ActivityImplementer for #impl_type {
-                fn register_all_static<S: ::temporalio_sdk::worker_options_builder::State>(
-                    worker_options: &mut ::temporalio_sdk::WorkerOptionsBuilder<S>,
-                ) {
-                    #(#static_activities)*
-                }
-
-                fn register_all_instance<S: ::temporalio_sdk::worker_options_builder::State>(
+                fn register_all(
                     self: ::std::sync::Arc<Self>,
-                    worker_options: &mut ::temporalio_sdk::WorkerOptionsBuilder<S>,
+                    defs: &mut ::temporalio_sdk::activities::ActivityDefinitions,
                 ) {
                     #register_instance_body
                 }
@@ -403,4 +581,13 @@ fn method_name_to_pascal_case(ident: &syn::Ident) -> String {
         }
     }
     result
+}
+
+fn type_name_string(ty: &Type) -> String {
+    if let Type::Path(type_path) = ty
+        && let Some(segment) = type_path.path.segments.last()
+    {
+        return segment.ident.to_string();
+    }
+    panic!("Cannot extract type name from impl block - expected a simple type path");
 }

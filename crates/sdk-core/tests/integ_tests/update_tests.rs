@@ -1,5 +1,6 @@
 use crate::common::{
-    CoreWfStarter, WorkflowHandleExt, init_core_and_create_wf, init_core_replay_preloaded,
+    CoreWfStarter, WorkflowHandleExt, activity_functions::StdActivities, init_core_and_create_wf,
+    init_core_replay_preloaded,
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
@@ -36,8 +37,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
+use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, UpdateContext, WfContext, activities::ActivityContext,
+    ActivityOptions, LocalActivityOptions, UpdateContext, WfContext,
+    activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
     Worker,
@@ -638,19 +641,21 @@ async fn update_with_local_acts() {
     let mut starter = CoreWfStarter::new(wf_name);
     // Short task timeout to get activities to heartbeat without taking ages
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
+
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .local_activity(LocalActivityOptions {
-                        activity_type: "echo_activity".to_string(),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
-                        ..Default::default()
-                    })
+                    .start_local_activity(
+                        StdActivities::delay,
+                        Duration::from_secs(3),
+                        LocalActivityOptions::default(),
+                    )?
                     .await;
                 Ok("hi")
             },
@@ -659,14 +664,6 @@ async fn update_with_local_acts() {
         sig.next().await;
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActivityContext, echo_me: String| async move {
-            // Sleep so we'll heartbeat
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            Ok(echo_me)
-        },
-    );
 
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
@@ -713,7 +710,7 @@ async fn update_with_local_acts() {
 async fn update_rejection_sdk() {
     let wf_name = "update_rejection_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -757,7 +754,7 @@ async fn update_rejection_sdk() {
 async fn update_fail_sdk() {
     let wf_name = "update_fail_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -801,7 +798,7 @@ async fn update_fail_sdk() {
 async fn update_timer_sequence() {
     let wf_name = "update_timer_sequence";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -849,7 +846,7 @@ async fn update_timer_sequence() {
 async fn task_failure_during_validation() {
     let wf_name = "task_failure_during_validation";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
@@ -910,7 +907,7 @@ async fn task_failure_during_validation() {
 async fn task_failure_after_update() {
     let wf_name = "task_failure_after_update";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
@@ -955,27 +952,46 @@ async fn task_failure_after_update() {
         .unwrap();
 }
 
+static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(2));
+static ACT_RAN: AtomicBool = AtomicBool::new(false);
 #[tokio::test]
 async fn worker_restarted_in_middle_of_update() {
     let wf_name = "worker_restarted_in_middle_of_update";
     let mut starter = CoreWfStarter::new(wf_name);
+
+    struct BlockingActivities;
+    #[activities]
+    impl BlockingActivities {
+        #[activity]
+        async fn blocks(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
+            BARR.wait().await;
+            if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
+                // On first run fail the task so we'll get retried on the new worker
+                return Err(anyhow!("Fail first time").into());
+            }
+            Ok(echo_me)
+        }
+    }
+
+    starter.sdk_config.register_activities(BlockingActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(2));
-    static ACT_RAN: AtomicBool = AtomicBool::new(false);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
             move |ctx: UpdateContext, _: ()| async move {
                 ctx.wf_ctx
-                    .activity(ActivityOptions {
-                        activity_type: "blocks".to_string(),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    })
+                    .start_activity(
+                        BlockingActivities::blocks,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(2)),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
                     .await;
                 Ok(())
             },
@@ -984,17 +1000,6 @@ async fn worker_restarted_in_middle_of_update() {
         sig.next().await;
         Ok(().into())
     });
-    worker.register_activity(
-        "blocks",
-        |_ctx: ActivityContext, echo_me: String| async move {
-            BARR.wait().await;
-            if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
-                // On first run fail the task so we'll get retried on the new worker
-                return Err(anyhow!("Fail first time").into());
-            }
-            Ok(echo_me)
-        },
-    );
 
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
@@ -1058,6 +1063,7 @@ async fn worker_restarted_in_middle_of_update() {
 async fn update_after_empty_wft() {
     let wf_name = "update_after_empty_wft";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -1071,12 +1077,15 @@ async fn update_after_empty_wft() {
                     return Ok(());
                 }
                 ctx.wf_ctx
-                    .activity(ActivityOptions {
-                        activity_type: "echo".to_string(),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    })
+                    .start_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(2)),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
                     .await;
                 Ok(())
             },
@@ -1085,12 +1094,15 @@ async fn update_after_empty_wft() {
         let sig_handle = async {
             sig.next().await;
             ACT_STARTED.store(true, Ordering::Release);
-            ctx.activity(ActivityOptions {
-                activity_type: "echo".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                start_to_close_timeout: Some(Duration::from_secs(2)),
-                ..Default::default()
-            })
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(2)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
             .await;
             ACT_STARTED.store(false, Ordering::Release);
         };
@@ -1099,10 +1111,6 @@ async fn update_after_empty_wft() {
         });
         Ok(().into())
     });
-    worker.register_activity(
-        "echo",
-        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-    );
 
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
@@ -1147,6 +1155,7 @@ async fn update_after_empty_wft() {
 async fn update_lost_on_activity_mismatch() {
     let wf_name = "update_lost_on_activity_mismatch";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
@@ -1167,23 +1176,22 @@ async fn update_lost_on_activity_mismatch() {
         for _ in 1..=3 {
             let cr = can_run.clone();
             ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
-            ctx.activity(ActivityOptions {
-                activity_type: "echo".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                start_to_close_timeout: Some(Duration::from_secs(2)),
-                ..Default::default()
-            })
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(2)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
             .await;
             can_run.fetch_sub(1, Ordering::Release);
         }
         Ok(().into())
     });
-    worker.register_activity(
-        "echo",
-        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-    );
 
-    let core_worker = worker.core_worker.clone();
+    let core_worker = worker.core_worker();
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let wf_id = starter.get_task_queue().to_string();

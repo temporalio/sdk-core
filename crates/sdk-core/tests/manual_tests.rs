@@ -17,18 +17,32 @@ use rand::{Rng, SeedableRng};
 use std::{
     mem,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
-use temporalio_common::{
-    protos::coresdk::AsJsonPayloadExt, telemetry::PrometheusExporterOptions,
-    worker::WorkerTaskTypes,
+use temporalio_common::{telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes};
+use temporalio_macros::activities;
+use temporalio_sdk::{
+    ActivityOptions, WfContext,
+    activities::{ActivityContext, ActivityError},
 };
-use temporalio_sdk::{ActivityOptions, WfContext, activities::ActivityContext};
-use temporalio_sdk_core::{CoreRuntime, PollerBehavior};
+use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
 use tracing::info;
+
+struct JitteryEchoActivities;
+#[activities]
+impl JitteryEchoActivities {
+    #[activity]
+    async fn echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
+        // Add some jitter to completions
+        let rand_millis = rand::rng().random_range(0..500);
+        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
+        Ok(echo)
+    }
+}
 
 #[tokio::test]
 async fn poller_load_spiky() {
@@ -47,33 +61,37 @@ async fn poller_load_spiky() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.max_outstanding_activities = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 1000, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
+
+    worker.register_activities(JitteryEchoActivities);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.start_activity(
+                    JitteryEchoActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -83,12 +101,6 @@ async fn poller_load_spiky() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 
@@ -203,14 +215,14 @@ async fn poller_load_sustained() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 100, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -291,32 +303,37 @@ async fn poller_load_spike_then_sustained() {
         };
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("poller_load", rt);
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 100, 100, 100));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
     let mut worker = starter.worker().await;
     let submitter = worker.get_submitter_handle();
+
+    worker.register_activities(JitteryEchoActivities);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.start_activity(
+                    JitteryEchoActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -326,12 +343,6 @@ async fn poller_load_spike_then_sustained() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 

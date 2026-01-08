@@ -47,9 +47,28 @@ impl PayloadConverter {
     // TODO [rust-sdk-branch]: Proto binary, other standard built-ins
 }
 
+#[derive(Debug)]
 pub enum PayloadConversionError {
     WrongEncoding,
-    EncodingError(Box<dyn std::error::Error>),
+    EncodingError(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl std::fmt::Display for PayloadConversionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PayloadConversionError::WrongEncoding => write!(f, "Wrong encoding"),
+            PayloadConversionError::EncodingError(err) => write!(f, "Encoding error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for PayloadConversionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PayloadConversionError::WrongEncoding => None,
+            PayloadConversionError::EncodingError(err) => Some(err.as_ref()),
+        }
+    }
 }
 
 pub trait FailureConverter {
@@ -71,13 +90,13 @@ pub struct DefaultFailureConverter;
 pub trait PayloadCodec {
     fn encode(
         &self,
-        payloads: Vec<Payload>,
         context: &SerializationContext,
+        payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
     fn decode(
         &self,
-        payloads: Vec<Payload>,
         context: &SerializationContext,
+        payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
 }
 pub struct DefaultPayloadCodec;
@@ -94,7 +113,7 @@ pub trait TemporalSerializable {
         None
     }
 }
-///
+
 /// Indicates some type can be deserialized for use with Temporal.
 ///
 /// You don't need to implement this unless you are using a non-serde-compatible custom converter,
@@ -102,8 +121,8 @@ pub trait TemporalSerializable {
 pub trait TemporalDeserializable: Sized {
     fn from_serde(
         _: &dyn ErasedSerdePayloadConverter,
-        _: Payload,
         _: &SerializationContext,
+        _: Payload,
     ) -> Option<Self> {
         None
     }
@@ -122,26 +141,26 @@ pub struct RawValue {
 pub trait GenericPayloadConverter {
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
-        val: &T,
         context: &SerializationContext,
+        val: &T,
     ) -> Result<Payload, PayloadConversionError>;
     #[allow(clippy::wrong_self_convention)]
     fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
-        payload: Payload,
         context: &SerializationContext,
+        payload: Payload,
     ) -> Result<T, PayloadConversionError>;
 }
 
 impl GenericPayloadConverter for PayloadConverter {
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
-        val: &T,
         context: &SerializationContext,
+        val: &T,
     ) -> Result<Payload, PayloadConversionError> {
         match self {
             PayloadConverter::Serde(pc) => {
-                Ok(pc.to_payload(val.as_serde().ok_or_else(|| todo!())?, context)?)
+                Ok(pc.to_payload(context, val.as_serde().ok_or_else(|| todo!())?)?)
             }
             PayloadConverter::UseWrappers => {
                 Ok(T::to_payload(val, context).ok_or_else(|| todo!())?)
@@ -153,12 +172,12 @@ impl GenericPayloadConverter for PayloadConverter {
 
     fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
-        payload: Payload,
         context: &SerializationContext,
+        payload: Payload,
     ) -> Result<T, PayloadConversionError> {
         match self {
             PayloadConverter::Serde(pc) => {
-                Ok(T::from_serde(pc.as_ref(), payload, context).ok_or_else(|| todo!())?)
+                Ok(T::from_serde(pc.as_ref(), context, payload).ok_or_else(|| todo!())?)
             }
             PayloadConverter::UseWrappers => {
                 Ok(T::from_payload(payload, context).ok_or_else(|| todo!())?)
@@ -183,13 +202,13 @@ where
 {
     fn from_serde(
         pc: &dyn ErasedSerdePayloadConverter,
-        payload: Payload,
         context: &SerializationContext,
+        payload: Payload,
     ) -> Option<Self>
     where
         Self: Sized,
     {
-        erased_serde::deserialize(&mut pc.from_payload(payload, context).ok()?).ok()
+        erased_serde::deserialize(&mut pc.from_payload(context, payload).ok()?).ok()
     }
 }
 
@@ -197,8 +216,8 @@ struct SerdeJsonPayloadConverter;
 impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
     fn to_payload(
         &self,
+        _: &SerializationContext,
         value: &dyn erased_serde::Serialize,
-        _context: &SerializationContext,
     ) -> Result<Payload, PayloadConversionError> {
         let as_json = serde_json::to_vec(value).map_err(|_| todo!())?;
         Ok(Payload {
@@ -213,8 +232,8 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
 
     fn from_payload(
         &self,
+        _: &SerializationContext,
         payload: Payload,
-        _context: &SerializationContext,
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError> {
         // TODO: Would check metadata
         let json_v: serde_json::Value =
@@ -225,14 +244,14 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
 pub trait ErasedSerdePayloadConverter: Send + Sync {
     fn to_payload(
         &self,
-        value: &dyn erased_serde::Serialize,
         context: &SerializationContext,
+        value: &dyn erased_serde::Serialize,
     ) -> Result<Payload, PayloadConversionError>;
     #[allow(clippy::wrong_self_convention)]
     fn from_payload(
         &self,
-        payload: Payload,
         context: &SerializationContext,
+        payload: Payload,
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError>;
 }
 
@@ -299,15 +318,15 @@ impl FailureConverter for DefaultFailureConverter {
 impl PayloadCodec for DefaultPayloadCodec {
     fn encode(
         &self,
-        payloads: Vec<Payload>,
         _: &SerializationContext,
+        payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>> {
         async move { payloads }.boxed()
     }
     fn decode(
         &self,
-        payloads: Vec<Payload>,
         _: &SerializationContext,
+        payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>> {
         async move { payloads }.boxed()
     }

@@ -4,6 +4,10 @@ use syn::parse_macro_input;
 mod definitions;
 mod fsm_impl;
 
+/// Can be used to define Activities for invocation and execution. Using this macro requires that
+/// you also depend on the `temporalio_sdk` crate.
+///
+/// For a usage example, see that crate's documentation.
 #[proc_macro_attribute]
 pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let def: definitions::ActivitiesDefinition =
@@ -23,9 +27,9 @@ pub fn activity(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// An example state machine definition of a card reader for unlocking a door:
 /// ```
-/// use temporalio_macros::fsm;
 /// use std::convert::Infallible;
 /// use temporalio_common::fsm_trait::{StateMachine, TransitionResult};
+/// use temporalio_macros::fsm;
 ///
 /// fsm! {
 ///     name CardReader; command Commands; error Infallible; shared_state SharedState;
@@ -39,7 +43,7 @@ pub fn activity(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// #[derive(Clone)]
 /// pub struct SharedState {
-///     last_id: Option<String>
+///     last_id: Option<String>,
 /// }
 ///
 /// #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -71,8 +75,11 @@ pub fn activity(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, shared_dat: &mut SharedState, data: CardData)
-///       -> CardReaderTransition<ReadingCardOrLocked> {
+///     fn on_card_readable(
+///         &self,
+///         shared_dat: &mut SharedState,
+///         data: CardData,
+///     ) -> CardReaderTransition<ReadingCardOrLocked> {
 ///         match &shared_dat.last_id {
 ///             // Arbitrarily deny the same person entering twice in a row
 ///             Some(d) if d == &data => TransitionResult::ok(vec![], Locked {}.into()),
