@@ -1,7 +1,4 @@
-use crate::{
-    common::{CoreWfStarter, NAMESPACE},
-    integ_tests::activity_functions::echo,
-};
+use crate::common::{CoreWfStarter, NAMESPACE, activity_functions::StdActivities};
 use futures_util::StreamExt;
 use std::{
     sync::{
@@ -11,11 +8,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporalio_common::protos::{
-    coresdk::AsJsonPayloadExt,
-    temporal::api::{
-        common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
-    },
+use temporalio_common::protos::temporal::api::{
+    common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
@@ -29,7 +23,7 @@ const POST_RESET_SIG: &str = "post-reset";
 async fn reset_workflow() {
     let wf_name = "reset_me_wf";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
     let notify = Arc::new(Notify::new());
@@ -114,7 +108,7 @@ async fn reset_workflow() {
 async fn reset_randomseed() {
     let wf_name = "reset_randomseed";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes {
+    starter.sdk_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: true,
         enable_remote_activities: false,
@@ -153,11 +147,11 @@ async fn reset_randomseed() {
             if RAND_SEED.load(Ordering::Relaxed) == ctx.random_seed() {
                 ctx.timer(Duration::from_millis(100)).await;
             } else {
-                ctx.local_activity(LocalActivityOptions {
-                    activity_type: "echo".to_string(),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.start_local_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    LocalActivityOptions::default(),
+                )?
                 .await;
             }
             // Wait for the post-task-fail signal
@@ -172,7 +166,7 @@ async fn reset_randomseed() {
             Ok(().into())
         }
     });
-    worker.register_activity("echo", echo);
+    worker.register_activities(StdActivities);
 
     let run_id = worker
         .submit_wf(

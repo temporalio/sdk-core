@@ -170,6 +170,8 @@ pub struct ConnectionOptions {
     #[builder(default = "temporal-rust".to_owned())]
     #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
     client_name: String,
+    // TODO [rust-sdk-branch]: SDK should set this to its version. Doing that probably easiest
+    // after adding proper client interceptors.
     /// The version of the SDK being implemented on top of core. Is set as `client-version` header
     /// in all RPC calls. The server decides if the client is supported based on this.
     #[builder(default = VERSION.to_owned())]

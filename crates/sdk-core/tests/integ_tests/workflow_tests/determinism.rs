@@ -1,4 +1,6 @@
-use crate::common::{CoreWfStarter, WorkflowHandleExt, mock_sdk, mock_sdk_cfg};
+use crate::common::{
+    CoreWfStarter, WorkflowHandleExt, activity_functions::StdActivities, mock_sdk, mock_sdk_cfg,
+};
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -6,8 +8,7 @@ use std::{
 use temporalio_client::WorkflowOptions;
 use temporalio_common::{
     protos::{
-        DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder, canned_histories,
-        coresdk::AsJsonPayloadExt,
+        TestHistoryBuilder, canned_histories,
         temporal::api::{
             enums::v1::{EventType, WorkflowTaskFailedCause},
             failure::v1::Failure,
@@ -17,7 +18,6 @@ use temporalio_common::{
 };
 use temporalio_sdk::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
-    activities::ActivityContext,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -40,11 +40,8 @@ pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<
         }
         2 => {
             // On the second attempt we should cause a nondeterminism error
-            ctx.activity(ActivityOptions {
-                activity_type: "whatever".to_string(),
-                ..Default::default()
-            })
-            .await;
+            ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?
+                .await;
         }
         _ => panic!("Ran too many times"),
     }
@@ -55,7 +52,7 @@ pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<
 async fn test_determinism_error_then_recovers() {
     let wf_name = "test_determinism_error_then_recovers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);
@@ -67,8 +64,11 @@ async fn test_determinism_error_then_recovers() {
 
 #[tokio::test]
 async fn task_fail_causes_replay_unset_too_soon() {
+    use crate::common::activity_functions::StdActivities;
+
     let wf_name = "task_fail_causes_replay_unset_too_soon";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     static DID_FAIL: AtomicBool = AtomicBool::new(false);
@@ -76,12 +76,15 @@ async fn task_fail_causes_replay_unset_too_soon() {
         if DID_FAIL.load(Ordering::Relaxed) {
             assert!(ctx.is_replaying());
         }
-        ctx.activity(ActivityOptions {
-            activity_type: "echo".to_string(),
-            input: "hi!".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(2)),
-            ..Default::default()
-        })
+        ctx.start_activity(
+            StdActivities::echo,
+            "hi!".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
         .await;
         if !DID_FAIL.load(Ordering::Relaxed) {
             DID_FAIL.store(true, Ordering::Relaxed);
@@ -89,10 +92,6 @@ async fn task_fail_causes_replay_unset_too_soon() {
         }
         Ok(().into())
     });
-    worker.register_activity(
-        "echo",
-        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-    );
 
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
@@ -248,32 +247,42 @@ async fn activity_id_or_type_change_is_nondeterministic(
 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
         if local_act {
-            ctx.local_activity(if id_change {
-                LocalActivityOptions {
-                    activity_id: Some("I'm bad and wrong!".to_string()),
-                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                    ..Default::default()
-                }
+            if id_change {
+                ctx.start_local_activity(
+                    StdActivities::default,
+                    (),
+                    LocalActivityOptions {
+                        activity_id: Some("I'm bad and wrong!".to_string()),
+                        ..Default::default()
+                    },
+                )?
+                .await;
             } else {
-                LocalActivityOptions {
-                    activity_type: "not the default act type".to_string(),
+                ctx.start_local_activity(
+                    // Different type causes nondeterminism
+                    StdActivities::no_op,
+                    (),
+                    Default::default(),
+                )?
+                .await;
+            }
+        } else if id_change {
+            ctx.start_activity(
+                StdActivities::default,
+                (),
+                ActivityOptions {
+                    activity_id: Some("I'm bad and wrong!".to_string()),
                     ..Default::default()
-                }
-            })
+                },
+            )?
             .await;
         } else {
-            ctx.activity(if id_change {
-                ActivityOptions {
-                    activity_id: Some("I'm bad and wrong!".to_string()),
-                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                    ..Default::default()
-                }
-            } else {
-                ActivityOptions {
-                    activity_type: "not the default act type".to_string(),
-                    ..Default::default()
-                }
-            })
+            ctx.start_activity(
+                // Different type causes nondeterminism
+                StdActivities::no_op,
+                (),
+                ActivityOptions::default(),
+            )?
             .await;
         }
         Ok(().into())
@@ -333,7 +342,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         ctx.child_workflow(if id_change {
             ChildWorkflowOptions {
                 workflow_id: "I'm bad and wrong!".to_string(),
-                workflow_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                workflow_type: DEFAULT_WORKFLOW_TYPE.to_string(),
                 ..Default::default()
             }
         } else {

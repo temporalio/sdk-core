@@ -1,13 +1,11 @@
-use crate::common::CoreWfStarter;
+use crate::common::{CoreWfStarter, activity_functions::StdActivities};
 use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
-use std::{future, time::Duration};
+use std::{future, sync::Arc, time::Duration};
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
-use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
-    activities::{ActivityContext, ActivityError},
-};
+use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk_core::TunerHolder;
 use tokio_util::sync::CancellationToken;
 
 const FUZZY_SIG: &str = "fuzzy_sig";
@@ -31,10 +29,6 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn echo(_ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
-    Ok(echo_me)
-}
-
 async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
     let sigchan = ctx
         .make_signal_channel(FUZZY_SIG)
@@ -46,21 +40,27 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
         .take_until(done.cancelled())
         .for_each_concurrent(None, |action| match action {
             FuzzyWfAction::DoAct => ctx
-                .activity(ActivityOptions {
-                    activity_type: "echo_activity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                .start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .map(|_| ())
                 .boxed(),
             FuzzyWfAction::DoLocalAct => ctx
-                .local_activity(LocalActivityOptions {
-                    activity_type: "echo_activity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                .start_local_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    LocalActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .map(|_| ())
                 .boxed(),
             FuzzyWfAction::Shutdown => {
@@ -78,12 +78,12 @@ async fn fuzzy_workflow() {
     let num_workflows = 200;
     let wf_name = "fuzzy_wf";
     let mut starter = CoreWfStarter::new("fuzzy_workflow");
-    starter.worker_config.max_outstanding_workflow_tasks = Some(25);
-    starter.worker_config.max_cached_workflows = 25;
-    starter.worker_config.max_outstanding_activities = Some(25);
+    starter.sdk_config.max_cached_workflows = 25;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(25, 25, 100, 100));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
-    worker.register_activity("echo_activity", echo);
+    worker.register_activities(StdActivities);
+
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];

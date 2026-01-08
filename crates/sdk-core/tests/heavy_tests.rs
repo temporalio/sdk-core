@@ -7,7 +7,8 @@ mod fuzzy_workflow;
 
 use crate::common::get_integ_runtime_options;
 use common::{
-    CoreWfStarter, init_integ_telem, prom_metrics, rand_6_chars, workflows::la_problem_workflow,
+    CoreWfStarter, activity_functions::StdActivities, init_integ_telem, prom_metrics, rand_6_chars,
+    workflows::la_problem_workflow,
 };
 use futures_util::{
     StreamExt,
@@ -24,6 +25,7 @@ use std::{
 use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
+use temporalio_macros::activities;
 
 use temporalio_common::{
     protos::{
@@ -32,18 +34,24 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{ActivityOptions, WfContext, WorkflowResult, activities::ActivityContext};
-use temporalio_sdk_core::{CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions};
+use temporalio_sdk::{
+    ActivityOptions, WfContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
+};
+use temporalio_sdk_core::{
+    CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, TunerHolder,
+};
 
 #[tokio::test]
 async fn activity_load() {
     const CONCURRENCY: usize = 512;
 
     let mut starter = CoreWfStarter::new("activity_load");
-    starter.worker_config.max_outstanding_workflow_tasks = Some(CONCURRENCY);
-    starter.worker_config.max_cached_workflows = CONCURRENCY;
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
-    starter.worker_config.max_outstanding_activities = Some(CONCURRENCY);
+    starter.sdk_config.max_cached_workflows = CONCURRENCY;
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
+    starter.sdk_config.tuner =
+        Arc::new(TunerHolder::fixed_size(CONCURRENCY, CONCURRENCY, 100, 100));
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -52,21 +60,27 @@ async fn activity_load() {
 
     let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();
-        let payload = "yo".as_json_payload().unwrap();
+        let input_str = "yo".to_string();
         async move {
-            let activity = ActivityOptions {
-                activity_id: Some(activity_id.to_string()),
-                activity_type: "test_activity".to_string(),
-                input: payload.clone(),
-                task_queue,
-                schedule_to_start_timeout: Some(activity_timeout),
-                start_to_close_timeout: Some(activity_timeout),
-                schedule_to_close_timeout: Some(activity_timeout),
-                heartbeat_timeout: Some(activity_timeout),
-                cancellation_type: ActivityCancellationType::TryCancel,
-                ..Default::default()
-            };
-            let res = ctx.activity(activity).await.unwrap_ok_payload();
+            let res = ctx
+                .start_activity(
+                    StdActivities::echo,
+                    input_str.clone(),
+                    ActivityOptions {
+                        activity_id: Some(activity_id.to_string()),
+                        task_queue,
+                        schedule_to_start_timeout: Some(activity_timeout),
+                        start_to_close_timeout: Some(activity_timeout),
+                        schedule_to_close_timeout: Some(activity_timeout),
+                        heartbeat_timeout: Some(activity_timeout),
+                        cancellation_type: ActivityCancellationType::TryCancel,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await
+                .unwrap_ok_payload();
+            let payload = input_str.as_json_payload().unwrap();
             assert_eq!(res.data, payload.data);
             Ok(().into())
         }
@@ -75,10 +89,6 @@ async fn activity_load() {
     let starting = Instant::now();
     let wf_type = "activity_load";
     worker.register_wf(wf_type.to_owned(), wf_fn);
-    worker.register_activity(
-        "test_activity",
-        |_ctx: ActivityContext, echo: String| async move { Ok(echo) },
-    );
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
         let wf_id = format!("activity_load_{i}");
@@ -108,12 +118,8 @@ async fn chunky_activities_resource_based() {
     const WORKFLOWS: usize = 100;
 
     let mut starter = CoreWfStarter::new("chunky_activities_resource_based");
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10_usize);
     let mut tuner = ResourceBasedTuner::new(0.7, 0.7);
     tuner
         .with_workflow_slots_options(ResourceSlotOptions::new(
@@ -122,34 +128,13 @@ async fn chunky_activities_resource_based() {
             Duration::from_millis(0),
         ))
         .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
-    starter.worker_config.tuner = Some(Arc::new(tuner));
-    let mut worker = starter.worker().await;
+    starter.sdk_config.tuner = Arc::new(tuner);
 
-    let activity_id = "act-1";
-    let activity_timeout = Duration::from_secs(30);
-
-    let wf_fn = move |ctx: WfContext| {
-        let payload = "yo".as_json_payload().unwrap();
-        async move {
-            let activity = ActivityOptions {
-                activity_id: Some(activity_id.to_string()),
-                activity_type: "test_activity".to_string(),
-                input: payload.clone(),
-                start_to_close_timeout: Some(activity_timeout),
-                ..Default::default()
-            };
-            let res = ctx.activity(activity).await.unwrap_ok_payload();
-            assert_eq!(res.data, payload.data);
-            Ok(().into())
-        }
-    };
-
-    let starting = Instant::now();
-    let wf_type = "chunky_activity_wf";
-    worker.register_wf(wf_type.to_owned(), wf_fn);
-    worker.register_activity(
-        "test_activity",
-        |_ctx: ActivityContext, echo: String| async move {
+    struct ChunkyActivities;
+    #[activities]
+    impl ChunkyActivities {
+        #[activity]
+        async fn chunky_echo(_ctx: ActivityContext, echo: String) -> Result<String, ActivityError> {
             tokio::task::spawn_blocking(move || {
                 // Allocate a gig and then do some CPU stuff on it
                 let mut mem = vec![0_u8; 1000 * 1024 * 1024];
@@ -161,8 +146,40 @@ async fn chunky_activities_resource_based() {
                 Ok(echo)
             })
             .await?
-        },
-    );
+        }
+    }
+
+    starter.sdk_config.register_activities(ChunkyActivities);
+    let mut worker = starter.worker().await;
+
+    let activity_id = "act-1";
+    let activity_timeout = Duration::from_secs(30);
+
+    let wf_fn = move |ctx: WfContext| {
+        let input_str = "yo".to_string();
+        async move {
+            let res = ctx
+                .start_activity(
+                    ChunkyActivities::chunky_echo,
+                    input_str.clone(),
+                    ActivityOptions {
+                        activity_id: Some(activity_id.to_string()),
+                        start_to_close_timeout: Some(activity_timeout),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await
+                .unwrap_ok_payload();
+            let payload = input_str.as_json_payload().unwrap();
+            assert_eq!(res.data, payload.data);
+            Ok(().into())
+        }
+    };
+
+    let starting = Instant::now();
+    let wf_type = "chunky_activity_wf";
+    worker.register_wf(wf_type.to_owned(), wf_fn);
     join_all((0..WORKFLOWS).map(|i| {
         let worker = &worker;
         let wf_id = format!("chunk_activity_{i}");
@@ -203,10 +220,10 @@ async fn workflow_load() {
     init_integ_telem();
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("workflow_load", rt);
-    starter.worker_config.max_outstanding_workflow_tasks = Some(5);
-    starter.worker_config.max_cached_workflows = 200;
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
-    starter.worker_config.max_outstanding_activities = Some(100);
+    starter.sdk_config.max_cached_workflows = 200;
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 100, 100, 100));
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
@@ -214,12 +231,15 @@ async fn workflow_load() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo_activity".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
                 ctx.timer(Duration::from_secs(1)).await;
             }
@@ -231,10 +251,6 @@ async fn workflow_load() {
 
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActivityContext, echo_me: String| async move { Ok(echo_me) },
-    );
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];
@@ -280,18 +296,15 @@ async fn workflow_load() {
 async fn evict_while_la_running_no_interference() {
     let wf_name = "evict_while_la_running_no_interference";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.max_outstanding_local_activities = Some(20);
-    starter.worker_config.max_cached_workflows = 20;
+    starter.sdk_config.max_cached_workflows = 20;
     // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
     // introduces more instability that can be useful in the test.
     // starter.max_wft(20);
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(100, 10, 20, 1));
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActivityContext, _: String| async {
-        tokio::time::sleep(Duration::from_secs(15)).await;
-        Ok(())
-    });
 
     let client = starter.get_client().await;
     let subfs = FuturesUnordered::new();
@@ -306,7 +319,7 @@ async fn evict_while_la_running_no_interference() {
             )
             .await
             .unwrap();
-        let cw = worker.core_worker.clone();
+        let cw = worker.core_worker();
         let client = client.clone();
         subfs.push(async move {
             // Evict the workflow
@@ -346,9 +359,9 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
 async fn can_paginate_long_history() {
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     // Do not use sticky queues so we are forced to paginate once history gets long
-    starter.worker_config.max_cached_workflows = 0;
+    starter.sdk_config.max_cached_workflows = 0;
 
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
@@ -388,19 +401,35 @@ async fn poller_autoscaling_basic_loadtest() {
     let num_workflows = 100;
     let wf_name = "poller_load";
     let mut starter = CoreWfStarter::new("poller_load");
-    starter.worker_config.max_cached_workflows = 5000;
-    starter.worker_config.max_outstanding_workflow_tasks = Some(1000);
-    starter.worker_config.max_outstanding_activities = Some(1000);
-    starter.worker_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.max_cached_workflows = 5000;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1000, 1000, 100, 1));
+    starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
-    starter.worker_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
+    starter.sdk_config.activity_task_poller_behavior = PollerBehavior::Autoscaling {
         minimum: 1,
         maximum: 200,
         initial: 5,
     };
+
+    struct JitteryActivities;
+    #[activities]
+    impl JitteryActivities {
+        #[activity]
+        async fn jittery_echo(
+            _ctx: ActivityContext,
+            echo: String,
+        ) -> Result<String, ActivityError> {
+            // Add some jitter to completions
+            let rand_millis = rand::rng().random_range(0..500);
+            tokio::time::sleep(Duration::from_millis(rand_millis)).await;
+            Ok(echo)
+        }
+    }
+
+    starter.sdk_config.register_activities(JitteryActivities);
     let mut worker = starter.worker().await;
     let shutdown_handle = worker.inner_mut().shutdown_handle();
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -409,12 +438,15 @@ async fn poller_autoscaling_basic_loadtest() {
 
         let real_stuff = async move {
             for _ in 0..5 {
-                ctx.activity(ActivityOptions {
-                    activity_type: "echo".to_string(),
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
-                    ..Default::default()
-                })
+                ctx.start_activity(
+                    JitteryActivities::jittery_echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
                 .await;
             }
         };
@@ -424,12 +456,6 @@ async fn poller_autoscaling_basic_loadtest() {
         }
 
         Ok(().into())
-    });
-    worker.register_activity("echo", |_: ActivityContext, echo: String| async move {
-        // Add some jitter to completions
-        let rand_millis = rand::rng().random_range(0..500);
-        tokio::time::sleep(Duration::from_millis(rand_millis)).await;
-        Ok(echo)
     });
     let client = starter.get_client().await;
 
