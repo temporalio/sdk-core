@@ -73,7 +73,6 @@ extern crate tracing;
 extern crate self as temporalio_sdk;
 
 pub mod activities;
-mod app_data;
 pub mod interceptors;
 mod workflow_context;
 mod workflow_future;
@@ -94,7 +93,6 @@ use crate::{
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
 };
 use anyhow::{Context, anyhow, bail};
-use app_data::AppData;
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, future::BoxFuture};
 use serde::Serialize;
 use std::{
@@ -323,7 +321,6 @@ pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
-    app_data: Option<AppData>,
 }
 
 struct CommonWorker {
@@ -398,7 +395,6 @@ impl Worker {
                 activities,
                 ..Default::default()
             },
-            app_data: Some(Default::default()),
         }
     }
 
@@ -407,8 +403,8 @@ impl Worker {
         &self.common.task_queue
     }
 
-    /// Return a handle that can be used to initiate shutdown.
-    /// TODO: Doc better after shutdown changes
+    /// Return a handle that can be used to initiate shutdown. This is useful because [Worker::run]
+    /// takes self mutably, so you may want to obtain a handle for shutting down before running.
     pub fn shutdown_handle(&self) -> impl Fn() + use<> {
         let w = self.common.worker.clone();
         move || w.initiate_shutdown()
@@ -445,21 +441,11 @@ impl Worker {
         self
     }
 
-    /// Insert Custom App Context for Workflows and Activities
-    pub fn insert_app_data<T: Send + Sync + 'static>(&mut self, data: T) {
-        self.app_data.as_mut().map(|a| a.insert(data));
-    }
-
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
-        let (common, wf_half, act_half, app_data) = self.split_apart();
-        let safe_app_data = Arc::new(
-            app_data
-                .take()
-                .ok_or_else(|| anyhow!("app_data should exist on run"))?,
-        );
+        let (common, wf_half, act_half) = self.split_apart();
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
         let wf_future_joiner = async {
@@ -542,7 +528,6 @@ impl Worker {
                         }
                         act_half.activity_task_handler(
                             common.worker.clone(),
-                            safe_app_data.clone(),
                             common.task_queue.clone(),
                             activity?,
                         )?;
@@ -560,10 +545,6 @@ impl Worker {
         }
         self.common.worker.shutdown().await;
         debug!("Worker shutdown complete");
-        self.app_data = Some(
-            Arc::try_unwrap(safe_app_data)
-                .map_err(|_| anyhow!("some references of AppData exist on worker shutdown"))?,
-        );
         Ok(())
     }
 
@@ -595,19 +576,11 @@ impl Worker {
         self.common.worker.clone()
     }
 
-    fn split_apart(
-        &mut self,
-    ) -> (
-        &mut CommonWorker,
-        &mut WorkflowHalf,
-        &mut ActivityHalf,
-        &mut Option<AppData>,
-    ) {
+    fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
         (
             &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
-            &mut self.app_data,
         )
     }
 }
@@ -732,7 +705,6 @@ impl ActivityHalf {
     fn activity_task_handler(
         &mut self,
         worker: Arc<CoreWorker>,
-        app_data: Arc<AppData>,
         task_queue: String,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
@@ -757,14 +729,8 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) = ActivityContext::new(
-                    worker.clone(),
-                    app_data,
-                    ct,
-                    task_queue,
-                    task_token.clone(),
-                    start,
-                );
+                let (ctx, arg) =
+                    ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
                 // TODO [rust-sdk-branch]: Get payload converter from client
                 let payload_converter = PayloadConverter::serde_json();
 

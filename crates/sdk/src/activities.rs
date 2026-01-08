@@ -47,7 +47,6 @@
 #[doc(inline)]
 pub use temporalio_macros::activities;
 
-use crate::app_data::AppData;
 use futures_util::{FutureExt, future::BoxFuture};
 use prost_types::{Duration, Timestamp};
 use std::{
@@ -75,7 +74,6 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct ActivityContext {
     worker: Arc<CoreWorker>,
-    app_data: Arc<AppData>,
     cancellation_token: CancellationToken,
     input: Vec<Payload>,
     heartbeat_details: Vec<Payload>,
@@ -88,7 +86,6 @@ impl ActivityContext {
     /// (which may be a default [Payload]).
     pub fn new(
         worker: Arc<CoreWorker>,
-        app_data: Arc<AppData>,
         cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
@@ -125,7 +122,6 @@ impl ActivityContext {
         (
             ActivityContext {
                 worker,
-                app_data,
                 cancellation_token,
                 input,
                 heartbeat_details,
@@ -195,11 +191,6 @@ impl ActivityContext {
     /// Get headers attached to this activity
     pub fn headers(&self) -> &HashMap<String, Payload> {
         &self.header_fields
-    }
-
-    /// Get custom Application Data
-    pub fn app_data<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.app_data.get::<T>()
     }
 }
 
