@@ -1538,6 +1538,7 @@ pub mod coresdk {
             Ok(Payload {
                 metadata,
                 data: as_json.into_bytes(),
+                external_payloads: Default::default(),
             })
         }
     }
@@ -2016,6 +2017,7 @@ pub mod temporal {
                         Self {
                             metadata,
                             data: v.as_ref().to_vec(),
+                            external_payloads: Default::default(),
                         }
                     }
                 }
@@ -2352,6 +2354,8 @@ pub mod temporal {
                                 Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => true,
                                 Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => false,
                                 Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionPausedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => false,
                             }
                         } else {
                             false
@@ -2431,6 +2435,8 @@ pub mod temporal {
                             Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => { EventType::WorkflowExecutionOptionsUpdated }
                             Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => { EventType::NexusOperationCancelRequestCompleted }
                             Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => { EventType::NexusOperationCancelRequestFailed }
+                            Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
+                            Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
                         }
                     }
                 }

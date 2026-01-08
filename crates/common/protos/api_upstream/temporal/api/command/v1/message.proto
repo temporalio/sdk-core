@@ -179,6 +179,11 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     // Deprecated. Only considered for versioning v0.2.
     bool inherit_build_id = 15 [deprecated = true];
 
+    // Experimental. Optionally decide the versioning behavior that the first task of the new run should use.
+    // For example, choose to AutoUpgrade on continue-as-new instead of inheriting the pinned version
+    // of the previous run.
+    temporal.api.enums.v1.ContinueAsNewVersioningBehavior initial_versioning_behavior = 16;
+
     // `workflow_execution_timeout` is omitted as it shouldn't be overridden from within a workflow.
 }
 

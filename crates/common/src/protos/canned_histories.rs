@@ -272,6 +272,7 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -343,6 +344,7 @@ pub fn scheduled_cancelled_activity_timeout(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -421,6 +423,7 @@ pub fn cancel_scheduled_activity_abandon(activity_id: &str, signal_id: &str) -> 
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -453,6 +456,7 @@ pub fn cancel_started_activity_abandon(activity_id: &str, signal_id: &str) -> Te
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -492,6 +496,7 @@ pub fn cancel_scheduled_activity_with_signal_and_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -508,6 +513,7 @@ pub fn cancel_scheduled_activity_with_signal_and_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -561,6 +567,7 @@ pub fn cancel_started_activity_with_signal_and_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -577,6 +584,7 @@ pub fn cancel_started_activity_with_signal_and_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -621,6 +629,7 @@ pub fn cancel_scheduled_activity_with_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -678,6 +687,7 @@ pub fn cancel_started_activity_with_activity_task_cancel(
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -720,6 +730,7 @@ pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_we_signaled(
@@ -727,6 +738,7 @@ pub fn two_signals(sig_1_id: &str, sig_2_id: &str) -> TestHistoryBuilder {
         vec![Payload {
             metadata: Default::default(),
             data: b"world".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_workflow_task_scheduled_and_started();
@@ -777,6 +789,7 @@ pub fn lots_of_big_signals(num_tasks: usize) -> TestHistoryBuilder {
                 vec![Payload {
                     metadata: Default::default(),
                     data: dat.into(),
+                    external_payloads: Default::default(),
                 }],
             );
         }
@@ -846,6 +859,7 @@ pub fn cancel_not_sent_when_also_complete_repro() -> TestHistoryBuilder {
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_full_wf_task();
@@ -896,6 +910,7 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     t.add_workflow_task_scheduled();
@@ -904,6 +919,7 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
         vec![Payload {
             metadata: Default::default(),
             data: b"hello ".to_vec(),
+            external_payloads: Default::default(),
         }],
     );
     let started_event_id = t.add(ActivityTaskStartedEventAttributes {

@@ -90,6 +90,10 @@ message Request {
         StartOperationRequest start_operation = 3;
         CancelOperationRequest cancel_operation = 4;
     }
+
+    // The endpoint this request was addressed to before forwarding to the worker.
+    // Supported from server version 1.30.0.
+    string endpoint = 10;
 }
 
 // Response variant for StartOperationRequest.
