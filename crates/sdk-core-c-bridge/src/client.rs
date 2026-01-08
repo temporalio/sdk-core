@@ -729,7 +729,9 @@ async fn call_workflow_service(
         }
         "PatchSchedule" => rpc_call_on_trait!(client, call, WorkflowService, patch_schedule),
         "PauseActivity" => rpc_call_on_trait!(client, call, WorkflowService, pause_activity),
-        "PauseWorkflowExecution" => rpc_call_on_trait!(client, call, WorkflowService, pause_workflow_execution),
+        "PauseWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, pause_workflow_execution)
+        }
         "PollActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_activity_execution)
         }
@@ -770,7 +772,12 @@ async fn call_workflow_service(
             rpc_call_on_trait!(client, call, WorkflowService, register_namespace)
         }
         "RequestCancelActivityExecution" => {
-            rpc_call_on_trait!(client, call, WorkflowService, request_cancel_activity_execution)
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_activity_execution
+            )
         }
         "RequestCancelWorkflowExecution" => {
             rpc_call_on_trait!(
@@ -883,7 +890,7 @@ async fn call_workflow_service(
         }
         "StartActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_activity_execution)
-        }        
+        }
         "StartBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
         }
