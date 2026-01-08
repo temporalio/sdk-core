@@ -1206,7 +1206,7 @@ impl WorkerHeartbeatManager {
                         as f32,
 
                     // Set by SharedNamespaceWorker because it relies on the client
-                    process_key: String::new(),
+                    worker_grouping_key: String::new(),
                 }),
                 task_queue: config.task_queue.clone(),
                 deployment_version,

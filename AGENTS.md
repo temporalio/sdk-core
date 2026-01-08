@@ -8,10 +8,10 @@ document as your quick reference when submitting pull requests.
 - `crates` - All crates in the workspace.
   - `crates/core/` – implementation of the core SDK
   - `crates/client/` – clients for communicating with Temporal clusters
+  - `crates/common/` – protobuf definitions shared across crates
   - `crates/core-api/` – API definitions exposed by core
   - `crates/core-c-bridge/` – C interface for core
   - `crates/sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
-  - `crates/sdk-core-protos/` – protobuf definitions shared across crates
   - `crates/fsm/` – state machine implementation and macros
   - `crates/core/tests/` – integration, heavy, and manual tests
 - `arch_docs/` – architectural design documents
@@ -74,5 +74,5 @@ Reviewers will look for:
 
 - Fetch workflow histories with `cargo run --bin histfetch <workflow_id> [run_id]` (binary lives in
   `crates/core/src/histfetch.rs`).
-- Protobuf files under `crates/sdk-core-protos/protos/api_upstream` are a git subtree; see
+- Protobuf files under `crates/common/protos/api_upstream` are a git subtree; see
   `README.md` for update instructions.

@@ -169,4 +169,8 @@ enum EventType {
     EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED = 56;
     // A cancellation request for a Nexus operation resulted in an error.
     EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED = 57;
+    // An event that indicates that the workflow execution has been paused.
+    EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED = 58;
+    // An event that indicates that the previously paused workflow execution has been unpaused.
+    EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED = 59;
 }

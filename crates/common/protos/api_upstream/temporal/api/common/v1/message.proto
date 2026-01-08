@@ -32,6 +32,14 @@ message Payloads {
 message Payload {
     map<string,bytes> metadata = 1;
     bytes data = 2;
+    // Details about externally stored payloads associated with this payload.
+    repeated ExternalPayloadDetails external_payloads = 3;
+
+    // Describes an externally stored object referenced by this payload.
+    message ExternalPayloadDetails {
+        // Size in bytes of the externally stored payload
+        int64 size_bytes = 1;
+    }
 }
 
 // A user-defined set of *indexed* fields that are used/exposed when listing/searching workflows.
@@ -338,4 +346,3 @@ message WorkerSelector {
         string worker_instance_key = 1;
     }
 }
-
