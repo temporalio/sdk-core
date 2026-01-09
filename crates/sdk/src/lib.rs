@@ -76,6 +76,7 @@ pub mod activities;
 pub mod interceptors;
 mod workflow_context;
 mod workflow_future;
+pub mod workflows;
 
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
@@ -1343,4 +1344,54 @@ mod tests {
         let ctx: ActivityContext = unimplemented!();
         let _result = MyActivities::my_activity.run(ctx).await;
     }
+
+    /* TODO [rust-sdk-branch]: Use after implementing registration/invocation
+    // Workflow macro compile-time test - verifies the macros generate valid code
+    use temporalio_macros::{init, query, run, signal, update, workflow, workflow_methods};
+
+    #[workflow]
+    #[allow(dead_code)]
+    struct MyWorkflow {
+        counter: u32,
+    }
+
+    #[workflow_methods]
+    impl MyWorkflow {
+        #[init]
+        pub fn new(_ctx: &WfContext, _input: String) -> Self {
+            Self { counter: 0 }
+        }
+
+        #[run]
+        pub async fn run(&mut self, _ctx: &mut WfContext) -> WorkflowResult<String> {
+            Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
+        }
+
+        #[signal(name = "increment")]
+        pub fn increment_counter(&mut self, _ctx: &mut WfContext, amount: u32) {
+            self.counter += amount;
+        }
+
+        #[signal]
+        pub async fn async_signal(&mut self, _ctx: &mut WfContext) {
+            // Async signals are allowed
+        }
+
+        #[query]
+        pub fn get_counter(&self, _ctx: &WfContext) -> u32 {
+            self.counter
+        }
+
+        #[update(name = "double")]
+        pub fn double_counter(&mut self, _ctx: &mut WfContext) -> u32 {
+            self.counter *= 2;
+            self.counter
+        }
+
+        #[update]
+        pub async fn async_update(&mut self, _ctx: &mut WfContext, val: i32) -> i32 {
+            val * 2
+        }
+    }
+    */
 }

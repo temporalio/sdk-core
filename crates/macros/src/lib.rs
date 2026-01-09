@@ -3,6 +3,7 @@ use syn::parse_macro_input;
 
 mod definitions;
 mod fsm_impl;
+mod workflow_definitions;
 
 /// Can be used to define Activities for invocation and execution. Using this macro requires that
 /// you also depend on the `temporalio_sdk` crate.
@@ -19,6 +20,88 @@ pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// This attribute is processed by the `#[activities]` macro and should not be used standalone.
 #[proc_macro_attribute]
 pub fn activity(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a struct as a workflow definition.
+///
+/// This attribute can optionally specify a custom workflow name:
+/// `#[workflow(name = "my-custom-workflow")]`
+///
+/// If no name is specified, the struct name is used as the workflow type name.
+///
+/// This attribute must be used in conjunction with `#[workflow_methods]` on an impl block.
+#[proc_macro_attribute]
+pub fn workflow(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Pass through - the struct is not modified, just marked for workflow_methods
+    item
+}
+
+/// Defines workflow methods for a workflow struct. Using this macro requires that
+/// you also depend on the `temporalio_sdk` crate.
+///
+/// This macro processes an impl block and generates:
+/// - Marker structs for each workflow method
+/// - Trait implementations for workflow definition and execution
+/// - Registration code for workers
+///
+/// ## Method Attributes
+///
+/// - `#[init]` - Optional initialization method. Signature: `fn new(input: T, ctx: &WfContext) -> Self`
+/// - `#[run]` - Required main workflow function. Signature: `async fn run(&mut self, ctx: &mut WfContext) -> WorkflowResult<T>`
+/// - `#[signal]` - Signal handler. Signature: `fn signal(&mut self, ctx: &mut WfContext, input: T)` (may be async)
+/// - `#[query]` - Query handler. Signature: `fn query(&self, ctx: &WfContext, input: T) -> R` (must NOT be async)
+/// - `#[update]` - Update handler. Signature: `fn update(&mut self, ctx: &mut WfContext, input: T) -> R` (may be async)
+///
+/// For a usage example, see the `temporalio_sdk` crate's documentation.
+#[proc_macro_attribute]
+pub fn workflow_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let def: workflow_definitions::WorkflowMethodsDefinition =
+        parse_macro_input!(item as workflow_definitions::WorkflowMethodsDefinition);
+    def.codegen()
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as the initialization method.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+#[proc_macro_attribute]
+pub fn init(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as the main run method.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+#[proc_macro_attribute]
+pub fn run(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as a signal handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the signal name:
+/// `#[signal(name = "my_signal")]`
+#[proc_macro_attribute]
+pub fn signal(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as a query handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the query name:
+/// `#[query(name = "my_query")]`
+#[proc_macro_attribute]
+pub fn query(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as an update handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the update name:
+/// `#[update(name = "my_update")]`
+#[proc_macro_attribute]
+pub fn update(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
