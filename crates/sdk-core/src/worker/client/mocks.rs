@@ -1,5 +1,5 @@
 use super::*;
-use futures_util::Future;
+use futures_util::{Future, FutureExt};
 use std::sync::{Arc, LazyLock};
 use temporalio_client::worker::ClientWorkerSet;
 
@@ -53,6 +53,8 @@ pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
+    r.expect_shutdown_worker()
+        .returning(|_, _| async { Ok(ShutdownWorkerResponse {}) }.boxed());
     r.expect_sdk_name_and_version()
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r.expect_identity()
