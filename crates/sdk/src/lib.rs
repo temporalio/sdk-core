@@ -92,6 +92,7 @@ use crate::{
     },
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
+    workflows::{WorkflowDefinitions, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, future::BoxFuture};
@@ -166,6 +167,9 @@ pub struct WorkerOptions {
 
     #[builder(field)]
     activities: ActivityDefinitions,
+
+    #[builder(field)]
+    workflows: WorkflowDefinitions,
 
     /// Set the deployment options for this worker. Defaults to a hash of the currently running
     /// executable.
@@ -263,6 +267,12 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         self.activities.register_activity::<AD>(instance);
         self
     }
+
+    /// Registers all workflows on a workflow implementer.
+    pub fn register_workflow<WI: WorkflowImplementer>(mut self) -> Self {
+        self.workflows.register_workflow::<WI>();
+        self
+    }
 }
 
 // Needs to exist to avoid https://github.com/elastio/bon/issues/359
@@ -287,6 +297,16 @@ impl WorkerOptions {
     /// Returns all the registered activities by cloning the current set.
     pub fn activities(&self) -> ActivityDefinitions {
         self.activities.clone()
+    }
+
+    /// Registers all workflows on a workflow implementer.
+    pub fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
+        self.workflows.register_workflow::<WI>();
+        self
+    }
+    /// Returns all the registered workflows by cloning the current set.
+    pub fn workflows(&self) -> WorkflowDefinitions {
+        self.workflows.clone()
     }
 
     #[doc(hidden)]
@@ -336,6 +356,7 @@ struct WorkflowHalf {
     workflows: RefCell<HashMap<String, WorkflowData>>,
     /// Maps workflow type to the function for executing workflow runs with that ID
     workflow_fns: RefCell<HashMap<String, WorkflowFunction>>,
+    workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
 }
 struct WorkflowData {
@@ -364,26 +385,29 @@ impl Worker {
         mut options: WorkerOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let acts = std::mem::take(&mut options.activities);
+        let wfs = std::mem::take(&mut options.workflows);
         let wc = options
             .to_core_options(client.namespace())
             .map_err(|s| anyhow::anyhow!("{s}"))?;
         let core = init_worker(runtime, wc, client.connection().clone())?;
         let mut me = Self::new_from_core(Arc::new(core));
         me.activity_half.activities = acts;
+        me.workflow_half.workflow_definitions = wfs;
         Ok(me)
     }
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
     pub fn new_from_core(worker: Arc<CoreWorker>) -> Self {
-        Self::new_from_core_activities(worker, Default::default())
+        Self::new_from_core_definitions(worker, Default::default(), Default::default())
     }
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
-    pub fn new_from_core_activities(
+    pub fn new_from_core_definitions(
         worker: Arc<CoreWorker>,
         activities: ActivityDefinitions,
+        workflows: WorkflowDefinitions,
     ) -> Self {
         Self {
             common: CommonWorker {
@@ -391,7 +415,10 @@ impl Worker {
                 worker,
                 worker_interceptor: None,
             },
-            workflow_half: Default::default(),
+            workflow_half: WorkflowHalf {
+                workflow_definitions: workflows,
+                ..Default::default()
+            },
             activity_half: ActivityHalf {
                 activities,
                 ..Default::default()
@@ -439,6 +466,14 @@ impl Worker {
         self.activity_half
             .activities
             .register_activity::<AD>(instance);
+        self
+    }
+
+    /// Registers all workflows on a workflow implementer.
+    pub fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
+        self.workflow_half
+            .workflow_definitions
+            .register_workflow::<WI>();
         self
     }
 
@@ -615,7 +650,24 @@ impl WorkflowHalf {
             let (wff, activations) = {
                 let wf_fns_borrow = self.workflow_fns.borrow();
 
-                let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
+                // First check function-based workflows, then macro-based workflows
+                if let Some(wf_function) = wf_fns_borrow.get(workflow_type) {
+                    wf_function.start_workflow(
+                        common.worker.get_config().namespace.clone(),
+                        common.task_queue.clone(),
+                        std::mem::take(sw),
+                        completions_tx.clone(),
+                    )
+                } else if let Some(invocation) =
+                    self.workflow_definitions.get_workflow(workflow_type)
+                {
+                    WorkflowFunction::from_invocation(invocation).start_workflow(
+                        common.worker.get_config().namespace.clone(),
+                        common.task_queue.clone(),
+                        std::mem::take(sw),
+                        completions_tx.clone(),
+                    )
+                } else {
                     warn!("Workflow type {workflow_type} not found");
 
                     completions_tx
@@ -626,14 +678,7 @@ impl WorkflowHalf {
                         ))
                         .expect("Completion channel intact");
                     return Ok(None);
-                };
-
-                wf_function.start_workflow(
-                    common.worker.get_config().namespace.clone(),
-                    common.task_queue.clone(),
-                    std::mem::take(sw),
-                    completions_tx.clone(),
-                )
+                }
             };
             let jh = tokio::spawn(async move {
                 tokio::select! {
@@ -1084,6 +1129,24 @@ impl WorkflowFunction {
                         })
                     })
                     .boxed()
+            }),
+        }
+    }
+
+    pub(crate) fn from_invocation(invocation: workflows::WorkflowInvocation) -> Self {
+        Self {
+            wf_func: Box::new(move |ctx: WfContext| {
+                let input = ctx.get_args().first().cloned().unwrap_or_default();
+                let converter = PayloadConverter::serde_json();
+                match invocation(input, converter, ctx) {
+                    Ok(fut) => fut
+                        .map(|r| match r {
+                            Ok(payload) => Ok(WfExitValue::Normal(payload)),
+                            Err(e) => Err(e.into()),
+                        })
+                        .boxed(),
+                    Err(e) => async move { Err(anyhow::Error::from(e)) }.boxed(),
+                }
             }),
         }
     }

@@ -58,6 +58,7 @@ use temporalio_sdk::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
     },
+    workflows::WorkflowImplementer,
 };
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
@@ -342,7 +343,11 @@ impl CoreWfStarter {
 
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let worker = self.get_worker().await;
-        let sdk = Worker::new_from_core_activities(worker, self.sdk_config.activities());
+        let sdk = Worker::new_from_core_definitions(
+            worker,
+            self.sdk_config.activities(),
+            self.sdk_config.workflows(),
+        );
         let mut w = TestWorker::new(sdk);
         w.client = Some(self.get_client().await);
 
@@ -543,6 +548,11 @@ impl TestWorker {
         instance: AI,
     ) -> &mut Self {
         self.inner.register_activities::<AI>(instance);
+        self
+    }
+
+    pub(crate) fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
+        self.inner.register_workflow::<WI>();
         self
     }
 

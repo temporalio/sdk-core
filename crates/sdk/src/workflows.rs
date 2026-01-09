@@ -6,7 +6,7 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{WfContext, WorkflowResult, WfExitValue};
+//! use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
@@ -22,7 +22,10 @@
 //!
 //!     #[run]
 //!     pub async fn run(&mut self, ctx: &mut WfContext) -> WorkflowResult<String> {
-//!         Ok(WfExitValue::Normal(format!("Done with counter: {}", self.counter)))
+//!         Ok(WfExitValue::Normal(format!(
+//!             "Done with counter: {}",
+//!             self.counter
+//!         )))
 //!     }
 //!
 //!     #[signal]
@@ -41,7 +44,9 @@ use futures_util::future::BoxFuture;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
-    data_converters::{PayloadConversionError, PayloadConverter},
+    data_converters::{
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+    },
     protos::temporal::api::common::v1::Payload,
 };
 
@@ -72,18 +77,27 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
     /// The marker struct for the run method that implements `WorkflowDefinition`
     type Run: WorkflowDefinition;
 
-    /// Initialize the workflow from a serialized payload.
+    /// Whether the init method accepts the workflow input.
+    /// If true, input goes to init. If false, input goes to run.
+    const INIT_TAKES_INPUT: bool;
+
+    /// Initialize the workflow instance.
     ///
-    /// This is called when a new workflow execution starts. The implementation
-    /// should deserialize the input and call the user's init method (or use Default).
+    /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
+    /// `input` will be `Some`. Otherwise it's `None`.
     fn init(
-        input: Payload,
-        converter: &PayloadConverter,
         ctx: &WfContext,
-    ) -> Result<Self, PayloadConversionError>;
+        input: Option<<Self::Run as WorkflowDefinition>::Input>,
+    ) -> Self;
 
     /// Execute the workflow's main run function.
-    fn run(&mut self, ctx: WfContext) -> BoxFuture<'_, Result<Payload, WorkflowError>>;
+    ///
+    /// If `INIT_TAKES_INPUT` is false, `input` will be `Some`. Otherwise it's `None`.
+    fn run(
+        &mut self,
+        ctx: WfContext,
+        input: Option<<Self::Run as WorkflowDefinition>::Input>,
+    ) -> BoxFuture<'_, Result<Payload, WorkflowError>>;
 }
 
 /// Trait for executing signal handlers on a workflow.
@@ -175,9 +189,9 @@ pub(crate) type UpdateValidator =
     Arc<dyn Fn(&Payload, &PayloadConverter) -> Result<(), String> + Send + Sync>;
 
 /// Contains all handlers for a single workflow type.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct WorkflowHandlers {
-    run: Option<WorkflowInvocation>,
+    run: WorkflowInvocation,
     signals: HashMap<&'static str, SignalHandler>,
     queries: HashMap<&'static str, QueryHandler>,
     updates: HashMap<&'static str, (UpdateHandler, UpdateValidator)>,
@@ -204,14 +218,31 @@ impl WorkflowDefinitions {
 
     /// Register a specific workflow's run method.
     #[doc(hidden)]
-    pub fn register_workflow_run<W: WorkflowImplementation>(&mut self) -> &mut Self {
+    pub fn register_workflow_run<W: WorkflowImplementation>(&mut self) -> &mut Self
+    where
+        <W::Run as WorkflowDefinition>::Input: Send,
+    {
         let workflow_name = <W::Run as WorkflowDefinition>::name();
-        self.workflows.entry(workflow_name).or_default().run =
-            Some(Arc::new(move |payload, converter, ctx| {
-                let mut workflow = W::init(payload, &converter, &ctx)?;
-                Ok(Box::pin(async move { workflow.run(ctx.clone()).await })
-                    as BoxFuture<'static, Result<Payload, WorkflowError>>)
-            }));
+        let run = Arc::new(move |payload, converter: PayloadConverter, ctx| {
+            let input = converter.from_payload(&SerializationContext::Workflow, payload)?;
+            let (init_input, run_input) = if W::INIT_TAKES_INPUT {
+                (Some(input), None)
+            } else {
+                (None, Some(input))
+            };
+            let mut workflow = W::init(&ctx, init_input);
+            Ok(Box::pin(async move { workflow.run(ctx.clone(), run_input).await })
+                as BoxFuture<'static, Result<Payload, WorkflowError>>)
+        });
+        self.workflows.insert(
+            workflow_name,
+            WorkflowHandlers {
+                run,
+                signals: HashMap::new(),
+                queries: HashMap::new(),
+                updates: HashMap::new(),
+            },
+        );
         self
     }
 
@@ -226,8 +257,8 @@ impl WorkflowDefinitions {
         let signal_name = S::name();
 
         self.workflows
-            .entry(workflow_name)
-            .or_default()
+            .get_mut(workflow_name)
+            .expect("Workflow must be registered before signals")
             .signals
             .insert(
                 signal_name,
@@ -251,8 +282,8 @@ impl WorkflowDefinitions {
         let query_name = Q::name();
 
         self.workflows
-            .entry(workflow_name)
-            .or_default()
+            .get_mut(workflow_name)
+            .expect("Workflow must be registered before queries")
             .queries
             .insert(
                 query_name,
@@ -284,8 +315,8 @@ impl WorkflowDefinitions {
         });
 
         self.workflows
-            .entry(workflow_name)
-            .or_default()
+            .get_mut(workflow_name)
+            .expect("Workflow must be registered before updates")
             .updates
             .insert(update_name, (handler, validator));
         self
@@ -298,9 +329,7 @@ impl WorkflowDefinitions {
 
     /// Get the workflow invocation function for a given workflow type.
     pub(crate) fn get_workflow(&self, workflow_type: &str) -> Option<WorkflowInvocation> {
-        self.workflows
-            .get(workflow_type)
-            .and_then(|h| h.run.clone())
+        self.workflows.get(workflow_type).map(|h| h.run.clone())
     }
 
     /// Get the signal handler for a given workflow and signal type.

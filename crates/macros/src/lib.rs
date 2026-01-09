@@ -1,8 +1,9 @@
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
-mod definitions;
+mod activities_definitions;
 mod fsm_impl;
+mod macro_utils;
 mod workflow_definitions;
 
 /// Can be used to define Activities for invocation and execution. Using this macro requires that
@@ -11,8 +12,8 @@ mod workflow_definitions;
 /// For a usage example, see that crate's documentation.
 #[proc_macro_attribute]
 pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let def: definitions::ActivitiesDefinition =
-        parse_macro_input!(item as definitions::ActivitiesDefinition);
+    let def: activities_definitions::ActivitiesDefinition =
+        parse_macro_input!(item as activities_definitions::ActivitiesDefinition);
     def.codegen()
 }
 

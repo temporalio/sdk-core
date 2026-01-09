@@ -45,7 +45,7 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
     activities::{ActivityContext, ActivityError},
@@ -59,36 +59,46 @@ use temporalio_sdk_core::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
-    // TODO [rust-sdk-branch]: activities need to return deserialzied results
-    let r = ctx
-        .start_activity(
-            StdActivities::echo,
-            "hi!".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )?
-        .await
-        .unwrap_ok_payload();
-    Ok(r.into())
+#[workflow]
+#[derive(Default)]
+struct OneActivityWorkflow;
+
+#[workflow_methods]
+impl OneActivityWorkflow {
+    #[run]
+    async fn run(&mut self, ctx: &mut WfContext, input: String) -> WorkflowResult<String> {
+        let r = ctx
+            .start_activity(
+                StdActivities::echo,
+                input,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )?
+            .await
+            .unwrap_ok_payload();
+        Ok(WfExitValue::Normal(String::from_json_payload(&r)?))
+    }
 }
 
 #[tokio::test]
 async fn one_activity_only() {
-    let wf_name = "one_activity";
+    let wf_name = OneActivityWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.register_activities(StdActivities);
+    starter
+        .sdk_config
+        .register_workflow::<OneActivityWorkflow>();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), one_activity_wf);
 
+    let input = "hello from input!";
     let run_id = worker
         .submit_wf(
             wf_name.to_owned(),
             wf_name.to_owned(),
-            vec![],
+            vec![input.as_json_payload().unwrap()],
             WorkflowOptions::default(),
         )
         .await
@@ -100,8 +110,7 @@ async fn one_activity_only() {
         .await
         .unwrap();
     let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    let p = Payload::from_json_payload(&r[0]).unwrap();
-    assert_eq!(String::from_json_payload(&p).unwrap(), "hi!");
+    assert_eq!(String::from_json_payload(&r[0]).unwrap(), input);
 }
 
 #[tokio::test]
