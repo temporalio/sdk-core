@@ -923,7 +923,7 @@ async fn long_local_activity_with_update(
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
-    assert_eq!(res[0], replay_res.unwrap());
+    assert_eq!(res.payload, replay_res.unwrap());
 
     // Load histories from pre-fix version and ensure compat
     let replay_worker = init_core_replay_preloaded(
@@ -985,7 +985,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
-    assert_eq!(res[0], replay_res.unwrap());
+    assert_eq!(res.payload, replay_res.unwrap());
 }
 
 pub(crate) async fn local_activity_with_summary_wf(ctx: WfContext) -> WorkflowResult<()> {

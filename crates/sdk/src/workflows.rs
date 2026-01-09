@@ -85,10 +85,7 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
     ///
     /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
     /// `input` will be `Some`. Otherwise it's `None`.
-    fn init(
-        ctx: &WfContext,
-        input: Option<<Self::Run as WorkflowDefinition>::Input>,
-    ) -> Self;
+    fn init(ctx: &WfContext, input: Option<<Self::Run as WorkflowDefinition>::Input>) -> Self;
 
     /// Execute the workflow's main run function.
     ///
@@ -231,8 +228,10 @@ impl WorkflowDefinitions {
                 (None, Some(input))
             };
             let mut workflow = W::init(&ctx, init_input);
-            Ok(Box::pin(async move { workflow.run(ctx.clone(), run_input).await })
-                as BoxFuture<'static, Result<Payload, WorkflowError>>)
+            Ok(
+                Box::pin(async move { workflow.run(ctx.clone(), run_input).await })
+                    as BoxFuture<'static, Result<Payload, WorkflowError>>,
+            )
         });
         self.workflows.insert(
             workflow_name,

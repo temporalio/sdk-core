@@ -47,6 +47,14 @@ impl PayloadConverter {
     // TODO [rust-sdk-branch]: Proto binary, other standard built-ins
 }
 
+impl Default for PayloadConverter {
+    fn default() -> Self {
+        Self::Composite(Arc::new(CompositePayloadConverter {
+            converters: vec![Self::UseWrappers, Self::serde_json()],
+        }))
+    }
+}
+
 #[derive(Debug)]
 pub enum PayloadConversionError {
     WrongEncoding,
@@ -106,11 +114,11 @@ pub struct DefaultPayloadCodec;
 /// You don't need to implement this unless you are using a non-serde-compatible custom converter,
 /// in which case you should implement the to/from_payload functions on some wrapper type.
 pub trait TemporalSerializable {
-    fn as_serde(&self) -> Option<&dyn erased_serde::Serialize> {
-        None
+    fn as_serde(&self) -> Result<&dyn erased_serde::Serialize, PayloadConversionError> {
+        Err(PayloadConversionError::WrongEncoding)
     }
-    fn to_payload(&self, _: &SerializationContext) -> Option<Payload> {
-        None
+    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+        Err(PayloadConversionError::WrongEncoding)
     }
 }
 
@@ -123,19 +131,29 @@ pub trait TemporalDeserializable: Sized {
         _: &dyn ErasedSerdePayloadConverter,
         _: &SerializationContext,
         _: Payload,
-    ) -> Option<Self> {
-        None
+    ) -> Result<Self, PayloadConversionError> {
+        Err(PayloadConversionError::WrongEncoding)
     }
-    fn from_payload(_: Payload, _: &SerializationContext) -> Option<Self> {
-        None
+    fn from_payload(_: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError> {
+        Err(PayloadConversionError::WrongEncoding)
     }
 }
 
-// TODO [rust-sdk-branch]: implement serialize/deserialize directly (should always bypass the
-// converter).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RawValue {
     pub payload: Payload,
+}
+
+impl TemporalSerializable for RawValue {
+    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+        Ok(self.payload.clone())
+    }
+}
+
+impl TemporalDeserializable for RawValue {
+    fn from_payload(p: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError> {
+        Ok(RawValue { payload: p })
+    }
 }
 
 pub trait GenericPayloadConverter {
@@ -159,14 +177,18 @@ impl GenericPayloadConverter for PayloadConverter {
         val: &T,
     ) -> Result<Payload, PayloadConversionError> {
         match self {
-            PayloadConverter::Serde(pc) => {
-                Ok(pc.to_payload(context, val.as_serde().ok_or_else(|| todo!())?)?)
+            PayloadConverter::Serde(pc) => pc.to_payload(context, val.as_serde()?),
+            PayloadConverter::UseWrappers => T::to_payload(val, context),
+            PayloadConverter::Composite(composite) => {
+                for converter in &composite.converters {
+                    match converter.to_payload(context, val) {
+                        Ok(payload) => return Ok(payload),
+                        Err(PayloadConversionError::WrongEncoding) => continue,
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(PayloadConversionError::WrongEncoding)
             }
-            PayloadConverter::UseWrappers => {
-                Ok(T::to_payload(val, context).ok_or_else(|| todo!())?)
-            }
-            // Fairly clear how this would work
-            PayloadConverter::Composite(_pc) => todo!(),
         }
     }
 
@@ -176,13 +198,18 @@ impl GenericPayloadConverter for PayloadConverter {
         payload: Payload,
     ) -> Result<T, PayloadConversionError> {
         match self {
-            PayloadConverter::Serde(pc) => {
-                Ok(T::from_serde(pc.as_ref(), context, payload).ok_or_else(|| todo!())?)
+            PayloadConverter::Serde(pc) => T::from_serde(pc.as_ref(), context, payload),
+            PayloadConverter::UseWrappers => T::from_payload(payload, context),
+            PayloadConverter::Composite(composite) => {
+                for converter in &composite.converters {
+                    match converter.from_payload(context, payload.clone()) {
+                        Ok(val) => return Ok(val),
+                        Err(PayloadConversionError::WrongEncoding) => continue,
+                        Err(e) => return Err(e),
+                    }
+                }
+                Err(PayloadConversionError::WrongEncoding)
             }
-            PayloadConverter::UseWrappers => {
-                Ok(T::from_payload(payload, context).ok_or_else(|| todo!())?)
-            }
-            PayloadConverter::Composite(_pc) => todo!(),
         }
     }
 }
@@ -192,8 +219,8 @@ impl<T> TemporalSerializable for T
 where
     T: serde::Serialize,
 {
-    fn as_serde(&self) -> Option<&dyn erased_serde::Serialize> {
-        Some(self)
+    fn as_serde(&self) -> Result<&dyn erased_serde::Serialize, PayloadConversionError> {
+        Ok(self)
     }
 }
 impl<T> TemporalDeserializable for T
@@ -204,11 +231,13 @@ where
         pc: &dyn ErasedSerdePayloadConverter,
         context: &SerializationContext,
         payload: Payload,
-    ) -> Option<Self>
+    ) -> Result<Self, PayloadConversionError>
     where
         Self: Sized,
     {
-        erased_serde::deserialize(&mut pc.from_payload(context, payload).ok()?).ok()
+        let mut de = pc.from_payload(context, payload)?;
+        erased_serde::deserialize(&mut de)
+            .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))
     }
 }
 
@@ -235,9 +264,12 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
         _: &SerializationContext,
         payload: Payload,
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError> {
-        // TODO: Would check metadata
-        let json_v: serde_json::Value =
-            serde_json::from_slice(&payload.data).map_err(|_| todo!())?;
+        let encoding = payload.metadata.get("encoding").map(|v| v.as_slice());
+        if encoding != Some(b"json/plain".as_slice()) {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        let json_v: serde_json::Value = serde_json::from_slice(&payload.data)
+            .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))?;
         Ok(Box::new(<dyn erased_serde::Deserializer>::erase(json_v)))
     }
 }
@@ -257,17 +289,17 @@ pub trait ErasedSerdePayloadConverter: Send + Sync {
 
 // TODO [rust-sdk-branch]: All prost things should be behind a compile flag
 
-pub struct ProstSerializable<T: prost::Message>(T);
+pub struct ProstSerializable<T: prost::Message>(pub T);
 impl<T> TemporalSerializable for ProstSerializable<T>
 where
     T: prost::Message + Default + 'static,
 {
-    fn to_payload(&self, _: &SerializationContext) -> Option<Payload> {
+    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
         let as_proto = prost::Message::encode_to_vec(&self.0);
-        Some(Payload {
+        Ok(Payload {
             metadata: {
                 let mut hm = HashMap::new();
-                hm.insert("encoding".to_string(), b"proto/binary".to_vec());
+                hm.insert("encoding".to_string(), b"binary/protobuf".to_vec());
                 hm
             },
             data: as_proto,
@@ -278,18 +310,23 @@ impl<T> TemporalDeserializable for ProstSerializable<T>
 where
     T: prost::Message + Default + 'static,
 {
-    fn from_payload(p: Payload, _: &SerializationContext) -> Option<Self>
+    fn from_payload(p: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError>
     where
         Self: Sized,
     {
-        // TODO [rust-sdk-branch]: Check metadata
-        Some(ProstSerializable(T::decode(p.data.as_slice()).ok()?))
+        let encoding = p.metadata.get("encoding").map(|v| v.as_slice());
+        if encoding != Some(b"binary/protobuf".as_slice()) {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        T::decode(p.data.as_slice())
+            .map(ProstSerializable)
+            .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))
     }
 }
 
 #[derive(Clone)]
 pub struct CompositePayloadConverter {
-    _converters: Vec<PayloadConverter>,
+    converters: Vec<PayloadConverter>,
 }
 
 impl Default for DataConverter {

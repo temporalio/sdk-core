@@ -1,14 +1,18 @@
 use crate::WorkflowService;
 use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
-use temporalio_common::protos::{
-    coresdk::FromPayloadsExt,
-    temporal::api::{
-        common::v1::{Payload, WorkflowExecution},
-        enums::v1::HistoryEventFilterType,
-        failure::v1::Failure,
-        history::v1::history_event::Attributes,
-        workflowservice::v1::GetWorkflowExecutionHistoryRequest,
+use temporalio_common::{
+    WorkflowDefinition,
+    data_converters::{GenericPayloadConverter, PayloadConverter, RawValue, SerializationContext},
+    protos::{
+        coresdk::FromPayloadsExt,
+        temporal::api::{
+            common::v1::{Payload, WorkflowExecution},
+            enums::v1::HistoryEventFilterType,
+            failure::v1::Failure,
+            history::v1::history_event::Attributes,
+            workflowservice::v1::GetWorkflowExecutionHistoryRequest,
+        },
     },
 };
 use tonic::IntoRequest;
@@ -60,11 +64,11 @@ impl Default for GetWorkflowResultOptions {
 
 /// A workflow handle which can refer to a specific workflow run, or a chain of workflow runs with
 /// the same workflow id.
-pub struct WorkflowHandle<ClientT, ResultT> {
+pub struct WorkflowHandle<ClientT, W> {
     client: ClientT,
     info: WorkflowExecutionInfo,
 
-    _res_type: PhantomData<ResultT>,
+    _wf_type: PhantomData<W>,
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
@@ -89,19 +93,29 @@ impl WorkflowExecutionInfo {
 }
 
 /// A workflow handle to a workflow with unknown types. Uses raw payloads.
-pub(crate) type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, Vec<Payload>>;
+pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, UntypedWorkflow>;
 
-impl<CT, RT> WorkflowHandle<CT, RT>
+/// Marker type for untyped workflow handles
+pub struct UntypedWorkflow;
+impl WorkflowDefinition for UntypedWorkflow {
+    // TODO: Need to handle multiargs
+    type Input = RawValue;
+    type Output = RawValue;
+    fn name() -> &'static str {
+        ""
+    }
+}
+
+impl<CT, W> WorkflowHandle<CT, W>
 where
     CT: WorkflowService + Clone,
-    // TODO: Make more generic, capable of (de)serialization w/ serde
-    RT: FromPayloadsExt,
+    W: WorkflowDefinition,
 {
     pub(crate) fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
         Self {
             client,
             info,
-            _res_type: PhantomData::<RT>,
+            _wf_type: PhantomData::<W>,
         }
     }
 
@@ -119,7 +133,7 @@ where
     pub async fn get_workflow_result(
         &self,
         opts: GetWorkflowResultOptions,
-    ) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
+    ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error> {
         let mut next_page_tok = vec![];
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
         loop {
@@ -166,12 +180,19 @@ where
                 };
             }
 
+            // TODO: Get payload converter from client
+            let pc = PayloadConverter::default();
+
             break match event_attrs {
                 Some(Attributes::WorkflowExecutionCompletedEventAttributes(attrs)) => {
                     follow!(attrs);
-                    Ok(WorkflowExecutionResult::Succeeded(RT::from_payloads(
-                        attrs.result,
-                    )))
+                    let payload = attrs
+                        .result
+                        .and_then(|p| p.payloads.into_iter().next())
+                        .unwrap_or_default();
+                    let result: W::Output =
+                        pc.from_payload(&SerializationContext::Workflow, payload)?;
+                    Ok(WorkflowExecutionResult::Succeeded(result))
                 }
                 Some(Attributes::WorkflowExecutionFailedEventAttributes(attrs)) => {
                     follow!(attrs);

@@ -224,7 +224,7 @@ impl WfContext {
         mut opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
         // TODO [rust-sdk-branch]: Get payload converter properly
-        let pc = PayloadConverter::serde_json();
+        let pc = PayloadConverter::default();
         let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
@@ -249,7 +249,7 @@ impl WfContext {
         opts: LocalActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
         // TODO [rust-sdk-branch]: Get payload converter properly
-        let pc = PayloadConverter::serde_json();
+        let pc = PayloadConverter::default();
         let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
         Ok(LATimerBackoffFut::new(
             AD::name().to_string(),

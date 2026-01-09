@@ -29,7 +29,8 @@ pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
-    GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    GetWorkflowResultOptions, UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo,
+    WorkflowExecutionResult, WorkflowHandle,
 };
 
 use crate::{
@@ -38,7 +39,6 @@ use crate::{
     request_extensions::RequestExt,
     sealed::WfHandleClient,
     worker::ClientWorkerSet,
-    workflow_handle::UntypedWorkflowHandle,
 };
 use http::{Uri, uri::InvalidUri};
 use parking_lot::RwLock;
@@ -50,6 +50,10 @@ use std::{
     time::Duration,
 };
 use temporalio_common::{
+    WorkflowDefinition,
+    data_converters::{
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+    },
     protos::{
         TaskToken,
         coresdk::IntoPayloadsExt,
@@ -499,6 +503,17 @@ pub enum InvalidHeaderError {
     },
 }
 
+/// Errors that can occur when starting a workflow.
+#[derive(thiserror::Error, Debug)]
+pub enum StartWorkflowError {
+    /// Error converting the input to a payload.
+    #[error("Failed to serialize workflow input: {0}")]
+    PayloadConversion(#[from] PayloadConversionError),
+    /// Server returned an error.
+    #[error("Server error: {0}")]
+    TonicStatus(#[from] tonic::Status),
+}
+
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
 #[derive(Debug)]
 struct ClientHeaders {
@@ -926,10 +941,9 @@ pub struct SignalWithStartOptions {
 
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
-#[async_trait::async_trait]
 pub trait WorkflowClientTrait: NamespacedClient {
     /// Starts workflow execution.
-    async fn start_workflow(
+    fn start_workflow_old(
         &self,
         input: Vec<Payload>,
         task_queue: String,
@@ -937,158 +951,175 @@ pub trait WorkflowClientTrait: NamespacedClient {
         workflow_type: String,
         request_id: Option<String>,
         options: WorkflowOptions,
-    ) -> Result<StartWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<StartWorkflowExecutionResponse>>;
+
+    /// Start a workflow execution.
+    fn start_workflow<W>(
+        &self,
+        workflow: W,
+        input: W::Input,
+        task_queue: String,
+        workflow_id: String,
+        options: WorkflowOptions,
+    ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, StartWorkflowError>>
+    where
+        Self: Sized,
+        W: WorkflowDefinition,
+        W::Input: Send;
 
     /// Notifies the server that workflow tasks for a given workflow should be sent to the normal
     /// non-sticky task queue. This normally happens when workflow has been evicted from the cache.
-    async fn reset_sticky_task_queue(
+    fn reset_sticky_task_queue(
         &self,
         workflow_id: String,
         run_id: String,
-    ) -> Result<ResetStickyTaskQueueResponse>;
+    ) -> impl Future<Output = Result<ResetStickyTaskQueueResponse>>;
 
     /// Complete activity task by sending response to the server. `task_token` contains activity
     /// identifier that would've been received from polling for an activity task. `result` is a blob
     /// that contains activity response.
-    async fn complete_activity_task(
+    fn complete_activity_task(
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCompletedResponse>;
+    ) -> impl Future<Output = Result<RespondActivityTaskCompletedResponse>>;
 
     /// Report activity task heartbeat by sending details to the server. `task_token` contains
     /// activity identifier that would've been received from polling for an activity task. `result`
     /// contains `cancel_requested` flag, which if set to true indicates that activity has been
     /// cancelled.
-    async fn record_activity_heartbeat(
+    fn record_activity_heartbeat(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
-    ) -> Result<RecordActivityTaskHeartbeatResponse>;
+    ) -> impl Future<Output = Result<RecordActivityTaskHeartbeatResponse>>;
 
     /// Cancel activity task by sending response to the server. `task_token` contains activity
     /// identifier that would've been received from polling for an activity task. `details` is a
     /// blob that provides arbitrary user defined cancellation info.
-    async fn cancel_activity_task(
+    fn cancel_activity_task(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCanceledResponse>;
+    ) -> impl Future<Output = Result<RespondActivityTaskCanceledResponse>>;
 
     /// Send a signal to a certain workflow instance
-    async fn signal_workflow_execution(
+    fn signal_workflow_execution(
         &self,
         workflow_id: String,
         run_id: String,
         signal_name: String,
         payloads: Option<Payloads>,
         request_id: Option<String>,
-    ) -> Result<SignalWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<SignalWorkflowExecutionResponse>>;
 
     /// Send signal and start workflow transcationally
-    async fn signal_with_start_workflow_execution(
+    fn signal_with_start_workflow_execution(
         &self,
         options: SignalWithStartOptions,
         workflow_options: WorkflowOptions,
-    ) -> Result<SignalWithStartWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<SignalWithStartWorkflowExecutionResponse>>;
 
     /// Request a query of a certain workflow instance
-    async fn query_workflow_execution(
+    fn query_workflow_execution(
         &self,
         workflow_id: String,
         run_id: String,
         query: WorkflowQuery,
-    ) -> Result<QueryWorkflowResponse>;
+    ) -> impl Future<Output = Result<QueryWorkflowResponse>>;
 
     /// Get information about a workflow run
-    async fn describe_workflow_execution(
+    fn describe_workflow_execution(
         &self,
         workflow_id: String,
         run_id: Option<String>,
-    ) -> Result<DescribeWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<DescribeWorkflowExecutionResponse>>;
 
     /// Get history for a particular workflow run
-    async fn get_workflow_execution_history(
+    fn get_workflow_execution_history(
         &self,
         workflow_id: String,
         run_id: Option<String>,
         page_token: Vec<u8>,
-    ) -> Result<GetWorkflowExecutionHistoryResponse>;
+    ) -> impl Future<Output = Result<GetWorkflowExecutionHistoryResponse>>;
 
     /// Cancel a currently executing workflow
-    async fn cancel_workflow_execution(
+    fn cancel_workflow_execution(
         &self,
         workflow_id: String,
         run_id: Option<String>,
         reason: String,
         request_id: Option<String>,
-    ) -> Result<RequestCancelWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<RequestCancelWorkflowExecutionResponse>>;
 
     /// Terminate a currently executing workflow
-    async fn terminate_workflow_execution(
+    fn terminate_workflow_execution(
         &self,
         workflow_id: String,
         run_id: Option<String>,
-    ) -> Result<TerminateWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<TerminateWorkflowExecutionResponse>>;
 
     /// Register a new namespace
-    async fn register_namespace(
+    fn register_namespace(
         &self,
         options: RegisterNamespaceOptions,
-    ) -> Result<RegisterNamespaceResponse>;
+    ) -> impl Future<Output = Result<RegisterNamespaceResponse>>;
 
     /// Lists all available namespaces
-    async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
+    fn list_namespaces(&self) -> impl Future<Output = Result<ListNamespacesResponse>>;
 
     /// Query namespace details
-    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
+    fn describe_namespace(
+        &self,
+        namespace: Namespace,
+    ) -> impl Future<Output = Result<DescribeNamespaceResponse>>;
 
     /// List open workflow executions with Standard Visibility filtering
-    async fn list_open_workflow_executions(
+    fn list_open_workflow_executions(
         &self,
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<list_open_workflow_executions_request::Filters>,
-    ) -> Result<ListOpenWorkflowExecutionsResponse>;
+    ) -> impl Future<Output = Result<ListOpenWorkflowExecutionsResponse>>;
 
     /// List closed workflow executions Standard Visibility filtering
-    async fn list_closed_workflow_executions(
+    fn list_closed_workflow_executions(
         &self,
         max_page_size: i32,
         next_page_token: Vec<u8>,
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<list_closed_workflow_executions_request::Filters>,
-    ) -> Result<ListClosedWorkflowExecutionsResponse>;
+    ) -> impl Future<Output = Result<ListClosedWorkflowExecutionsResponse>>;
 
     /// List workflow executions with Advanced Visibility filtering
-    async fn list_workflow_executions(
+    fn list_workflow_executions(
         &self,
         page_size: i32,
         next_page_token: Vec<u8>,
         query: String,
-    ) -> Result<ListWorkflowExecutionsResponse>;
+    ) -> impl Future<Output = Result<ListWorkflowExecutionsResponse>>;
 
     /// List archived workflow executions
-    async fn list_archived_workflow_executions(
+    fn list_archived_workflow_executions(
         &self,
         page_size: i32,
         next_page_token: Vec<u8>,
         query: String,
-    ) -> Result<ListArchivedWorkflowExecutionsResponse>;
+    ) -> impl Future<Output = Result<ListArchivedWorkflowExecutionsResponse>>;
 
     /// Get Cluster Search Attributes
-    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
+    fn get_search_attributes(&self) -> impl Future<Output = Result<GetSearchAttributesResponse>>;
 
     /// Send an Update to a workflow execution
-    async fn update_workflow_execution(
+    fn update_workflow_execution(
         &self,
         workflow_id: String,
         run_id: String,
         name: String,
         wait_policy: update::v1::WaitPolicy,
         args: Option<Payloads>,
-    ) -> Result<UpdateWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<UpdateWorkflowExecutionResponse>>;
 }
 
 /// A client that is bound to a namespace
@@ -1233,12 +1264,11 @@ impl From<common::v1::Priority> for Priority {
     }
 }
 
-#[async_trait::async_trait]
 impl<T> WorkflowClientTrait for T
 where
     T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
 {
-    async fn start_workflow(
+    async fn start_workflow_old(
         &self,
         input: Vec<Payload>,
         task_queue: String,
@@ -1283,6 +1313,68 @@ where
             )
             .await?
             .into_inner())
+    }
+
+    async fn start_workflow<W>(
+        &self,
+        _workflow: W,
+        input: W::Input,
+        task_queue: String,
+        workflow_id: String,
+        options: WorkflowOptions,
+    ) -> Result<WorkflowHandle<Self, W>, StartWorkflowError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        // TODO: Store payload converter on client and use from there
+        let pc = PayloadConverter::default();
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let namespace = self.namespace();
+        let res = self
+            .clone()
+            .start_workflow_execution(
+                StartWorkflowExecutionRequest {
+                    namespace: namespace.clone(),
+                    input: vec![payload].into_payloads(),
+                    workflow_id: workflow_id.clone(),
+                    workflow_type: Some(WorkflowType {
+                        name: W::name().to_string(),
+                    }),
+                    task_queue: Some(TaskQueue {
+                        name: task_queue,
+                        kind: TaskQueueKind::Unspecified as i32,
+                        normal_name: "".to_string(),
+                    }),
+                    request_id: Uuid::new_v4().to_string(),
+                    workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                    workflow_id_conflict_policy: options.id_conflict_policy as i32,
+                    workflow_execution_timeout: options
+                        .execution_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                    search_attributes: options.search_attributes.map(|d| d.into()),
+                    cron_schedule: options.cron_schedule.unwrap_or_default(),
+                    request_eager_execution: options.enable_eager_workflow_start,
+                    retry_policy: options.retry_policy,
+                    links: options.links,
+                    completion_callbacks: options.completion_callbacks,
+                    priority: options.priority.map(Into::into),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
+        Ok(WorkflowHandle::new(
+            self.clone(),
+            WorkflowExecutionInfo {
+                namespace,
+                workflow_id,
+                run_id: Some(res.run_id),
+            },
+        ))
     }
 
     async fn reset_sticky_task_queue(

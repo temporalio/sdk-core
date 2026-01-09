@@ -38,7 +38,7 @@ async fn eager_wf_start_different_clients() {
     let client = Client::new(connection, client_opts);
     let w = starter.get_worker().await;
     let res = client
-        .start_workflow(
+        .start_workflow_old(
             vec![],
             w.get_config().task_queue.clone(), // task_queue
             wf_name.to_string(),               // workflow_id

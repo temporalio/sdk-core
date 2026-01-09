@@ -30,10 +30,13 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientTlsOptions, Connection, ConnectionOptions, GetWorkflowResultOptions,
-    NamespacedClient, TlsOptions, WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo,
-    WorkflowExecutionResult, WorkflowHandle, WorkflowOptions, WorkflowService,
+    NamespacedClient, StartWorkflowError, TlsOptions, UntypedWorkflowHandle, WfClientExt,
+    WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    WorkflowOptions, WorkflowService,
 };
 use temporalio_common::{
+    WorkflowDefinition,
+    data_converters::RawValue,
     protos::{
         coresdk::{
             FromPayloadsExt, workflow_activation::WorkflowActivation,
@@ -380,7 +383,7 @@ impl CoreWfStarter {
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
-    ) -> WorkflowHandle<Client, Vec<Payload>> {
+    ) -> UntypedWorkflowHandle<Client> {
         let run_id = worker
             .submit_wf(
                 self.task_queue_name.clone(),
@@ -420,7 +423,7 @@ impl CoreWfStarter {
                              Tests must call `get_worker` first.",
         );
         iw.client
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 iw.worker.get_config().task_queue.clone(),
                 workflow_id,
@@ -457,7 +460,7 @@ impl CoreWfStarter {
 
     pub(crate) async fn wait_for_default_wf_finish(
         &self,
-    ) -> Result<WorkflowExecutionResult<Vec<Payload>>, Error> {
+    ) -> Result<WorkflowExecutionResult<RawValue>, Error> {
         self.initted_worker
             .get()
             .unwrap()
@@ -592,6 +595,42 @@ impl TestWorker {
             .await
     }
 
+    /// Start a workflow using the typed API with a workflow marker struct.
+    ///
+    /// Returns a handle to the started workflow.
+    pub(crate) async fn submit_workflow<W>(
+        &self,
+        workflow: W,
+        workflow_id: impl Into<String>,
+        input: W::Input,
+        mut options: WorkflowOptions,
+    ) -> Result<WorkflowHandle<Client, W>, StartWorkflowError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        let c = self.client.as_ref().expect("client must be set");
+        if options.execution_timeout.is_none() {
+            options.execution_timeout = Some(Duration::from_secs(60 * 5));
+        }
+        let wfid = workflow_id.into();
+        let handle = c
+            .start_workflow(
+                workflow,
+                input,
+                self.inner.task_queue().to_string(),
+                wfid.clone(),
+                options,
+            )
+            .await?;
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: c.namespace().to_string(),
+            workflow_id: wfid,
+            run_id: handle.info().run_id.clone(),
+        });
+        Ok(handle)
+    }
+
     /// Similar to `submit_wf` but checking that the server returns the first
     /// workflow task in the client response.
     /// Note that this does not guarantee that the worker will execute this task eagerly.
@@ -605,7 +644,7 @@ impl TestWorker {
         let c = self.client.as_ref().context("client needed for eager wf")?;
         let wfid = workflow_id.into();
         let res = c
-            .start_workflow(
+            .start_workflow_old(
                 input,
                 self.inner.task_queue().to_string(),
                 wfid.clone(),
@@ -699,7 +738,7 @@ impl TestWorkerSubmitterHandle {
         let wfid = workflow_id.into();
         let res = self
             .client
-            .start_workflow(
+            .start_workflow_old(
                 input,
                 self.tq.clone(),
                 wfid.clone(),
@@ -714,6 +753,33 @@ impl TestWorkerSubmitterHandle {
             run_id: Some(res.run_id.clone()),
         });
         Ok(res.run_id)
+    }
+
+    /// Start a workflow using the typed API with a workflow marker struct.
+    ///
+    /// Returns a handle to the started workflow.
+    pub(crate) async fn submit_workflow<W>(
+        &self,
+        workflow: W,
+        workflow_id: impl Into<String>,
+        input: W::Input,
+        options: WorkflowOptions,
+    ) -> Result<WorkflowHandle<Client, W>, StartWorkflowError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        let wfid = workflow_id.into();
+        let handle = self
+            .client
+            .start_workflow(workflow, input, self.tq.clone(), wfid.clone(), options)
+            .await?;
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self.client.namespace().to_string(),
+            workflow_id: wfid,
+            run_id: handle.info().run_id.clone(),
+        });
+        Ok(handle)
     }
 }
 
@@ -897,9 +963,9 @@ pub(crate) trait WorkflowHandleExt {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<R> WorkflowHandleExt for WorkflowHandle<Client, R>
+impl<W> WorkflowHandleExt for WorkflowHandle<Client, W>
 where
-    R: FromPayloadsExt,
+    W: WorkflowDefinition,
 {
     async fn fetch_history_and_replay(
         &self,

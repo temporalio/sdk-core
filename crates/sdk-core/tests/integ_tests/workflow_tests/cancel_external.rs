@@ -74,7 +74,8 @@ async fn sends_cancel_to_other_wf() {
         &h.get_workflow_result(GetWorkflowResultOptions::default())
             .await
             .unwrap()
-            .unwrap_success()[0],
+            .unwrap_success()
+            .payload,
     )
     .unwrap();
     assert!(res.contains("Cancel requested by workflow"));

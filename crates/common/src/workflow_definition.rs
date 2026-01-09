@@ -8,7 +8,7 @@ pub trait WorkflowDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
     /// Type of the output of the workflow
-    type Output: TemporalSerializable + 'static;
+    type Output: TemporalDeserializable + TemporalSerializable + 'static;
     /// The workflow type name
     fn name() -> &'static str
     where

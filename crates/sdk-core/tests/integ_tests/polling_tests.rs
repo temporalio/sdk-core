@@ -166,7 +166,7 @@ async fn switching_worker_client_changes_poll() {
         // Start a workflow on both servers
         info!("Starting workflows");
         let wf1 = client1
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 "my-task-queue".to_owned(),
                 "my-workflow-1".to_owned(),
@@ -177,7 +177,7 @@ async fn switching_worker_client_changes_poll() {
             .await
             .unwrap();
         let wf2 = client2
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 "my-task-queue".to_owned(),
                 "my-workflow-2".to_owned(),
@@ -402,7 +402,7 @@ async fn replace_client_works_after_polling_failure() {
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server
-                .start_workflow(
+                .start_workflow_old(
                     vec![],
                     task_queue.clone(),
                     wf_name.into(),
@@ -446,7 +446,7 @@ async fn replace_client_works_after_polling_failure() {
             )
             .await;
             let wf_2 = client_for_integ_server
-                .start_workflow(
+                .start_workflow_old(
                     vec![],
                     task_queue,
                     wf_name.into(),

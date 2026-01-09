@@ -778,7 +778,7 @@ impl ActivityHalf {
                 let (ctx, arg) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
                 // TODO [rust-sdk-branch]: Get payload converter from client
-                let payload_converter = PayloadConverter::serde_json();
+                let payload_converter = PayloadConverter::default();
 
                 tokio::spawn(async move {
                     let act_fut = async move {
@@ -1137,7 +1137,7 @@ impl WorkflowFunction {
         Self {
             wf_func: Box::new(move |ctx: WfContext| {
                 let input = ctx.get_args().first().cloned().unwrap_or_default();
-                let converter = PayloadConverter::serde_json();
+                let converter = PayloadConverter::default();
                 match invocation(input, converter, ctx) {
                     Ok(fut) => fut
                         .map(|r| match r {

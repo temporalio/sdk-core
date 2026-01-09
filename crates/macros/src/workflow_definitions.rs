@@ -829,7 +829,7 @@ impl WorkflowMethodsDefinition {
         let run_impl_body = quote! {
             use ::futures_util::FutureExt;
             use ::temporalio_common::data_converters::GenericPayloadConverter;
-            let converter = ::temporalio_common::data_converters::PayloadConverter::serde_json();
+            let converter = ::temporalio_common::data_converters::PayloadConverter::default();
             async move {
                 let mut ctx = ctx;
                 let result = #run_call;

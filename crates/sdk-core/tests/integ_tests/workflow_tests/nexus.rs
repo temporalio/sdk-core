@@ -161,8 +161,9 @@ async fn nexus_basic(
         .get_workflow_result(Default::default())
         .await
         .unwrap();
-    let res = Result::<NexusOperationResult, Failure>::from_json_payload(&res.unwrap_success()[0])
-        .unwrap();
+    let res =
+        Result::<NexusOperationResult, Failure>::from_json_payload(&res.unwrap_success().payload)
+            .unwrap();
     match outcome {
         Outcome::Succeed => {
             let p = assert_matches!(
@@ -397,7 +398,7 @@ async fn nexus_async(
         .get_workflow_result(Default::default())
         .await
         .unwrap();
-    let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
+    let res = NexusOperationResult::from_json_payload(&res.unwrap_success().payload).unwrap();
     match outcome {
         Outcome::Succeed => {
             let p = assert_matches!(
@@ -875,7 +876,7 @@ async fn nexus_cancellation_types(
         .get_workflow_result(Default::default())
         .await
         .unwrap();
-    let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
+    let res = NexusOperationResult::from_json_payload(&res.unwrap_success().payload).unwrap();
 
     match cancellation_type {
         NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {

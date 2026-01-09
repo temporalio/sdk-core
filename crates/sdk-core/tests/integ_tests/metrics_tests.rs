@@ -267,7 +267,7 @@ async fn one_slot_worker_reports_available_slot() {
 
         // Start a workflow so that a task will get delivered
         client
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 tq.to_owned(),
                 "one_slot_metric_test".to_owned(),

@@ -91,26 +91,24 @@ async fn one_activity_only() {
         .sdk_config
         .register_workflow::<OneActivityWorkflow>();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
 
-    let input = "hello from input!";
-    let run_id = worker
-        .submit_wf(
+    let input = "hello from input!".to_string();
+    let handle = worker
+        .submit_workflow(
+            OneActivityWorkflow::run,
             wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![input.as_json_payload().unwrap()],
+            input.clone(),
             WorkflowOptions::default(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
     let res = handle
         .get_workflow_result(Default::default())
         .await
         .unwrap();
     let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    assert_eq!(String::from_json_payload(&r[0]).unwrap(), input);
+    assert_eq!(r, input);
 }
 
 #[tokio::test]
