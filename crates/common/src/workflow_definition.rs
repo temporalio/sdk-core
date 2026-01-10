@@ -20,8 +20,10 @@ pub trait WorkflowDefinition {
 /// Typically, you will want to use the `#[query]` attribute inside a `#[workflow_methods]` macro
 /// to define updates. However, this trait may be implemented manually if desired.
 pub trait QueryDefinition {
+    /// The workflow type this query belongs to
+    type Workflow: WorkflowDefinition;
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
-    type Output: TemporalSerializable + 'static;
+    type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
     fn name() -> &'static str
     where
@@ -33,6 +35,8 @@ pub trait QueryDefinition {
 /// Typically, you will want to use the `#[signal]` attribute inside a `#[workflow_methods]` macro
 /// to define signals. However, this trait may be implemented manually if desired.
 pub trait SignalDefinition {
+    /// The workflow type this signal belongs to
+    type Workflow: WorkflowDefinition;
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
 
     fn name() -> &'static str
@@ -45,8 +49,10 @@ pub trait SignalDefinition {
 /// Typically, you will want to use the `#[update]` attribute inside a `#[workflow_methods]` macro
 /// to define updates. However, this trait may be implemented manually if desired.
 pub trait UpdateDefinition {
+    /// The workflow type this update belongs to
+    type Workflow: WorkflowDefinition;
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
-    type Output: TemporalSerializable + 'static;
+    type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
     fn name() -> &'static str
     where

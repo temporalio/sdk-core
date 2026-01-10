@@ -332,6 +332,7 @@ impl WorkflowDefinitions {
     }
 
     /// Get the signal handler for a given workflow and signal type.
+    #[allow(dead_code)] // Remove once dispatch implemented
     pub(crate) fn get_signal(
         &self,
         workflow_type: &str,
@@ -344,6 +345,7 @@ impl WorkflowDefinitions {
     }
 
     /// Get the query handler for a given workflow and query type.
+    #[allow(dead_code)] // Remove once dispatch implemented
     pub(crate) fn get_query(&self, workflow_type: &str, query_name: &str) -> Option<QueryHandler> {
         self.workflows
             .get(workflow_type)
@@ -352,6 +354,7 @@ impl WorkflowDefinitions {
     }
 
     /// Get the update handler and validator for a given workflow and update type.
+    #[allow(dead_code)] // Remove once dispatch implemented
     pub(crate) fn get_update(
         &self,
         workflow_type: &str,

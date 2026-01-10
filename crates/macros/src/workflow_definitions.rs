@@ -490,6 +490,11 @@ fn extract_simple_output_type(sig: &syn::Signature) -> Option<Type> {
 }
 
 impl WorkflowMethodsDefinition {
+    fn run_struct_ident(&self) -> syn::Ident {
+        let struct_name = method_name_to_pascal_case(&self.run_method.method.sig.ident);
+        format_ident!("{}", struct_name)
+    }
+
     pub(crate) fn codegen(&self) -> TokenStream {
         let impl_type = &self.impl_block.self_ty;
         let impl_type_name = type_name_string(impl_type);
@@ -531,8 +536,7 @@ impl WorkflowMethodsDefinition {
 
         // Run method marker struct and impls
         let run_method = &self.run_method;
-        let struct_name = method_name_to_pascal_case(&run_method.method.sig.ident);
-        let struct_ident = format_ident!("{}", struct_name);
+        let struct_ident = self.run_struct_ident();
 
         let input_type = type_to_tokens(
             run_method.input_type.as_ref().or(self
@@ -658,8 +662,10 @@ impl WorkflowMethodsDefinition {
             generate_sync_handler_body(&info.prefixed_method, has_input, false)
         };
 
+        let run_struct_ident = self.run_struct_ident();
         let trait_impl = quote! {
             impl ::temporalio_common::SignalDefinition for #module_ident::#struct_ident {
+                type Workflow = #module_ident::#run_struct_ident;
                 type Input = #input_type;
 
                 fn name() -> &'static str
@@ -705,8 +711,10 @@ impl WorkflowMethodsDefinition {
 
         let method_call = generate_method_call(prefixed_method, query.input_type.is_some());
 
+        let run_struct_ident = self.run_struct_ident();
         let trait_impl = quote! {
             impl ::temporalio_common::QueryDefinition for #module_ident::#struct_ident {
+                type Workflow = #module_ident::#run_struct_ident;
                 type Input = #input_type;
                 type Output = #output_type;
 
@@ -756,8 +764,10 @@ impl WorkflowMethodsDefinition {
             generate_sync_handler_body(&info.prefixed_method, has_input, true)
         };
 
+        let run_struct_ident = self.run_struct_ident();
         let trait_impl = quote! {
             impl ::temporalio_common::UpdateDefinition for #module_ident::#struct_ident {
+                type Workflow = #module_ident::#run_struct_ident;
                 type Input = #input_type;
                 type Output = #output_type;
 

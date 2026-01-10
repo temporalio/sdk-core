@@ -1,16 +1,18 @@
-use crate::WorkflowService;
+use crate::{WorkflowClientTrait, WorkflowService};
 use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
-    WorkflowDefinition,
+    QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{GenericPayloadConverter, PayloadConverter, RawValue, SerializationContext},
     protos::{
         coresdk::FromPayloadsExt,
         temporal::api::{
-            common::v1::{Payload, WorkflowExecution},
+            common::v1::{Payload, Payloads, WorkflowExecution},
             enums::v1::HistoryEventFilterType,
             failure::v1::Failure,
             history::v1::history_event::Attributes,
+            query::v1::WorkflowQuery,
+            update::v1::WaitPolicy,
             workflowservice::v1::GetWorkflowExecutionHistoryRequest,
         },
     },
@@ -228,6 +230,121 @@ where
                      Event details: {o:?}"
                 )),
             };
+        }
+    }
+
+    /// Send a typed signal to the workflow
+    pub async fn signal<S>(
+        &self,
+        _signal: S,
+        input: S::Input,
+    ) -> Result<(), anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        S: SignalDefinition<Workflow = W>,
+        S::Input: Send,
+    {
+        let pc = PayloadConverter::default();
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        self.client
+            .signal_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                S::name().to_string(),
+                Some(Payloads {
+                    payloads: vec![payload],
+                }),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Query the workflow with typed input and output
+    pub async fn query<Q>(
+        &self,
+        _query: Q,
+        input: Q::Input,
+    ) -> Result<Q::Output, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        Q: QueryDefinition<Workflow = W>,
+        Q::Input: Send,
+    {
+        let pc = PayloadConverter::default();
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let response = self
+            .client
+            .query_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                WorkflowQuery {
+                    query_type: Q::name().to_string(),
+                    query_args: Some(Payloads {
+                        payloads: vec![payload],
+                    }),
+                    header: None,
+                },
+            )
+            .await?;
+
+        let result_payload = response
+            .query_result
+            .and_then(|p| p.payloads.into_iter().next())
+            .ok_or_else(|| anyhow!("Query returned no result"))?;
+
+        pc.from_payload(&SerializationContext::Workflow, result_payload)
+            .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
+    }
+
+    /// Send an update to the workflow with typed input and output
+    pub async fn update<U>(
+        &self,
+        _update: U,
+        input: U::Input,
+    ) -> Result<U::Output, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        U: UpdateDefinition<Workflow = W>,
+        U::Input: Send,
+    {
+        let pc = PayloadConverter::default();
+        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let response = self
+            .client
+            .update_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                U::name().to_string(),
+                WaitPolicy {
+                    lifecycle_stage: 2, // UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED
+                },
+                Some(Payloads {
+                    payloads: vec![payload],
+                }),
+            )
+            .await?;
+
+        let outcome = response
+            .outcome
+            .ok_or_else(|| anyhow!("Update returned no outcome"))?;
+
+        match outcome.value {
+            Some(temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
+                success,
+            )) => {
+                let result_payload = success
+                    .payloads
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| anyhow!("Update success had no payload"))?;
+                pc.from_payload(&SerializationContext::Workflow, result_payload)
+                    .map_err(|e| anyhow!("Failed to deserialize update result: {}", e))
+            }
+            Some(temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
+                failure,
+            )) => Err(anyhow!("Update failed: {:?}", failure)),
+            None => Err(anyhow!("Update returned no outcome value")),
         }
     }
 }

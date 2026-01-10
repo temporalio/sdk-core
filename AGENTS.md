@@ -8,9 +8,12 @@ document as your quick reference when submitting pull requests.
 - Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly.
   Unit tests may be run with `cargo test`.
 - Always use `cargo lint` for checking lints / clippy. Do not use clippy directly.
-- Any added comments should explain why something needs to be done, rather than what it is. Comments
-  that simply state a fact easily understood from type signatures or other context should never be
-  added.
+- It is EXTREMELY IMPORTANT that any added comments should explain why something needs to be done,
+  rather than what it is. Comments that simply state a fact easily understood from type signatures
+  or other context should NEVER be added. Always prefer to avoid a comment unless it truly is 
+  clarifying something nonobvious.
+- Always make every attempt to avoid explicit sleeps in test code. Instead rely on synchronization
+  techniques like channels, Notify, etc.
 
 ## Repo Specific Utilities
 

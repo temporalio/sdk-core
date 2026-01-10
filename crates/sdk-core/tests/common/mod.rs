@@ -39,7 +39,7 @@ use temporalio_common::{
     data_converters::RawValue,
     protos::{
         coresdk::{
-            FromPayloadsExt, workflow_activation::WorkflowActivation,
+            workflow_activation::WorkflowActivation,
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
@@ -554,6 +554,7 @@ impl TestWorker {
         self
     }
 
+    #[allow(unused)]
     pub(crate) fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
         self.inner.register_workflow::<WI>();
         self
@@ -753,33 +754,6 @@ impl TestWorkerSubmitterHandle {
             run_id: Some(res.run_id.clone()),
         });
         Ok(res.run_id)
-    }
-
-    /// Start a workflow using the typed API with a workflow marker struct.
-    ///
-    /// Returns a handle to the started workflow.
-    pub(crate) async fn submit_workflow<W>(
-        &self,
-        workflow: W,
-        workflow_id: impl Into<String>,
-        input: W::Input,
-        options: WorkflowOptions,
-    ) -> Result<WorkflowHandle<Client, W>, StartWorkflowError>
-    where
-        W: WorkflowDefinition,
-        W::Input: Send,
-    {
-        let wfid = workflow_id.into();
-        let handle = self
-            .client
-            .start_workflow(workflow, input, self.tq.clone(), wfid.clone(), options)
-            .await?;
-        self.started_workflows.lock().push(WorkflowExecutionInfo {
-            namespace: self.client.namespace().to_string(),
-            workflow_id: wfid,
-            run_id: handle.info().run_id.clone(),
-        });
-        Ok(handle)
     }
 }
 
