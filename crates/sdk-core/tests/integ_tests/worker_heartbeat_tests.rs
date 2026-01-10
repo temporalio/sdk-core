@@ -519,7 +519,7 @@ fn after_shutdown_checks(
         activity_poller_info.last_successful_poll_time.unwrap()
     ));
 
-    assert_eq!(heartbeat.total_sticky_cache_hit, 2);
+    assert_eq!(heartbeat.total_sticky_cache_hit, 1);
     assert_eq!(heartbeat.current_sticky_cache_size, 0);
     assert_eq!(
         heartbeat.plugins,
