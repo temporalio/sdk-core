@@ -58,9 +58,7 @@ use std::{
 use temporalio_client::Priority;
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::{
-        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-    },
+    data_converters::{DataConverter, SerializationContext},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -340,10 +338,9 @@ fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
 pub(crate) type ActivityInvocation = Arc<
     dyn Fn(
             Payload,
-            PayloadConverter,
+            DataConverter,
             ActivityContext,
-        )
-            -> Result<BoxFuture<'static, Result<Payload, ActivityError>>, PayloadConversionError>
+        ) -> BoxFuture<'static, Result<Payload, ActivityError>>
         + Send
         + Sync,
 >;
@@ -380,23 +377,27 @@ impl ActivityDefinitions {
         self
     }
     /// Registers a specific activitiy.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
-        &mut self,
-        instance: Arc<AD::Implementer>,
-    ) -> &mut Self {
+    pub fn register_activity<AD>(&mut self, instance: Arc<AD::Implementer>) -> &mut Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
         self.activities.insert(
             AD::name(),
-            Arc::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(&SerializationContext::Activity, p)?;
-                let pc2 = pc.clone();
-                Ok(AD::execute(Some(instance.clone()), c, deserialized)
-                    .map(move |v| match v {
-                        Ok(okv) => pc2
-                            .to_payload(&SerializationContext::Activity, &okv)
-                            .map_err(|e| e.into()),
-                        Err(e) => Err(e),
-                    })
-                    .boxed())
+            Arc::new(move |p, dc, c| {
+                let instance = instance.clone();
+                let dc = dc.clone();
+                async move {
+                    let deserialized: AD::Input = dc
+                        .from_payload(&SerializationContext::Activity, p)
+                        .await
+                        .map_err(ActivityError::from)?;
+                    let result = AD::execute(Some(instance), c, deserialized).await?;
+                    dc.to_payload(&SerializationContext::Activity, &result)
+                        .await
+                        .map_err(ActivityError::from)
+                }
+                .boxed()
             }),
         );
         self

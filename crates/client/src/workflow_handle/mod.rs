@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
-    data_converters::{GenericPayloadConverter, PayloadConverter, RawValue, SerializationContext},
+    data_converters::{RawValue, SerializationContext},
     protos::{
         coresdk::FromPayloadsExt,
         temporal::api::{
@@ -135,30 +135,31 @@ where
     pub async fn get_workflow_result(
         &self,
         opts: GetWorkflowResultOptions,
-    ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error> {
+    ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+    {
         let mut next_page_tok = vec![];
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
         loop {
-            let server_res = self
-                .client
-                .clone()
-                .get_workflow_execution_history(
-                    GetWorkflowExecutionHistoryRequest {
-                        namespace: self.info.namespace.to_string(),
-                        execution: Some(WorkflowExecution {
-                            workflow_id: self.info.workflow_id.clone(),
-                            run_id: run_id.clone(),
-                        }),
-                        skip_archival: true,
-                        wait_new_event: true,
-                        history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
-                        next_page_token: next_page_tok.clone(),
-                        ..Default::default()
-                    }
-                    .into_request(),
-                )
-                .await?
-                .into_inner();
+            let server_res = WorkflowService::get_workflow_execution_history(
+                &mut self.client.clone(),
+                GetWorkflowExecutionHistoryRequest {
+                    namespace: self.info.namespace.to_string(),
+                    execution: Some(WorkflowExecution {
+                        workflow_id: self.info.workflow_id.clone(),
+                        run_id: run_id.clone(),
+                    }),
+                    skip_archival: true,
+                    wait_new_event: true,
+                    history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
+                    next_page_token: next_page_tok.clone(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
 
             let mut history = server_res
                 .history
@@ -182,8 +183,7 @@ where
                 };
             }
 
-            // TODO: Get payload converter from client
-            let pc = PayloadConverter::default();
+            let dc = self.client.data_converter();
 
             break match event_attrs {
                 Some(Attributes::WorkflowExecutionCompletedEventAttributes(attrs)) => {
@@ -192,8 +192,9 @@ where
                         .result
                         .and_then(|p| p.payloads.into_iter().next())
                         .unwrap_or_default();
-                    let result: W::Output =
-                        pc.from_payload(&SerializationContext::Workflow, payload)?;
+                    let result: W::Output = dc
+                        .from_payload(&SerializationContext::Workflow, payload)
+                        .await?;
                     Ok(WorkflowExecutionResult::Succeeded(result))
                 }
                 Some(Attributes::WorkflowExecutionFailedEventAttributes(attrs)) => {
@@ -244,8 +245,11 @@ where
         S: SignalDefinition<Workflow = W>,
         S::Input: Send,
     {
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let payload = self
+            .client
+            .data_converter()
+            .to_payload(&SerializationContext::Workflow, &input)
+            .await?;
         self.client
             .signal_workflow_execution(
                 self.info.workflow_id.clone(),
@@ -271,8 +275,10 @@ where
         Q: QueryDefinition<Workflow = W>,
         Q::Input: Send,
     {
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let dc = self.client.data_converter();
+        let payload = dc
+            .to_payload(&SerializationContext::Workflow, &input)
+            .await?;
         let response = self
             .client
             .query_workflow_execution(
@@ -293,7 +299,8 @@ where
             .and_then(|p| p.payloads.into_iter().next())
             .ok_or_else(|| anyhow!("Query returned no result"))?;
 
-        pc.from_payload(&SerializationContext::Workflow, result_payload)
+        dc.from_payload(&SerializationContext::Workflow, result_payload)
+            .await
             .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
     }
 
@@ -308,8 +315,10 @@ where
         U: UpdateDefinition<Workflow = W>,
         U::Input: Send,
     {
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let dc = self.client.data_converter();
+        let payload = dc
+            .to_payload(&SerializationContext::Workflow, &input)
+            .await?;
         let response = self
             .client
             .update_workflow_execution(
@@ -338,7 +347,8 @@ where
                     .into_iter()
                     .next()
                     .ok_or_else(|| anyhow!("Update success had no payload"))?;
-                pc.from_payload(&SerializationContext::Workflow, result_payload)
+                dc.from_payload(&SerializationContext::Workflow, result_payload)
+                    .await
                     .map_err(|e| anyhow!("Failed to deserialize update result: {}", e))
             }
             Some(temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(

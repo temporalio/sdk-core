@@ -13,6 +13,7 @@ mod shared_tests;
 #[cfg(test)]
 mod integ_tests {
     mod client_tests;
+    mod data_converter_tests;
     mod ephemeral_server_tests;
     mod heartbeat_tests;
     mod metrics_tests;

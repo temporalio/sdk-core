@@ -110,7 +110,6 @@ use std::{
 use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::PayloadConverter,
     protos::{
         TaskToken,
         coresdk::{
@@ -260,10 +259,11 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         self
     }
     /// Registers a specific activitiy.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
-        mut self,
-        instance: Arc<AD::Implementer>,
-    ) -> Self {
+    pub fn register_activity<AD>(mut self, instance: Arc<AD::Implementer>) -> Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
         self.activities.register_activity::<AD>(instance);
         self
     }
@@ -287,10 +287,11 @@ impl WorkerOptions {
         self
     }
     /// Registers a specific activitiy.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
-        &mut self,
-        instance: Arc<AD::Implementer>,
-    ) -> &mut Self {
+    pub fn register_activity<AD>(&mut self, instance: Arc<AD::Implementer>) -> &mut Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
         self.activities.register_activity::<AD>(instance);
         self
     }
@@ -348,6 +349,7 @@ struct CommonWorker {
     worker: Arc<CoreWorker>,
     task_queue: String,
     worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
+    client: Option<Client>,
 }
 
 #[derive(Default)]
@@ -390,7 +392,12 @@ impl Worker {
             .to_core_options(client.namespace())
             .map_err(|s| anyhow::anyhow!("{s}"))?;
         let core = init_worker(runtime, wc, client.connection().clone())?;
-        let mut me = Self::new_from_core(Arc::new(core));
+        let mut me = Self::new_from_core_definitions(
+            Arc::new(core),
+            Some(client),
+            Default::default(),
+            Default::default(),
+        );
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
         Ok(me)
@@ -399,13 +406,14 @@ impl Worker {
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
     pub fn new_from_core(worker: Arc<CoreWorker>) -> Self {
-        Self::new_from_core_definitions(worker, Default::default(), Default::default())
+        Self::new_from_core_definitions(worker, None, Default::default(), Default::default())
     }
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
     pub fn new_from_core_definitions(
         worker: Arc<CoreWorker>,
+        client: Option<Client>,
         activities: ActivityDefinitions,
         workflows: WorkflowDefinitions,
     ) -> Self {
@@ -414,6 +422,7 @@ impl Worker {
                 task_queue: worker.get_config().task_queue.clone(),
                 worker,
                 worker_interceptor: None,
+                client,
             },
             workflow_half: WorkflowHalf {
                 workflow_definitions: workflows,
@@ -459,10 +468,11 @@ impl Worker {
         self
     }
     /// Registers a specific activitiy.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
-        &mut self,
-        instance: Arc<AD::Implementer>,
-    ) -> &mut Self {
+    pub fn register_activity<AD>(&mut self, instance: Arc<AD::Implementer>) -> &mut Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
         self.activity_half
             .activities
             .register_activity::<AD>(instance);
@@ -507,6 +517,10 @@ impl Worker {
                 .context("Workflow futures encountered an error")
         };
         let wf_completion_processor = async {
+            // TODO: Apply PayloadCodec encoding here before sending completions to core.
+            // This is where async codec operations (e.g., encryption) should be applied to
+            // outgoing payloads in workflow commands (ScheduleActivity inputs, child workflow
+            // inputs, etc.). The codec comes from the client's DataConverter.
             UnboundedReceiverStream::new(completions_rx)
                 .map(Ok)
                 .try_for_each_concurrent(None, |completion| async {
@@ -523,6 +537,9 @@ impl Worker {
             // Workflow polling loop
             async {
                 loop {
+                    // TODO: Apply PayloadCodec decoding here after receiving activations from core.
+                    // This is where async codec operations should decode incoming payloads in
+                    // workflow activation jobs (activity results, child workflow results, etc.).
                     let activation = match common.worker.poll_workflow_activation().await {
                         Err(PollError::ShutDown) => {
                             break;
@@ -565,6 +582,7 @@ impl Worker {
                         act_half.activity_task_handler(
                             common.worker.clone(),
                             common.task_queue.clone(),
+                            common.client.as_ref(),
                             activity?,
                         )?;
                     }
@@ -647,6 +665,14 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;
+            let payload_converter = common
+                .client
+                .as_ref()
+                .ok_or_else(|| anyhow!("Client required for workflow execution"))?
+                .options()
+                .data_converter
+                .payload_converter()
+                .clone();
             let (wff, activations) = {
                 let wf_fns_borrow = self.workflow_fns.borrow();
 
@@ -657,6 +683,7 @@ impl WorkflowHalf {
                         common.task_queue.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
+                        payload_converter.clone(),
                     )
                 } else if let Some(invocation) =
                     self.workflow_definitions.get_workflow(workflow_type)
@@ -666,6 +693,7 @@ impl WorkflowHalf {
                         common.task_queue.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
+                        payload_converter,
                     )
                 } else {
                     warn!("Workflow type {workflow_type} not found");
@@ -752,6 +780,7 @@ impl ActivityHalf {
         &mut self,
         worker: Arc<CoreWorker>,
         task_queue: String,
+        client: Option<&Client>,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
@@ -777,8 +806,11 @@ impl ActivityHalf {
 
                 let (ctx, arg) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
-                // TODO [rust-sdk-branch]: Get payload converter from client
-                let payload_converter = PayloadConverter::default();
+                let data_converter = client
+                    .ok_or_else(|| anyhow!("Client required for activity execution"))?
+                    .options()
+                    .data_converter
+                    .clone();
 
                 tokio::spawn(async move {
                     let act_fut = async move {
@@ -787,7 +819,7 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn)(arg, payload_converter, ctx)?.await
+                        (act_fn)(arg, data_converter, ctx).await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
@@ -1137,7 +1169,7 @@ impl WorkflowFunction {
         Self {
             wf_func: Box::new(move |ctx: WfContext| {
                 let input = ctx.get_args().first().cloned().unwrap_or_default();
-                let converter = PayloadConverter::default();
+                let converter = ctx.payload_converter.clone();
                 match invocation(input, converter, ctx) {
                     Ok(fut) => fut
                         .map(|r| match r {

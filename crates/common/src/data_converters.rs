@@ -5,24 +5,64 @@ use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
-// TODO [rust-sdk-branch]: Use
-#[allow(unused)]
+#[derive(Clone)]
 pub struct DataConverter {
     payload_converter: PayloadConverter,
-    failure_converter: Box<dyn FailureConverter>,
-    codec: Box<dyn PayloadCodec>,
+    #[allow(dead_code)] // Will be used for failure conversion
+    failure_converter: Arc<dyn FailureConverter + Send + Sync>,
+    codec: Arc<dyn PayloadCodec + Send + Sync>,
+}
+
+impl std::fmt::Debug for DataConverter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataConverter")
+            .field("payload_converter", &self.payload_converter)
+            .finish_non_exhaustive()
+    }
 }
 impl DataConverter {
+    /// Create a new DataConverter with the given payload converter, failure converter, and codec.
     pub fn new(
         payload_converter: PayloadConverter,
-        failure_converter: impl FailureConverter + 'static,
-        codec: impl PayloadCodec + 'static,
+        failure_converter: impl FailureConverter + Send + Sync + 'static,
+        codec: impl PayloadCodec + Send + Sync + 'static,
     ) -> Self {
         Self {
             payload_converter,
-            failure_converter: Box::new(failure_converter),
-            codec: Box::new(codec),
+            failure_converter: Arc::new(failure_converter),
+            codec: Arc::new(codec),
         }
+    }
+
+    pub async fn to_payload<T: TemporalSerializable + 'static>(
+        &self,
+        context: &SerializationContext,
+        val: &T,
+    ) -> Result<Payload, PayloadConversionError> {
+        let payload = self.payload_converter.to_payload(context, val)?;
+        let encoded = self.codec.encode(context, vec![payload]).await;
+        encoded
+            .into_iter()
+            .next()
+            .ok_or(PayloadConversionError::WrongEncoding)
+    }
+
+    pub async fn from_payload<T: TemporalDeserializable + 'static>(
+        &self,
+        context: &SerializationContext,
+        payload: Payload,
+    ) -> Result<T, PayloadConversionError> {
+        let decoded = self.codec.decode(context, vec![payload]).await;
+        let payload = decoded
+            .into_iter()
+            .next()
+            .ok_or(PayloadConversionError::WrongEncoding)?;
+        self.payload_converter.from_payload(context, payload)
+    }
+
+    /// Returns the payload converter component of this data converter.
+    pub fn payload_converter(&self) -> &PayloadConverter {
+        &self.payload_converter
     }
 }
 
@@ -36,9 +76,19 @@ pub enum SerializationContext {
 #[derive(Clone)]
 pub enum PayloadConverter {
     Serde(Arc<dyn ErasedSerdePayloadConverter>),
-    // This variant signals the user wants to delegate to wrapper types
+    /// This variant signals the user wants to delegate to wrapper types
     UseWrappers,
     Composite(Arc<CompositePayloadConverter>),
+}
+
+impl std::fmt::Debug for PayloadConverter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PayloadConverter::Serde(_) => write!(f, "PayloadConverter::Serde(...)"),
+            PayloadConverter::UseWrappers => write!(f, "PayloadConverter::UseWrappers"),
+            PayloadConverter::Composite(_) => write!(f, "PayloadConverter::Composite(...)"),
+        }
+    }
 }
 impl PayloadConverter {
     pub fn serde_json() -> Self {
@@ -331,7 +381,11 @@ pub struct CompositePayloadConverter {
 
 impl Default for DataConverter {
     fn default() -> Self {
-        todo!()
+        Self::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            DefaultPayloadCodec,
+        )
     }
 }
 impl FailureConverter for DefaultFailureConverter {

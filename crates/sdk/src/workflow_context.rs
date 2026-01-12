@@ -72,10 +72,9 @@ pub struct WfContext {
     pub(crate) shared: Arc<RwLock<WfContextSharedData>>,
 
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
+    pub(crate) payload_converter: PayloadConverter,
 }
 
-// TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
-//    traits.
 impl WfContext {
     /// Create a new wf context, returning the context itself and a receiver which outputs commands
     /// sent from the workflow.
@@ -84,6 +83,7 @@ impl WfContext {
         task_queue: String,
         init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
+        payload_converter: PayloadConverter,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
         let (chan, rx) = std::sync::mpsc::channel();
@@ -110,6 +110,7 @@ impl WfContext {
                     next_signal_external_wf_sequence_number: 1,
                     next_nexus_op_sequence_number: 1,
                 })),
+                payload_converter,
             },
             rx,
         )
@@ -216,6 +217,7 @@ impl WfContext {
         cmd
     }
 
+    // TODO [rust-sdk-branch] Deserialize result
     /// Request to run an activity
     pub fn start_activity<AD: ActivityDefinition>(
         &self,
@@ -223,9 +225,9 @@ impl WfContext {
         input: AD::Input,
         mut opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
-        // TODO [rust-sdk-branch]: Get payload converter properly
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let payload = self
+            .payload_converter
+            .to_payload(&SerializationContext::Workflow, &input)?;
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         if opts.task_queue.is_none() {
@@ -241,6 +243,7 @@ impl WfContext {
         Ok(cmd)
     }
 
+    // TODO [rust-sdk-branch] Deserialize result
     /// Request to run a local activity
     pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
@@ -248,9 +251,9 @@ impl WfContext {
         input: AD::Input,
         opts: LocalActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
-        // TODO [rust-sdk-branch]: Get payload converter properly
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let payload = self
+            .payload_converter
+            .to_payload(&SerializationContext::Workflow, &input)?;
         Ok(LATimerBackoffFut::new(
             AD::name().to_string(),
             payload,

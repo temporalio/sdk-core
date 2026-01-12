@@ -3,6 +3,7 @@ use crate::{
     UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
     panic_formatter,
 };
+use temporalio_common::data_converters::PayloadConverter;
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
@@ -50,6 +51,7 @@ impl WorkflowFunction {
         task_queue: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
+        payload_converter: PayloadConverter,
     ) -> (
         impl Future<Output = WorkflowResult<Payload>> + use<>,
         UnboundedSender<WorkflowActivation>,
@@ -60,8 +62,13 @@ impl WorkflowFunction {
             "otel.name" = format!("RunWorkflow:{}", &init_workflow_job.workflow_type),
             "otel.kind" = "server"
         );
-        let (wf_context, cmd_receiver) =
-            WfContext::new(namespace, task_queue, init_workflow_job, cancel_rx);
+        let (wf_context, cmd_receiver) = WfContext::new(
+            namespace,
+            task_queue,
+            init_workflow_job,
+            cancel_rx,
+            payload_converter,
+        );
         let (tx, incoming_activations) = unbounded_channel();
         let inner_fut = (self.wf_func)(wf_context.clone()).instrument(span);
         (

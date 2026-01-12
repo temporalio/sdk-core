@@ -51,9 +51,7 @@ use std::{
 };
 use temporalio_common::{
     WorkflowDefinition,
-    data_converters::{
-        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-    },
+    data_converters::{DataConverter, PayloadConversionError, SerializationContext},
     protos::{
         TaskToken,
         coresdk::IntoPayloadsExt,
@@ -404,6 +402,9 @@ pub struct ClientOptions {
     /// The namespace this client will be bound to.
     #[builder(start_fn)]
     pub namespace: String,
+    /// The data converter used for serializing/deserializing payloads.
+    #[builder(default)]
+    pub data_converter: DataConverter,
 }
 
 /// Configuration options for TLS
@@ -942,6 +943,12 @@ pub struct SignalWithStartOptions {
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
 pub trait WorkflowClientTrait: NamespacedClient {
+    /// Returns the data converter used for serializing/deserializing payloads.
+    fn data_converter(&self) -> &DataConverter {
+        static DEFAULT: OnceLock<DataConverter> = OnceLock::new();
+        DEFAULT.get_or_init(DataConverter::default)
+    }
+
     /// Starts workflow execution.
     fn start_workflow_old(
         &self,
@@ -1327,9 +1334,10 @@ where
         W: WorkflowDefinition,
         W::Input: Send,
     {
-        // TODO: Store payload converter on client and use from there
-        let pc = PayloadConverter::default();
-        let payload = pc.to_payload(&SerializationContext::Workflow, &input)?;
+        let payload = self
+            .data_converter()
+            .to_payload(&SerializationContext::Workflow, &input)
+            .await?;
         let namespace = self.namespace();
         let res = self
             .clone()
