@@ -20,7 +20,7 @@ use temporalio_common::{
         temporal::api::enums::v1::EventType,
     },
 };
-use temporalio_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
+use temporalio_sdk::{Worker, WorkflowContext, WorkflowFunction, interceptors::WorkerInterceptor};
 use temporalio_sdk_core::{
     PollError,
     replay::{HistoryFeeder, HistoryForReplay},
@@ -34,7 +34,7 @@ fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WfContext| async move {
+    WorkflowFunction::new(move |ctx: WorkflowContext| async move {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }

@@ -12,14 +12,14 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
 
 static FIELD_A: &str = "cat_name";
 static FIELD_B: &str = "cute_level";
 
-async fn memo_upserter(ctx: WfContext) -> WorkflowResult<()> {
+async fn memo_upserter(ctx: WorkflowContext) -> WorkflowResult<()> {
     ctx.upsert_memo([
         (FIELD_A.to_string(), "enchi".as_json_payload().unwrap()),
         (FIELD_B.to_string(), 9001.as_json_payload().unwrap()),
@@ -94,24 +94,27 @@ async fn workflow_modify_props() {
     });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        ctx.upsert_memo([
-            (
-                String::from(k1),
-                Payload {
-                    data: vec![0x01],
-                    ..Default::default()
-                },
-            ),
-            (
-                String::from(k2),
-                Payload {
-                    data: vec![0x02],
-                    ..Default::default()
-                },
-            ),
-        ]);
-        Ok(().into())
-    });
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE,
+        move |ctx: WorkflowContext| async move {
+            ctx.upsert_memo([
+                (
+                    String::from(k1),
+                    Payload {
+                        data: vec![0x01],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    String::from(k2),
+                    Payload {
+                        data: vec![0x02],
+                        ..Default::default()
+                    },
+                ),
+            ]);
+            Ok(().into())
+        },
+    );
     worker.run().await.unwrap();
 }

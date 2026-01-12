@@ -1,13 +1,5 @@
 error: #[query] methods must use `&self` as the receiver (not `&mut self`) - queries are read-only
-  --> tests/workflows_trybuild/mut_query_fail.rs:15:22
+  --> tests/workflows_trybuild/mut_query_fail.rs:14:22
    |
-15 |     pub fn get_value(&mut self, _ctx: &WfContext) -> u32 {
+14 |     pub fn get_value(&mut self, _ctx: &WorkflowContext) -> u32 {
    |                      ^^^^^^^^^
-
-warning: unused imports: `WfContext`, `WfExitValue`, and `WorkflowResult`
- --> tests/workflows_trybuild/mut_query_fail.rs:2:22
-  |
-2 | use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
-  |                      ^^^^^^^^^  ^^^^^^^^^^^  ^^^^^^^^^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

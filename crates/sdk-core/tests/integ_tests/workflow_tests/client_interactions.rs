@@ -4,7 +4,7 @@ use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use temporalio_client::{WorkflowExecutionResult, WorkflowOptions};
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 
 #[workflow]
 #[derive(Default)]
@@ -15,7 +15,11 @@ struct InteractionWorkflow {
 #[workflow_methods]
 impl InteractionWorkflow {
     #[run]
-    async fn run(&mut self, ctx: &mut WfContext, wait_for_signal: bool) -> WorkflowResult<i32> {
+    async fn run(
+        &mut self,
+        ctx: &mut WorkflowContext,
+        wait_for_signal: bool,
+    ) -> WorkflowResult<i32> {
         if wait_for_signal {
             ctx.wait_condition(|| self.counter != 0).await;
         }
@@ -23,17 +27,17 @@ impl InteractionWorkflow {
     }
 
     #[signal]
-    fn increment(&mut self, _ctx: &mut WfContext, amount: i32) {
+    fn increment(&mut self, _ctx: &mut WorkflowContext, amount: i32) {
         self.counter += amount;
     }
 
     #[query]
-    fn get_counter(&self, _ctx: &WfContext) -> i32 {
+    fn get_counter(&self, _ctx: &WorkflowContext) -> i32 {
         self.counter
     }
 
     #[update]
-    fn set_counter(&mut self, _ctx: &mut WfContext, value: i32) -> i32 {
+    fn set_counter(&mut self, _ctx: &mut WorkflowContext, value: i32) -> i32 {
         let old = self.counter;
         self.counter = value;
         old

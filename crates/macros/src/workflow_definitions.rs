@@ -451,7 +451,7 @@ fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
 }
 
 fn is_wf_context_type(ty: &Type) -> bool {
-    // Check for WfContext, &WfContext, or &mut WfContext
+    // Check for WorkflowContext, &WorkflowContext, or &mut WorkflowContext
     let inner_type = match ty {
         Type::Reference(r) => &*r.elem,
         other => other,
@@ -460,7 +460,7 @@ fn is_wf_context_type(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = inner_type
         && let Some(segment) = path.segments.last()
     {
-        return segment.ident == "WfContext";
+        return segment.ident == "WorkflowContext";
     }
     false
 }
@@ -679,7 +679,7 @@ impl WorkflowMethodsDefinition {
             impl ::temporalio_sdk::workflows::ExecutableSignal<#module_ident::#struct_ident> for #impl_type {
                 fn handle(
                     &mut self,
-                    ctx: &mut ::temporalio_sdk::WfContext,
+                    ctx: &mut ::temporalio_sdk::WorkflowContext,
                     input: <#module_ident::#struct_ident as ::temporalio_common::SignalDefinition>::Input,
                 ) -> ::futures_util::future::BoxFuture<'_, ()> {
                     use ::futures_util::FutureExt;
@@ -729,7 +729,7 @@ impl WorkflowMethodsDefinition {
             impl ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident> for #impl_type {
                 fn handle(
                     &self,
-                    ctx: &::temporalio_sdk::WfContext,
+                    ctx: &::temporalio_sdk::WorkflowContext,
                     input: <#module_ident::#struct_ident as ::temporalio_common::QueryDefinition>::Input,
                 ) -> <#module_ident::#struct_ident as ::temporalio_common::QueryDefinition>::Output {
                     #method_call
@@ -782,7 +782,7 @@ impl WorkflowMethodsDefinition {
             impl ::temporalio_sdk::workflows::ExecutableUpdate<#module_ident::#struct_ident> for #impl_type {
                 fn handle(
                     &mut self,
-                    ctx: &mut ::temporalio_sdk::WfContext,
+                    ctx: &mut ::temporalio_sdk::WorkflowContext,
                     input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
                 ) -> ::futures_util::future::BoxFuture<'_, <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output> {
                     use ::futures_util::FutureExt;
@@ -869,7 +869,7 @@ impl WorkflowMethodsDefinition {
                 const INIT_TAKES_INPUT: bool = #init_has_input;
 
                 fn init(
-                    ctx: &::temporalio_sdk::WfContext,
+                    ctx: &::temporalio_sdk::WorkflowContext,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> Self {
                     #init_body
@@ -877,7 +877,7 @@ impl WorkflowMethodsDefinition {
 
                 fn run(
                     &mut self,
-                    ctx: ::temporalio_sdk::WfContext,
+                    ctx: ::temporalio_sdk::WorkflowContext,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> ::futures_util::future::BoxFuture<'_, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>> {
                     #run_impl_body

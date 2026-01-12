@@ -11,7 +11,7 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::WfContext;
+use temporalio_sdk::WorkflowContext;
 
 pub(crate) mod priority;
 
@@ -24,7 +24,7 @@ pub(crate) async fn grpc_message_too_large() {
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
-    core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
+    core.register_wf(wf_name.to_owned(), |_ctx: WorkflowContext| async move {
         if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
             Ok(vec![].into())
         } else {

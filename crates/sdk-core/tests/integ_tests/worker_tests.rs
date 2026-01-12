@@ -54,7 +54,7 @@ use temporalio_common::{
 };
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, WorkerOptions,
+    ActivityOptions, LocalActivityOptions, WorkerOptions, WorkflowContext,
     activities::{ActivityContext, ActivityError},
     interceptors::WorkerInterceptor,
 };
@@ -186,10 +186,9 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 
     // Workflow doesn't actually need to do anything. We just need to see that we don't get stuck
     // by assigning all slots to sticky pollers.
-    worker.register_wf(
-        wf_name.to_owned(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    worker.register_wf(wf_name.to_owned(), |_: WorkflowContext| async move {
+        Ok(().into())
+    });
     for i in 0..20 {
         worker
             .submit_wf(
@@ -216,7 +215,7 @@ async fn oversize_grpc_message() {
     let mut core = starter.worker().await;
 
     static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
-    core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
+    core.register_wf(wf_name.to_owned(), |_ctx: WorkflowContext| async move {
         if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
             Ok(vec![].into())
         } else {
@@ -375,7 +374,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         }
     }
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WorkflowContext| {
         let complete_token = workflow_complete_token.clone();
         async move {
             ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())?
@@ -443,15 +442,18 @@ async fn max_wft_respected() {
         cfg.max_outstanding_workflow_tasks = Some(1);
     });
     let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        drop(
-            active_count
-                .try_acquire()
-                .expect("No multiple concurrent workflow tasks!"),
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE,
+        move |ctx: WorkflowContext| async move {
+            drop(
+                active_count
+                    .try_acquire()
+                    .expect("No multiple concurrent workflow tasks!"),
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        },
+    );
 
     for wf_id in wf_ids {
         worker
@@ -531,7 +533,7 @@ async fn history_length_with_fail_and_timeout(
             wc.max_cached_workflows = 1;
         }
     });
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WorkflowContext| async move {
         assert_eq!(ctx.history_length(), 3);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.history_length(), 14);
@@ -587,7 +589,7 @@ async fn sets_build_id_from_wft_complete() {
         },
     );
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WorkflowContext| async move {
         // First task, it should be empty, since replaying and nothing in first WFT completed
         assert_eq!(ctx.current_deployment_version(), None);
         ctx.timer(Duration::from_secs(1)).await;
@@ -727,7 +729,7 @@ async fn test_custom_slot_supplier_simple() {
 
     worker.register_wf(
         "SlotSupplierWorkflow".to_owned(),
-        |ctx: WfContext| async move {
+        |ctx: WorkflowContext| async move {
             let _result = ctx
                 .start_activity(
                     StdActivities::no_op,

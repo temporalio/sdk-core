@@ -59,7 +59,8 @@ use temporalio_common::{
 };
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
+    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions,
+    WorkflowContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -793,7 +794,7 @@ async fn activity_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         let normal_act_pass = ctx
             .start_activity(
                 PassFailActivities::pass_fail_act,
@@ -934,7 +935,7 @@ async fn nexus_metrics() {
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_string(), move |ctx: WorkflowContext| {
         let partial_op = NexusOperationOptions {
             endpoint: endpoint.clone(),
             service: "mysvc".to_string(),
@@ -1108,10 +1109,9 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        wf_name.to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    worker.register_wf(wf_name.to_string(), |_: WorkflowContext| async move {
+        Ok(().into())
+    });
 
     worker
         .submit_wf(
@@ -1197,10 +1197,9 @@ async fn metrics_available_from_custom_slot_supplier() {
     starter.sdk_config.tuner = Arc::new(tb.build());
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        "s_wf".to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    worker.register_wf("s_wf".to_string(), |_: WorkflowContext| async move {
+        Ok(().into())
+    });
 
     worker
         .submit_wf(
@@ -1353,7 +1352,7 @@ async fn sticky_queue_label_strategy(
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.clone(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.clone(), |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_millis(1)).await;
         Ok(().into())
     });
@@ -1432,7 +1431,7 @@ async fn resource_based_tuner_metrics() {
 
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_millis(100)).await;
         Ok(().into())
     });

@@ -61,7 +61,8 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, TimerOptions, WorkflowContext,
+    interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, TunerHolder, WorkflowErrorType,
@@ -79,7 +80,7 @@ async fn parallel_workflows_same_queue() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
-    core.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    core.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
@@ -477,7 +478,7 @@ async fn slow_completes_with_small_cache() {
 
     worker.register_activities(StdActivities);
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         for _ in 0..3 {
             ctx.start_activity(
                 StdActivities::echo,
@@ -783,7 +784,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_secs(1000)).await;
         Ok(().into())
     });
@@ -815,7 +816,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let mut starter = starter.clone_no_worker();
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         ctx.start_activity(
             StdActivities::echo,
             "hi".to_owned(),
@@ -862,7 +863,7 @@ async fn history_out_of_order_on_restart() {
 
     worker.register_activities(StdActivities);
     worker2.register_activities(StdActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.start_local_activity(
             StdActivities::echo,
             "hi".to_string(),
@@ -887,7 +888,7 @@ async fn history_out_of_order_on_restart() {
         Ok(().into())
     });
 
-    worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker2.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.start_local_activity(
             StdActivities::echo,
             "hi".to_string(),
@@ -975,7 +976,7 @@ async fn pass_timer_summary_to_metadata() {
     });
 
     let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
+    worker.register_wf(wf_type, |ctx: WorkflowContext| async move {
         ctx.timer(TimerOptions {
             duration: Duration::from_secs(1),
             summary: Some("timer summary".to_string()),

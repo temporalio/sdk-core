@@ -34,7 +34,7 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
+use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext};
 use temporalio_sdk_core::PollError;
 use tokio::{
     join,
@@ -69,7 +69,7 @@ async fn nexus_basic(
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let endpoint = endpoint.clone();
         async move {
             match ctx
@@ -226,7 +226,7 @@ async fn nexus_async(
         Some(Duration::from_secs(5))
     };
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let endpoint = endpoint.clone();
         async move {
             let started = ctx.start_nexus_operation(NexusOperationOptions {
@@ -255,7 +255,7 @@ async fn nexus_async(
     });
     worker.register_wf(
         "async_completer".to_owned(),
-        move |ctx: WfContext| async move {
+        move |ctx: WorkflowContext| async move {
             match outcome {
                 Outcome::Succeed => Ok("completed async".into()),
                 Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
@@ -451,7 +451,7 @@ async fn nexus_cancel_before_start() {
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let endpoint = endpoint.clone();
         async move {
             let started = ctx.start_nexus_operation(NexusOperationOptions {
@@ -502,7 +502,7 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let endpoint = endpoint.clone();
         async move {
             // We just need to create the command, not await it.
@@ -604,7 +604,7 @@ async fn nexus_cancellation_types(
     let schedule_to_close_timeout = Some(Duration::from_secs(5));
 
     let (caller_op_future_tx, caller_op_future_rx) = watch::channel(false);
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let endpoint = endpoint.clone();
         let caller_op_future_tx = caller_op_future_tx.clone();
         async move {
@@ -640,7 +640,7 @@ async fn nexus_cancellation_types(
     let cancellation_wait_happened_clone = cancellation_wait_happened.clone();
     let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
     let (handler_exited_tx, mut handler_exited_rx) = watch::channel(false);
-    worker.register_wf("async_completer".to_owned(), move |ctx: WfContext| {
+    worker.register_wf("async_completer".to_owned(), move |ctx: WorkflowContext| {
         let cancellation_tx = cancellation_tx.clone();
         let cancellation_wait_happened = cancellation_wait_happened_clone.clone();
         let handler_exited_tx = handler_exited_tx.clone();

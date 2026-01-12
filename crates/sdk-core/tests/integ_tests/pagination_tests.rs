@@ -14,7 +14,7 @@ use temporalio_common::protos::{
         workflowservice::v1::GetWorkflowExecutionHistoryResponse,
     },
 };
-use temporalio_sdk::WfContext;
+use temporalio_sdk::WorkflowContext;
 use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
 
 #[tokio::test]
@@ -106,7 +106,7 @@ async fn weird_pagination_doesnt_drop_wft_events() {
 
     let sig_ctr = Arc::new(AtomicUsize::new(0));
     let sig_ctr_clone = sig_ctr.clone();
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| {
         let sig_ctr_clone = sig_ctr_clone.clone();
         async move {
             let mut sigchan = ctx.make_signal_channel("hi");
@@ -246,7 +246,7 @@ async fn extreme_pagination_doesnt_drop_wft_events_worker() {
 
     let sig_ctr = Arc::new(AtomicUsize::new(0));
     let sig_ctr_clone = sig_ctr.clone();
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| {
         let sig_ctr_clone = sig_ctr_clone.clone();
         async move {
             let mut sigchan = ctx.make_signal_channel("hi");

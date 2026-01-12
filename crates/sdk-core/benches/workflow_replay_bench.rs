@@ -17,7 +17,7 @@ use temporalio_common::{
     protos::{DEFAULT_WORKFLOW_TYPE, canned_histories},
     telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes},
 };
-use temporalio_sdk::{WfContext, WorkflowFunction};
+use temporalio_sdk::{WorkflowContext, WorkflowFunction};
 use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -143,7 +143,7 @@ criterion_group!(benches, criterion_benchmark, bench_metrics);
 criterion_main!(benches);
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WfContext| async move {
+    WorkflowFunction::new(move |ctx: WorkflowContext| async move {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
@@ -152,7 +152,7 @@ fn timers_wf(num_timers: u32) -> WorkflowFunction {
 }
 
 fn big_signals_wf(num_tasks: usize) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WfContext| async move {
+    WorkflowFunction::new(move |ctx: WorkflowContext| async move {
         let mut sigs = ctx.make_signal_channel("bigsig");
         for _ in 1..=num_tasks {
             for _ in 1..=5 {

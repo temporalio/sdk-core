@@ -31,7 +31,7 @@ use temporalio_common::{
     },
     telemetry::{CoreLogStreamConsumer, Logger, TelemetryOptions},
 };
-use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_sdk::{ActivityOptions, WorkflowContext};
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, RuntimeOptions, TunerHolder,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
@@ -260,7 +260,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         for _ in 0..3 {
             ctx.start_activity(
                 StdActivities::echo,

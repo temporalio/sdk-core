@@ -48,11 +48,11 @@ pub fn workflow(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// ## Method Attributes
 ///
-/// - `#[init]` - Optional initialization method. Signature: `fn new(input: T, ctx: &WfContext) -> Self`
-/// - `#[run]` - Required main workflow function. Signature: `async fn run(&mut self, ctx: &mut WfContext) -> WorkflowResult<T>`
-/// - `#[signal]` - Signal handler. Signature: `fn signal(&mut self, ctx: &mut WfContext, input: T)` (may be async)
-/// - `#[query]` - Query handler. Signature: `fn query(&self, ctx: &WfContext, input: T) -> R` (must NOT be async)
-/// - `#[update]` - Update handler. Signature: `fn update(&mut self, ctx: &mut WfContext, input: T) -> R` (may be async)
+/// - `#[init]` - Optional initialization method. Signature: `fn new(input: T, ctx: &WorkflowContext) -> Self`
+/// - `#[run]` - Required main workflow function. Signature: `async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<T>`
+/// - `#[signal]` - Signal handler. Signature: `fn signal(&mut self, ctx: &mut WorkflowContext, input: T)` (may be async)
+/// - `#[query]` - Query handler. Signature: `fn query(&self, ctx: &WorkflowContext, input: T) -> R` (must NOT be async)
+/// - `#[update]` - Update handler. Signature: `fn update(&mut self, ctx: &mut WorkflowContext, input: T) -> R` (may be async)
 ///
 /// For a usage example, see the `temporalio_sdk` crate's documentation.
 #[proc_macro_attribute]

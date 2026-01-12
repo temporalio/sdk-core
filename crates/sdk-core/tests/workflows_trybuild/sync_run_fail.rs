@@ -1,5 +1,4 @@
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
 
 #[workflow]
 pub struct BadWorkflow;
@@ -7,7 +6,7 @@ pub struct BadWorkflow;
 #[workflow_methods]
 impl BadWorkflow {
     #[run]
-    pub fn run(&mut self, _ctx: &mut WfContext) -> WorkflowResult<()> {
+    pub fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 }

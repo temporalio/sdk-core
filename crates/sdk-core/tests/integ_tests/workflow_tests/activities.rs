@@ -47,7 +47,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    ActivityOptions, CancellableFuture, WfExitValue, WorkflowContext, WorkflowFunction,
+    WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -66,7 +67,7 @@ struct OneActivityWorkflow;
 #[workflow_methods]
 impl OneActivityWorkflow {
     #[run]
-    async fn run(&mut self, ctx: &mut WfContext, input: String) -> WorkflowResult<String> {
+    async fn run(&mut self, ctx: &mut WorkflowContext, input: String) -> WorkflowResult<String> {
         let r = ctx
             .start_activity(
                 StdActivities::echo,
@@ -909,7 +910,7 @@ async fn one_activity_abandon_cancelled_before_started() {
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -951,7 +952,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -1022,7 +1023,7 @@ async fn it_can_complete_async() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.clone(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.clone(), move |ctx: WorkflowContext| async move {
         let activity_resolution = ctx
             .start_activity(
                 AsyncActivities::complete_async_activity,
@@ -1102,7 +1103,7 @@ async fn graceful_shutdown() {
     starter.sdk_config.register_activities(SleeperActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let act_futs = (1..=10).map(|_| {
             ctx.start_activity(
                 SleeperActivities::sleeper,
@@ -1179,7 +1180,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
         .sdk_config
         .register_activities(CancellableEchoActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let res = ctx
             .start_activity(
                 CancellableEchoActivities::cancellable_echo,
@@ -1225,7 +1226,7 @@ async fn long_activity_timeout_repro() {
         .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let mut iter = 1;
         loop {
             let res = ctx
@@ -1286,7 +1287,7 @@ async fn pass_activity_summary_to_metadata() {
     });
 
     let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
+    worker.register_wf(wf_type, |ctx: WorkflowContext| async move {
         ctx.start_activity(
             StdActivities::default,
             (),
@@ -1338,7 +1339,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     let mock = mock_worker_client();
     let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
 
-    worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_type.to_owned(), |ctx: WorkflowContext| async move {
         let act_fut = ctx.start_activity(
             StdActivities::default,
             (),
@@ -1363,7 +1364,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
 
 #[tokio::test]
 async fn immediate_activity_cancelation() {
-    let func = WorkflowFunction::new(|ctx: WfContext| async move {
+    let func = WorkflowFunction::new(|ctx: WorkflowContext| async move {
         let cancel_activity_future =
             ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?;
         // Immediately cancel the activity

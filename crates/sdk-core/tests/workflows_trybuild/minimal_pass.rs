@@ -1,5 +1,5 @@
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 
 #[workflow]
 pub struct MinimalWorkflow;
@@ -7,7 +7,7 @@ pub struct MinimalWorkflow;
 #[workflow_methods]
 impl MinimalWorkflow {
     #[run]
-    pub async fn run(&mut self, _ctx: &mut WfContext) -> WorkflowResult<()> {
+    pub async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 }

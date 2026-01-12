@@ -9,10 +9,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::{TunerHolder, test_help::MockPollCfg};
 
-async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn continue_as_new_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     let run_ct = ctx.get_args()[0].data[0];
     ctx.timer(Duration::from_millis(500)).await;
     Ok(if run_ct < 5 {
@@ -70,7 +70,7 @@ async fn continue_as_new_multiple_concurrent() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
+async fn wf_with_timer(ctx: WorkflowContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_millis(500)).await;
     Ok(WfExitValue::continue_as_new(
         ContinueAsNewWorkflowExecution {

@@ -16,10 +16,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{CancellableFuture, WfContext, WorkflowResult};
+use temporalio_sdk::{CancellableFuture, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown};
 
-pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn timer_wf(command_sink: WorkflowContext) -> WorkflowResult<()> {
     command_sink.timer(Duration::from_secs(1)).await;
     Ok(().into())
 }
@@ -112,7 +112,7 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
+async fn parallel_timer_wf(command_sink: WorkflowContext) -> WorkflowResult<()> {
     let t1 = command_sink.timer(Duration::from_secs(1));
     let t2 = command_sink.timer(Duration::from_secs(1));
     let _ = tokio::join!(t1, t2);
@@ -131,7 +131,7 @@ async fn parallel_timers() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn happy_timer(ctx: WfContext) -> WorkflowResult<()> {
+async fn happy_timer(ctx: WorkflowContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_secs(5)).await;
     Ok(().into())
 }
@@ -171,14 +171,14 @@ async fn mismatched_timer_ids_errors() {
         if message.contains("Timer fired event did not have expected timer id 1"))
     });
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_secs(5)).await;
         Ok(().into())
     });
     worker.run().await.unwrap();
 }
 
-async fn cancel_timer(ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_timer(ctx: WorkflowContext) -> WorkflowResult<()> {
     let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
     ctx.timer(Duration::from_secs(5)).await;
     // Cancel the first timer after having waited on the second
@@ -230,7 +230,7 @@ async fn cancel_before_sent_to_server() {
         });
     });
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WorkflowContext| async move {
         let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
         // Immediately cancel the timer
         cancel_timer_fut.cancel(&ctx);

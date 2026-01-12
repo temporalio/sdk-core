@@ -82,7 +82,7 @@ pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
-    StartedChildWorkflow, TimerOptions, WfContext,
+    StartedChildWorkflow, TimerOptions, WorkflowContext,
 };
 
 use crate::{
@@ -1118,7 +1118,7 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>
+type WfFunc = dyn Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>
     + Send
     + Sync
     + 'static;
@@ -1130,7 +1130,7 @@ pub struct WorkflowFunction {
 
 impl<F, Fut, O> From<F> for WorkflowFunction
 where
-    F: Fn(WfContext) -> Fut + Send + Sync + 'static,
+    F: Fn(WorkflowContext) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
     O: Serialize,
 {
@@ -1140,15 +1140,15 @@ where
 }
 
 impl WorkflowFunction {
-    /// Build a workflow function from a closure or function pointer which accepts a [WfContext]
+    /// Build a workflow function from a closure or function pointer which accepts a [WorkflowContext]
     pub fn new<F, Fut, O>(f: F) -> Self
     where
-        F: Fn(WfContext) -> Fut + Send + Sync + 'static,
+        F: Fn(WorkflowContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
         O: Serialize,
     {
         Self {
-            wf_func: Box::new(move |ctx: WfContext| {
+            wf_func: Box::new(move |ctx: WorkflowContext| {
                 (f)(ctx)
                     .map(|r| {
                         r.and_then(|r| {
@@ -1167,7 +1167,7 @@ impl WorkflowFunction {
 
     pub(crate) fn from_invocation(invocation: workflows::WorkflowInvocation) -> Self {
         Self {
-            wf_func: Box::new(move |ctx: WfContext| {
+            wf_func: Box::new(move |ctx: WorkflowContext| {
                 let input = ctx.get_args().first().cloned().unwrap_or_default();
                 let converter = ctx.payload_converter.clone();
                 match invocation(input, converter, ctx) {
@@ -1288,7 +1288,7 @@ pub struct UpdateInfo {
 /// Context for a workflow update
 pub struct UpdateContext {
     /// The workflow context, can be used to do normal workflow things inside the update handler
-    pub wf_ctx: WfContext,
+    pub wf_ctx: WorkflowContext,
     /// Additional update info
     pub info: UpdateInfo,
 }
@@ -1424,7 +1424,7 @@ mod tests {
     // Compile-only test for workflow context invocation
     #[allow(dead_code, unreachable_code, unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
-        let wf_ctx: WfContext = unimplemented!();
+        let wf_ctx: WorkflowContext = unimplemented!();
         wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
         wf_ctx.start_activity(
             MyActivities::takes_self,
@@ -1453,38 +1453,38 @@ mod tests {
     #[workflow_methods]
     impl MyWorkflow {
         #[init]
-        pub fn new(_ctx: &WfContext, _input: String) -> Self {
+        pub fn new(_ctx: &WorkflowContext, _input: String) -> Self {
             Self { counter: 0 }
         }
 
         #[run]
-        pub async fn run(&mut self, _ctx: &mut WfContext) -> WorkflowResult<String> {
+        pub async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<String> {
             Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
         }
 
         #[signal(name = "increment")]
-        pub fn increment_counter(&mut self, _ctx: &mut WfContext, amount: u32) {
+        pub fn increment_counter(&mut self, _ctx: &mut WorkflowContext, amount: u32) {
             self.counter += amount;
         }
 
         #[signal]
-        pub async fn async_signal(&mut self, _ctx: &mut WfContext) {
+        pub async fn async_signal(&mut self, _ctx: &mut WorkflowContext) {
             // Async signals are allowed
         }
 
         #[query]
-        pub fn get_counter(&self, _ctx: &WfContext) -> u32 {
+        pub fn get_counter(&self, _ctx: &WorkflowContext) -> u32 {
             self.counter
         }
 
         #[update(name = "double")]
-        pub fn double_counter(&mut self, _ctx: &mut WfContext) -> u32 {
+        pub fn double_counter(&mut self, _ctx: &mut WorkflowContext) -> u32 {
             self.counter *= 2;
             self.counter
         }
 
         #[update]
-        pub async fn async_update(&mut self, _ctx: &mut WfContext, val: i32) -> i32 {
+        pub async fn async_update(&mut self, _ctx: &mut WorkflowContext, val: i32) -> i32 {
             val * 2
         }
     }

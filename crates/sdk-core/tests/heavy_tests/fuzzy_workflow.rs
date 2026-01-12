@@ -4,7 +4,7 @@ use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, sync::Arc, time::Duration};
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
-use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::TunerHolder;
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +29,7 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
+async fn fuzzy_wf_def(ctx: WorkflowContext) -> WorkflowResult<()> {
     let sigchan = ctx
         .make_signal_channel(FUZZY_SIG)
         .map(|sd| FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal"));

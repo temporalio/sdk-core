@@ -1,9 +1,9 @@
 use crate::common::activity_functions::StdActivities;
 use std::time::Duration;
 use temporalio_common::{prost_dur, protos::temporal::api::common::v1::RetryPolicy};
-use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
 
-pub(crate) async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn la_problem_workflow(ctx: WorkflowContext) -> WorkflowResult<()> {
     ctx.start_local_activity(
         StdActivities::delay,
         Duration::from_secs(15),

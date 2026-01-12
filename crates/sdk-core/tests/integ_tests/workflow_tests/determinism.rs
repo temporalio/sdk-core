@@ -17,7 +17,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WorkflowContext, WorkflowResult,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -26,7 +26,7 @@ use temporalio_sdk_core::{
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
 
-pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn timer_wf_nondeterministic(ctx: WorkflowContext) -> WorkflowResult<()> {
     let run_ct = RUN_CT.fetch_add(1, Ordering::Relaxed);
 
     match run_ct {
@@ -72,7 +72,7 @@ async fn task_fail_causes_replay_unset_too_soon() {
     let mut worker = starter.worker().await;
 
     static DID_FAIL: AtomicBool = AtomicBool::new(false);
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         if DID_FAIL.load(Ordering::Relaxed) {
             assert!(ctx.is_replaying());
         }
@@ -102,7 +102,7 @@ async fn task_fail_causes_replay_unset_too_soon() {
         .unwrap();
 }
 
-async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
+async fn timer_wf_fails_once(ctx: WorkflowContext) -> WorkflowResult<()> {
     static DID_FAIL: AtomicBool = AtomicBool::new(false);
 
     ctx.timer(Duration::from_secs(1)).await;
@@ -177,7 +177,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     });
 
     let started_count: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| async move {
         // The workflow is replaying all of history, so the when it schedules an extra timer it
         // should not have, it causes a nondeterminism error.
         if started_count.fetch_add(1, Ordering::Relaxed) == 0 {
@@ -245,7 +245,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
         }
     });
 
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| async move {
         if local_act {
             if id_change {
                 ctx.start_local_activity(
@@ -338,7 +338,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         }
     });
 
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| async move {
         ctx.child_workflow(if id_change {
             ChildWorkflowOptions {
                 workflow_id: "I'm bad and wrong!".to_string(),
@@ -394,7 +394,7 @@ async fn repro_channel_missing_because_nondeterminism() {
             cfg.ignore_evicts_on_shutdown = false;
         });
 
-        worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+        worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| async move {
             ctx.patched("wrongid");
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())

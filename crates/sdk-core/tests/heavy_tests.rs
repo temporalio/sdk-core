@@ -35,7 +35,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, WfContext, WorkflowResult,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -58,7 +58,7 @@ async fn activity_load() {
     let activity_timeout = Duration::from_secs(8);
     let task_queue = Some(starter.get_task_queue().to_owned());
 
-    let wf_fn = move |ctx: WfContext| {
+    let wf_fn = move |ctx: WorkflowContext| {
         let task_queue = task_queue.clone();
         let input_str = "yo".to_string();
         async move {
@@ -155,7 +155,7 @@ async fn chunky_activities_resource_based() {
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(30);
 
-    let wf_fn = move |ctx: WfContext| {
+    let wf_fn = move |ctx: WorkflowContext| {
         let input_str = "yo".to_string();
         async move {
             let res = ctx
@@ -224,7 +224,7 @@ async fn workflow_load() {
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 100, 100, 100));
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
@@ -343,7 +343,7 @@ async fn evict_while_la_running_no_interference() {
     tokio::join!(subfs.collect::<Vec<_>>(), runf);
 }
 
-pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn many_parallel_timers_longhist(ctx: WorkflowContext) -> WorkflowResult<()> {
     for _ in 0..120 {
         let mut futs = vec![];
         for _ in 0..100 {
@@ -431,7 +431,7 @@ async fn poller_autoscaling_basic_loadtest() {
     starter.sdk_config.register_activities(JitteryActivities);
     let mut worker = starter.worker().await;
     let shutdown_handle = worker.inner_mut().shutdown_handle();
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 

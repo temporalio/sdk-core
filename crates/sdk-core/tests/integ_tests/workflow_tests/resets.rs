@@ -13,7 +13,7 @@ use temporalio_common::protos::temporal::api::{
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{LocalActivityOptions, WfContext};
+use temporalio_sdk::{LocalActivityOptions, WorkflowContext};
 use tokio::sync::Notify;
 use tonic::IntoRequest;
 
@@ -29,7 +29,7 @@ async fn reset_workflow() {
     let notify = Arc::new(Notify::new());
 
     let wf_notify = notify.clone();
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let notify = wf_notify.clone();
         async move {
             // Make a couple workflow tasks
@@ -123,7 +123,7 @@ async fn reset_randomseed() {
     static RAND_SEED: AtomicU64 = AtomicU64::new(0);
 
     let wf_notify = notify.clone();
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let notify = wf_notify.clone();
         async move {
             let _ = RAND_SEED.compare_exchange(

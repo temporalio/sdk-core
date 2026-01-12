@@ -19,7 +19,7 @@ use temporalio_common::protos::{
 
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
+    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WorkflowContext,
     WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
@@ -28,7 +28,7 @@ use uuid::Uuid;
 const SIGNAME: &str = "signame";
 const RECEIVER_WFID: &str = "sends-signal-signal-receiver";
 
-async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_sender(ctx: WorkflowContext) -> WorkflowResult<()> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();
@@ -64,7 +64,7 @@ async fn sends_signal_to_missing_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_receiver(ctx: WorkflowContext) -> WorkflowResult<()> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
     assert_eq!(&res.input, &[b"hi!".into()]);
     assert_eq!(
@@ -74,7 +74,7 @@ async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_with_create_wf_receiver(ctx: WorkflowContext) -> WorkflowResult<()> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
     assert_eq!(&res.input, &[b"tada".into()]);
     assert_eq!(
@@ -140,7 +140,7 @@ async fn sends_signal_with_create_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
+async fn signals_child(ctx: WorkflowContext) -> WorkflowResult<()> {
     let started_child = ctx
         .child_workflow(ChildWorkflowOptions {
             workflow_id: "my_precious_child".to_string(),
@@ -178,7 +178,7 @@ async fn sends_signal_to_child() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signal_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_sender_canned(ctx: WorkflowContext) -> WorkflowResult<()> {
     let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
     dat.with_header("tupac", b"shakur");
     let res = ctx.signal_workflow(dat).await;
@@ -271,7 +271,7 @@ async fn cancels_before_sending() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WorkflowContext| async move {
         let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
             "fake_wid",
             "fake_rid",

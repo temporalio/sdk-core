@@ -2,9 +2,9 @@ use crate::common::{CoreWfStarter, NAMESPACE, get_integ_connection};
 use std::time::Duration;
 use temporalio_client::{Client, WorkflowClientTrait};
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 
-pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn eager_wf(_context: WorkflowContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 

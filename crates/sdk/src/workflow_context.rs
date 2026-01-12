@@ -62,20 +62,20 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Used within workflows to issue commands, get info, etc.
 #[derive(Clone)]
-pub struct WfContext {
+pub struct WorkflowContext {
     namespace: String,
     task_queue: String,
     inital_information: Arc<InitializeWorkflow>,
 
     chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<Option<String>>,
-    pub(crate) shared: Arc<RwLock<WfContextSharedData>>,
+    pub(crate) shared: Arc<RwLock<WorkflowContextSharedData>>,
 
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
     pub(crate) payload_converter: PayloadConverter,
 }
 
-impl WfContext {
+impl WorkflowContext {
     /// Create a new wf context, returning the context itself and a receiver which outputs commands
     /// sent from the workflow.
     pub(super) fn new(
@@ -91,7 +91,7 @@ impl WfContext {
             Self {
                 namespace,
                 task_queue,
-                shared: Arc::new(RwLock::new(WfContextSharedData {
+                shared: Arc::new(RwLock::new(WorkflowContextSharedData {
                     random_seed: init_workflow_job.randomness_seed,
                     search_attributes: init_workflow_job
                         .search_attributes
@@ -538,7 +538,7 @@ impl WfCtxProtectedDat {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct WfContextSharedData {
+pub(crate) struct WorkflowContextSharedData {
     /// Maps change ids -> resolved status
     pub(crate) changes: HashMap<String, bool>,
     pub(crate) is_replaying: bool,
@@ -584,13 +584,13 @@ impl Stream for DrainableSignalStream {
 /// Used in the prototype SDK for cancelling operations like timers and activities.
 pub trait CancellableFuture<T>: Future<Output = T> {
     /// Cancel this Future
-    fn cancel(&self, cx: &WfContext);
+    fn cancel(&self, cx: &WorkflowContext);
 }
 
 /// A Future that can be cancelled with a reason
 pub trait CancellableFutureWithReason<T>: CancellableFuture<T> {
     /// Cancel this Future with a reason
-    fn cancel_with_reason(&self, cx: &WfContext, reason: String);
+    fn cancel_with_reason(&self, cx: &WorkflowContext, reason: String);
 }
 
 struct WFCommandFut<T, D> {
@@ -676,7 +676,7 @@ where
     T: Unblockable<OtherDat = D>,
     ID: Clone + Into<CancellableID>,
 {
-    fn cancel(&self, cx: &WfContext) {
+    fn cancel(&self, cx: &WorkflowContext) {
         cx.cancel(self.cancellable_id.clone().into());
     }
 }
@@ -684,7 +684,7 @@ impl<T, D> CancellableFutureWithReason<T> for CancellableWFCommandFut<T, D, Canc
 where
     T: Unblockable<OtherDat = D>,
 {
-    fn cancel_with_reason(&self, cx: &WfContext, reason: String) {
+    fn cancel_with_reason(&self, cx: &WorkflowContext, reason: String) {
         let new_id = self.cancellable_id.clone().with_reason(reason);
         cx.cancel(new_id);
     }
@@ -696,7 +696,7 @@ struct LATimerBackoffFut<'a> {
     input: Payload,
     current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Send + Unpin + 'a>>,
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
-    ctx: &'a WfContext,
+    ctx: &'a WorkflowContext,
     next_attempt: u32,
     next_sched_time: Option<prost_types::Timestamp>,
     did_cancel: AtomicBool,
@@ -706,7 +706,7 @@ impl<'a> LATimerBackoffFut<'a> {
         activity_type: String,
         input: Payload,
         opts: LocalActivityOptions,
-        ctx: &'a WfContext,
+        ctx: &'a WorkflowContext,
     ) -> Self {
         Self {
             la_opts: opts.clone(),
@@ -782,7 +782,7 @@ impl Future for LATimerBackoffFut<'_> {
     }
 }
 impl CancellableFuture<ActivityResolution> for LATimerBackoffFut<'_> {
-    fn cancel(&self, ctx: &WfContext) {
+    fn cancel(&self, ctx: &WorkflowContext) {
         self.did_cancel.store(true, Ordering::Release);
         if let Some(tf) = self.timer_fut.as_ref() {
             tf.cancel(ctx);
@@ -832,7 +832,10 @@ pub struct StartedChildWorkflow {
 
 impl ChildWorkflow {
     /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(self, cx: &WfContext) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
+    pub fn start(
+        self,
+        cx: &WorkflowContext,
+    ) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
         let child_seq = cx.seq_nums.write().next_child_workflow_seq();
         // Immediately create the command/future for the result, otherwise if the user does
         // not await the result until *after* we receive an activation for it, there will be nothing
@@ -883,7 +886,7 @@ impl StartedChildWorkflow {
     }
 
     /// Cancel the child workflow
-    pub fn cancel(&self, cx: &WfContext, reason: String) {
+    pub fn cancel(&self, cx: &WorkflowContext, reason: String) {
         cx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {
                 child_workflow_seq: self.common.result_future.cancellable_id.seq_num(),
@@ -896,7 +899,7 @@ impl StartedChildWorkflow {
     /// Signal the child workflow
     pub fn signal<'a, S: Into<Signal>>(
         &self,
-        cx: &'a WfContext,
+        cx: &'a WorkflowContext,
         data: S,
     ) -> impl CancellableFuture<SignalExternalWfResult> + use<'a, S> {
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
@@ -922,7 +925,7 @@ impl StartedNexusOperation {
         self.unblock_dat.result_future.clone().await
     }
 
-    pub fn cancel(&self, cx: &WfContext) {
+    pub fn cancel(&self, cx: &WorkflowContext) {
         cx.cancel(CancellableID::NexusOp(self.unblock_dat.schedule_seq));
     }
 }

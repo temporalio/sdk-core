@@ -33,7 +33,7 @@ use temporalio_common::protos::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, WfContext, WorkflowResult,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
@@ -42,7 +42,7 @@ use tokio_stream::StreamExt;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 
-pub(crate) async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn changes_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     if ctx.patched(MY_PATCH_ID) {
         ctx.timer(Duration::from_millis(100)).await;
     } else {
@@ -73,7 +73,7 @@ async fn writes_change_markers() {
 /// a cheapo way of being re-run, at which point it runs with change checks and the "new" code.
 static DID_DIE: AtomicBool = AtomicBool::new(false);
 
-pub(crate) async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn no_change_then_change_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     if DID_DIE.load(Ordering::Acquire) {
         assert!(!ctx.patched(MY_PATCH_ID));
     }
@@ -105,7 +105,7 @@ async fn can_add_change_markers() {
 
 static DID_DIE_2: AtomicBool = AtomicBool::new(false);
 
-pub(crate) async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn replay_with_change_marker_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     assert!(ctx.patched(MY_PATCH_ID));
     ctx.timer(Duration::from_millis(200)).await;
     if !DID_DIE_2.load(Ordering::Acquire) {
@@ -140,7 +140,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     let mut worker = starter.worker().await;
     // Include a task failure as well to make sure that works
     static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.timer(Duration::from_millis(1)).await;
         if FAIL_ONCE.load(Ordering::Acquire) {
             FAIL_ONCE.store(false, Ordering::Release);
@@ -162,7 +162,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
         let did_die = did_die.clone();
         async move {
             ctx.timer(Duration::from_millis(200)).await;
@@ -197,7 +197,7 @@ async fn deprecated_patch_removal() {
     let did_die = Arc::new(AtomicBool::new(false));
     let send_sig = Arc::new(Notify::new());
     let send_sig_c = send_sig.clone();
-    worker.register_wf(wf_name, move |ctx: WfContext| {
+    worker.register_wf(wf_name, move |ctx: WorkflowContext| {
         let did_die = did_die.clone();
         let send_sig_c = send_sig_c.clone();
         async move {
@@ -325,7 +325,7 @@ impl FakeAct {
     }
 }
 
-async fn v1(ctx: &mut WfContext) {
+async fn v1(ctx: &mut WorkflowContext) {
     ctx.start_activity(
         FakeAct::nameless,
         (),
@@ -338,7 +338,7 @@ async fn v1(ctx: &mut WfContext) {
     .await;
 }
 
-async fn v2(ctx: &mut WfContext) -> bool {
+async fn v2(ctx: &mut WorkflowContext) -> bool {
     if ctx.patched(MY_PATCH_ID) {
         ctx.start_activity(
             FakeAct::nameless,
@@ -366,7 +366,7 @@ async fn v2(ctx: &mut WfContext) -> bool {
     }
 }
 
-async fn v3(ctx: &mut WfContext) {
+async fn v3(ctx: &mut WorkflowContext) {
     ctx.deprecate_patch(MY_PATCH_ID);
     ctx.start_activity(
         FakeAct::nameless,
@@ -380,7 +380,7 @@ async fn v3(ctx: &mut WfContext) {
     .await;
 }
 
-async fn v4(ctx: &mut WfContext) {
+async fn v4(ctx: &mut WorkflowContext) {
     ctx.start_activity(
         FakeAct::nameless,
         (),
@@ -404,7 +404,7 @@ fn patch_setup(replaying: bool, marker_type: MarkerType, workflow_version: usize
 
 macro_rules! patch_wf {
     ($workflow_version:ident) => {
-        move |mut ctx: WfContext| async move {
+        move |mut ctx: WorkflowContext| async move {
             match $workflow_version {
                 1 => {
                     v1(&mut ctx).await;
@@ -678,22 +678,25 @@ async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] r
 
     // Errors would appear as nondeterminism problems, so just run it.
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        if ctx.patched(MY_PATCH_ID) {
-            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
-                .await;
-        } else {
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE,
+        move |ctx: WorkflowContext| async move {
+            if ctx.patched(MY_PATCH_ID) {
+                ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+                    .await;
+            } else {
+                ctx.timer(ONE_SECOND).await;
+            }
             ctx.timer(ONE_SECOND).await;
-        }
-        ctx.timer(ONE_SECOND).await;
-        if ctx.patched(MY_PATCH_ID) {
-            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
-                .await;
-        } else {
-            ctx.timer(ONE_SECOND).await;
-        }
-        Ok(().into())
-    });
+            if ctx.patched(MY_PATCH_ID) {
+                ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+                    .await;
+            } else {
+                ctx.timer(ONE_SECOND).await;
+            }
+            Ok(().into())
+        },
+    );
     worker.run().await.unwrap();
 }
 
@@ -757,12 +760,15 @@ async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize
     });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        for i in 1..=num_patches {
-            let _dontcare = ctx.patched(&format!("patch-{i}"));
-            ctx.timer(ONE_SECOND).await;
-        }
-        Ok(().into())
-    });
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE,
+        move |ctx: WorkflowContext| async move {
+            for i in 1..=num_patches {
+                let _dontcare = ctx.patched(&format!("patch-{i}"));
+                ctx.timer(ONE_SECOND).await;
+            }
+            Ok(().into())
+        },
+    );
     worker.run().await.unwrap();
 }

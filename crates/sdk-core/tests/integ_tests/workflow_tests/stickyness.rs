@@ -8,7 +8,7 @@ use std::{
 };
 use temporalio_client::WorkflowOptions;
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::{PollerBehavior, TunerHolder};
 use tokio::sync::Barrier;
 
@@ -27,7 +27,7 @@ async fn timer_workflow_not_sticky() {
 
 static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn timer_timeout_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
     let t = ctx.timer(Duration::from_secs(1));
     if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
@@ -66,7 +66,7 @@ async fn cache_miss_ok() {
     let mut worker = starter.worker().await;
 
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         barr.wait().await;
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())

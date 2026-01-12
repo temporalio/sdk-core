@@ -39,7 +39,7 @@ use temporalio_common::{
 };
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, UpdateContext, WfContext,
+    ActivityOptions, LocalActivityOptions, UpdateContext, WorkflowContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -645,7 +645,7 @@ async fn update_with_local_acts() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -713,7 +713,7 @@ async fn update_rejection_sdk() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
@@ -757,7 +757,7 @@ async fn update_fail_sdk() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -801,7 +801,7 @@ async fn update_timer_sequence() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -851,7 +851,7 @@ async fn task_failure_during_validation() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     static FAILCT: AtomicUsize = AtomicUsize::new(0);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| {
@@ -912,7 +912,7 @@ async fn task_failure_after_update() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     static FAILCT: AtomicUsize = AtomicUsize::new(0);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -977,7 +977,7 @@ async fn worker_restarted_in_middle_of_update() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -1068,7 +1068,7 @@ async fn update_after_empty_wft() {
     let client = starter.get_client().await;
 
     static ACT_STARTED: AtomicBool = AtomicBool::new(false);
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
@@ -1159,7 +1159,7 @@ async fn update_lost_on_activity_mismatch() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
         let can_run = Arc::new(AtomicUsize::new(1));
         let cr = can_run.clone();
         ctx.update_handler(

@@ -9,10 +9,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
-async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn cancelled_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
     let mut reason = "".to_string();
     let cancelled = tokio::select! {
         _ = ctx.timer(Duration::from_secs(500)) => false,
@@ -64,7 +64,7 @@ async fn cancel_during_timer() {
     );
 }
 
-async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
+async fn wf_with_timer(ctx: WorkflowContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_millis(500)).await;
     Ok(WfExitValue::Cancelled)
 }

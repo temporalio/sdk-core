@@ -1,9 +1,8 @@
 use crate::{
     CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, UpdateContext,
-    UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    UpdateFunctions, UpdateInfo, WfExitValue, WorkflowContext, WorkflowFunction, WorkflowResult,
     panic_formatter,
 };
-use temporalio_common::data_converters::PayloadConverter;
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
 use futures_util::{FutureExt, future::BoxFuture};
 use std::{
@@ -15,26 +14,29 @@ use std::{
     sync::mpsc::Receiver,
     task::{Context, Poll},
 };
-use temporalio_common::protos::{
-    coresdk::{
-        workflow_activation::{
-            FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
-            WorkflowActivationJob, workflow_activation_job::Variant,
+use temporalio_common::{
+    data_converters::PayloadConverter,
+    protos::{
+        coresdk::{
+            workflow_activation::{
+                FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,
+                ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
+                WorkflowActivation, WorkflowActivationJob, workflow_activation_job::Variant,
+            },
+            workflow_commands::{
+                CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
+                CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
+                RequestCancelActivity, RequestCancelExternalWorkflowExecution,
+                RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
+                ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand,
+                update_response, workflow_command,
+            },
+            workflow_completion,
+            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
         },
-        workflow_commands::{
-            CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
-            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
-            RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-            RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
-            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand, update_response,
-            workflow_command,
-        },
-        workflow_completion,
-        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
+        temporal::api::{common::v1::Payload, enums::v1::VersioningBehavior, failure::v1::Failure},
+        utilities::TryIntoOrNone,
     },
-    temporal::api::{common::v1::Payload, enums::v1::VersioningBehavior, failure::v1::Failure},
-    utilities::TryIntoOrNone,
 };
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -62,7 +64,7 @@ impl WorkflowFunction {
             "otel.name" = format!("RunWorkflow:{}", &init_workflow_job.workflow_type),
             "otel.kind" = "server"
         );
-        let (wf_context, cmd_receiver) = WfContext::new(
+        let (wf_context, cmd_receiver) = WorkflowContext::new(
             namespace,
             task_queue,
             init_workflow_job,
@@ -119,7 +121,7 @@ pub(crate) struct WorkflowFuture {
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<Option<String>>,
     /// Copy of the workflow context
-    wf_ctx: WfContext,
+    wf_ctx: WorkflowContext,
     /// Maps signal IDs to channels to send down when they are signaled
     sig_chans: HashMap<String, SigChanOrBuffer>,
     /// Maps update handlers by name to implementations

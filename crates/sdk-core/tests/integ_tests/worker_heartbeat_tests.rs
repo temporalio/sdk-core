@@ -35,7 +35,7 @@ use temporalio_common::{
 };
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, WfContext,
+    ActivityOptions, WorkflowContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -178,7 +178,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         ctx.start_activity(
             NotifyActivities::pass_fail_act,
             "pass".to_string(),
@@ -319,7 +319,7 @@ async fn docker_worker_heartbeat_tuner() {
     let worker_instance_key = worker.worker_instance_key();
 
     // Run a workflow
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),
@@ -599,7 +599,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let client = starter.get_client().await;
     let client_for_orchestrator = client.clone();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         let wf_marker = ctx
             .get_args()
             .first()
@@ -694,13 +694,13 @@ async fn worker_heartbeat_multiple_workers() {
     let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
 
     let mut worker_a = starter.worker().await;
-    worker_a.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
+    worker_a.register_wf(wf_name.to_string(), |_ctx: WorkflowContext| async move {
         Ok(().into())
     });
 
     let mut starter_b = starter.clone_no_worker();
     let mut worker_b = starter_b.worker().await;
-    worker_b.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
+    worker_b.register_wf(wf_name.to_string(), |_ctx: WorkflowContext| async move {
         Ok(().into())
     });
 
@@ -806,7 +806,7 @@ async fn worker_heartbeat_failure_metrics() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_string(), |ctx: WorkflowContext| async move {
         let _ = ctx
             .start_activity(
                 FailingActivities::failing_act,
@@ -978,7 +978,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),
@@ -1039,7 +1039,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         ctx.start_activity(
             StdActivities::echo,
             "pass".to_string(),

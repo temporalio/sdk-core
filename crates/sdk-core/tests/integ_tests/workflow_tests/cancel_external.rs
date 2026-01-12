@@ -8,12 +8,12 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 
-async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_sender(ctx: WorkflowContext) -> WorkflowResult<()> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)?.to_owned();
     let sigres = ctx
         .cancel_external(
@@ -34,7 +34,7 @@ async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-async fn cancel_receiver(ctx: WfContext) -> WorkflowResult<String> {
+async fn cancel_receiver(ctx: WorkflowContext) -> WorkflowResult<String> {
     let r = ctx.cancelled().await;
     Ok(r.into())
 }
@@ -82,7 +82,7 @@ async fn sends_cancel_to_other_wf() {
     assert!(res.contains("cancel-reason"));
 }
 
-async fn cancel_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_sender_canned(ctx: WorkflowContext) -> WorkflowResult<()> {
     let res = ctx
         .cancel_external(
             NamespacedWorkflowExecution {

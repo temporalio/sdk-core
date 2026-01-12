@@ -10,7 +10,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WfContext, WfExitValue, WorkflowResult,
+    ActivityOptions, WfExitValue, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -84,7 +84,7 @@ impl DataConverterTestWorkflow {
     #[run]
     async fn run(
         &mut self,
-        ctx: &mut WfContext,
+        ctx: &mut WorkflowContext,
         input: TrackedWrapper,
     ) -> WorkflowResult<TrackedWrapper> {
         let result = ctx

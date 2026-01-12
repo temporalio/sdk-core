@@ -6,7 +6,7 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+//! use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
@@ -16,12 +16,12 @@
 //! #[workflow_methods]
 //! impl MyWorkflow {
 //!     #[init]
-//!     pub fn new(ctx: &WfContext, input: String) -> Self {
+//!     pub fn new(ctx: &WorkflowContext, input: String) -> Self {
 //!         Self { counter: 0 }
 //!     }
 //!
 //!     #[run]
-//!     pub async fn run(&mut self, ctx: &mut WfContext) -> WorkflowResult<String> {
+//!     pub async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<String> {
 //!         Ok(WfExitValue::Normal(format!(
 //!             "Done with counter: {}",
 //!             self.counter
@@ -29,12 +29,12 @@
 //!     }
 //!
 //!     #[signal]
-//!     pub fn increment(&mut self, ctx: &mut WfContext, amount: u32) {
+//!     pub fn increment(&mut self, ctx: &mut WorkflowContext, amount: u32) {
 //!         self.counter += amount;
 //!     }
 //!
 //!     #[query]
-//!     pub fn get_counter(&self, ctx: &WfContext) -> u32 {
+//!     pub fn get_counter(&self, ctx: &WorkflowContext) -> u32 {
 //!         self.counter
 //!     }
 //! }
@@ -50,7 +50,7 @@ use temporalio_common::{
     protos::temporal::api::common::v1::Payload,
 };
 
-use crate::WfContext;
+use crate::WorkflowContext;
 
 /// Error type for workflow operations
 #[derive(Debug, thiserror::Error)]
@@ -85,14 +85,15 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
     ///
     /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
     /// `input` will be `Some`. Otherwise it's `None`.
-    fn init(ctx: &WfContext, input: Option<<Self::Run as WorkflowDefinition>::Input>) -> Self;
+    fn init(ctx: &WorkflowContext, input: Option<<Self::Run as WorkflowDefinition>::Input>)
+    -> Self;
 
     /// Execute the workflow's main run function.
     ///
     /// If `INIT_TAKES_INPUT` is false, `input` will be `Some`. Otherwise it's `None`.
     fn run(
         &mut self,
-        ctx: WfContext,
+        ctx: WorkflowContext,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
     ) -> BoxFuture<'_, Result<Payload, WorkflowError>>;
 }
@@ -107,7 +108,7 @@ pub trait ExecutableSignal<S: SignalDefinition>: WorkflowImplementation {
     ///
     /// Signals may be synchronous or asynchronous, but the trait always returns
     /// a boxed future for uniformity.
-    fn handle(&mut self, ctx: &mut WfContext, input: S::Input) -> BoxFuture<'_, ()>;
+    fn handle(&mut self, ctx: &mut WorkflowContext, input: S::Input) -> BoxFuture<'_, ()>;
 }
 
 /// Trait for executing query handlers on a workflow.
@@ -119,7 +120,7 @@ pub trait ExecutableQuery<Q: QueryDefinition>: WorkflowImplementation {
     /// Handle a query with the given input and return the result.
     ///
     /// Queries take `&self` (immutable) and cannot modify workflow state.
-    fn handle(&self, ctx: &WfContext, input: Q::Input) -> Q::Output;
+    fn handle(&self, ctx: &WorkflowContext, input: Q::Input) -> Q::Output;
 }
 
 /// Trait for executing update handlers on a workflow.
@@ -131,13 +132,13 @@ pub trait ExecutableUpdate<U: UpdateDefinition>: WorkflowImplementation {
     /// Handle an update with the given input and return the result.
     ///
     /// Updates take `&mut self` and can modify workflow state.
-    fn handle(&mut self, ctx: &mut WfContext, input: U::Input) -> BoxFuture<'_, U::Output>;
+    fn handle(&mut self, ctx: &mut WorkflowContext, input: U::Input) -> BoxFuture<'_, U::Output>;
 
     /// Validate an update before it is applied.
     ///
     /// The default implementation always accepts the update.
     /// Override this to add validation logic.
-    fn validate(&self, _ctx: &WfContext, _input: &U::Input) -> Result<(), String> {
+    fn validate(&self, _ctx: &WorkflowContext, _input: &U::Input) -> Result<(), String> {
         Ok(())
     }
 }
@@ -156,7 +157,7 @@ pub(crate) type WorkflowInvocation = Arc<
     dyn Fn(
             Payload,
             PayloadConverter,
-            WfContext,
+            WorkflowContext,
         )
             -> Result<BoxFuture<'static, Result<Payload, WorkflowError>>, PayloadConversionError>
         + Send

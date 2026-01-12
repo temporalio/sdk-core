@@ -235,11 +235,7 @@ where
     }
 
     /// Send a typed signal to the workflow
-    pub async fn signal<S>(
-        &self,
-        _signal: S,
-        input: S::Input,
-    ) -> Result<(), anyhow::Error>
+    pub async fn signal<S>(&self, _signal: S, input: S::Input) -> Result<(), anyhow::Error>
     where
         CT: WorkflowClientTrait,
         S: SignalDefinition<Workflow = W>,
@@ -265,11 +261,7 @@ where
     }
 
     /// Query the workflow with typed input and output
-    pub async fn query<Q>(
-        &self,
-        _query: Q,
-        input: Q::Input,
-    ) -> Result<Q::Output, anyhow::Error>
+    pub async fn query<Q>(&self, _query: Q, input: Q::Input) -> Result<Q::Output, anyhow::Error>
     where
         CT: WorkflowClientTrait,
         Q: QueryDefinition<Workflow = W>,
@@ -305,11 +297,7 @@ where
     }
 
     /// Send an update to the workflow with typed input and output
-    pub async fn update<U>(
-        &self,
-        _update: U,
-        input: U::Input,
-    ) -> Result<U::Output, anyhow::Error>
+    pub async fn update<U>(&self, _update: U, input: U::Input) -> Result<U::Output, anyhow::Error>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -339,9 +327,11 @@ where
             .ok_or_else(|| anyhow!("Update returned no outcome"))?;
 
         match outcome.value {
-            Some(temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
-                success,
-            )) => {
+            Some(
+                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
+                    success,
+                ),
+            ) => {
                 let result_payload = success
                     .payloads
                     .into_iter()
@@ -351,9 +341,11 @@ where
                     .await
                     .map_err(|e| anyhow!("Failed to deserialize update result: {}", e))
             }
-            Some(temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
-                failure,
-            )) => Err(anyhow!("Update failed: {:?}", failure)),
+            Some(
+                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
+                    failure,
+                ),
+            ) => Err(anyhow!("Update failed: {:?}", failure)),
             None => Err(anyhow!("Update returned no outcome value")),
         }
     }

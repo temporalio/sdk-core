@@ -6,7 +6,7 @@ use temporalio_client::{
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, ChildWorkflowOptions, WfContext,
+    ActivityOptions, ChildWorkflowOptions, WorkflowContext,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -44,48 +44,51 @@ pub(crate) async fn priority_values_sent_to_server() {
     }
 
     worker.register_activities(PriorityActivities);
-    worker.register_wf(starter.get_task_queue(), move |ctx: WfContext| async move {
-        let child = ctx.child_workflow(ChildWorkflowOptions {
-            workflow_id: format!("{}-child", ctx.task_queue()),
-            workflow_type: child_type.to_owned(),
-            options: WorkflowOptions {
-                priority: Some(Priority {
-                    priority_key: 4,
-                    fairness_key: "fair-child".to_string(),
-                    fairness_weight: 1.23,
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-        let started = child
-            .start(&ctx)
-            .await
-            .into_started()
-            .expect("Child should start OK");
-        let activity = ctx
-            .start_activity(
-                PriorityActivities::echo,
-                "hello".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
+    worker.register_wf(
+        starter.get_task_queue(),
+        move |ctx: WorkflowContext| async move {
+            let child = ctx.child_workflow(ChildWorkflowOptions {
+                workflow_id: format!("{}-child", ctx.task_queue()),
+                workflow_type: child_type.to_owned(),
+                options: WorkflowOptions {
                     priority: Some(Priority {
-                        priority_key: 5,
-                        fairness_key: "fair-act".to_string(),
-                        fairness_weight: 1.1,
+                        priority_key: 4,
+                        fairness_key: "fair-child".to_string(),
+                        fairness_weight: 1.23,
                     }),
-                    // Currently no priority info attached to eagerly run activities
-                    do_not_eagerly_execute: true,
                     ..Default::default()
                 },
-            )
-            .unwrap();
-        started.result().await;
-        activity.await.unwrap_ok_payload();
-        Ok(().into())
-    });
-    worker.register_wf(child_type.to_owned(), |ctx: WfContext| async move {
+                ..Default::default()
+            });
+
+            let started = child
+                .start(&ctx)
+                .await
+                .into_started()
+                .expect("Child should start OK");
+            let activity = ctx
+                .start_activity(
+                    PriorityActivities::echo,
+                    "hello".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        priority: Some(Priority {
+                            priority_key: 5,
+                            fairness_key: "fair-act".to_string(),
+                            fairness_weight: 1.1,
+                        }),
+                        // Currently no priority info attached to eagerly run activities
+                        do_not_eagerly_execute: true,
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            started.result().await;
+            activity.await.unwrap_ok_payload();
+            Ok(().into())
+        },
+    );
+    worker.register_wf(child_type.to_owned(), |ctx: WorkflowContext| async move {
         assert_eq!(
             ctx.workflow_initial_info().priority,
             Some(common::v1::Priority {

@@ -17,11 +17,11 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
 
-async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
+async fn search_attr_updater(ctx: WorkflowContext) -> WorkflowResult<()> {
     let mut int_val = ctx
         .search_attributes()
         .indexed_fields
@@ -129,24 +129,27 @@ async fn upsert_search_attrs_from_workflow() {
     });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        ctx.upsert_search_attributes([
-            (
-                String::from(k1),
-                Payload {
-                    data: vec![0x01],
-                    ..Default::default()
-                },
-            ),
-            (
-                String::from(k2),
-                Payload {
-                    data: vec![0x02],
-                    ..Default::default()
-                },
-            ),
-        ]);
-        Ok(().into())
-    });
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE,
+        move |ctx: WorkflowContext| async move {
+            ctx.upsert_search_attributes([
+                (
+                    String::from(k1),
+                    Payload {
+                        data: vec![0x01],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    String::from(k2),
+                    Payload {
+                        data: vec![0x02],
+                        ..Default::default()
+                    },
+                ),
+            ]);
+            Ok(().into())
+        },
+    );
     worker.run().await.unwrap();
 }

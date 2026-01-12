@@ -26,7 +26,7 @@ use temporalio_client::{
 use temporalio_common::{telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes};
 use temporalio_macros::activities;
 use temporalio_sdk::{
-    ActivityOptions, WfContext,
+    ActivityOptions, WorkflowContext,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
@@ -77,7 +77,7 @@ async fn poller_load_spiky() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
@@ -224,7 +224,7 @@ async fn poller_load_sustained() {
     };
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
@@ -319,7 +319,7 @@ async fn poller_load_spike_then_sustained() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
