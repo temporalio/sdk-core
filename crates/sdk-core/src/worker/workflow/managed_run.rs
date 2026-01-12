@@ -191,6 +191,7 @@ impl ManagedRun {
             attempt = %work.attempt,
             "Applying new workflow task from server"
         );
+        let is_incremental = work.is_incremental();
         let wft_info = WorkflowTaskInfo {
             attempt: work.attempt,
             task_token: work.task_token,
@@ -239,7 +240,9 @@ impl ManagedRun {
 
         // The update field is only populated in the event we hit the cache
         let activation = if work.update.is_real() {
-            self.metrics.sticky_cache_hit();
+            if is_incremental {
+                self.metrics.sticky_cache_hit();
+            }
             self.wfm.new_work_from_server(work.update, work.messages)?
         } else {
             let r = self.wfm.get_next_activation()?;
