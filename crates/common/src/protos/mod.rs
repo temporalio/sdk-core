@@ -2354,8 +2354,10 @@ pub mod temporal {
                                 Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => true,
                                 Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => false,
                                 Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => false,
-                                Attributes::WorkflowExecutionPausedEventAttributes(_) => false,
-                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => false,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionPausedEventAttributes(_) => true,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => true,
                             }
                         } else {
                             false
