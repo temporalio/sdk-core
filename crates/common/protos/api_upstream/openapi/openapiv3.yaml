@@ -122,6 +122,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities:
+    get:
+      tags:
+        - WorkflowService
+      description: ListActivityExecutions is a visibility API to list activity executions in a specific namespace.
+      operationId: ListActivityExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          description: Max number of executions to return per page.
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          description: Token returned in ListActivityExecutionsResponse.
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListActivityExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/activities/cancel:
     post:
       tags:
@@ -129,7 +171,7 @@ paths:
       description: |-
         RespondActivityTaskFailed is called by workers when processing an activity task fails.
 
-         This results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
+         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
          and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
          no longer valid due to activity timeout, already being completed, or never having existed.
       operationId: RespondActivityTaskCanceled
@@ -163,7 +205,7 @@ paths:
       tags:
         - WorkflowService
       description: |-
-        See `RecordActivityTaskCanceled`. This version allows clients to record failures by
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
          namespace/workflow id/activity id instead of task token.
 
          (-- api-linter: core::0136::prepositions=disabled
@@ -203,7 +245,7 @@ paths:
         RespondActivityTaskCompleted is called by workers when they successfully complete an activity
          task.
 
-         This results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
+         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
          and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
          no longer valid due to activity timeout, already being completed, or never having existed.
       operationId: RespondActivityTaskCompleted
@@ -237,7 +279,7 @@ paths:
       tags:
         - WorkflowService
       description: |-
-        See `RecordActivityTaskCompleted`. This version allows clients to record completions by
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
          namespace/workflow id/activity id instead of task token.
 
          (-- api-linter: core::0136::prepositions=disabled
@@ -349,10 +391,17 @@ paths:
       description: |-
         RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
 
-         If worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
-         then it will be marked as timed out and an `ACTIVITY_TASK_TIMED_OUT` event will be written to
-         the workflow history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in
-         such situations, in that event, the SDK should request cancellation of the activity.
+         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
+         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
+         time out the activity.
+
+         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
+         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
+         in that event, the SDK should request cancellation of the activity.
+
+         The request may contain response `details` which will be persisted by the server and may be
+         used by the activity to checkpoint progress. The `cancel_requested` field in the response
+         indicates whether cancellation has been requested for the activity.
       operationId: RecordActivityTaskHeartbeat
       parameters:
         - name: namespace
@@ -437,6 +486,8 @@ paths:
          - The activity should respond to the cancellation accordingly.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type
+         This API will be deprecated soon and replaced with a newer PauseActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: PauseActivity
       parameters:
         - name: namespace
@@ -486,6 +537,8 @@ paths:
          'keep_paused': if the activity is paused, it will remain paused.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type.
+         This API will be deprecated soon and replaced with a newer ResetActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: ResetActivity
       parameters:
         - name: namespace
@@ -531,6 +584,8 @@ paths:
          'reset_heartbeat': the activity heartbeat timer and heartbeats will be reset.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type
+         This API will be deprecated soon and replaced with a newer UnpauseActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: UnpauseActivity
       parameters:
         - name: namespace
@@ -565,6 +620,8 @@ paths:
       description: |-
         UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.
          If there are multiple pending activities of the provided type - all of them will be updated.
+         This API will be deprecated soon and replaced with a newer UpdateActivityExecutionOptions that is better named and
+         structured to work well for standalone activities.
       operationId: UpdateActivityOptions
       parameters:
         - name: namespace
@@ -586,6 +643,260 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateActivityOptionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeActivityExecution returns information about an activity execution.
+         It can be used to:
+         - Get current activity info without waiting
+         - Long-poll for next state change and return new activity info
+         Response can optionally include activity input or outcome (if the activity has completed).
+      operationId: DescribeActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Activity run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: includeInput
+          in: query
+          description: Include the input field in the response.
+          schema:
+            type: boolean
+        - name: includeOutcome
+          in: query
+          description: Include the outcome (result/failure) in the response if the activity has completed.
+          schema:
+            type: boolean
+        - name: longPollToken
+          in: query
+          description: |-
+            Token from a previous DescribeActivityExecutionResponse. If present, long-poll until activity
+             state changes from the state encoded in this token. If absent, return current state immediately.
+             If present, run_id must also be present.
+             Note that activity state may change multiple times between requests, therefore it is not
+             guaranteed that a client making a sequence of long-poll requests will see a complete
+             sequence of state changes.
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        StartActivityExecution starts a new activity execution.
+
+         Returns an `ActivityExecutionAlreadyStarted` error if an instance already exists with same activity ID in this namespace
+         unless permitted by the specified ID conflict policy.
+      operationId: StartActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: |-
+            Identifier for this activity. Required. This identifier should be meaningful in the user's
+             own system. It must be unique among activities in the same namespace, subject to the rules
+             imposed by id_reuse_policy and id_conflict_policy.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/cancel:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RequestCancelActivityExecution requests cancellation of an activity execution.
+
+         Cancellation is cooperative: this call records the request, but the activity must detect and
+         acknowledge it for the activity to reach CANCELED status. The cancellation signal is
+         delivered via `cancel_requested` in the heartbeat response; SDKs surface this via
+         language-idiomatic mechanisms (context cancellation, exceptions, abort signals).
+      operationId: RequestCancelActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCancelActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCancelActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/outcome:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        PollActivityExecution long-polls for an activity execution to complete and returns the
+         outcome (result or failure).
+      operationId: PollActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Activity run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/terminate:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TerminateActivityExecution terminates an existing activity execution immediately.
+
+         Termination does not reach the worker and the activity code cannot react to it. A terminated activity may have a
+         running attempt.
+      operationId: TerminateActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activity-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountActivityExecutions is a visibility API to count activity executions in a specific namespace.
+      operationId: CountActivityExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountActivityExecutionsResponse'
         default:
           description: Default error response
           content:
@@ -3604,6 +3915,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities:
+    get:
+      tags:
+        - WorkflowService
+      description: ListActivityExecutions is a visibility API to list activity executions in a specific namespace.
+      operationId: ListActivityExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          description: Max number of executions to return per page.
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          description: Token returned in ListActivityExecutionsResponse.
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListActivityExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/activities/cancel:
     post:
       tags:
@@ -3611,7 +3964,7 @@ paths:
       description: |-
         RespondActivityTaskFailed is called by workers when processing an activity task fails.
 
-         This results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
+         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
          and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
          no longer valid due to activity timeout, already being completed, or never having existed.
       operationId: RespondActivityTaskCanceled
@@ -3645,7 +3998,7 @@ paths:
       tags:
         - WorkflowService
       description: |-
-        See `RecordActivityTaskCanceled`. This version allows clients to record failures by
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
          namespace/workflow id/activity id instead of task token.
 
          (-- api-linter: core::0136::prepositions=disabled
@@ -3685,7 +4038,7 @@ paths:
         RespondActivityTaskCompleted is called by workers when they successfully complete an activity
          task.
 
-         This results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
+         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
          and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
          no longer valid due to activity timeout, already being completed, or never having existed.
       operationId: RespondActivityTaskCompleted
@@ -3719,7 +4072,7 @@ paths:
       tags:
         - WorkflowService
       description: |-
-        See `RecordActivityTaskCompleted`. This version allows clients to record completions by
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
          namespace/workflow id/activity id instead of task token.
 
          (-- api-linter: core::0136::prepositions=disabled
@@ -3831,10 +4184,17 @@ paths:
       description: |-
         RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
 
-         If worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
-         then it will be marked as timed out and an `ACTIVITY_TASK_TIMED_OUT` event will be written to
-         the workflow history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in
-         such situations, in that event, the SDK should request cancellation of the activity.
+         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
+         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
+         time out the activity.
+
+         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
+         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
+         in that event, the SDK should request cancellation of the activity.
+
+         The request may contain response `details` which will be persisted by the server and may be
+         used by the activity to checkpoint progress. The `cancel_requested` field in the response
+         indicates whether cancellation has been requested for the activity.
       operationId: RecordActivityTaskHeartbeat
       parameters:
         - name: namespace
@@ -3919,6 +4279,8 @@ paths:
          - The activity should respond to the cancellation accordingly.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type
+         This API will be deprecated soon and replaced with a newer PauseActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: PauseActivity
       parameters:
         - name: namespace
@@ -3968,6 +4330,8 @@ paths:
          'keep_paused': if the activity is paused, it will remain paused.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type.
+         This API will be deprecated soon and replaced with a newer ResetActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: ResetActivity
       parameters:
         - name: namespace
@@ -4013,6 +4377,8 @@ paths:
          'reset_heartbeat': the activity heartbeat timer and heartbeats will be reset.
 
          Returns a `NotFound` error if there is no pending activity with the provided ID or type
+         This API will be deprecated soon and replaced with a newer UnpauseActivityExecution that is better named and
+         structured to work well for standalone activities.
       operationId: UnpauseActivity
       parameters:
         - name: namespace
@@ -4047,6 +4413,8 @@ paths:
       description: |-
         UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.
          If there are multiple pending activities of the provided type - all of them will be updated.
+         This API will be deprecated soon and replaced with a newer UpdateActivityExecutionOptions that is better named and
+         structured to work well for standalone activities.
       operationId: UpdateActivityOptions
       parameters:
         - name: namespace
@@ -4068,6 +4436,260 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateActivityOptionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeActivityExecution returns information about an activity execution.
+         It can be used to:
+         - Get current activity info without waiting
+         - Long-poll for next state change and return new activity info
+         Response can optionally include activity input or outcome (if the activity has completed).
+      operationId: DescribeActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Activity run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: includeInput
+          in: query
+          description: Include the input field in the response.
+          schema:
+            type: boolean
+        - name: includeOutcome
+          in: query
+          description: Include the outcome (result/failure) in the response if the activity has completed.
+          schema:
+            type: boolean
+        - name: longPollToken
+          in: query
+          description: |-
+            Token from a previous DescribeActivityExecutionResponse. If present, long-poll until activity
+             state changes from the state encoded in this token. If absent, return current state immediately.
+             If present, run_id must also be present.
+             Note that activity state may change multiple times between requests, therefore it is not
+             guaranteed that a client making a sequence of long-poll requests will see a complete
+             sequence of state changes.
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        StartActivityExecution starts a new activity execution.
+
+         Returns an `ActivityExecutionAlreadyStarted` error if an instance already exists with same activity ID in this namespace
+         unless permitted by the specified ID conflict policy.
+      operationId: StartActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: |-
+            Identifier for this activity. Required. This identifier should be meaningful in the user's
+             own system. It must be unique among activities in the same namespace, subject to the rules
+             imposed by id_reuse_policy and id_conflict_policy.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/cancel:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RequestCancelActivityExecution requests cancellation of an activity execution.
+
+         Cancellation is cooperative: this call records the request, but the activity must detect and
+         acknowledge it for the activity to reach CANCELED status. The cancellation signal is
+         delivered via `cancel_requested` in the heartbeat response; SDKs surface this via
+         language-idiomatic mechanisms (context cancellation, exceptions, abort signals).
+      operationId: RequestCancelActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCancelActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCancelActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/outcome:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        PollActivityExecution long-polls for an activity execution to complete and returns the
+         outcome (result or failure).
+      operationId: PollActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Activity run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/terminate:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TerminateActivityExecution terminates an existing activity execution immediately.
+
+         Termination does not reach the worker and the activity code cannot react to it. A terminated activity may have a
+         running attempt.
+      operationId: TerminateActivityExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateActivityExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activity-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountActivityExecutions is a visibility API to count activity executions in a specific namespace.
+      operationId: CountActivityExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountActivityExecutionsResponse'
         default:
           description: Default error response
           content:
@@ -6524,6 +7146,235 @@ paths:
                 $ref: '#/components/schemas/Status'
 components:
   schemas:
+    ActivityExecutionInfo:
+      type: object
+      properties:
+        activityId:
+          type: string
+          description: Unique identifier of this activity within its namespace along with run ID (below).
+        runId:
+          type: string
+        activityType:
+          allOf:
+            - $ref: '#/components/schemas/ActivityType'
+          description: The type of the activity, a string that maps to a registered activity on a worker.
+        status:
+          enum:
+            - ACTIVITY_EXECUTION_STATUS_UNSPECIFIED
+            - ACTIVITY_EXECUTION_STATUS_RUNNING
+            - ACTIVITY_EXECUTION_STATUS_COMPLETED
+            - ACTIVITY_EXECUTION_STATUS_FAILED
+            - ACTIVITY_EXECUTION_STATUS_CANCELED
+            - ACTIVITY_EXECUTION_STATUS_TERMINATED
+            - ACTIVITY_EXECUTION_STATUS_TIMED_OUT
+          type: string
+          description: A general status for this activity, indicates whether it is currently running or in one of the terminal statuses.
+          format: enum
+        runState:
+          enum:
+            - PENDING_ACTIVITY_STATE_UNSPECIFIED
+            - PENDING_ACTIVITY_STATE_SCHEDULED
+            - PENDING_ACTIVITY_STATE_STARTED
+            - PENDING_ACTIVITY_STATE_CANCEL_REQUESTED
+            - PENDING_ACTIVITY_STATE_PAUSED
+            - PENDING_ACTIVITY_STATE_PAUSE_REQUESTED
+          type: string
+          description: More detailed breakdown of ACTIVITY_EXECUTION_STATUS_RUNNING.
+          format: enum
+        taskQueue:
+          type: string
+        scheduleToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Indicates how long the caller is willing to wait for an activity completion. Limits how long
+             retries will be attempted.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        scheduleToStartTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Limits time an activity task can stay in a task queue before a worker picks it up. This
+             timeout is always non retryable, as all a retry would achieve is to put it back into the same
+             queue. Defaults to `schedule_to_close_timeout`.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        startToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Maximum time a single activity attempt is allowed to execute after being picked up by a worker. This
+             timeout is always retryable.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        heartbeatTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Maximum permitted time between successful worker heartbeats.
+        retryPolicy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicy'
+          description: The retry policy for the activity. Will never exceed `schedule_to_close_timeout`.
+        heartbeatDetails:
+          allOf:
+            - $ref: '#/components/schemas/Payloads'
+          description: Details provided in the last recorded activity heartbeat.
+        lastHeartbeatTime:
+          type: string
+          description: Time the last heartbeat was recorded.
+          format: date-time
+        lastStartedTime:
+          type: string
+          description: Time the last attempt was started.
+          format: date-time
+        attempt:
+          type: integer
+          description: The attempt this activity is currently on. Incremented each time a new attempt is scheduled.
+          format: int32
+        executionDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: How long this activity has been running for, including all attempts and backoff between attempts.
+        scheduleTime:
+          type: string
+          description: Time the activity was originally scheduled via a StartActivityExecution request.
+          format: date-time
+        expirationTime:
+          type: string
+          description: Scheduled time + schedule to close timeout.
+          format: date-time
+        closeTime:
+          type: string
+          description: Time when the activity transitioned to a closed state.
+          format: date-time
+        lastFailure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: Failure details from the last failed attempt.
+        lastWorkerIdentity:
+          type: string
+        currentRetryInterval:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Time from the last attempt failure to the next activity retry.
+             If the activity is currently running, this represents the next retry interval in case the attempt fails.
+             If activity is currently backing off between attempt, this represents the current retry interval.
+             If there is no next retry allowed, this field will be null.
+             This interval is typically calculated from the specified retry policy, but may be modified if an activity fails
+             with a retryable application failure specifying a retry delay.
+        lastAttemptCompleteTime:
+          type: string
+          description: The time when the last activity attempt completed. If activity has not been completed yet, it will be null.
+          format: date-time
+        nextAttemptScheduleTime:
+          type: string
+          description: |-
+            The time when the next activity attempt will be scheduled.
+             If activity is currently scheduled or started, this field will be null.
+          format: date-time
+        lastDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            The Worker Deployment Version this activity was dispatched to most recently.
+             If nil, the activity has not yet been dispatched or was last dispatched to an unversioned worker.
+        priority:
+          allOf:
+            - $ref: '#/components/schemas/Priority'
+          description: Priority metadata.
+        stateTransitionCount:
+          type: string
+          description: Incremented each time the activity's state is mutated in persistence.
+        stateSizeBytes:
+          type: string
+          description: Updated once on scheduled and once on terminal status.
+        searchAttributes:
+          $ref: '#/components/schemas/SearchAttributes'
+        header:
+          $ref: '#/components/schemas/Header'
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: Metadata for use by user interfaces to display the fixed as-of-start summary and details of the activity.
+        canceledReason:
+          type: string
+          description: Set if activity cancelation was requested.
+      description: Information about a standalone activity.
+    ActivityExecutionListInfo:
+      type: object
+      properties:
+        activityId:
+          type: string
+          description: A unique identifier of this activity within its namespace along with run ID (below).
+        runId:
+          type: string
+          description: The run ID of the standalone activity.
+        activityType:
+          allOf:
+            - $ref: '#/components/schemas/ActivityType'
+          description: The type of the activity, a string that maps to a registered activity on a worker.
+        scheduleTime:
+          type: string
+          description: Time the activity was originally scheduled via a StartActivityExecution request.
+          format: date-time
+        closeTime:
+          type: string
+          description: If the activity is in a terminal status, this field represents the time the activity transitioned to that status.
+          format: date-time
+        status:
+          enum:
+            - ACTIVITY_EXECUTION_STATUS_UNSPECIFIED
+            - ACTIVITY_EXECUTION_STATUS_RUNNING
+            - ACTIVITY_EXECUTION_STATUS_COMPLETED
+            - ACTIVITY_EXECUTION_STATUS_FAILED
+            - ACTIVITY_EXECUTION_STATUS_CANCELED
+            - ACTIVITY_EXECUTION_STATUS_TERMINATED
+            - ACTIVITY_EXECUTION_STATUS_TIMED_OUT
+          type: string
+          description: |-
+            Only scheduled and terminal statuses appear here. More detailed information in PendingActivityInfo but not
+             available in the list response.
+          format: enum
+        searchAttributes:
+          allOf:
+            - $ref: '#/components/schemas/SearchAttributes'
+          description: Search attributes from the start request.
+        taskQueue:
+          type: string
+          description: The task queue this activity was scheduled on when it was originally started, updated on activity options update.
+        stateTransitionCount:
+          type: string
+          description: Updated on terminal status.
+        stateSizeBytes:
+          type: string
+          description: Updated once on scheduled and once on terminal status.
+        executionDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            The difference between close time and scheduled time.
+             This field is only populated if the activity is closed.
+      description: |-
+        Limited activity information returned in the list response.
+         When adding fields here, ensure that it is also present in ActivityExecutionInfo (note that it
+         may already be present in ActivityExecutionInfo but not at the top-level).
+    ActivityExecutionOutcome:
+      type: object
+      properties:
+        result:
+          allOf:
+            - $ref: '#/components/schemas/Payloads'
+          description: The result if the activity completed successfully.
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: The failure if the activity completed unsuccessfully.
+      description: 'The outcome of a completed activity execution: either a successful result or a failure.'
     ActivityFailureInfo:
       type: object
       properties:
@@ -6589,7 +7440,9 @@ components:
           type: string
           description: Maximum permitted time between successful worker heartbeats.
         retryPolicy:
-          $ref: '#/components/schemas/RetryPolicy'
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicy'
+          description: The retry policy for the activity. Will never exceed `schedule_to_close_timeout`.
     ActivityPropertiesModifiedExternallyEventAttributes:
       type: object
       properties:
@@ -7585,6 +8438,33 @@ components:
           type: string
           description: Time of the last update.
           format: date-time
+    CountActivityExecutionsResponse:
+      type: object
+      properties:
+        count:
+          type: string
+          description: |-
+            If `query` is not grouping by any field, the count is an approximate number
+             of activities that match the query.
+             If `query` is grouping by a field, the count is simply the sum of the counts
+             of the groups returned in the response. This number can be smaller than the
+             total number of activities matching the query.
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/CountActivityExecutionsResponse_AggregationGroup'
+          description: |-
+            Contains the groups if the request is grouping by a field.
+             The list might not be complete, and the counts of each group is approximate.
+    CountActivityExecutionsResponse_AggregationGroup:
+      type: object
+      properties:
+        groupValues:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payload'
+        count:
+          type: string
     CountWorkflowExecutionsResponse:
       type: object
       properties:
@@ -7834,6 +8714,30 @@ components:
         Holds information about ongoing transition of a workflow execution from one worker
          deployment version to another.
          Experimental. Might change in the future.
+    DescribeActivityExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the activity, useful when run_id was not specified in the request.
+        info:
+          allOf:
+            - $ref: '#/components/schemas/ActivityExecutionInfo'
+          description: Information about the activity execution.
+        input:
+          allOf:
+            - $ref: '#/components/schemas/Payloads'
+          description: |-
+            Serialized activity input, passed as arguments to the activity function.
+             Only set if include_input was true in the request.
+        outcome:
+          allOf:
+            - $ref: '#/components/schemas/ActivityExecutionOutcome'
+          description: Only set if the activity is completed and include_outcome was true in the request.
+        longPollToken:
+          type: string
+          description: Token for follow-on long-poll requests. Absent only if the activity is complete.
+          format: bytes
     DescribeBatchOperationResponse:
       type: object
       properties:
@@ -8882,6 +9786,17 @@ components:
           $ref: '#/components/schemas/WorkflowEvent_EventReference'
         requestIdRef:
           $ref: '#/components/schemas/WorkflowEvent_RequestIdReference'
+    ListActivityExecutionsResponse:
+      type: object
+      properties:
+        executions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityExecutionListInfo'
+        nextPageToken:
+          type: string
+          description: Token to use to fetch the next page. If empty, there is no next page.
+          format: bytes
     ListArchivedWorkflowExecutionsResponse:
       type: object
       properties:
@@ -9213,9 +10128,6 @@ components:
         workerHeartbeats:
           type: boolean
           description: True if the namespace supports worker heartbeats
-        reportedProblemsSearchAttribute:
-          type: boolean
-          description: True if the namespace supports reported problems search attribute
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceReplicationConfig:
       type: object
@@ -9912,6 +10824,14 @@ components:
         version:
           type: string
           description: The version of the plugin, may be empty.
+    PollActivityExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the activity, useful when run_id was not specified in the request.
+        outcome:
+          $ref: '#/components/schemas/ActivityExecutionOutcome'
     PollWorkflowTaskQueueResponse:
       type: object
       properties:
@@ -10268,10 +11188,12 @@ components:
           description: Namespace of the workflow which scheduled this activity
         workflowId:
           type: string
-          description: Id of the workflow which scheduled this activity
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
         runId:
           type: string
-          description: Run Id of the workflow which scheduled this activity
+          description: |-
+            For a workflow activity - the run ID of the workflow which scheduled this activity.
+             For a standalone activity - the run ID of the activity.
         activityId:
           type: string
           description: Id of the activity we're heartbeating
@@ -10415,6 +11337,30 @@ components:
         input:
           $ref: '#/components/schemas/Input'
       description: The client request that triggers a Workflow Update.
+    RequestCancelActivityExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        activityId:
+          type: string
+        runId:
+          type: string
+          description: Activity run ID, targets the latest run if run_id is empty.
+        identity:
+          type: string
+          description: The identity of the worker/client.
+        requestId:
+          type: string
+          description: Used to de-dupe cancellation requests.
+        reason:
+          type: string
+          description: |-
+            Reason for requesting the cancellation, recorded and available via the PollActivityExecution API.
+             Not propagated to a worker if an activity attempt is currently running.
+    RequestCancelActivityExecutionResponse:
+      type: object
+      properties: {}
     RequestCancelExternalWorkflowExecutionFailedEventAttributes:
       type: object
       properties:
@@ -10786,10 +11732,12 @@ components:
           description: Namespace of the workflow which scheduled this activity
         workflowId:
           type: string
-          description: Id of the workflow which scheduled this activity
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
         runId:
           type: string
-          description: Run Id of the workflow which scheduled this activity
+          description: |-
+            For a workflow activity - the run ID of the workflow which scheduled this activity.
+             For a standalone activity - the run ID of the activity.
         activityId:
           type: string
           description: Id of the activity to confirm is cancelled
@@ -10853,10 +11801,12 @@ components:
           description: Namespace of the workflow which scheduled this activity
         workflowId:
           type: string
-          description: Id of the workflow which scheduled this activity
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
         runId:
           type: string
-          description: Run Id of the workflow which scheduled this activity
+          description: |-
+            For a workflow activity - the run ID of the workflow which scheduled this activity.
+             For a standalone activity - the run ID of the activity.
         activityId:
           type: string
           description: Id of the activity to complete
@@ -10916,10 +11866,12 @@ components:
           description: Namespace of the workflow which scheduled this activity
         workflowId:
           type: string
-          description: Id of the workflow which scheduled this activity
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
         runId:
           type: string
-          description: Run Id of the workflow which scheduled this activity
+          description: |-
+            For a workflow activity - the run ID of the workflow which scheduled this activity.
+             For a standalone activity - the run ID of the activity.
         activityId:
           type: string
           description: Id of the activity to fail
@@ -11879,6 +12831,118 @@ components:
     SignalWorkflowExecutionResponse:
       type: object
       properties: {}
+    StartActivityExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        identity:
+          type: string
+          description: The identity of the client who initiated this request
+        requestId:
+          type: string
+          description: A unique identifier for this start request. Typically UUIDv4.
+        activityId:
+          type: string
+          description: |-
+            Identifier for this activity. Required. This identifier should be meaningful in the user's
+             own system. It must be unique among activities in the same namespace, subject to the rules
+             imposed by id_reuse_policy and id_conflict_policy.
+        activityType:
+          allOf:
+            - $ref: '#/components/schemas/ActivityType'
+          description: The type of the activity, a string that corresponds to a registered activity on a worker.
+        taskQueue:
+          allOf:
+            - $ref: '#/components/schemas/TaskQueue'
+          description: Task queue to schedule this activity on.
+        scheduleToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Indicates how long the caller is willing to wait for an activity completion. Limits how long
+             retries will be attempted. Either this or `start_to_close_timeout` must be specified.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        scheduleToStartTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Limits time an activity task can stay in a task queue before a worker picks it up. This
+             timeout is always non retryable, as all a retry would achieve is to put it back into the same
+             queue. Defaults to `schedule_to_close_timeout` if not specified.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        startToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Maximum time an activity is allowed to execute after being picked up by a worker. This
+             timeout is always retryable. Either this or `schedule_to_close_timeout` must be
+             specified.
+
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        heartbeatTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Maximum permitted time between successful worker heartbeats.
+        retryPolicy:
+          allOf:
+            - $ref: '#/components/schemas/RetryPolicy'
+          description: The retry policy for the activity. Will never exceed `schedule_to_close_timeout`.
+        input:
+          allOf:
+            - $ref: '#/components/schemas/Payloads'
+          description: Serialized arguments to the activity. These are passed as arguments to the activity function.
+        idReusePolicy:
+          enum:
+            - ACTIVITY_ID_REUSE_POLICY_UNSPECIFIED
+            - ACTIVITY_ID_REUSE_POLICY_ALLOW_DUPLICATE
+            - ACTIVITY_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY
+            - ACTIVITY_ID_REUSE_POLICY_REJECT_DUPLICATE
+          type: string
+          description: |-
+            Defines whether to allow re-using the activity id from a previously *closed* activity.
+             The default policy is ACTIVITY_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+          format: enum
+        idConflictPolicy:
+          enum:
+            - ACTIVITY_ID_CONFLICT_POLICY_UNSPECIFIED
+            - ACTIVITY_ID_CONFLICT_POLICY_FAIL
+            - ACTIVITY_ID_CONFLICT_POLICY_USE_EXISTING
+          type: string
+          description: |-
+            Defines how to resolve an activity id conflict with a *running* activity.
+             The default policy is ACTIVITY_ID_CONFLICT_POLICY_FAIL.
+          format: enum
+        searchAttributes:
+          allOf:
+            - $ref: '#/components/schemas/SearchAttributes'
+          description: Search attributes for indexing.
+        header:
+          allOf:
+            - $ref: '#/components/schemas/Header'
+          description: Header for context propagation and tracing purposes.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: Metadata for use by user interfaces to display the fixed as-of-start summary and details of the activity.
+        priority:
+          allOf:
+            - $ref: '#/components/schemas/Priority'
+          description: Priority metadata.
+    StartActivityExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the activity that was started - or used (via ACTIVITY_ID_CONFLICT_POLICY_USE_EXISTING).
+        started:
+          type: boolean
+          description: If true, a new activity was started.
     StartBatchOperationRequest:
       type: object
       properties:
@@ -12175,10 +13239,6 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
-        eagerWorkerDeploymentOptions:
-          allOf:
-            - $ref: '#/components/schemas/WorkerDeploymentOptions'
-          description: Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`.
     StartWorkflowExecutionResponse:
       type: object
       properties:
@@ -12514,6 +13574,28 @@ components:
           description: Last time versioning information of this Task Queue changed.
           format: date-time
       description: Experimental. Worker Deployments are experimental and might significantly change in the future.
+    TerminateActivityExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        activityId:
+          type: string
+        runId:
+          type: string
+          description: Activity run ID, targets the latest run if run_id is empty.
+        identity:
+          type: string
+          description: The identity of the worker/client.
+        requestId:
+          type: string
+          description: Used to de-dupe termination requests.
+        reason:
+          type: string
+          description: Reason for requesting the termination, recorded in in the activity's result failure outcome.
+    TerminateActivityExecutionResponse:
+      type: object
+      properties: {}
     TerminateWorkflowExecutionRequest:
       type: object
       properties:
