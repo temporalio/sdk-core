@@ -200,6 +200,8 @@ pub struct WorkerHeartbeatMetrics {
     pub activity_execution_failed: Arc<AtomicU64>,
     pub nexus_task_execution_failed: Arc<AtomicU64>,
     pub local_activity_execution_failed: Arc<AtomicU64>,
+    // Although latency metrics here are histograms, we are using the number of times they're called
+    // to represent the `total_processed_tasks` heartbeat field
     pub activity_execution_latency: Arc<AtomicU64>,
     pub local_activity_execution_latency: Arc<AtomicU64>,
     pub workflow_task_execution_latency: Arc<AtomicU64>,
