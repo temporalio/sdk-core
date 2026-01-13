@@ -702,7 +702,11 @@ async fn worker_heartbeat_multiple_workers() {
     // Verify both heartbeats contain the same shared worker_grouping_key
     let worker_grouping_keys: HashSet<_> = all
         .iter()
-        .filter_map(|hb| hb.host_info.as_ref().map(|info| info.worker_grouping_key.clone()))
+        .filter_map(|hb| {
+            hb.host_info
+                .as_ref()
+                .map(|info| info.worker_grouping_key.clone())
+        })
         .collect();
     assert!(worker_grouping_keys.len() > starting_hb_len);
 
