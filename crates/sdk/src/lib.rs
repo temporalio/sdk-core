@@ -107,9 +107,10 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporalio_client::{Client, NamespacedClient};
+use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait};
 use temporalio_common::{
     ActivityDefinition,
+    data_converters::DataConverter,
     protos::{
         TaskToken,
         coresdk::{
@@ -349,7 +350,7 @@ struct CommonWorker {
     worker: Arc<CoreWorker>,
     task_queue: String,
     worker_interceptor: Option<Box<dyn WorkerInterceptor>>,
-    client: Option<Client>,
+    data_converter: DataConverter,
 }
 
 #[derive(Default)]
@@ -394,7 +395,7 @@ impl Worker {
         let core = init_worker(runtime, wc, client.connection().clone())?;
         let mut me = Self::new_from_core_definitions(
             Arc::new(core),
-            Some(client),
+            client.data_converter().clone(),
             Default::default(),
             Default::default(),
         );
@@ -405,15 +406,20 @@ impl Worker {
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
-    pub fn new_from_core(worker: Arc<CoreWorker>) -> Self {
-        Self::new_from_core_definitions(worker, None, Default::default(), Default::default())
+    pub fn new_from_core(worker: Arc<CoreWorker>, data_converter: DataConverter) -> Self {
+        Self::new_from_core_definitions(
+            worker,
+            data_converter,
+            Default::default(),
+            Default::default(),
+        )
     }
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
     pub fn new_from_core_definitions(
         worker: Arc<CoreWorker>,
-        client: Option<Client>,
+        data_converter: DataConverter,
         activities: ActivityDefinitions,
         workflows: WorkflowDefinitions,
     ) -> Self {
@@ -422,7 +428,7 @@ impl Worker {
                 task_queue: worker.get_config().task_queue.clone(),
                 worker,
                 worker_interceptor: None,
-                client,
+                data_converter,
             },
             workflow_half: WorkflowHalf {
                 workflow_definitions: workflows,
@@ -582,7 +588,7 @@ impl Worker {
                         act_half.activity_task_handler(
                             common.worker.clone(),
                             common.task_queue.clone(),
-                            common.client.as_ref(),
+                            common.data_converter.clone(),
                             activity?,
                         )?;
                     }
@@ -665,14 +671,7 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;
-            let payload_converter = common
-                .client
-                .as_ref()
-                .ok_or_else(|| anyhow!("Client required for workflow execution"))?
-                .options()
-                .data_converter
-                .payload_converter()
-                .clone();
+            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 let wf_fns_borrow = self.workflow_fns.borrow();
 
@@ -780,7 +779,7 @@ impl ActivityHalf {
         &mut self,
         worker: Arc<CoreWorker>,
         task_queue: String,
-        client: Option<&Client>,
+        data_converter: DataConverter,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
         match activity.variant {
@@ -806,11 +805,6 @@ impl ActivityHalf {
 
                 let (ctx, arg) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
-                let data_converter = client
-                    .ok_or_else(|| anyhow!("Client required for activity execution"))?
-                    .options()
-                    .data_converter
-                    .clone();
 
                 tokio::spawn(async move {
                     let act_fut = async move {

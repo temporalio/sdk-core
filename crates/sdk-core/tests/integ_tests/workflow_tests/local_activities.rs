@@ -1157,11 +1157,12 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     });
     let core = worker.core_worker();
 
-    let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+    let shutdown_barr = Arc::new(Barrier::new(2));
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WorkflowContext| async move {
+            dbg!("dafuq");
             ctx.start_local_activity(
                 EchoWithConditionalBarrier::echo,
                 "hi".to_string(),
@@ -1173,8 +1174,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     );
 
     struct EchoWithConditionalBarrier {
-        shutdown_middle: bool,
-        shutdown_barr: &'static Barrier,
+        shutdown_barr: Option<Arc<Barrier>>,
         wft_timeout: Duration,
     }
     #[activities]
@@ -1185,8 +1185,9 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
             _: ActivityContext,
             str: String,
         ) -> Result<String, ActivityError> {
-            if self.shutdown_middle {
-                self.shutdown_barr.wait().await;
+            dbg!("Running activity");
+            if let Some(barr) = &self.shutdown_barr {
+                barr.wait().await;
             }
             // Take slightly more than two workflow tasks
             tokio::time::sleep(self.wft_timeout.mul_f32(2.2)).await;
@@ -1195,8 +1196,11 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     }
 
     worker.register_activities(EchoWithConditionalBarrier {
-        shutdown_middle,
-        shutdown_barr,
+        shutdown_barr: if shutdown_middle {
+            Some(shutdown_barr.clone())
+        } else {
+            None
+        },
         wft_timeout,
     });
     worker
@@ -1212,6 +1216,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         async {
             if shutdown_middle {
                 shutdown_barr.wait().await;
+                dbg!("Past barrier");
                 core.shutdown().await;
             }
         },

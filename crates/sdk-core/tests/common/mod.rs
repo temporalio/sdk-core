@@ -36,7 +36,7 @@ use temporalio_client::{
 };
 use temporalio_common::{
     WorkflowDefinition,
-    data_converters::RawValue,
+    data_converters::{DataConverter, RawValue},
     protos::{
         coresdk::{
             workflow_activation::WorkflowActivation,
@@ -167,7 +167,8 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     let core = init_core_replay_stream("replay_worker_test", histories);
-    let mut worker = Worker::new_from_core(Arc::new(core));
+    // TODO [rust-sdk-branch]: Needs DC passed in
+    let mut worker = Worker::new_from_core(Arc::new(core), DataConverter::default());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -349,7 +350,7 @@ impl CoreWfStarter {
         let client = self.get_client().await;
         let sdk = Worker::new_from_core_definitions(
             worker,
-            Some(client.clone()),
+            client.data_converter().clone(),
             self.sdk_config.activities(),
             self.sdk_config.workflows(),
         );
@@ -1032,7 +1033,8 @@ pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporalio_sdk::Worker {
         c.ignore_evicts_on_shutdown = false;
     });
     let core = mock_worker(mock);
-    let mut worker = temporalio_sdk::Worker::new_from_core(Arc::new(core));
+    let mut worker =
+        temporalio_sdk::Worker::new_from_core(Arc::new(core), DataConverter::default());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -1049,7 +1051,10 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(temporalio_sdk::Worker::new_from_core(Arc::new(core)))
+    TestWorker::new(temporalio_sdk::Worker::new_from_core(
+        Arc::new(core),
+        DataConverter::default(),
+    ))
 }
 
 #[derive(Default)]
