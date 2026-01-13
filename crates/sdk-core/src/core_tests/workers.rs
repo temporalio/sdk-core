@@ -16,18 +16,21 @@ use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
 use temporalio_common::{
     Worker,
+    errors::CompleteNexusError,
     protos::{
         canned_histories,
         coresdk::{
             ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
-            nexus::NexusTaskCompletion,
+            nexus::{NexusTaskCompletion, nexus_task_completion},
             workflow_activation::workflow_activation_job,
             workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
             common::v1::{ActivityType, WorkflowExecution},
+            enums::v1::NexusHandlerErrorRetryBehavior,
+            failure::v1::{Failure, NexusHandlerFailureInfo, failure::FailureInfo},
             nexus::{
                 self,
                 v1::{
@@ -38,8 +41,8 @@ use temporalio_common::{
             workflowservice::v1::{
                 PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
                 PollWorkflowTaskQueueResponse, RespondActivityTaskCompletedResponse,
-                RespondNexusTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
-                ShutdownWorkerResponse,
+                RespondNexusTaskCompletedResponse, RespondNexusTaskFailedResponse,
+                RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
             },
         },
         test_utils::start_timer_cmd,
@@ -587,6 +590,89 @@ async fn test_task_type_combinations_unified(
             PollError::ShutDown
         );
     }
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[tokio::test]
+async fn nexus_task_completion_with_failure_status() {
+    let mut client = mock_worker_client();
+    client
+        .expect_fail_nexus_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondNexusTaskFailedResponse::default()));
+
+    let mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(create_test_nexus_task())]),
+    );
+    let worker = mock_worker(mocks);
+
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    worker
+        .complete_nexus_task(NexusTaskCompletion {
+            task_token: nexus_task.task_token().to_vec(),
+            status: Some(nexus_task_completion::Status::Failure(Failure {
+                message: "handler failed".to_string(),
+                failure_info: Some(FailureInfo::NexusHandlerFailureInfo(
+                    NexusHandlerFailureInfo {
+                        r#type: "INTERNAL".to_string(),
+                        retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
+                    },
+                )),
+                ..Default::default()
+            })),
+        })
+        .await
+        .unwrap();
+
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[tokio::test]
+async fn nexus_task_completion_with_failure_status_missing_handler_info_fails() {
+    let client = mock_worker_client();
+
+    let mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(create_test_nexus_task())]),
+    );
+    let worker = mock_worker(mocks);
+
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    let result = worker
+        .complete_nexus_task(NexusTaskCompletion {
+            task_token: nexus_task.task_token().to_vec(),
+            status: Some(nexus_task_completion::Status::Failure(Failure {
+                message: "handler failed".to_string(),
+                // Missing NexusHandlerFailureInfo - should fail validation
+                failure_info: None,
+                ..Default::default()
+            })),
+        })
+        .await;
+
+    // Should fail validation because NexusHandlerFailureInfo is required
+    assert_matches!(
+        result,
+        Err(CompleteNexusError::MalformedNexusCompletion { reason }) if reason.contains("NexusHandlerFailureInfo")
+    );
+
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
     worker.shutdown().await;
     worker.finalize_shutdown().await;
 }
