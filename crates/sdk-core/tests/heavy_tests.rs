@@ -173,6 +173,7 @@ async fn chunky_activities_resource_based() {
                     wf_type.to_owned(),
                     vec![],
                     WorkflowOptions {
+                        #[allow(deprecated)]
                         id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
                         ..Default::default()
                     },
