@@ -595,6 +595,7 @@ mod test {
                 details: vec![Payload {
                     metadata: Default::default(),
                     data: vec![payload_data],
+                    external_payloads: Default::default(),
                 }],
             },
             // Mimic the same delay we would apply in activity task manager

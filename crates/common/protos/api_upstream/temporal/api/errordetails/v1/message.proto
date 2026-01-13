@@ -121,3 +121,11 @@ message MultiOperationExecutionFailure {
         repeated google.protobuf.Any details = 3;
     }
 }
+
+// An error indicating that an activity execution failed to start. Returned when there is an existing activity with the
+// given activity ID, and the given ID reuse and conflict policies do not permit starting a new one or attaching to an
+// existing one.
+message ActivityExecutionAlreadyStartedFailure {
+    string start_request_id = 1;
+    string run_id = 2;
+}

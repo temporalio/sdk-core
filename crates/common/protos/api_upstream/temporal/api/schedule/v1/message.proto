@@ -81,8 +81,8 @@ message Range {
 // corresponding fields of the timestamp, except for year: if year is missing,
 // that means all years match. For all fields besides year, at least one Range
 // must be present to match anything.
-// TODO: add relative-to-end-of-month
-// TODO: add nth day-of-week in month
+// Relative expressions such as "last day of the month" or "third Monday" are not currently
+// representable; callers must enumerate the concrete days they require.
 message StructuredCalendarSpec {
     // Match seconds (0-59)
     repeated Range second = 1;

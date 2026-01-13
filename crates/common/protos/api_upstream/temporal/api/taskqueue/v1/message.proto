@@ -343,4 +343,6 @@ message TaskQueueConfig {
     RateLimitConfig queue_rate_limit = 1;
     // If set, each individual fairness key will be limited to this rate, scaled by the weight of the fairness key.
     RateLimitConfig fairness_keys_rate_limit_default = 2;
+    // If set, overrides the fairness weights for the corresponding fairness keys.
+    map<string, float> fairness_weight_overrides = 3;
 }

@@ -10,6 +10,11 @@ option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 enum TaskQueueKind {
+    // Tasks from any non workflow task may be unspecified.
+    //
+    // Task queue kind is used to differentiate whether a workflow task queue is sticky or 
+    // normal. If a task is not a workflow task, Task queue kind will sometimes be 
+    // unspecified.
     TASK_QUEUE_KIND_UNSPECIFIED = 0;
     // Tasks from a normal workflow task queue always include complete workflow history
     //
@@ -99,4 +104,14 @@ enum RateLimitSource {
     RATE_LIMIT_SOURCE_WORKER = 2;
     // The value was set as the system default.
     RATE_LIMIT_SOURCE_SYSTEM = 3;
+}
+
+// Indicates whether a change to the Routing Config has been
+// propagated to all relevant Task Queues and their partitions.
+enum RoutingConfigUpdateState {
+    ROUTING_CONFIG_UPDATE_STATE_UNSPECIFIED = 0;
+    // Update to the RoutingConfig is currently in progress.
+    ROUTING_CONFIG_UPDATE_STATE_IN_PROGRESS = 1;
+    // Update to the RoutingConfig has completed successfully.
+    ROUTING_CONFIG_UPDATE_STATE_COMPLETED = 2;
 }
