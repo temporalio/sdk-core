@@ -281,6 +281,7 @@ async fn one_slot_worker_reports_available_slot() {
                 "whatever".to_string(),
                 None,
                 WorkflowOptions {
+                    #[allow(deprecated)]
                     id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
                     execution_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()

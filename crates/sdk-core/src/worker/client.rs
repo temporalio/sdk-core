@@ -300,7 +300,6 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -338,7 +337,6 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -771,7 +769,7 @@ impl WorkerClient for WorkerClientBag {
 
     fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat) {
         if let Some(host_info) = heartbeat.host_info.as_mut() {
-            host_info.process_key = self.worker_grouping_key().to_string();
+            host_info.worker_grouping_key = self.worker_grouping_key().to_string();
         }
         heartbeat.worker_identity = WorkerClient::identity(self);
         let sdk_name_and_ver = self.sdk_name_and_version();

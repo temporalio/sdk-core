@@ -72,6 +72,7 @@ async fn activity_heartbeat() {
     let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
+        external_payloads: Default::default(),
     };
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {

@@ -409,6 +409,7 @@ fn create_test_nexus_task() -> PollNexusTaskQueueResponse {
                     links: vec![],
                 }
             )),
+            endpoint: "".to_string(),
         }),
         poller_scaling_decision: None,
     }

@@ -38,6 +38,19 @@ message NamespaceInfo {
         bool worker_heartbeats = 4;
         // True if the namespace supports reported problems search attribute
         bool reported_problems_search_attribute = 5;
+        // True if the namespace supports pausing workflows
+        bool workflow_pause = 6;
+    }
+
+    // Namespace configured limits
+    Limits limits = 8;
+    message Limits {
+        // Maximum size in bytes for payload fields in workflow history events
+        // (e.g., workflow/activity inputs and results, failure details, signal payloads).
+        // When exceeded, the server will reject the operation with an error.
+        int64 blob_size_limit_error = 1;
+        // Maximum total memo size in bytes per workflow execution.
+        int64 memo_size_limit_error = 2;
     }
 
     // Whether scheduled workflows are supported on this namespace. This is only needed

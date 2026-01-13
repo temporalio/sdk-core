@@ -451,7 +451,7 @@ fn after_shutdown_checks(
     assert_eq!(heartbeat.worker_identity, "integ_tester");
     let host_info = heartbeat.host_info.clone().unwrap();
     assert!(!host_info.host_name.is_empty());
-    assert!(!host_info.process_key.is_empty());
+    assert!(!host_info.worker_grouping_key.is_empty());
     assert!(!host_info.process_id.is_empty());
     assert!(host_info.current_host_cpu_usage >= 0.0);
     assert!(host_info.current_host_mem_usage >= 0.0);
@@ -702,7 +702,11 @@ async fn worker_heartbeat_multiple_workers() {
     // Verify both heartbeats contain the same shared process_key
     let process_keys: HashSet<_> = all
         .iter()
-        .filter_map(|hb| hb.host_info.as_ref().map(|info| info.process_key.clone()))
+        .filter_map(|hb| {
+            hb.host_info
+                .as_ref()
+                .map(|info| info.worker_grouping_key.clone())
+        })
         .collect();
     assert!(process_keys.len() > starting_hb_len);
 

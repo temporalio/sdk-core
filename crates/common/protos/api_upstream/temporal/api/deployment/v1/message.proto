@@ -120,7 +120,13 @@ message WorkerDeploymentVersionInfo {
 
     // Timestamp when this version first became current or ramping.
     google.protobuf.Timestamp first_activation_time = 12;
+
+    // Timestamp when this version last became current.
+    // Can be used to determine whether a version has ever been Current.
+    google.protobuf.Timestamp last_current_time = 15;
+
     // Timestamp when this version last stopped being current or ramping.
+    // Cleared if the version becomes current or ramping again.
     google.protobuf.Timestamp last_deactivation_time = 13;
 
     // Range: [0, 100]. Must be zero if the version is not ramping (i.e. `ramping_since_time` is nil).
@@ -201,6 +207,10 @@ message WorkerDeploymentInfo {
     // to this Worker Deployment. They can either set their own identity as the manager or unset the field to proceed.
     string manager_identity = 6;
 
+    // Indicates whether the routing_config has been fully propagated to all
+    // relevant task queues and their partitions.
+    temporal.api.enums.v1.RoutingConfigUpdateState routing_config_update_state = 7;
+
     message WorkerDeploymentVersionSummary {
         // Deprecated. Use `deployment_version`.
         string version = 1 [deprecated = true];
@@ -228,7 +238,11 @@ message WorkerDeploymentInfo {
         google.protobuf.Timestamp routing_update_time = 8;
         // Timestamp when this version first became current or ramping.
         google.protobuf.Timestamp first_activation_time = 9;
+        // Timestamp when this version last became current.
+        // Can be used to determine whether a version has ever been Current.
+        google.protobuf.Timestamp last_current_time = 12;
         // Timestamp when this version last stopped being current or ramping.
+        // Cleared if the version becomes current or ramping again.
         google.protobuf.Timestamp last_deactivation_time = 10;
     }
 }
@@ -285,4 +299,16 @@ message RoutingConfig {
     // Last time ramping version percentage was changed.
     // If ramping version is changed, this is also updated, even if the percentage stays the same.
     google.protobuf.Timestamp ramping_version_percentage_changed_time = 6;
+    // Monotonically increasing value which is incremented on every mutation 
+    // to any field of this message to achieve eventual consistency between task queues and their partitions.
+    int64 revision_number = 10;
+}
+
+// Used as part of WorkflowExecutionStartedEventAttributes to pass down the AutoUpgrade behavior and source deployment version 
+// to a workflow execution whose parent/previous workflow has an AutoUpgrade behavior.
+message InheritedAutoUpgradeInfo {
+    // The source deployment version of the parent/previous workflow.
+    temporal.api.deployment.v1.WorkerDeploymentVersion source_deployment_version = 1;
+    // The revision number of the source deployment version of the parent/previous workflow.
+    int64 source_deployment_revision_number = 2;
 }

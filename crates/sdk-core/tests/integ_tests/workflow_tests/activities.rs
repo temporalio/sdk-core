@@ -124,6 +124,7 @@ async fn activity_workflow() {
     let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
+        external_payloads: Default::default(),
     };
     // Complete activity successfully.
     core.complete_activity_task(ActivityTaskCompletion {
@@ -327,6 +328,7 @@ async fn activity_retry() {
     let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
+        external_payloads: Default::default(),
     };
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
@@ -701,6 +703,7 @@ async fn async_activity_completion_workflow() {
     let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
+        external_payloads: Default::default(),
     };
     // Complete activity asynchronously.
     core.complete_activity_task(ActivityTaskCompletion {

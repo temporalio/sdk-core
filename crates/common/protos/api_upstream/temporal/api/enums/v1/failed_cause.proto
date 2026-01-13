@@ -123,6 +123,8 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_CIRCUIT_BREAKER_OPEN = 8;
     // Namespace exceeds operations rate limit.
     RESOURCE_EXHAUSTED_CAUSE_OPS_LIMIT = 9;
+    // Limits related to Worker Deployments are reached.
+    RESOURCE_EXHAUSTED_CAUSE_WORKER_DEPLOYMENT_LIMITS = 10;
 }
 
 enum ResourceExhaustedScope {
