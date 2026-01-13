@@ -10015,6 +10015,88 @@
       },
       "description": "Keep the parameters in sync with:\n  - temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions.\n  - temporal.api.workflow.v1.PostResetOperation.UpdateWorkflowOptions."
     },
+    "apicommonv1Link": {
+      "type": "object",
+      "properties": {
+        "workflowEvent": {
+          "$ref": "#/definitions/LinkWorkflowEvent"
+        },
+        "batchJob": {
+          "$ref": "#/definitions/LinkBatchJob"
+        }
+      },
+      "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
+    },
+    "apifailurev1Failure": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "description": "The source this Failure originated in, e.g. TypeScriptSDK / JavaSDK\nIn some SDKs this is used to rehydrate the stack trace into an exception object."
+        },
+        "stackTrace": {
+          "type": "string"
+        },
+        "encodedAttributes": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Alternative way to supply `message` and `stack_trace` and possibly other attributes, used for encryption of\nerrors originating in user code which might contain sensitive information.\nThe `encoded_attributes` Payload could represent any serializable object, e.g. JSON object or a `Failure` proto\nmessage.\n\nSDK authors:\n- The SDK should provide a default `encodeFailureAttributes` and `decodeFailureAttributes` implementation that:\n  - Uses a JSON object to represent `{ message, stack_trace }`.\n  - Overwrites the original message with \"Encoded failure\" to indicate that more information could be extracted.\n  - Overwrites the original stack_trace with an empty string.\n  - The resulting JSON object is converted to Payload using the default PayloadConverter and should be processed\n    by the user-provided PayloadCodec\n\n- If there's demand, we could allow overriding the default SDK implementation to encode other opaque Failure attributes."
+        },
+        "cause": {
+          "$ref": "#/definitions/apifailurev1Failure"
+        },
+        "applicationFailureInfo": {
+          "$ref": "#/definitions/v1ApplicationFailureInfo"
+        },
+        "timeoutFailureInfo": {
+          "$ref": "#/definitions/v1TimeoutFailureInfo"
+        },
+        "canceledFailureInfo": {
+          "$ref": "#/definitions/v1CanceledFailureInfo"
+        },
+        "terminatedFailureInfo": {
+          "$ref": "#/definitions/v1TerminatedFailureInfo"
+        },
+        "serverFailureInfo": {
+          "$ref": "#/definitions/v1ServerFailureInfo"
+        },
+        "resetWorkflowFailureInfo": {
+          "$ref": "#/definitions/v1ResetWorkflowFailureInfo"
+        },
+        "activityFailureInfo": {
+          "$ref": "#/definitions/v1ActivityFailureInfo"
+        },
+        "childWorkflowExecutionFailureInfo": {
+          "$ref": "#/definitions/v1ChildWorkflowExecutionFailureInfo"
+        },
+        "nexusOperationExecutionFailureInfo": {
+          "$ref": "#/definitions/v1NexusOperationFailureInfo"
+        },
+        "nexusHandlerFailureInfo": {
+          "$ref": "#/definitions/v1NexusHandlerFailureInfo"
+        },
+        "nexusSdkOperationFailureInfo": {
+          "$ref": "#/definitions/v1NexusSDKOperationFailureInfo"
+        },
+        "nexusSdkFailureErrorInfo": {
+          "$ref": "#/definitions/v1NexusSDKFailureErrorFailureInfo"
+        }
+      }
+    },
+    "apiupdatev1Request": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/definitions/v1Meta"
+        },
+        "input": {
+          "$ref": "#/definitions/v1Input"
+        }
+      },
+      "description": "The client request that triggers a Workflow Update."
+    },
     "protobufAny": {
       "type": "object",
       "properties": {
@@ -10129,7 +10211,7 @@
           "description": "Time when the activity transitioned to a closed state."
         },
         "lastFailure": {
-          "$ref": "#/definitions/v1Failure",
+          "$ref": "#/definitions/apifailurev1Failure",
           "description": "Failure details from the last failed attempt."
         },
         "lastWorkerIdentity": {
@@ -10246,7 +10328,7 @@
           "description": "The result if the activity completed successfully."
         },
         "failure": {
-          "$ref": "#/definitions/v1Failure",
+          "$ref": "#/definitions/apifailurev1Failure",
           "description": "The failure if the activity completed unsuccessfully."
         }
       },
@@ -12708,18 +12790,6 @@
       },
       "description": "IntervalSpec matches times that can be expressed as:\nepoch + n * interval + phase\nwhere n is an integer.\nphase defaults to zero if missing. interval is required.\nBoth interval and phase must be non-negative and are truncated to the nearest\nsecond before any calculations.\nFor example, an interval of 1 hour with phase of zero would match every hour,\non the hour. The same interval but a phase of 19 minutes would match every\nxx:19:00. An interval of 28 days with phase zero would match\n2022-02-17T00:00:00Z (among other times). The same interval with a phase of 3\ndays, 5 hours, and 23 minutes would match 2022-02-20T05:23:00Z instead."
     },
-    "v1Link": {
-      "type": "object",
-      "properties": {
-        "workflowEvent": {
-          "$ref": "#/definitions/LinkWorkflowEvent"
-        },
-        "batchJob": {
-          "$ref": "#/definitions/LinkBatchJob"
-        }
-      },
-      "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
-    },
     "v1ListActivityExecutionsResponse": {
       "type": "object",
       "properties": {
@@ -13136,10 +13206,6 @@
         "workflowPause": {
           "type": "boolean",
           "title": "True if the namespace supports pausing workflows"
-        },
-        "standaloneActivities": {
-          "type": "boolean",
-          "title": "True if the namespace supports standalone activities"
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -13454,7 +13520,8 @@
           "type": "string",
           "description": "Operation token - may be empty if the operation completed synchronously."
         }
-      }
+      },
+      "description": "Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers."
     },
     "v1NexusOperationScheduledEventAttributes": {
       "type": "object",
@@ -13551,6 +13618,31 @@
         }
       },
       "description": "Nexus operation timed out."
+    },
+    "v1NexusSDKFailureErrorFailureInfo": {
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "data": {
+          "type": "string",
+          "format": "byte"
+        }
+      },
+      "description": "Representation of the Nexus SDK FailureError object."
+    },
+    "v1NexusSDKOperationFailureInfo": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string"
+        }
+      },
+      "description": "Representation of the Nexus SDK OperationError object."
     },
     "v1OnConflictOptions": {
       "type": "object",
@@ -14264,18 +14356,6 @@
         "REPLICATION_STATE_HANDOVER"
       ],
       "default": "REPLICATION_STATE_UNSPECIFIED"
-    },
-    "v1Request": {
-      "type": "object",
-      "properties": {
-        "meta": {
-          "$ref": "#/definitions/v1Meta"
-        },
-        "input": {
-          "$ref": "#/definitions/v1Input"
-        }
-      },
-      "description": "The client request that triggers a Workflow Update."
     },
     "v1RequestCancelActivityExecutionResponse": {
       "type": "object"
@@ -16778,7 +16858,7 @@
           "$ref": "#/definitions/v1ContinueAsNewInitiator"
         },
         "failure": {
-          "$ref": "#/definitions/v1Failure",
+          "$ref": "#/definitions/apifailurev1Failure",
           "description": "Deprecated. If a workflow's retry policy would cause a new run to start when the current one\nhas failed, this field would be populated with that failure. Now (when supported by server\nand sdk) the final event will be `WORKFLOW_EXECUTION_FAILED` with `new_execution_run_id` set."
         },
         "lastCompletionResult": {

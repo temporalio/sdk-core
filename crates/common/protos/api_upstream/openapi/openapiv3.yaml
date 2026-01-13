@@ -9350,6 +9350,10 @@ components:
           $ref: '#/components/schemas/NexusOperationFailureInfo'
         nexusHandlerFailureInfo:
           $ref: '#/components/schemas/NexusHandlerFailureInfo'
+        nexusSdkOperationFailureInfo:
+          $ref: '#/components/schemas/NexusSDKOperationFailureInfo'
+        nexusSdkFailureErrorInfo:
+          $ref: '#/components/schemas/NexusSDKFailureErrorFailureInfo'
     FetchWorkerConfigRequest:
       type: object
       properties:
@@ -10262,9 +10266,6 @@ components:
         workflowPause:
           type: boolean
           description: True if the namespace supports pausing workflows
-        standaloneActivities:
-          type: boolean
-          description: True if the namespace supports standalone activities
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceInfo_Limits:
       type: object
@@ -10529,6 +10530,7 @@ components:
         operationToken:
           type: string
           description: Operation token - may be empty if the operation completed synchronously.
+      description: Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers.
     NexusOperationScheduledEventAttributes:
       type: object
       properties:
@@ -10636,6 +10638,23 @@ components:
           type: string
           description: The request ID allocated at schedule time.
       description: Nexus operation timed out.
+    NexusSDKFailureErrorFailureInfo:
+      type: object
+      properties:
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+        data:
+          type: string
+          format: bytes
+      description: Representation of the Nexus SDK FailureError object.
+    NexusSDKOperationFailureInfo:
+      type: object
+      properties:
+        state:
+          type: string
+      description: Representation of the Nexus SDK OperationError object.
     OnConflictOptions:
       type: object
       properties:

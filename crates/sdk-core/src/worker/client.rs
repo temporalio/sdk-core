@@ -30,7 +30,7 @@ use temporalio_common::{
                 TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
             },
             failure::v1::Failure,
-            nexus,
+            nexus::{self, v1::NexusTaskFailure},
             protocol::v1::Message as ProtocolMessage,
             query::v1::WorkflowQueryResult,
             sdk::v1::WorkflowTaskCompletedMetadata,
@@ -200,7 +200,7 @@ pub trait WorkerClient: Sync + Send {
     async fn fail_nexus_task(
         &self,
         task_token: TaskToken,
-        error: nexus::v1::HandlerError,
+        error: NexusTaskFailure,
     ) -> Result<RespondNexusTaskFailedResponse>;
     /// Get the workflow execution history
     async fn get_workflow_execution_history(
@@ -594,17 +594,24 @@ impl WorkerClient for WorkerClientBag {
     async fn fail_nexus_task(
         &self,
         task_token: TaskToken,
-        error: nexus::v1::HandlerError,
+        error: NexusTaskFailure,
     ) -> Result<RespondNexusTaskFailedResponse> {
+        let (error, failure) = match error {
+            NexusTaskFailure::Legacy(handler_err) => (Some(handler_err), None),
+            NexusTaskFailure::Temporal(failure) => (None, Some(failure)),
+        };
+
         Ok(self
             .client
             .clone()
             .respond_nexus_task_failed(
+                #[allow(deprecated)]
                 RespondNexusTaskFailedRequest {
                     namespace: self.namespace.clone(),
                     identity: self.identity.clone(),
                     task_token: task_token.0,
-                    error: Some(error),
+                    failure,
+                    error,
                 }
                 .into_request(),
             )

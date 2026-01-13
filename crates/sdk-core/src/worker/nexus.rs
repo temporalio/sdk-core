@@ -32,9 +32,12 @@ use temporalio_common::{
                 nexus_task_completion,
             },
         },
-        temporal::api::nexus::{
-            self,
-            v1::{request::Variant, response, start_operation_response},
+        temporal::api::{
+            failure::v1::failure::FailureInfo,
+            nexus::{
+                self,
+                v1::{NexusTaskFailure, request::Variant, response, start_operation_response},
+            },
         },
         utilities::normalize_http_headers,
     },
@@ -176,7 +179,31 @@ impl NexusManager {
                             FailureReason::NexusHandlerError(e.error_type.clone()),
                         )])
                         .nexus_task_execution_failed();
-                    (true, client.fail_nexus_task(tt, e).await.err())
+                    let maybe_net_err = client
+                        .fail_nexus_task(tt, NexusTaskFailure::Legacy(e))
+                        .await
+                        .err();
+                    (true, maybe_net_err)
+                }
+                nexus_task_completion::Status::Failure(f) => {
+                    if let Some(FailureInfo::NexusHandlerFailureInfo(failure_info)) =
+                        &f.failure_info
+                    {
+                        self.metrics
+                            .with_new_attrs([metrics::failure_reason(
+                                FailureReason::NexusHandlerError(failure_info.r#type.clone()),
+                            )])
+                            .nexus_task_execution_failed();
+                        let maybe_net_err = client
+                            .fail_nexus_task(tt, NexusTaskFailure::Temporal(f))
+                            .await
+                            .err();
+                        (true, maybe_net_err)
+                    } else {
+                        return Err(CompleteNexusError::MalformedNexusCompletion {
+                            reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo".to_string(),
+                        });
+                    }
                 }
             };
 
@@ -303,7 +330,7 @@ where
                                 .resp
                                 .request
                                 .as_ref()
-                                .and_then(|r| r.variant.as_ref())
+                                .and_then(|r| r.variant.as_ref().map(|v| v))
                                 .map(|v| match v {
                                     Variant::StartOperation(s) => (
                                         s.service.to_owned(),

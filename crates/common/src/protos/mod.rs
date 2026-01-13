@@ -821,11 +821,14 @@ pub mod coresdk {
                     nexus_task_completion::Status::Completed(c) => {
                         write!(f, "{c}")
                     }
-                    nexus_task_completion::Status::Error(e) => {
-                        write!(f, "{e}")
-                    }
                     nexus_task_completion::Status::AckCancel(_) => {
                         write!(f, "AckCancel")
+                    }
+                    nexus_task_completion::Status::Error(error) => {
+                        write!(f, "Error({error:?})")
+                    }
+                    nexus_task_completion::Status::Failure(failure) => {
+                        write!(f, "{failure}")
                     }
                 }?;
                 write!(f, ")")
@@ -1435,6 +1438,12 @@ pub mod coresdk {
                 }
                 Some(FailureInfo::NexusHandlerFailureInfo(v)) => {
                     write!(f, "Nexus Handler Failure: {}", v.r#type)?;
+                }
+                Some(FailureInfo::NexusSdkOperationFailureInfo(v)) => {
+                    write!(f, "Nexus Operation Failure: state: {}", v.state)?;
+                }
+                Some(FailureInfo::NexusSdkFailureErrorInfo(v)) => {
+                    write!(f, "Nexus Failure: metadata: {:?}", v.metadata)?;
                 }
             }
             write!(f, ")")
@@ -2347,6 +2356,8 @@ pub mod temporal {
                                 Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => false,
                                 Attributes::WorkflowPropertiesModifiedEventAttributes(_) => false,
                                 Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionPausedEventAttributes(_) => false,
+                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => false,
                                 Attributes::NexusOperationScheduledEventAttributes(_) => false,
                                 Attributes::NexusOperationStartedEventAttributes(_) => false,
                                 Attributes::NexusOperationCompletedEventAttributes(_) => false,
@@ -2386,6 +2397,8 @@ pub mod temporal {
                         match self {
                             Attributes::WorkflowExecutionStartedEventAttributes(_) => { EventType::WorkflowExecutionStarted }
                             Attributes::WorkflowExecutionCompletedEventAttributes(_) => { EventType::WorkflowExecutionCompleted }
+                            Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
+                            Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
                             Attributes::WorkflowExecutionFailedEventAttributes(_) => { EventType::WorkflowExecutionFailed }
                             Attributes::WorkflowExecutionTimedOutEventAttributes(_) => { EventType::WorkflowExecutionTimedOut }
                             Attributes::WorkflowTaskScheduledEventAttributes(_) => { EventType::WorkflowTaskScheduled }
@@ -2552,9 +2565,12 @@ pub mod temporal {
                 use crate::protos::{
                     camel_case_to_screaming_snake,
                     temporal::api::{
-                        common,
-                        common::v1::link::{WorkflowEvent, workflow_event},
+                        common::{
+                            self,
+                            v1::link::{WorkflowEvent, workflow_event},
+                        },
                         enums::v1::EventType,
+                        failure,
                     },
                 };
                 use anyhow::{anyhow, bail};
@@ -2593,6 +2609,11 @@ pub mod temporal {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                         write!(f, "HandlerError")
                     }
+                }
+
+                pub enum NexusTaskFailure {
+                    Legacy(HandlerError),
+                    Temporal(failure::v1::Failure),
                 }
 
                 static SCHEME_PREFIX: &str = "temporal://";

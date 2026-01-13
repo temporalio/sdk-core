@@ -28,9 +28,12 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::{ActivityType, WorkflowExecution},
-            nexus::v1::{
-                Request as NexusRequest, Response as NexusResponse, StartOperationRequest,
-                StartOperationResponse, start_operation_response,
+            nexus::{
+                self,
+                v1::{
+                    Request as NexusRequest, Response as NexusResponse, StartOperationRequest,
+                    StartOperationResponse, start_operation_response,
+                },
             },
             workflowservice::v1::{
                 PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
@@ -402,7 +405,9 @@ fn create_test_nexus_task_with_headers(
     PollNexusTaskQueueResponse {
         task_token: b"nex-task".to_vec(),
         request: Some(NexusRequest {
-            header,
+            capabilities: Some(nexus::v1::request::Capabilities{ temporal_failure_responses: true }),
+            endpoint: "test-endpoint".to_string(),
+            header: Default::default(),
             scheduled_time: None,
             variant: Some(temporalio_common::protos::temporal::api::nexus::v1::request::Variant::StartOperation(
                 StartOperationRequest {

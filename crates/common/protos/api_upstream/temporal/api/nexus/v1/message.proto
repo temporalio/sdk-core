@@ -12,6 +12,7 @@ option csharp_namespace = "Temporalio.Api.Nexus.V1";
 import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/nexus.proto";
+import "temporal/api/failure/v1/message.proto";
 
 // A general purpose failure message.
 // See: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure
@@ -77,6 +78,12 @@ message CancelOperationRequest {
 
 // A Nexus request.
 message Request {
+    message Capabilities {
+        // If set, handlers may use temporal.api.failure.v1.Failure instances to return failures to the server.
+        // This also allows handler and operation errors to have their own messages and stack traces.
+        bool temporal_failure_responses = 1;
+    }
+
     // Headers extracted from the original request in the Temporal frontend.
     // When using Nexus over HTTP, this includes the request's HTTP headers ignoring multiple values.
     map<string, string> header = 1;
@@ -85,6 +92,8 @@ message Request {
     // (-- api-linter: core::0142::time-field-names=disabled
     //     aip.dev/not-precedent: Not following linter rules. --)
     google.protobuf.Timestamp scheduled_time = 2;
+
+    Capabilities capabilities = 100;
 
     oneof variant {
         StartOperationRequest start_operation = 3;
@@ -118,6 +127,9 @@ message StartOperationResponse {
         Async async_success = 2;
         // The operation completed unsuccessfully (failed or canceled).
         UnsuccessfulOperationError operation_error = 3;
+        // The operation completed unsuccessfully (failed or canceled).
+        // Failure object must contain a NexusSDKOperationFailureInfo object.
+        temporal.api.failure.v1.Failure failure = 4;
     }
 }
 

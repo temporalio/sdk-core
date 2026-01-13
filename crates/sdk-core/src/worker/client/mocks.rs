@@ -126,7 +126,7 @@ mockall::mock! {
         fn fail_nexus_task<'a, 'b>(
             &self,
             task_token: TaskToken,
-            error: nexus::v1::HandlerError,
+            error: NexusTaskFailure,
         ) -> impl Future<Output = Result<RespondNexusTaskFailedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

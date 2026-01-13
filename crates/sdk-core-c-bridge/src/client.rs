@@ -580,6 +580,9 @@ async fn call_workflow_service(
         "CreateWorkflowRule" => {
             rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
         }
+        "DeleteActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
+        }
         "DeleteSchedule" => rpc_call_on_trait!(client, call, WorkflowService, delete_schedule),
         "DeleteActivityExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
