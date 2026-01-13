@@ -16,18 +16,21 @@ use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
 use temporalio_common::{
     Worker,
+    errors::CompleteNexusError,
     protos::{
         canned_histories,
         coresdk::{
             ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
-            nexus::NexusTaskCompletion,
+            nexus::{NexusTaskCompletion, nexus_task_completion},
             workflow_activation::workflow_activation_job,
             workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
             common::v1::{ActivityType, WorkflowExecution},
+            enums::v1::NexusHandlerErrorRetryBehavior,
+            failure::v1::{Failure, NexusHandlerFailureInfo, failure::FailureInfo},
             nexus::{
                 self,
                 v1::{
@@ -38,8 +41,8 @@ use temporalio_common::{
             workflowservice::v1::{
                 PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
                 PollWorkflowTaskQueueResponse, RespondActivityTaskCompletedResponse,
-                RespondNexusTaskCompletedResponse, RespondWorkflowTaskCompletedResponse,
-                ShutdownWorkerResponse,
+                RespondNexusTaskCompletedResponse, RespondNexusTaskFailedResponse,
+                RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
             },
         },
         test_utils::start_timer_cmd,
@@ -599,40 +602,39 @@ async fn test_task_type_combinations_unified(
 }
 
 #[tokio::test]
-async fn nexus_request_deadline_missing_header() {
+async fn nexus_task_completion_with_failure_status() {
     let mut client = mock_worker_client();
     client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-    let nexus_task = create_test_nexus_task(); // No headers
-    let mut mocks = MocksHolder::from_client_with_custom(
+        .expect_fail_nexus_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondNexusTaskFailedResponse::default()));
+
+    let mocks = MocksHolder::from_client_with_custom(
         client,
-        None::<stream::Empty<_>>,
+        None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
         None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
-        Some(vec![QueueResponse::from(nexus_task)]),
+        Some(vec![QueueResponse::from(create_test_nexus_task())]),
     );
-    mocks.worker_cfg(|w| {
-        w.task_queue = "test-queue".to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: false,
-            enable_local_activities: false,
-            enable_remote_activities: false,
-            enable_nexus: true,
-        };
-        w.skip_client_worker_set_check = true;
-    });
     let worker = mock_worker(mocks);
 
     let nexus_task = worker.poll_nexus_task().await.unwrap();
-    assert!(
-        nexus_task.request_deadline.is_none(),
-        "request_deadline should be None when header is missing"
-    );
-
     worker
-        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
+        .complete_nexus_task(NexusTaskCompletion {
+            task_token: nexus_task.task_token().to_vec(),
+            status: Some(nexus_task_completion::Status::Failure(Failure {
+                message: "handler failed".to_string(),
+                failure_info: Some(FailureInfo::NexusHandlerFailureInfo(
+                    NexusHandlerFailureInfo {
+                        r#type: "INTERNAL".to_string(),
+                        retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
+                    },
+                )),
+                ..Default::default()
+            })),
+        })
         .await
         .unwrap();
+
     worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
@@ -643,102 +645,36 @@ async fn nexus_request_deadline_missing_header() {
 }
 
 #[tokio::test]
-async fn nexus_request_deadline_valid_header() {
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-    let mut headers = std::collections::HashMap::new();
-    headers.insert("request-timeout".to_string(), "30s".to_string());
-    let nexus_task = create_test_nexus_task_with_headers(headers);
-    let mut mocks = MocksHolder::from_client_with_custom(
+async fn nexus_task_completion_with_failure_status_missing_handler_info_fails() {
+    let client = mock_worker_client();
+
+    let mocks = MocksHolder::from_client_with_custom(
         client,
-        None::<stream::Empty<_>>,
+        None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
         None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
-        Some(vec![QueueResponse::from(nexus_task)]),
+        Some(vec![QueueResponse::from(create_test_nexus_task())]),
     );
-    mocks.worker_cfg(|w| {
-        w.task_queue = "test-queue".to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: false,
-            enable_local_activities: false,
-            enable_remote_activities: false,
-            enable_nexus: true,
-        };
-        w.skip_client_worker_set_check = true;
-    });
     let worker = mock_worker(mocks);
 
-    let before = std::time::SystemTime::now();
     let nexus_task = worker.poll_nexus_task().await.unwrap();
-    let after = std::time::SystemTime::now();
+    let result = worker
+        .complete_nexus_task(NexusTaskCompletion {
+            task_token: nexus_task.task_token().to_vec(),
+            status: Some(nexus_task_completion::Status::Failure(Failure {
+                message: "handler failed".to_string(),
+                // Missing NexusHandlerFailureInfo - should fail validation
+                failure_info: None,
+                ..Default::default()
+            })),
+        })
+        .await;
 
-    assert!(
-        nexus_task.request_deadline.is_some(),
-        "request_deadline should be Some when valid header is present"
-    );
-    let deadline: std::time::SystemTime = nexus_task.request_deadline.unwrap().try_into().unwrap();
-    // Deadline should be approximately 30s from now
-    let expected_min = before + Duration::from_secs(30);
-    let expected_max = after + Duration::from_secs(30);
-    assert!(
-        deadline >= expected_min && deadline <= expected_max,
-        "deadline {:?} should be between {:?} and {:?}",
-        deadline,
-        expected_min,
-        expected_max
-    );
-
-    worker
-        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
-        .await
-        .unwrap();
-    worker.initiate_shutdown();
+    // Should fail validation because NexusHandlerFailureInfo is required
     assert_matches!(
-        worker.poll_nexus_task().await.unwrap_err(),
-        PollError::ShutDown
-    );
-    worker.shutdown().await;
-    worker.finalize_shutdown().await;
-}
-
-#[tokio::test]
-async fn nexus_request_deadline_invalid_header() {
-    let mut client = mock_worker_client();
-    client
-        .expect_complete_nexus_task()
-        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
-    let mut headers = std::collections::HashMap::new();
-    headers.insert("request-timeout".to_string(), "invalid".to_string());
-    let nexus_task = create_test_nexus_task_with_headers(headers);
-    let mut mocks = MocksHolder::from_client_with_custom(
-        client,
-        None::<stream::Empty<_>>,
-        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
-        Some(vec![QueueResponse::from(nexus_task)]),
-    );
-    mocks.worker_cfg(|w| {
-        w.task_queue = "test-queue".to_string();
-        w.task_types = WorkerTaskTypes {
-            enable_workflows: false,
-            enable_local_activities: false,
-            enable_remote_activities: false,
-            enable_nexus: true,
-        };
-        w.skip_client_worker_set_check = true;
-    });
-    let worker = mock_worker(mocks);
-
-    let nexus_task = worker.poll_nexus_task().await.unwrap();
-    assert!(
-        nexus_task.request_deadline.is_none(),
-        "request_deadline should be None when header is invalid"
+        result,
+        Err(CompleteNexusError::MalformedNexusCompletion { reason }) if reason.contains("NexusHandlerFailureInfo")
     );
 
-    worker
-        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
-        .await
-        .unwrap();
     worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),

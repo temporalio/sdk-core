@@ -330,7 +330,7 @@ where
                                 .resp
                                 .request
                                 .as_ref()
-                                .and_then(|r| r.variant.as_ref().map(|v| v))
+                                .and_then(|r| r.variant.as_ref())
                                 .map(|v| match v {
                                     Variant::StartOperation(s) => (
                                         s.service.to_owned(),
