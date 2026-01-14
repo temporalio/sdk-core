@@ -12,7 +12,7 @@ use temporalio_common::protos::{
         },
     },
     temporal::api::{
-        common::v1::{Payload, RetryPolicy},
+        common::v1::{Payload, RetryPolicy, SearchAttributes},
         enums::v1::ParentClosePolicy,
         sdk::v1::UserMetadata,
     },
@@ -267,7 +267,10 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                         .options
                         .task_timeout
                         .and_then(|d| d.try_into().ok()),
-                    search_attributes: self.options.search_attributes.unwrap_or_default(),
+                    search_attributes: self
+                        .options
+                        .search_attributes
+                        .map(|sa| SearchAttributes { indexed_fields: sa }),
                     cron_schedule: self.options.cron_schedule.unwrap_or_default(),
                     parent_close_policy: self.parent_close_policy as i32,
                     priority: self.options.priority.map(Into::into),

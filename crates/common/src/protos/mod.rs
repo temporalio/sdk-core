@@ -941,11 +941,12 @@ pub mod coresdk {
 
         impl Display for UpsertWorkflowSearchAttributes {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(
-                    f,
-                    "UpsertWorkflowSearchAttributes({:?})",
-                    self.search_attributes.keys()
-                )
+                let keys: Vec<_> = self
+                    .search_attributes
+                    .as_ref()
+                    .map(|sa| sa.indexed_fields.keys().collect())
+                    .unwrap_or_default();
+                write!(f, "UpsertWorkflowSearchAttributes({:?})", keys)
             }
         }
 
@@ -1778,7 +1779,7 @@ pub mod temporal {
                     fn from(s: workflow_commands::UpsertWorkflowSearchAttributes) -> Self {
                         Self::UpsertWorkflowSearchAttributesCommandAttributes(
                             UpsertWorkflowSearchAttributesCommandAttributes {
-                                search_attributes: Some(s.search_attributes.into()),
+                                search_attributes: s.search_attributes,
                             },
                         )
                     }
@@ -1843,7 +1844,7 @@ pub mod temporal {
                             task_queue: Some(s.task_queue.into()),
                             header: Some(s.headers.into()),
                             memo: Some(s.memo.into()),
-                            search_attributes: Some(s.search_attributes.into()),
+                            search_attributes: s.search_attributes,
                             input: s.input.into_payloads(),
                             workflow_id_reuse_policy: s.workflow_id_reuse_policy,
                             workflow_execution_timeout: s.workflow_execution_timeout,
@@ -1901,11 +1902,7 @@ pub mod temporal {
                                 Some(c.headers.into())
                             },
                             retry_policy: c.retry_policy,
-                            search_attributes: if c.search_attributes.is_empty() {
-                                None
-                            } else {
-                                Some(c.search_attributes.into())
-                            },
+                            search_attributes: c.search_attributes,
                             inherit_build_id,
                             ..Default::default()
                         },

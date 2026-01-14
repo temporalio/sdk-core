@@ -13,7 +13,8 @@ use futures::future::BoxFuture;
 /// Represents a payload field in a proto message.
 /// Payloads within the same field may be processed together by the codec.
 pub struct PayloadField<'a> {
-    /// The fully-qualified field path (e.g., "coresdk.workflow_commands.ScheduleActivity.arguments")
+    /// The fully-qualified field path (e.g.,
+    /// `coresdk.workflow_commands.ScheduleActivity.arguments`)
     pub path: &'static str,
     /// The payload data
     pub data: PayloadFieldData<'a>,
@@ -21,11 +22,11 @@ pub struct PayloadField<'a> {
 
 /// The payload data within a field, varying by field type.
 pub enum PayloadFieldData<'a> {
-    /// A singular Payload field
+    /// A singular [Payload] field
     Single(&'a mut Payload),
-    /// A repeated Payload field (Vec<Payload>)
+    /// A repeated [Payload] field
     Repeated(&'a mut Vec<Payload>),
-    /// A Payloads message field
+    /// A [Payloads] message field
     Payloads(&'a mut Payloads),
 }
 
@@ -46,16 +47,15 @@ pub trait PayloadVisitable: Send {
     ) -> BoxFuture<'a, ()>;
 }
 
-/// Fields that should not be transformed by the codec (must remain server-readable).
-/// Search attributes need to be readable by the server for indexing.
-const SKIP_ENCODE_FIELDS: &[&str] = &[
-    "coresdk.workflow_commands.StartChildWorkflowExecution.search_attributes",
-    "coresdk.workflow_commands.ContinueAsNewWorkflowExecution.search_attributes",
-    "coresdk.workflow_commands.UpsertWorkflowSearchAttributes.search_attributes",
-];
+/// Check if a field path represents search attributes that should not be encoded.
+/// Search attributes must remain server-readable for indexing.
+fn is_search_attributes_path(path: &str) -> bool {
+    // All search attributes go through the SearchAttributes message which has indexed_fields
+    path.contains("SearchAttributes.indexed_fields")
+}
 
 fn should_encode(path: &str) -> bool {
-    !SKIP_ENCODE_FIELDS.contains(&path)
+    !is_search_attributes_path(path)
 }
 
 /// Visitor that encodes payloads using a codec.
@@ -211,7 +211,7 @@ mod tests {
                 WorkflowActivationCompletion, workflow_activation_completion::Status,
             },
         },
-        temporal::api::common::v1::Memo,
+        temporal::api::common::v1::{Memo, SearchAttributes},
     };
     use futures::FutureExt;
     use std::collections::HashMap;
@@ -483,14 +483,16 @@ mod tests {
                         WorkflowCommand {
                             variant: Some(CmdVariant::UpsertWorkflowSearchAttributes(
                                 UpsertWorkflowSearchAttributes {
-                                    search_attributes: {
-                                        let mut sa = HashMap::new();
-                                        sa.insert(
-                                            "CustomField".to_string(),
-                                            make_payload("search-value"),
-                                        );
-                                        sa
-                                    },
+                                    search_attributes: Some(SearchAttributes {
+                                        indexed_fields: {
+                                            let mut sa = HashMap::new();
+                                            sa.insert(
+                                                "CustomField".to_string(),
+                                                make_payload("search-value"),
+                                            );
+                                            sa
+                                        },
+                                    }),
                                 },
                             )),
                             user_metadata: None,
@@ -500,14 +502,16 @@ mod tests {
                             variant: Some(CmdVariant::ContinueAsNewWorkflowExecution(
                                 ContinueAsNewWorkflowExecution {
                                     arguments: vec![make_payload("continue-arg")],
-                                    search_attributes: {
-                                        let mut sa = HashMap::new();
-                                        sa.insert(
-                                            "CustomField".to_string(),
-                                            make_payload("continue-search-value"),
-                                        );
-                                        sa
-                                    },
+                                    search_attributes: Some(SearchAttributes {
+                                        indexed_fields: {
+                                            let mut sa = HashMap::new();
+                                            sa.insert(
+                                                "CustomField".to_string(),
+                                                make_payload("continue-search-value"),
+                                            );
+                                            sa
+                                        },
+                                    }),
                                     ..Default::default()
                                 },
                             )),
@@ -520,14 +524,16 @@ mod tests {
                                     seq: 1,
                                     workflow_type: "child-workflow".to_string(),
                                     input: vec![make_payload("child-arg")],
-                                    search_attributes: {
-                                        let mut sa = HashMap::new();
-                                        sa.insert(
-                                            "CustomField".to_string(),
-                                            make_payload("child-search-value"),
-                                        );
-                                        sa
-                                    },
+                                    search_attributes: Some(SearchAttributes {
+                                        indexed_fields: {
+                                            let mut sa = HashMap::new();
+                                            sa.insert(
+                                                "CustomField".to_string(),
+                                                make_payload("child-search-value"),
+                                            );
+                                            sa
+                                        },
+                                    }),
                                     ..Default::default()
                                 },
                             )),
@@ -557,8 +563,9 @@ mod tests {
         else {
             panic!("Expected UpsertWorkflowSearchAttributes")
         };
+        let sa = upsert.search_attributes.as_ref().unwrap();
         assert!(
-            !is_encoded(upsert.search_attributes.get("CustomField").unwrap()),
+            !is_encoded(sa.indexed_fields.get("CustomField").unwrap()),
             "search attributes should NOT be encoded"
         );
 
@@ -572,13 +579,9 @@ mod tests {
             is_encoded(&continue_as_new.arguments[0]),
             "arguments should be encoded"
         );
+        let sa = continue_as_new.search_attributes.as_ref().unwrap();
         assert!(
-            !is_encoded(
-                continue_as_new
-                    .search_attributes
-                    .get("CustomField")
-                    .unwrap()
-            ),
+            !is_encoded(sa.indexed_fields.get("CustomField").unwrap()),
             "search attributes should NOT be encoded"
         );
 
@@ -589,8 +592,9 @@ mod tests {
             panic!("Expected StartChildWorkflowExecution")
         };
         assert!(is_encoded(&start_child.input[0]), "input should be encoded");
+        let sa = start_child.search_attributes.as_ref().unwrap();
         assert!(
-            !is_encoded(start_child.search_attributes.get("CustomField").unwrap()),
+            !is_encoded(sa.indexed_fields.get("CustomField").unwrap()),
             "search attributes should NOT be encoded"
         );
     }

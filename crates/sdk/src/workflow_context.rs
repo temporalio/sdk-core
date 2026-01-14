@@ -352,7 +352,9 @@ impl WorkflowContext {
         self.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
-                    search_attributes: HashMap::from_iter(attr_iter),
+                    search_attributes: Some(SearchAttributes {
+                        indexed_fields: HashMap::from_iter(attr_iter),
+                    }),
                 },
             ),
         ))
