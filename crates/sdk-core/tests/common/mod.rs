@@ -134,7 +134,6 @@ pub(crate) fn integ_sdk_config(tq: &str) -> WorkerOptions {
             use_worker_versioning: false,
             default_versioning_behavior: None,
         })
-        .task_types(WorkerTaskTypes::all())
         .build()
 }
 

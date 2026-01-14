@@ -839,7 +839,6 @@ impl WorkflowMethodsDefinition {
         let run_impl_body = quote! {
             use ::futures_util::FutureExt;
             use ::temporalio_common::data_converters::GenericPayloadConverter;
-            let converter = ::temporalio_common::data_converters::PayloadConverter::default();
             async move {
                 let mut ctx = ctx;
                 let result = #run_call;
@@ -847,8 +846,11 @@ impl WorkflowMethodsDefinition {
                     Ok(exit_value) => {
                         match exit_value {
                             ::temporalio_sdk::WfExitValue::Normal(v) => {
-                                converter.to_payload(&::temporalio_common::data_converters::SerializationContext::Workflow, &v)
-                                    .map_err(Into::into)
+                                let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
+                                    data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
+                                    converter: &ctx.payload_converter(),
+                                };
+                                ctx.payload_converter().to_payload(&ser_ctx, &v).map_err(Into::into)
                             }
                             ::temporalio_sdk::WfExitValue::ContinueAsNew(_) |
                             ::temporalio_sdk::WfExitValue::Cancelled |

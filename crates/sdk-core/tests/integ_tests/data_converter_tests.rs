@@ -1,12 +1,14 @@
 use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporalio_client::{WorkflowExecutionResult, WorkflowOptions};
+use temporalio_client::{WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporalio_common::{
     data_converters::{
-        PayloadConversionError, SerializationContext, TemporalDeserializable, TemporalSerializable,
+        MultiArgs2, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
-    protos::temporal::api::common::v1::Payload,
+    protos::temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    worker::WorkerTaskTypes,
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
@@ -34,7 +36,7 @@ impl TrackedValue {
 }
 
 impl TemporalSerializable for TrackedWrapper {
-    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+    fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         let mut wire = self.0.clone();
         wire.serialize_count += 1;
         let json = serde_json::to_vec(&wire)
@@ -52,8 +54,8 @@ impl TemporalSerializable for TrackedWrapper {
 
 impl TemporalDeserializable for TrackedWrapper {
     fn from_payload(
+        _: &SerializationContext<'_>,
         payload: Payload,
-        _: &SerializationContext,
     ) -> Result<Self, PayloadConversionError> {
         let wire: TrackedValue = serde_json::from_slice(&payload.data)
             .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))?;
@@ -100,7 +102,12 @@ impl DataConverterTestWorkflow {
 
         // TODO [rust-sdk-branch] Will go away after activity starts return deserialized result
         let payload = result.unwrap_ok_payload();
-        let output = TrackedWrapper::from_payload(payload, &SerializationContext::Workflow)?;
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+        let output = TrackedWrapper::from_payload(&ctx, payload)?;
 
         Ok(WfExitValue::Normal(output))
     }
@@ -163,4 +170,95 @@ async fn data_converter_tracks_serialization_points() {
         "Value should have been deserialized 4 times, was deserialized {} times",
         output.deserialize_count
     );
+}
+
+#[workflow]
+#[derive(Default)]
+struct MultiArgs2Workflow;
+#[workflow_methods]
+impl MultiArgs2Workflow {
+    #[run]
+    async fn run(
+        &mut self,
+        _ctx: &mut WorkflowContext,
+        input: MultiArgs2<String, i32>,
+    ) -> WorkflowResult<String> {
+        Ok(WfExitValue::Normal(format!(
+            "received: {} and {}",
+            input.0, input.1
+        )))
+    }
+}
+
+#[tokio::test]
+async fn multi_args_serializes_as_multiple_payloads() {
+    let wf_name = MultiArgs2Workflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_workflow::<MultiArgs2Workflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let input = MultiArgs2("hello".to_string(), 42);
+
+    let handle = worker
+        .submit_workflow(
+            MultiArgs2Workflow::run,
+            wf_name.to_owned(),
+            input,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let result = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    let output = assert_matches!(result, WorkflowExecutionResult::Succeeded(v) => v);
+    assert_eq!(output, "received: hello and 42");
+
+    // Verify the workflow history contains multiple payloads in the input
+    let client = starter.get_client().await;
+    let history = client
+        .get_workflow_execution_history(wf_name.to_owned(), None, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+
+    let workflow_started_event = history
+        .events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowExecutionStartedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find WorkflowExecutionStarted event");
+
+    let input_payloads = workflow_started_event
+        .input
+        .as_ref()
+        .expect("Should have input payloads");
+
+    assert_eq!(
+        input_payloads.payloads.len(),
+        2,
+        "MultiArgs2<A, B> should produce 2 payloads, got {}",
+        input_payloads.payloads.len()
+    );
+
+    // Verify the content of each payload
+    let first_payload_data: String =
+        serde_json::from_slice(&input_payloads.payloads[0].data).unwrap();
+    assert_eq!(first_payload_data, "hello");
+
+    let second_payload_data: i32 =
+        serde_json::from_slice(&input_payloads.payloads[1].data).unwrap();
+    assert_eq!(second_payload_data, 42);
 }

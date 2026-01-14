@@ -472,7 +472,7 @@ impl WorkflowFuture {
         run_id: &str,
         activation_cmds: &mut Vec<WorkflowCommand>,
     ) -> Result<bool, Error> {
-        // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
+        // TODO [rust-sdk-branch]: Make sure this is *actually* safe before un-prototyping rust sdk
         let mut res = match AssertUnwindSafe(&mut self.inner)
             .catch_unwind()
             .poll_unpin(cx)

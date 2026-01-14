@@ -32,6 +32,7 @@ use temporalio_common::{
     ActivityDefinition,
     data_converters::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData,
     },
     protos::{
         coresdk::{
@@ -72,7 +73,7 @@ pub struct WorkflowContext {
     pub(crate) shared: Arc<RwLock<WorkflowContextSharedData>>,
 
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
-    pub(crate) payload_converter: PayloadConverter,
+    payload_converter: PayloadConverter,
 }
 
 impl WorkflowContext {
@@ -163,6 +164,11 @@ impl WorkflowContext {
         self.shared.read().is_replaying
     }
 
+    /// Returns the [PayloadConverter] currently used by the worker running this workflow.
+    pub fn payload_converter(&self) -> &PayloadConverter {
+        &self.payload_converter
+    }
+
     /// Return various information that the workflow was initialized with. Will eventually become
     /// a proper non-proto workflow info struct.
     pub fn workflow_initial_info(&self) -> &InitializeWorkflow {
@@ -225,9 +231,11 @@ impl WorkflowContext {
         input: AD::Input,
         mut opts: ActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
-        let payload = self
-            .payload_converter
-            .to_payload(&SerializationContext::Workflow, &input)?;
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.payload_converter,
+        };
+        let payload = self.payload_converter.to_payload(&ctx, &input)?;
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         if opts.task_queue.is_none() {
@@ -251,9 +259,11 @@ impl WorkflowContext {
         input: AD::Input,
         opts: LocalActivityOptions,
     ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
-        let payload = self
-            .payload_converter
-            .to_payload(&SerializationContext::Workflow, &input)?;
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.payload_converter,
+        };
+        let payload = self.payload_converter.to_payload(&ctx, &input)?;
         Ok(LATimerBackoffFut::new(
             AD::name().to_string(),
             payload,

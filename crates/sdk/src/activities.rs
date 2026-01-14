@@ -58,7 +58,7 @@ use std::{
 use temporalio_client::Priority;
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::{DataConverter, SerializationContext},
+    data_converters::{DataConverter, SerializationContextData},
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -73,22 +73,20 @@ use tokio_util::sync::CancellationToken;
 pub struct ActivityContext {
     worker: Arc<CoreWorker>,
     cancellation_token: CancellationToken,
-    input: Vec<Payload>,
     heartbeat_details: Vec<Payload>,
     header_fields: HashMap<String, Payload>,
     info: ActivityInfo,
 }
 
 impl ActivityContext {
-    /// Construct new Activity Context, returning the context and the first argument to the activity
-    /// (which may be a default [Payload]).
+    /// Construct new Activity Context, returning the context and all arguments to the activity.
     pub fn new(
         worker: Arc<CoreWorker>,
         cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
         task: activity_task::Start,
-    ) -> (Self, Payload) {
+    ) -> (Self, Vec<Payload>) {
         let activity_task::Start {
             workflow_namespace,
             workflow_type,
@@ -96,7 +94,7 @@ impl ActivityContext {
             activity_id,
             activity_type,
             header_fields,
-            mut input,
+            input,
             heartbeat_details,
             scheduled_time,
             current_attempt_scheduled_time,
@@ -115,13 +113,11 @@ impl ActivityContext {
             start_to_close_timeout.as_ref(),
             schedule_to_close_timeout.as_ref(),
         );
-        let first_arg = input.pop().unwrap_or_default();
 
         (
             ActivityContext {
                 worker,
                 cancellation_token,
-                input,
                 heartbeat_details,
                 header_fields,
                 info: ActivityInfo {
@@ -144,7 +140,7 @@ impl ActivityContext {
                     priority: priority.map(Into::into).unwrap_or_default(),
                 },
             },
-            first_arg,
+            input,
         )
     }
 
@@ -159,14 +155,8 @@ impl ActivityContext {
         self.cancellation_token.is_cancelled()
     }
 
-    /// Retrieve extra parameters to the Activity. The first input is always popped and passed to
-    /// the Activity function for the currently executing activity. However, if more parameters are
-    /// passed, perhaps from another language's SDK, explicit access is available from extra_inputs
-    pub fn extra_inputs(&mut self) -> &mut [Payload] {
-        &mut self.input
-    }
-
-    /// Extract heartbeat details from last failed attempt. This is used in combination with retry policy.
+    /// Extract heartbeat details from last failed attempt. This is used in combination with retry
+    /// policy.
     pub fn get_heartbeat_details(&self) -> &[Payload] {
         &self.heartbeat_details
     }
@@ -337,7 +327,7 @@ fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
 
 pub(crate) type ActivityInvocation = Arc<
     dyn Fn(
-            Payload,
+            Vec<Payload>,
             DataConverter,
             ActivityContext,
         ) -> BoxFuture<'static, Result<Payload, ActivityError>>
@@ -384,16 +374,16 @@ impl ActivityDefinitions {
     {
         self.activities.insert(
             AD::name(),
-            Arc::new(move |p, dc, c| {
+            Arc::new(move |payloads, dc, c| {
                 let instance = instance.clone();
                 let dc = dc.clone();
                 async move {
                     let deserialized: AD::Input = dc
-                        .from_payload(&SerializationContext::Activity, p)
+                        .from_payloads(&SerializationContextData::Activity, payloads)
                         .await
                         .map_err(ActivityError::from)?;
                     let result = AD::execute(Some(instance), c, deserialized).await?;
-                    dc.to_payload(&SerializationContext::Activity, &result)
+                    dc.to_payload(&SerializationContextData::Activity, &result)
                         .await
                         .map_err(ActivityError::from)
                 }

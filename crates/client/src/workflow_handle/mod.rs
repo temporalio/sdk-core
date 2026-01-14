@@ -3,7 +3,7 @@ use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
-    data_converters::{RawValue, SerializationContext},
+    data_converters::{RawValue, SerializationContextData},
     protos::{
         coresdk::FromPayloadsExt,
         temporal::api::{
@@ -94,13 +94,13 @@ impl WorkflowExecutionInfo {
     }
 }
 
-/// A workflow handle to a workflow with unknown types. Uses raw payloads.
+/// A workflow handle to a workflow with unknown types. Uses single argument raw payloads for input
+/// and output.
 pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, UntypedWorkflow>;
 
 /// Marker type for untyped workflow handles
 pub struct UntypedWorkflow;
 impl WorkflowDefinition for UntypedWorkflow {
-    // TODO: Need to handle multiargs
     type Input = RawValue;
     type Output = RawValue;
     fn name() -> &'static str {
@@ -193,7 +193,7 @@ where
                         .and_then(|p| p.payloads.into_iter().next())
                         .unwrap_or_default();
                     let result: W::Output = dc
-                        .from_payload(&SerializationContext::Workflow, payload)
+                        .from_payload(&SerializationContextData::Workflow, payload)
                         .await?;
                     Ok(WorkflowExecutionResult::Succeeded(result))
                 }
@@ -241,19 +241,17 @@ where
         S: SignalDefinition<Workflow = W>,
         S::Input: Send,
     {
-        let payload = self
+        let payloads = self
             .client
             .data_converter()
-            .to_payload(&SerializationContext::Workflow, &input)
+            .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
         self.client
             .signal_workflow_execution(
                 self.info.workflow_id.clone(),
                 self.info.run_id.clone().unwrap_or_default(),
                 S::name().to_string(),
-                Some(Payloads {
-                    payloads: vec![payload],
-                }),
+                Some(Payloads { payloads }),
                 None,
             )
             .await?;
@@ -268,8 +266,8 @@ where
         Q::Input: Send,
     {
         let dc = self.client.data_converter();
-        let payload = dc
-            .to_payload(&SerializationContext::Workflow, &input)
+        let payloads = dc
+            .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
         let response = self
             .client
@@ -278,20 +276,18 @@ where
                 self.info.run_id.clone().unwrap_or_default(),
                 WorkflowQuery {
                     query_type: Q::name().to_string(),
-                    query_args: Some(Payloads {
-                        payloads: vec![payload],
-                    }),
+                    query_args: Some(Payloads { payloads }),
                     header: None,
                 },
             )
             .await?;
 
-        let result_payload = response
+        let result_payloads = response
             .query_result
-            .and_then(|p| p.payloads.into_iter().next())
-            .ok_or_else(|| anyhow!("Query returned no result"))?;
+            .map(|p| p.payloads)
+            .unwrap_or_default();
 
-        dc.from_payload(&SerializationContext::Workflow, result_payload)
+        dc.from_payloads(&SerializationContextData::Workflow, result_payloads)
             .await
             .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
     }
@@ -304,8 +300,8 @@ where
         U::Input: Send,
     {
         let dc = self.client.data_converter();
-        let payload = dc
-            .to_payload(&SerializationContext::Workflow, &input)
+        let payloads = dc
+            .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
         let response = self
             .client
@@ -316,9 +312,7 @@ where
                 WaitPolicy {
                     lifecycle_stage: 2, // UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED
                 },
-                Some(Payloads {
-                    payloads: vec![payload],
-                }),
+                Some(Payloads { payloads }),
             )
             .await?;
 
@@ -331,16 +325,10 @@ where
                 temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
                     success,
                 ),
-            ) => {
-                let result_payload = success
-                    .payloads
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow!("Update success had no payload"))?;
-                dc.from_payload(&SerializationContext::Workflow, result_payload)
-                    .await
-                    .map_err(|e| anyhow!("Failed to deserialize update result: {}", e))
-            }
+            ) => dc
+                .from_payloads(&SerializationContextData::Workflow, success.payloads)
+                .await
+                .map_err(|e| anyhow!("Failed to deserialize update result: {}", e)),
             Some(
                 temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
                     failure,

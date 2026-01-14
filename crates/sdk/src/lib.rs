@@ -210,6 +210,8 @@ pub struct WorkerOptions {
     /// Controls how polling for Nexus tasks will happen on this worker's task queue.
     #[builder(default = PollerBehavior::SimpleMaximum(5))]
     pub nexus_task_poller_behavior: PollerBehavior,
+    // TODO [rust-sdk-branch]: Will go away once workflow registration can only happen in here.
+    //   Then it can be auto-determined.
     /// Specifies which task types this worker will poll for.
     ///
     /// Note: At least one task type must be specified or the worker will fail validation.
@@ -380,7 +382,6 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    // TODO [rust-sdk-branch]: Not 100% sure I like passing runtime here
     /// Create a new worker from an existing connection, and options.
     pub fn new(
         runtime: &CoreRuntime,
@@ -523,8 +524,8 @@ impl Worker {
                 .context("Workflow futures encountered an error")
         };
         let wf_completion_processor = async {
-            // TODO: Apply PayloadCodec encoding here before sending completions to core.
-            // This is where async codec operations (e.g., encryption) should be applied to
+            // TODO [rust-sdk-branch]: Apply PayloadCodec encoding here before sending completions
+            // to core. This is where async codec operations (e.g., encryption) should be applied to
             // outgoing payloads in workflow commands (ScheduleActivity inputs, child workflow
             // inputs, etc.). The codec comes from the client's DataConverter.
             UnboundedReceiverStream::new(completions_rx)
@@ -543,9 +544,10 @@ impl Worker {
             // Workflow polling loop
             async {
                 loop {
-                    // TODO: Apply PayloadCodec decoding here after receiving activations from core.
-                    // This is where async codec operations should decode incoming payloads in
-                    // workflow activation jobs (activity results, child workflow results, etc.).
+                    // TODO [rust-sdk-branch]: Apply PayloadCodec decoding here after receiving
+                    // activations from core. This is where async codec operations should decode
+                    // incoming payloads in workflow activation jobs (activity results, child
+                    // workflow results, etc.).
                     let activation = match common.worker.poll_workflow_activation().await {
                         Err(PollError::ShutDown) => {
                             break;
@@ -803,7 +805,7 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) =
+                let (ctx, args) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
 
                 tokio::spawn(async move {
@@ -813,7 +815,7 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn)(arg, data_converter, ctx).await
+                        (act_fn)(args, data_converter, ctx).await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
@@ -1162,8 +1164,8 @@ impl WorkflowFunction {
     pub(crate) fn from_invocation(invocation: workflows::WorkflowInvocation) -> Self {
         Self {
             wf_func: Box::new(move |ctx: WorkflowContext| {
-                let input = ctx.get_args().first().cloned().unwrap_or_default();
-                let converter = ctx.payload_converter.clone();
+                let input = ctx.get_args().to_vec();
+                let converter = ctx.payload_converter().clone();
                 match invocation(input, converter, ctx) {
                     Ok(fut) => fut
                         .map(|r| match r {

@@ -40,17 +40,17 @@
 //! }
 //! ```
 
+use crate::WorkflowContext;
 use futures_util::future::BoxFuture;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData,
     },
     protos::temporal::api::common::v1::Payload,
 };
-
-use crate::WorkflowContext;
 
 /// Error type for workflow operations
 #[derive(Debug, thiserror::Error)]
@@ -155,7 +155,7 @@ pub trait WorkflowImplementer: WorkflowImplementation {
 /// Type alias for workflow invocation functions
 pub(crate) type WorkflowInvocation = Arc<
     dyn Fn(
-            Payload,
+            Vec<Payload>,
             PayloadConverter,
             WorkflowContext,
         )
@@ -221,8 +221,12 @@ impl WorkflowDefinitions {
         <W::Run as WorkflowDefinition>::Input: Send,
     {
         let workflow_name = <W::Run as WorkflowDefinition>::name();
-        let run = Arc::new(move |payload, converter: PayloadConverter, ctx| {
-            let input = converter.from_payload(&SerializationContext::Workflow, payload)?;
+        let run = Arc::new(move |payloads, converter: PayloadConverter, ctx| {
+            let ser_ctx = SerializationContext {
+                data: &SerializationContextData::Workflow,
+                converter: &converter,
+            };
+            let input = converter.from_payloads(&ser_ctx, payloads)?;
             let (init_input, run_input) = if W::INIT_TAKES_INPUT {
                 (Some(input), None)
             } else {

@@ -36,11 +36,15 @@ impl DataConverter {
 
     pub async fn to_payload<T: TemporalSerializable + 'static>(
         &self,
-        context: &SerializationContext,
+        data: &SerializationContextData,
         val: &T,
     ) -> Result<Payload, PayloadConversionError> {
-        let payload = self.payload_converter.to_payload(context, val)?;
-        let encoded = self.codec.encode(context, vec![payload]).await;
+        let context = SerializationContext {
+            data,
+            converter: &self.payload_converter,
+        };
+        let payload = self.payload_converter.to_payload(&context, val)?;
+        let encoded = self.codec.encode(data, vec![payload]).await;
         encoded
             .into_iter()
             .next()
@@ -49,15 +53,45 @@ impl DataConverter {
 
     pub async fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
-        context: &SerializationContext,
+        data: &SerializationContextData,
         payload: Payload,
     ) -> Result<T, PayloadConversionError> {
-        let decoded = self.codec.decode(context, vec![payload]).await;
+        let context = SerializationContext {
+            data,
+            converter: &self.payload_converter,
+        };
+        let decoded = self.codec.decode(data, vec![payload]).await;
         let payload = decoded
             .into_iter()
             .next()
             .ok_or(PayloadConversionError::WrongEncoding)?;
-        self.payload_converter.from_payload(context, payload)
+        self.payload_converter.from_payload(&context, payload)
+    }
+
+    pub async fn to_payloads<T: TemporalSerializable + 'static>(
+        &self,
+        data: &SerializationContextData,
+        val: &T,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
+        let context = SerializationContext {
+            data,
+            converter: &self.payload_converter,
+        };
+        let payloads = self.payload_converter.to_payloads(&context, val)?;
+        Ok(self.codec.encode(data, payloads).await)
+    }
+
+    pub async fn from_payloads<T: TemporalDeserializable + 'static>(
+        &self,
+        data: &SerializationContextData,
+        payloads: Vec<Payload>,
+    ) -> Result<T, PayloadConversionError> {
+        let context = SerializationContext {
+            data,
+            converter: &self.payload_converter,
+        };
+        let decoded = self.codec.decode(data, payloads).await;
+        self.payload_converter.from_payloads(&context, decoded)
     }
 
     /// Returns the payload converter component of this data converter.
@@ -66,12 +100,22 @@ impl DataConverter {
     }
 }
 
-pub enum SerializationContext {
-    // TODO [rust-sdk-branch]: Fill in
+/// Data about the serialization context, indicating where the serialization is occurring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SerializationContextData {
     Workflow,
     Activity,
     Nexus,
     None,
+}
+
+/// Context for serialization operations, including the kind of context and the
+/// payload converter for nested serialization.
+#[derive(Clone, Copy)]
+pub struct SerializationContext<'a> {
+    pub data: &'a SerializationContextData,
+    /// Allows nested types to serialize their contents using the same converter.
+    pub converter: &'a PayloadConverter,
 }
 #[derive(Clone)]
 pub enum PayloadConverter {
@@ -134,26 +178,26 @@ pub trait FailureConverter {
         &self,
         error: Box<dyn std::error::Error>,
         payload_converter: &PayloadConverter,
-        context: &SerializationContext,
+        context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError>;
 
     fn to_error(
         &self,
         failure: Failure,
         payload_converter: &PayloadConverter,
-        context: &SerializationContext,
+        context: &SerializationContextData,
     ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
 }
 pub struct DefaultFailureConverter;
 pub trait PayloadCodec {
     fn encode(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContextData,
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
     fn decode(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContextData,
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
 }
@@ -167,8 +211,15 @@ pub trait TemporalSerializable {
     fn as_serde(&self) -> Result<&dyn erased_serde::Serialize, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
     }
-    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+    fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
+    }
+    /// Convert to multiple payloads. Override this for types representing multiple arguments.
+    fn to_payloads(
+        &self,
+        ctx: &SerializationContext<'_>,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
+        Ok(vec![self.to_payload(ctx)?])
     }
 }
 
@@ -179,13 +230,27 @@ pub trait TemporalSerializable {
 pub trait TemporalDeserializable: Sized {
     fn from_serde(
         _: &dyn ErasedSerdePayloadConverter,
-        _: &SerializationContext,
+        _ctx: &SerializationContext<'_>,
         _: Payload,
     ) -> Result<Self, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
     }
-    fn from_payload(_: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError> {
+    fn from_payload(
+        ctx: &SerializationContext<'_>,
+        payload: Payload,
+    ) -> Result<Self, PayloadConversionError> {
+        let _ = (ctx, payload);
         Err(PayloadConversionError::WrongEncoding)
+    }
+    /// Convert from multiple payloads. Override this for types representing multiple arguments.
+    fn from_payloads(
+        ctx: &SerializationContext<'_>,
+        payloads: Vec<Payload>,
+    ) -> Result<Self, PayloadConversionError> {
+        if payloads.len() != 1 {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        Self::from_payload(ctx, payloads.into_iter().next().unwrap())
     }
 }
 
@@ -195,13 +260,16 @@ pub struct RawValue {
 }
 
 impl TemporalSerializable for RawValue {
-    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+    fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         Ok(self.payload.clone())
     }
 }
 
 impl TemporalDeserializable for RawValue {
-    fn from_payload(p: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError> {
+    fn from_payload(
+        _: &SerializationContext<'_>,
+        p: Payload,
+    ) -> Result<Self, PayloadConversionError> {
         Ok(RawValue { payload: p })
     }
 }
@@ -209,30 +277,68 @@ impl TemporalDeserializable for RawValue {
 pub trait GenericPayloadConverter {
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContext<'_>,
         val: &T,
     ) -> Result<Payload, PayloadConversionError>;
     #[allow(clippy::wrong_self_convention)]
     fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContext<'_>,
         payload: Payload,
     ) -> Result<T, PayloadConversionError>;
+    fn to_payloads<T: TemporalSerializable + 'static>(
+        &self,
+        context: &SerializationContext<'_>,
+        val: &T,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
+        Ok(vec![self.to_payload(context, val)?])
+    }
+    #[allow(clippy::wrong_self_convention)]
+    fn from_payloads<T: TemporalDeserializable + 'static>(
+        &self,
+        context: &SerializationContext<'_>,
+        payloads: Vec<Payload>,
+    ) -> Result<T, PayloadConversionError> {
+        if payloads.len() != 1 {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        self.from_payload(context, payloads.into_iter().next().unwrap())
+    }
 }
 
 impl GenericPayloadConverter for PayloadConverter {
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContext<'_>,
         val: &T,
     ) -> Result<Payload, PayloadConversionError> {
+        let mut payloads = self.to_payloads(context, val)?;
+        if payloads.len() != 1 {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        Ok(payloads.pop().unwrap())
+    }
+
+    fn from_payload<T: TemporalDeserializable + 'static>(
+        &self,
+        context: &SerializationContext<'_>,
+        payload: Payload,
+    ) -> Result<T, PayloadConversionError> {
+        self.from_payloads(context, vec![payload])
+    }
+
+    fn to_payloads<T: TemporalSerializable + 'static>(
+        &self,
+        context: &SerializationContext<'_>,
+        val: &T,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
         match self {
-            PayloadConverter::Serde(pc) => pc.to_payload(context, val.as_serde()?),
-            PayloadConverter::UseWrappers => T::to_payload(val, context),
+            PayloadConverter::Serde(pc) => Ok(vec![pc.to_payload(context.data, val.as_serde()?)?]),
+            PayloadConverter::UseWrappers => T::to_payloads(val, context),
             PayloadConverter::Composite(composite) => {
                 for converter in &composite.converters {
-                    match converter.to_payload(context, val) {
-                        Ok(payload) => return Ok(payload),
+                    match converter.to_payloads(context, val) {
+                        Ok(payloads) => return Ok(payloads),
                         Err(PayloadConversionError::WrongEncoding) => continue,
                         Err(e) => return Err(e),
                     }
@@ -242,17 +348,22 @@ impl GenericPayloadConverter for PayloadConverter {
         }
     }
 
-    fn from_payload<T: TemporalDeserializable + 'static>(
+    fn from_payloads<T: TemporalDeserializable + 'static>(
         &self,
-        context: &SerializationContext,
-        payload: Payload,
+        context: &SerializationContext<'_>,
+        payloads: Vec<Payload>,
     ) -> Result<T, PayloadConversionError> {
         match self {
-            PayloadConverter::Serde(pc) => T::from_serde(pc.as_ref(), context, payload),
-            PayloadConverter::UseWrappers => T::from_payload(payload, context),
+            PayloadConverter::Serde(pc) => {
+                if payloads.len() != 1 {
+                    return Err(PayloadConversionError::WrongEncoding);
+                }
+                T::from_serde(pc.as_ref(), context, payloads.into_iter().next().unwrap())
+            }
+            PayloadConverter::UseWrappers => T::from_payloads(context, payloads),
             PayloadConverter::Composite(composite) => {
                 for converter in &composite.converters {
-                    match converter.from_payload(context, payload.clone()) {
+                    match converter.from_payloads(context, payloads.clone()) {
                         Ok(val) => return Ok(val),
                         Err(PayloadConversionError::WrongEncoding) => continue,
                         Err(e) => return Err(e),
@@ -279,13 +390,13 @@ where
 {
     fn from_serde(
         pc: &dyn ErasedSerdePayloadConverter,
-        context: &SerializationContext,
+        context: &SerializationContext<'_>,
         payload: Payload,
     ) -> Result<Self, PayloadConversionError>
     where
         Self: Sized,
     {
-        let mut de = pc.from_payload(context, payload)?;
+        let mut de = pc.from_payload(context.data, payload)?;
         erased_serde::deserialize(&mut de)
             .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))
     }
@@ -295,7 +406,7 @@ struct SerdeJsonPayloadConverter;
 impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
     fn to_payload(
         &self,
-        _: &SerializationContext,
+        _: &SerializationContextData,
         value: &dyn erased_serde::Serialize,
     ) -> Result<Payload, PayloadConversionError> {
         let as_json = serde_json::to_vec(value).map_err(|_| todo!())?;
@@ -311,7 +422,7 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
 
     fn from_payload(
         &self,
-        _: &SerializationContext,
+        _: &SerializationContextData,
         payload: Payload,
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError> {
         let encoding = payload.metadata.get("encoding").map(|v| v.as_slice());
@@ -326,13 +437,13 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
 pub trait ErasedSerdePayloadConverter: Send + Sync {
     fn to_payload(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContextData,
         value: &dyn erased_serde::Serialize,
     ) -> Result<Payload, PayloadConversionError>;
     #[allow(clippy::wrong_self_convention)]
     fn from_payload(
         &self,
-        context: &SerializationContext,
+        context: &SerializationContextData,
         payload: Payload,
     ) -> Result<Box<dyn erased_serde::Deserializer<'static>>, PayloadConversionError>;
 }
@@ -344,7 +455,7 @@ impl<T> TemporalSerializable for ProstSerializable<T>
 where
     T: prost::Message + Default + 'static,
 {
-    fn to_payload(&self, _: &SerializationContext) -> Result<Payload, PayloadConversionError> {
+    fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         let as_proto = prost::Message::encode_to_vec(&self.0);
         Ok(Payload {
             metadata: {
@@ -360,7 +471,10 @@ impl<T> TemporalDeserializable for ProstSerializable<T>
 where
     T: prost::Message + Default + 'static,
 {
-    fn from_payload(p: Payload, _: &SerializationContext) -> Result<Self, PayloadConversionError>
+    fn from_payload(
+        _: &SerializationContext<'_>,
+        p: Payload,
+    ) -> Result<Self, PayloadConversionError>
     where
         Self: Sized,
     {
@@ -393,7 +507,7 @@ impl FailureConverter for DefaultFailureConverter {
         &self,
         _: Box<dyn std::error::Error>,
         _: &PayloadConverter,
-        _: &SerializationContext,
+        _: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError> {
         todo!()
     }
@@ -401,7 +515,7 @@ impl FailureConverter for DefaultFailureConverter {
         &self,
         _: Failure,
         _: &PayloadConverter,
-        _: &SerializationContext,
+        _: &SerializationContextData,
     ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
         todo!()
     }
@@ -409,16 +523,67 @@ impl FailureConverter for DefaultFailureConverter {
 impl PayloadCodec for DefaultPayloadCodec {
     fn encode(
         &self,
-        _: &SerializationContext,
+        _: &SerializationContextData,
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>> {
         async move { payloads }.boxed()
     }
     fn decode(
         &self,
-        _: &SerializationContext,
+        _: &SerializationContextData,
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>> {
         async move { payloads }.boxed()
     }
 }
+
+/// Represents multiple arguments for workflows/activities that accept more than one argument.
+/// Use this when interoperating with other language SDKs that allow multiple arguments.
+macro_rules! impl_multi_args {
+    ($name:ident; $count:expr; $($idx:tt: $ty:ident),+) => {
+        #[derive(Clone, Debug, PartialEq, Eq)]
+        pub struct $name<$($ty),+>($(pub $ty),+);
+
+        impl<$($ty),+> TemporalSerializable for $name<$($ty),+>
+        where
+            $($ty: TemporalSerializable + 'static),+
+        {
+            fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
+                Err(PayloadConversionError::WrongEncoding)
+            }
+            fn to_payloads(
+                &self,
+                ctx: &SerializationContext<'_>,
+            ) -> Result<Vec<Payload>, PayloadConversionError> {
+                Ok(vec![$(ctx.converter.to_payload(ctx, &self.$idx)?),+])
+            }
+        }
+
+        impl<$($ty),+> TemporalDeserializable for $name<$($ty),+>
+        where
+            $($ty: TemporalDeserializable + 'static),+
+        {
+            fn from_payload(_: &SerializationContext<'_>, _: Payload) -> Result<Self, PayloadConversionError> {
+                Err(PayloadConversionError::WrongEncoding)
+            }
+            fn from_payloads(
+                ctx: &SerializationContext<'_>,
+                payloads: Vec<Payload>,
+            ) -> Result<Self, PayloadConversionError> {
+                if payloads.len() != $count {
+                    return Err(PayloadConversionError::WrongEncoding);
+                }
+                let mut iter = payloads.into_iter();
+                Ok($name(
+                    $(ctx.converter.from_payload::<$ty>(ctx, iter.next().unwrap())?),+
+                ))
+            }
+        }
+    };
+}
+
+impl_multi_args!(MultiArgs2; 2; 0: A, 1: B);
+impl_multi_args!(MultiArgs3; 3; 0: A, 1: B, 2: C);
+impl_multi_args!(MultiArgs4; 4; 0: A, 1: B, 2: C, 3: D);
+impl_multi_args!(MultiArgs5; 5; 0: A, 1: B, 2: C, 3: D, 4: E);
+impl_multi_args!(MultiArgs6; 6; 0: A, 1: B, 2: C, 3: D, 4: E, 5: F);

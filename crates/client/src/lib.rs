@@ -51,7 +51,7 @@ use std::{
 };
 use temporalio_common::{
     WorkflowDefinition,
-    data_converters::{DataConverter, PayloadConversionError, SerializationContext},
+    data_converters::{DataConverter, PayloadConversionError, SerializationContextData},
     protos::{
         TaskToken,
         coresdk::IntoPayloadsExt,
@@ -1334,9 +1334,9 @@ where
         W: WorkflowDefinition,
         W::Input: Send,
     {
-        let payload = self
+        let payloads = self
             .data_converter()
-            .to_payload(&SerializationContext::Workflow, &input)
+            .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
         let namespace = self.namespace();
         let res = self
@@ -1344,7 +1344,7 @@ where
             .start_workflow_execution(
                 StartWorkflowExecutionRequest {
                     namespace: namespace.clone(),
-                    input: vec![payload].into_payloads(),
+                    input: payloads.into_payloads(),
                     workflow_id: workflow_id.clone(),
                     workflow_type: Some(WorkflowType {
                         name: W::name().to_string(),
