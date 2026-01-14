@@ -10576,6 +10576,22 @@ components:
             Endpoint ID as resolved in the endpoint registry at the time this event was generated.
              This is stored on the event and used internally by the server in case the endpoint is renamed from the time the
              event was originally scheduled.
+        scheduleToStartTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Schedule-to-start timeout for this operation.
+             See ScheduleNexusOperationCommandAttributes.schedule_to_start_timeout for details.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        startToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Start-to-close timeout for this operation.
+             See ScheduleNexusOperationCommandAttributes.start_to_close_timeout for details.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
       description: Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command.
     NexusOperationStartedEventAttributes:
       type: object
@@ -10968,6 +10984,20 @@ components:
         operationToken:
           type: string
           description: Operation token. Only set for asynchronous operations after a successful StartOperation call.
+        scheduleToStartTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Schedule-to-start timeout for this operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        startToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Start-to-close timeout for this operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
       description: PendingNexusOperationInfo contains the state of a pending Nexus operation.
     PendingWorkflowTaskInfo:
       type: object
