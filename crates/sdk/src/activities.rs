@@ -58,7 +58,9 @@ use std::{
 use temporalio_client::Priority;
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{
+        DataConverter, GenericPayloadConverter, SerializationContext, SerializationContextData,
+    },
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -378,14 +380,18 @@ impl ActivityDefinitions {
                 let instance = instance.clone();
                 let dc = dc.clone();
                 async move {
-                    let deserialized: AD::Input = dc
-                        .from_payloads(&SerializationContextData::Activity, payloads)
-                        .await
+                    // Use PayloadConverter (not DataConverter) since the codec is applied
+                    // at the SDK/Core boundary by the visitor, not here.
+                    let pc = dc.payload_converter();
+                    let ctx = SerializationContext {
+                        data: &SerializationContextData::Activity,
+                        converter: pc,
+                    };
+                    let deserialized: AD::Input = pc
+                        .from_payloads(&ctx, payloads)
                         .map_err(ActivityError::from)?;
                     let result = AD::execute(Some(instance), c, deserialized).await?;
-                    dc.to_payload(&SerializationContextData::Activity, &result)
-                        .await
-                        .map_err(ActivityError::from)
+                    pc.to_payload(&ctx, &result).map_err(ActivityError::from)
                 }
                 .boxed()
             }),

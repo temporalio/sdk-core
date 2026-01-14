@@ -824,6 +824,10 @@ impl NamespacedClient for Client {
     fn identity(&self) -> String {
         self.connection.identity().to_owned()
     }
+
+    fn data_converter(&self) -> &DataConverter {
+        &self.options.data_converter
+    }
 }
 
 /// Enum to help reference a namespace by either the namespace name or the namespace id
@@ -943,12 +947,6 @@ pub struct SignalWithStartOptions {
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
 pub trait WorkflowClientTrait: NamespacedClient {
-    /// Returns the data converter used for serializing/deserializing payloads.
-    fn data_converter(&self) -> &DataConverter {
-        static DEFAULT: OnceLock<DataConverter> = OnceLock::new();
-        DEFAULT.get_or_init(DataConverter::default)
-    }
-
     /// Starts workflow execution.
     fn start_workflow_old(
         &self,
@@ -1135,6 +1133,12 @@ pub trait NamespacedClient {
     fn namespace(&self) -> String;
     /// Returns the client identity
     fn identity(&self) -> String;
+    /// Returns the data converter for serializing/deserializing payloads.
+    /// Default implementation returns a static default converter.
+    fn data_converter(&self) -> &DataConverter {
+        static DEFAULT: OnceLock<DataConverter> = OnceLock::new();
+        DEFAULT.get_or_init(DataConverter::default)
+    }
 }
 
 /// Optional fields supplied at the start of workflow execution

@@ -6,7 +6,8 @@ document as your quick reference when submitting pull requests.
 ## Requirements for coding agents
 
 - Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly.
-  Unit tests may be run with `cargo test`.
+  Unit tests may be run with `cargo test`. If you are about to run a test, you do not need to run
+  `cargo build` separately first. Just run the test, and it will build.
 - Always use `cargo lint` for checking lints / clippy. Do not use clippy directly.
 - It is EXTREMELY IMPORTANT that any added comments should explain why something needs to be done,
   rather than what it is. Comments that simply state a fact easily understood from type signatures

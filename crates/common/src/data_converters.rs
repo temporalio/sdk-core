@@ -98,6 +98,11 @@ impl DataConverter {
     pub fn payload_converter(&self) -> &PayloadConverter {
         &self.payload_converter
     }
+
+    /// Returns the codec component of this data converter.
+    pub fn codec(&self) -> &(dyn PayloadCodec + Send + Sync) {
+        self.codec.as_ref()
+    }
 }
 
 /// Data about the serialization context, indicating where the serialization is occurring.
@@ -201,6 +206,24 @@ pub trait PayloadCodec {
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
 }
+
+impl<T: PayloadCodec> PayloadCodec for Arc<T> {
+    fn encode(
+        &self,
+        context: &SerializationContextData,
+        payloads: Vec<Payload>,
+    ) -> BoxFuture<'static, Vec<Payload>> {
+        (**self).encode(context, payloads)
+    }
+    fn decode(
+        &self,
+        context: &SerializationContextData,
+        payloads: Vec<Payload>,
+    ) -> BoxFuture<'static, Vec<Payload>> {
+        (**self).decode(context, payloads)
+    }
+}
+
 pub struct DefaultPayloadCodec;
 
 /// Indicates some type can be serialized for use with Temporal.

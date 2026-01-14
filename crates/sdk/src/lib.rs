@@ -107,10 +107,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait};
+use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
     ActivityDefinition,
-    data_converters::DataConverter,
+    data_converters::{DataConverter, SerializationContextData},
+    payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
         coresdk::{
@@ -524,13 +525,15 @@ impl Worker {
                 .context("Workflow futures encountered an error")
         };
         let wf_completion_processor = async {
-            // TODO [rust-sdk-branch]: Apply PayloadCodec encoding here before sending completions
-            // to core. This is where async codec operations (e.g., encryption) should be applied to
-            // outgoing payloads in workflow commands (ScheduleActivity inputs, child workflow
-            // inputs, etc.). The codec comes from the client's DataConverter.
             UnboundedReceiverStream::new(completions_rx)
                 .map(Ok)
-                .try_for_each_concurrent(None, |completion| async {
+                .try_for_each_concurrent(None, |mut completion| async {
+                    encode_payloads(
+                        &mut completion,
+                        common.data_converter.codec(),
+                        &SerializationContextData::Workflow,
+                    )
+                    .await;
                     if let Some(ref i) = common.worker_interceptor {
                         i.on_workflow_activation_completion(&completion).await;
                     }
@@ -544,16 +547,18 @@ impl Worker {
             // Workflow polling loop
             async {
                 loop {
-                    // TODO [rust-sdk-branch]: Apply PayloadCodec decoding here after receiving
-                    // activations from core. This is where async codec operations should decode
-                    // incoming payloads in workflow activation jobs (activity results, child
-                    // workflow results, etc.).
-                    let activation = match common.worker.poll_workflow_activation().await {
+                    let mut activation = match common.worker.poll_workflow_activation().await {
                         Err(PollError::ShutDown) => {
                             break;
                         }
                         o => o?,
                     };
+                    decode_payloads(
+                        &mut activation,
+                        common.data_converter.codec(),
+                        &SerializationContextData::Workflow,
+                    )
+                    .await;
                     if let Some(ref i) = common.worker_interceptor {
                         i.on_workflow_activation(&activation).await?;
                     }
@@ -587,11 +592,18 @@ impl Worker {
                         if matches!(activity, Err(PollError::ShutDown)) {
                             break;
                         }
+                        let mut activity = activity?;
+                        decode_payloads(
+                            &mut activity,
+                            common.data_converter.codec(),
+                            &SerializationContextData::Activity,
+                        )
+                        .await;
                         act_half.activity_task_handler(
                             common.worker.clone(),
                             common.task_queue.clone(),
                             common.data_converter.clone(),
-                            activity?,
+                            activity,
                         )?;
                     }
                 };
@@ -807,6 +819,7 @@ impl ActivityHalf {
 
                 let (ctx, args) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let codec_data_converter = data_converter.clone();
 
                 tokio::spawn(async move {
                     let act_fut = async move {
@@ -856,12 +869,17 @@ impl ActivityHalf {
                             }
                         },
                     };
-                    worker
-                        .complete_activity_task(ActivityTaskCompletion {
-                            task_token,
-                            result: Some(result),
-                        })
-                        .await?;
+                    let mut completion = ActivityTaskCompletion {
+                        task_token,
+                        result: Some(result),
+                    };
+                    encode_payloads(
+                        &mut completion,
+                        codec_data_converter.codec(),
+                        &SerializationContextData::Activity,
+                    )
+                    .await;
+                    worker.complete_activity_task(completion).await?;
                     Ok::<_, anyhow::Error>(())
                 });
             }
