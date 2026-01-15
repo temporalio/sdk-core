@@ -13,6 +13,9 @@ use std::{
 };
 use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::{
+    data_converters::{
+        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
+    },
     protos::{
         coresdk::{
             FromJsonPayloadExt,
@@ -34,7 +37,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{
+    CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext, WorkflowResult,
+};
 use temporalio_sdk_core::PollError;
 use tokio::{
     join,
@@ -42,13 +48,51 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Outcome {
+#[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(crate) enum Outcome {
     Succeed,
     Fail,
     Cancel,
     CancelAfterRecordedBeforeStarted,
     Timeout,
+}
+
+#[workflow]
+#[derive(Default)]
+struct NexusBasicWf {
+    endpoint: String,
+}
+
+#[workflow_methods]
+impl NexusBasicWf {
+    #[init]
+    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+        Self { endpoint }
+    }
+
+    #[run]
+    pub(crate) async fn run(
+        &mut self,
+        ctx: &mut WorkflowContext,
+    ) -> WorkflowResult<Result<NexusOperationResult, Failure>> {
+        match ctx
+            .start_nexus_operation(NexusOperationOptions {
+                endpoint: self.endpoint.clone(),
+                service: "svc".to_string(),
+                operation: "op".to_string(),
+                schedule_to_close_timeout: Some(Duration::from_secs(3)),
+                ..Default::default()
+            })
+            .await
+        {
+            Ok(started) => {
+                assert_eq!(started.operation_token, None);
+                let res = started.result().await;
+                Ok(Ok(res).into())
+            }
+            Err(failure) => Ok(Err(failure).into()),
+        }
+    }
 }
 
 #[rstest::rstest]
@@ -69,29 +113,16 @@ async fn nexus_basic(
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let endpoint = endpoint.clone();
-        async move {
-            match ctx
-                .start_nexus_operation(NexusOperationOptions {
-                    endpoint,
-                    service: "svc".to_string(),
-                    operation: "op".to_string(),
-                    schedule_to_close_timeout: Some(Duration::from_secs(3)),
-                    ..Default::default()
-                })
-                .await
-            {
-                Ok(started) => {
-                    assert_eq!(started.operation_token, None);
-                    let res = started.result().await;
-                    Ok(Ok(res).into())
-                }
-                Err(failure) => Ok(Err(failure).into()),
-            }
-        }
-    });
-    let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
+    worker.register_workflow::<NexusBasicWf>();
+    let wf_handle = worker
+        .submit_workflow(
+            NexusBasicWf::run,
+            starter.get_task_queue().to_owned(),
+            endpoint.clone(),
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
 
     let client = starter.get_client().await;
     let nexus_task_handle = async {
@@ -195,6 +226,81 @@ async fn nexus_basic(
         .unwrap();
 }
 
+#[workflow]
+struct NexusAsyncWf {
+    endpoint: String,
+    schedule_to_close_timeout: Option<Duration>,
+    outcome: Outcome,
+}
+
+#[workflow_methods]
+impl NexusAsyncWf {
+    #[init]
+    fn new(
+        _ctx: &WorkflowContext,
+        (endpoint, schedule_to_close_timeout, outcome): (String, Option<Duration>, Outcome),
+    ) -> Self {
+        Self {
+            endpoint,
+            schedule_to_close_timeout,
+            outcome,
+        }
+    }
+
+    #[run]
+    pub(crate) async fn run(
+        &mut self,
+        ctx: &mut WorkflowContext,
+    ) -> WorkflowResult<NexusOperationResult> {
+        let started = ctx.start_nexus_operation(NexusOperationOptions {
+            endpoint: self.endpoint.clone(),
+            service: "svc".to_string(),
+            operation: "op".to_string(),
+            schedule_to_close_timeout: self.schedule_to_close_timeout,
+            ..Default::default()
+        });
+        if self.outcome == Outcome::CancelAfterRecordedBeforeStarted {
+            ctx.timer(Duration::from_millis(1)).await;
+            started.cancel(ctx);
+        }
+        let started = started.await.unwrap();
+        let result = started.result();
+        if matches!(self.outcome, Outcome::Cancel) {
+            started.cancel(ctx);
+            started.cancel(ctx);
+        }
+        let res = result.await;
+        started.cancel(ctx);
+        Ok(res.into())
+    }
+}
+
+#[workflow]
+struct AsyncCompleter {
+    outcome: Outcome,
+}
+
+#[workflow_methods]
+impl AsyncCompleter {
+    #[init]
+    fn new(_ctx: &WorkflowContext, outcome: Outcome) -> Self {
+        Self { outcome }
+    }
+
+    #[allow(dead_code)] // Started via untyped submitter handle
+    #[run]
+    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<String> {
+        match self.outcome {
+            Outcome::Succeed => Ok("completed async".to_string().into()),
+            Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
+                ctx.cancelled().await;
+                Ok(WfExitValue::Cancelled)
+            }
+            _ => bail!("broken"),
+        }
+    }
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn nexus_async(
@@ -220,54 +326,28 @@ async fn nexus_async(
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
     let schedule_to_close_timeout = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
-        // If we set this, it'll time out before we can cancel it.
         None
     } else {
         Some(Duration::from_secs(5))
     };
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let endpoint = endpoint.clone();
-        async move {
-            let started = ctx.start_nexus_operation(NexusOperationOptions {
-                endpoint,
-                service: "svc".to_string(),
-                operation: "op".to_string(),
-                schedule_to_close_timeout,
-                ..Default::default()
-            });
-            if outcome == Outcome::CancelAfterRecordedBeforeStarted {
-                ctx.timer(Duration::from_millis(1)).await;
-                started.cancel(&ctx);
-            }
-            let started = started.await.unwrap();
-            let result = started.result();
-            if matches!(outcome, Outcome::Cancel) {
-                started.cancel(&ctx);
-                // Make sure double-cancel doesn't cause problems
-                started.cancel(&ctx);
-            }
-            let res = result.await;
-            // Make sure cancel after completion doesn't cause problems
-            started.cancel(&ctx);
-            Ok(res.into())
-        }
-    });
-    worker.register_wf(
-        "async_completer".to_owned(),
-        move |ctx: WorkflowContext| async move {
-            match outcome {
-                Outcome::Succeed => Ok("completed async".into()),
-                Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
-                    ctx.cancelled().await;
-                    Ok(WfExitValue::Cancelled)
-                }
-                _ => bail!("broken"),
-            }
-        },
-    );
+    worker.register_workflow::<NexusAsyncWf>();
+    worker.register_workflow::<AsyncCompleter>();
     let submitter = worker.get_submitter_handle();
-    let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
+    let converter = PayloadConverter::default();
+    let ser_ctx = SerializationContext {
+        data: &SerializationContextData::Workflow,
+        converter: &converter,
+    };
+    let wf_handle = worker
+        .submit_workflow(
+            NexusAsyncWf::run,
+            starter.get_task_queue().to_owned(),
+            (endpoint.clone(), schedule_to_close_timeout, outcome),
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
 
     let client = starter.get_client().await;
     let nexus_task_handle = async {
@@ -312,11 +392,12 @@ async fn nexus_async(
 
             // Start the workflow which will act like the nexus handler and complete the async
             // operation
+            let payloads = vec![converter.to_payload(&ser_ctx, &outcome).unwrap()];
             submitter
                 .submit_wf(
                     completer_id.clone(),
-                    "async_completer",
-                    vec![],
+                    AsyncCompleter::name(),
+                    payloads,
                     WorkflowOptions {
                         completion_callbacks: vec![Callback {
                             variant: Some(callback::Variant::Nexus(callback::Nexus {
@@ -413,7 +494,7 @@ async fn nexus_async(
                 Some(nexus_operation_result::Status::Failed(f)) => f
             );
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            assert_eq!(f.cause.unwrap().message, "broken");
+            assert_eq!(f.cause.unwrap().message, "Workflow execution error: broken");
         }
         Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
             let f = assert_matches!(
@@ -437,6 +518,41 @@ async fn nexus_async(
         .await
         .unwrap();
 }
+#[workflow]
+#[derive(Default)]
+struct NexusCancelBeforeStartWf {
+    endpoint: String,
+}
+
+#[workflow_methods]
+impl NexusCancelBeforeStartWf {
+    #[init]
+    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+        Self { endpoint }
+    }
+
+    #[run]
+    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        let started = ctx.start_nexus_operation(NexusOperationOptions {
+            endpoint: self.endpoint.clone(),
+            service: "svc".to_string(),
+            operation: "op".to_string(),
+            ..Default::default()
+        });
+        started.cancel(ctx);
+        let res = started.await.unwrap_err();
+        assert_eq!(res.message, "Nexus Operation cancelled before scheduled");
+        if let FailureInfo::NexusOperationExecutionFailureInfo(fi) = res.failure_info.unwrap() {
+            assert_eq!(fi.endpoint, self.endpoint);
+            assert_eq!(fi.service, "svc");
+            assert_eq!(fi.operation, "op");
+        } else {
+            panic!("unexpected failure info");
+        }
+        Ok(().into())
+    }
+}
+
 #[tokio::test]
 async fn nexus_cancel_before_start() {
     let wf_name = "nexus_cancel_before_start";
@@ -451,29 +567,16 @@ async fn nexus_cancel_before_start() {
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let endpoint = endpoint.clone();
-        async move {
-            let started = ctx.start_nexus_operation(NexusOperationOptions {
-                endpoint: endpoint.clone(),
-                service: "svc".to_string(),
-                operation: "op".to_string(),
-                ..Default::default()
-            });
-            started.cancel(&ctx);
-            let res = started.await.unwrap_err();
-            assert_eq!(res.message, "Nexus Operation cancelled before scheduled");
-            if let FailureInfo::NexusOperationExecutionFailureInfo(fi) = res.failure_info.unwrap() {
-                assert_eq!(fi.endpoint, endpoint);
-                assert_eq!(fi.service, "svc");
-                assert_eq!(fi.operation, "op");
-            } else {
-                panic!("unexpected failure info");
-            }
-            Ok(().into())
-        }
-    });
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    worker.register_workflow::<NexusCancelBeforeStartWf>();
+    let handle = worker
+        .submit_workflow(
+            NexusCancelBeforeStartWf::run,
+            starter.get_task_queue().to_owned(),
+            endpoint,
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
 
     worker.run_until_done().await.unwrap();
 
@@ -481,6 +584,36 @@ async fn nexus_cancel_before_start() {
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct NexusMustCompleteTaskWf {
+    endpoint: String,
+}
+
+#[workflow_methods]
+impl NexusMustCompleteTaskWf {
+    #[init]
+    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+        Self { endpoint }
+    }
+
+    #[run]
+    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        // We just need to create the command, not await it.
+        drop(ctx.start_nexus_operation(NexusOperationOptions {
+            endpoint: self.endpoint.clone(),
+            service: "svc".to_string(),
+            operation: "op".to_string(),
+            ..Default::default()
+        }));
+        // Workflow completes right away, only having scheduled the operation. We need a timer
+        // to make sure the nexus task actually gets scheduled.
+        ctx.timer(Duration::from_millis(1)).await;
+        // started.await.unwrap();
+        Ok(().into())
+    }
 }
 
 #[rstest::rstest]
@@ -502,24 +635,16 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
 
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let endpoint = endpoint.clone();
-        async move {
-            // We just need to create the command, not await it.
-            drop(ctx.start_nexus_operation(NexusOperationOptions {
-                endpoint: endpoint.clone(),
-                service: "svc".to_string(),
-                operation: "op".to_string(),
-                ..Default::default()
-            }));
-            // Workflow completes right away, only having scheduled the operation. We need a timer
-            // to make sure the nexus task actually gets scheduled.
-            ctx.timer(Duration::from_millis(1)).await;
-            // started.await.unwrap();
-            Ok(().into())
-        }
-    });
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    worker.register_workflow::<NexusMustCompleteTaskWf>();
+    let handle = worker
+        .submit_workflow(
+            NexusMustCompleteTaskWf::run,
+            starter.get_task_queue().to_owned(),
+            endpoint,
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
     let (complete_order_tx, mut complete_order_rx) = mpsc::unbounded_channel();
 
     let task_handle = async {
@@ -578,6 +703,82 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
         .unwrap();
 }
 
+#[workflow]
+struct NexusCancellationCallerWf {
+    endpoint: String,
+    schedule_to_close_timeout: Option<Duration>,
+    cancellation_type: NexusOperationCancellationType,
+    caller_op_future_tx: watch::Sender<bool>,
+}
+
+#[workflow_methods(factory_only)]
+impl NexusCancellationCallerWf {
+    #[run(name = "nexus_cancellation_types")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<NexusOperationResult> {
+        let options = NexusOperationOptions {
+            endpoint: self.endpoint.clone(),
+            service: "svc".to_string(),
+            operation: "op".to_string(),
+            schedule_to_close_timeout: self.schedule_to_close_timeout,
+            cancellation_type: Some(self.cancellation_type),
+            ..Default::default()
+        };
+        let started = ctx.start_nexus_operation(options);
+        let started = started.await.unwrap();
+        let result = started.result();
+        started.cancel(ctx);
+        started.cancel(ctx);
+
+        let res = result.await;
+        self.caller_op_future_tx.send(true).unwrap();
+
+        // Make sure cancel after op completion doesn't cause problems
+        started.cancel(ctx);
+
+        // We need to wait slightly so that the workflow is not complete at the same time
+        // cancellation is invoked. If it does, the caller workflow will close and the server
+        // won't attempt to send the cancellation to the handler
+        ctx.timer(Duration::from_millis(1)).await;
+        Ok(res.into())
+    }
+}
+
+#[workflow]
+struct AsyncCompleterWf {
+    cancellation_type: NexusOperationCancellationType,
+    cancellation_wait_happened: Arc<AtomicBool>,
+    cancellation_tx: watch::Sender<bool>,
+    handler_exited_tx: watch::Sender<bool>,
+}
+
+#[workflow_methods(factory_only)]
+impl AsyncCompleterWf {
+    #[run(name = "async_completer")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        // Wait for cancellation
+        ctx.cancelled().await;
+        self.cancellation_tx.send(true).unwrap();
+
+        if self.cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
+            ctx.wait_condition(|| self.cancellation_wait_happened.load(Ordering::Relaxed))
+                .await;
+        } else if self.cancellation_type
+            == NexusOperationCancellationType::WaitCancellationRequested
+        {
+            // For WAIT_REQUESTED, wait until the caller nexus op future has been resolved. This
+            // allows the test to verify that it resolved due to
+            // NexusOperationCancelRequestCompleted (written after cancel handler responds)
+            // rather than NexusOperationCanceled (written after handler workflow completes as
+            // cancelled).
+            let mut signal_chan = ctx.make_signal_channel("proceed-to-exit");
+            signal_chan.next().await;
+        }
+
+        self.handler_exited_tx.send(true).unwrap();
+        Ok(WfExitValue::<()>::Cancelled)
+    }
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn nexus_cancellation_types(
@@ -604,67 +805,29 @@ async fn nexus_cancellation_types(
     let schedule_to_close_timeout = Some(Duration::from_secs(5));
 
     let (caller_op_future_tx, caller_op_future_rx) = watch::channel(false);
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
+    worker.register_workflow_with_factory({
         let endpoint = endpoint.clone();
         let caller_op_future_tx = caller_op_future_tx.clone();
-        async move {
-            let options = NexusOperationOptions {
-                endpoint,
-                service: "svc".to_string(),
-                operation: "op".to_string(),
-                schedule_to_close_timeout,
-                cancellation_type: Some(cancellation_type),
-                ..Default::default()
-            };
-            let started = ctx.start_nexus_operation(options);
-            let started = started.await.unwrap();
-            let result = started.result();
-            started.cancel(&ctx);
-            started.cancel(&ctx);
-
-            let res = result.await;
-            caller_op_future_tx.send(true).unwrap();
-
-            // Make sure cancel after op completion doesn't cause problems
-            started.cancel(&ctx);
-
-            // We need to wait slightly so that the workflow is not complete at the same time
-            // cancellation is invoked. If it does, the caller workflow will close and the server
-            // won't attempt to send the cancellation to the handler
-            ctx.timer(Duration::from_millis(1)).await;
-            Ok(res.into())
+        move || NexusCancellationCallerWf {
+            endpoint: endpoint.clone(),
+            schedule_to_close_timeout,
+            cancellation_type,
+            caller_op_future_tx: caller_op_future_tx.clone(),
         }
     });
 
     let cancellation_wait_happened = Arc::new(AtomicBool::new(false));
-    let cancellation_wait_happened_clone = cancellation_wait_happened.clone();
     let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
     let (handler_exited_tx, mut handler_exited_rx) = watch::channel(false);
-    worker.register_wf("async_completer".to_owned(), move |ctx: WorkflowContext| {
+    worker.register_workflow_with_factory({
+        let cancellation_wait_happened = cancellation_wait_happened.clone();
         let cancellation_tx = cancellation_tx.clone();
-        let cancellation_wait_happened = cancellation_wait_happened_clone.clone();
         let handler_exited_tx = handler_exited_tx.clone();
-        async move {
-            // Wait for cancellation
-            ctx.cancelled().await;
-            cancellation_tx.send(true).unwrap();
-
-            if cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
-                ctx.wait_condition(|| cancellation_wait_happened.load(Ordering::Relaxed))
-                    .await;
-            } else if cancellation_type == NexusOperationCancellationType::WaitCancellationRequested
-            {
-                // For WAIT_REQUESTED, wait until the caller nexus op future has been resolved. This
-                // allows the test to verify that it resolved due to
-                // NexusOperationCancelRequestCompleted (written after cancel handler responds)
-                // rather than NexusOperationCanceled (written after handler workflow completes as
-                // cancelled).
-                let mut signal_chan = ctx.make_signal_channel("proceed-to-exit");
-                signal_chan.next().await;
-            }
-
-            handler_exited_tx.send(true).unwrap();
-            Ok(WfExitValue::<()>::Cancelled)
+        move || AsyncCompleterWf {
+            cancellation_type,
+            cancellation_wait_happened: cancellation_wait_happened.clone(),
+            cancellation_tx: cancellation_tx.clone(),
+            handler_exited_tx: handler_exited_tx.clone(),
         }
     });
     let submitter = worker.get_submitter_handle();

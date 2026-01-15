@@ -495,7 +495,7 @@ impl WorkflowMethodsDefinition {
         format_ident!("{}", struct_name)
     }
 
-    pub(crate) fn codegen(&self) -> TokenStream {
+    pub(crate) fn codegen_with_options(&self, factory_only: bool) -> TokenStream {
         let impl_type = &self.impl_block.self_ty;
         let impl_type_name = type_name_string(impl_type);
         let module_name = type_to_snake_case(impl_type);
@@ -606,7 +606,8 @@ impl WorkflowMethodsDefinition {
             trait_impls.push(impls);
         }
 
-        let workflow_impl = self.generate_workflow_implementation(impl_type, &module_ident);
+        let workflow_impl =
+            self.generate_workflow_implementation(impl_type, &module_ident, factory_only);
         let implementer_impl = self.generate_workflow_implementer(impl_type, &module_ident);
 
         let const_impl = quote! {
@@ -798,6 +799,7 @@ impl WorkflowMethodsDefinition {
         &self,
         impl_type: &Type,
         module_ident: &syn::Ident,
+        factory_only: bool,
     ) -> TokenStream2 {
         let run_method = &self.run_method;
 
@@ -805,7 +807,8 @@ impl WorkflowMethodsDefinition {
         let run_struct_ident = format_ident!("{}", run_struct_name);
         let prefixed_run = format_ident!("__{}", run_method.method.sig.ident);
 
-        // Determine if init takes input or run takes input
+        // Determine if init exists and takes input, or if run takes input
+        let has_init = self.init_method.is_some();
         let init_has_input = self
             .init_method
             .as_ref()
@@ -823,6 +826,13 @@ impl WorkflowMethodsDefinition {
                 quote! {
                     #impl_type::#prefixed_init(ctx)
                 }
+            }
+        } else if factory_only {
+            // For factory-only workflows, init() should never be called
+            quote! {
+                panic!(
+                    "This workflow must be registered with register_workflow_with_factory"
+                )
             }
         } else {
             quote! {
@@ -850,12 +860,19 @@ impl WorkflowMethodsDefinition {
                                     data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
                                     converter: &ctx.payload_converter(),
                                 };
-                                ctx.payload_converter().to_payload(&ser_ctx, &v).map_err(Into::into)
+                                ctx.payload_converter()
+                                    .to_payload(&ser_ctx, &v)
+                                    .map(::temporalio_sdk::WfExitValue::Normal)
+                                    .map_err(Into::into)
                             }
-                            ::temporalio_sdk::WfExitValue::ContinueAsNew(_) |
-                            ::temporalio_sdk::WfExitValue::Cancelled |
+                            ::temporalio_sdk::WfExitValue::ContinueAsNew(cmd) => {
+                                Ok(::temporalio_sdk::WfExitValue::ContinueAsNew(cmd))
+                            }
+                            ::temporalio_sdk::WfExitValue::Cancelled => {
+                                Ok(::temporalio_sdk::WfExitValue::Cancelled)
+                            }
                             ::temporalio_sdk::WfExitValue::Evicted => {
-                                todo!("Handle non-normal exit values")
+                                Ok(::temporalio_sdk::WfExitValue::Evicted)
                             }
                         }
                     }
@@ -868,6 +885,7 @@ impl WorkflowMethodsDefinition {
             impl ::temporalio_sdk::workflows::WorkflowImplementation for #impl_type {
                 type Run = #module_ident::#run_struct_ident;
 
+                const HAS_INIT: bool = #has_init;
                 const INIT_TAKES_INPUT: bool = #init_has_input;
 
                 fn init(
@@ -881,7 +899,7 @@ impl WorkflowMethodsDefinition {
                     &mut self,
                     ctx: ::temporalio_sdk::WorkflowContext,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
-                ) -> ::futures_util::future::BoxFuture<'_, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>> {
+                ) -> ::futures_util::future::BoxFuture<'_, Result<::temporalio_sdk::WfExitValue<::temporalio_common::protos::temporal::api::common::v1::Payload>, ::temporalio_sdk::workflows::WorkflowError>> {
                     #run_impl_body
                 }
             }

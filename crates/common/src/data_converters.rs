@@ -376,6 +376,12 @@ impl GenericPayloadConverter for PayloadConverter {
         context: &SerializationContext<'_>,
         payloads: Vec<Payload>,
     ) -> Result<T, PayloadConversionError> {
+        // Handle empty payloads as unit type ()
+        if payloads.is_empty() && std::any::TypeId::of::<T>() == std::any::TypeId::of::<()>() {
+            let boxed: Box<dyn std::any::Any> = Box::new(());
+            return Ok(*boxed.downcast::<T>().unwrap());
+        }
+
         match self {
             PayloadConverter::Serde(pc) => {
                 if payloads.len() != 1 {
@@ -610,3 +616,22 @@ impl_multi_args!(MultiArgs3; 3; 0: A, 1: B, 2: C);
 impl_multi_args!(MultiArgs4; 4; 0: A, 1: B, 2: C, 3: D);
 impl_multi_args!(MultiArgs5; 5; 0: A, 1: B, 2: C, 3: D, 4: E);
 impl_multi_args!(MultiArgs6; 6; 0: A, 1: B, 2: C, 3: D, 4: E, 5: F);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_empty_payloads_as_unit_type() {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let empty_payloads: Vec<Payload> = vec![];
+        let result: Result<(), _> = converter.from_payloads(&ctx, empty_payloads);
+
+        assert!(result.is_ok(), "Empty payloads should deserialize as ()");
+    }
+}

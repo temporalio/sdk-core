@@ -13,11 +13,33 @@ use temporalio_common::protos::temporal::api::{
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{LocalActivityOptions, WorkflowContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{LocalActivityOptions, WorkflowContext, WorkflowResult};
 use tokio::sync::Notify;
 use tonic::IntoRequest;
 
 const POST_RESET_SIG: &str = "post-reset";
+
+#[workflow]
+struct ResetMeWf {
+    notify: Arc<Notify>,
+}
+
+#[workflow_methods(factory_only)]
+impl ResetMeWf {
+    #[run(name = "reset_me_wf")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        ctx.timer(Duration::from_secs(1)).await;
+        ctx.timer(Duration::from_secs(1)).await;
+        self.notify.notify_one();
+        let _ = ctx
+            .make_signal_channel(POST_RESET_SIG)
+            .next()
+            .await
+            .unwrap();
+        Ok(().into())
+    }
+}
 
 #[tokio::test]
 async fn reset_workflow() {
@@ -26,35 +48,18 @@ async fn reset_workflow() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
-    let notify = Arc::new(Notify::new());
 
-    let wf_notify = notify.clone();
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let notify = wf_notify.clone();
-        async move {
-            // Make a couple workflow tasks
-            ctx.timer(Duration::from_secs(1)).await;
-            ctx.timer(Duration::from_secs(1)).await;
-            // Tell outer scope to send the reset
-            notify.notify_one();
-            let _ = ctx
-                .make_signal_channel(POST_RESET_SIG)
-                .next()
-                .await
-                .unwrap();
-            Ok(().into())
-        }
+    let notify = Arc::new(Notify::new());
+    let notify_clone = notify.clone();
+    worker.register_workflow_with_factory(move || ResetMeWf {
+        notify: notify_clone.clone(),
     });
 
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
+    let handle = worker
+        .submit_workflow(ResetMeWf::run, wf_name, (), WorkflowOptions::default())
         .await
         .unwrap();
+    let run_id = handle.info().run_id.clone().unwrap();
 
     let mut client = starter.get_client().await;
     let resetter_fut = async {
@@ -66,7 +71,7 @@ async fn reset_workflow() {
                     namespace: NAMESPACE.to_owned(),
                     workflow_execution: Some(WorkflowExecution {
                         workflow_id: wf_name.to_owned(),
-                        run_id: run_id.clone(),
+                        run_id,
                     }),
                     // End of first WFT
                     workflow_task_finish_event_id: 4,
@@ -104,6 +109,56 @@ async fn reset_workflow() {
     rr.unwrap();
 }
 
+const POST_FAIL_SIG: &str = "post-fail";
+
+#[workflow]
+struct ResetRandomseedWf {
+    did_fail: Arc<AtomicBool>,
+    rand_seed: Arc<AtomicU64>,
+    notify: Arc<Notify>,
+}
+
+#[workflow_methods(factory_only)]
+impl ResetRandomseedWf {
+    #[run(name = "reset_randomseed")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        let _ = self.rand_seed.compare_exchange(
+            0,
+            ctx.random_seed(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+        ctx.timer(Duration::from_millis(100)).await;
+        ctx.timer(Duration::from_millis(100)).await;
+        if self
+            .did_fail
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.notify.notify_one();
+            panic!("Ahh");
+        }
+        if self.rand_seed.load(Ordering::Relaxed) == ctx.random_seed() {
+            ctx.timer(Duration::from_millis(100)).await;
+        } else {
+            ctx.start_local_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                LocalActivityOptions::default(),
+            )?
+            .await;
+        }
+        let _ = ctx.make_signal_channel(POST_FAIL_SIG).next().await.unwrap();
+        self.notify.notify_one();
+        let _ = ctx
+            .make_signal_channel(POST_RESET_SIG)
+            .next()
+            .await
+            .unwrap();
+        Ok(().into())
+    }
+}
+
 #[tokio::test]
 async fn reset_randomseed() {
     let wf_name = "reset_randomseed";
@@ -116,67 +171,28 @@ async fn reset_randomseed() {
     };
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
+
+    let did_fail = Arc::new(AtomicBool::new(false));
+    let rand_seed = Arc::new(AtomicU64::new(0));
     let notify = Arc::new(Notify::new());
-
-    const POST_FAIL_SIG: &str = "post-fail";
-    static DID_FAIL: AtomicBool = AtomicBool::new(false);
-    static RAND_SEED: AtomicU64 = AtomicU64::new(0);
-
-    let wf_notify = notify.clone();
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| {
-        let notify = wf_notify.clone();
-        async move {
-            let _ = RAND_SEED.compare_exchange(
-                0,
-                ctx.random_seed(),
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            );
-            // Make a couple workflow tasks
-            ctx.timer(Duration::from_millis(100)).await;
-            ctx.timer(Duration::from_millis(100)).await;
-            if DID_FAIL
-                .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
-                .is_ok()
-            {
-                // Tell outer scope to send the post-task-failure-signal
-                notify.notify_one();
-                panic!("Ahh");
-            }
-            // Make a command that is one thing with the initial seed, but another after reset
-            if RAND_SEED.load(Ordering::Relaxed) == ctx.random_seed() {
-                ctx.timer(Duration::from_millis(100)).await;
-            } else {
-                ctx.start_local_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    LocalActivityOptions::default(),
-                )?
-                .await;
-            }
-            // Wait for the post-task-fail signal
-            let _ = ctx.make_signal_channel(POST_FAIL_SIG).next().await.unwrap();
-            // Tell outer scope to send the reset
-            notify.notify_one();
-            let _ = ctx
-                .make_signal_channel(POST_RESET_SIG)
-                .next()
-                .await
-                .unwrap();
-            Ok(().into())
-        }
+    let notify_clone = notify.clone();
+    worker.register_workflow_with_factory(move || ResetRandomseedWf {
+        did_fail: did_fail.clone(),
+        rand_seed: rand_seed.clone(),
+        notify: notify_clone.clone(),
     });
     worker.register_activities(StdActivities);
 
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
+    let handle = worker
+        .submit_workflow(
+            ResetRandomseedWf::run,
+            wf_name,
+            (),
             WorkflowOptions::default(),
         )
         .await
         .unwrap();
+    let run_id = handle.info().run_id.clone().unwrap();
 
     let mut client = starter.get_client().await;
     let client_fur = async {

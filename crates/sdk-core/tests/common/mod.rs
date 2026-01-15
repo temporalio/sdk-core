@@ -61,7 +61,7 @@ use temporalio_sdk::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
     },
-    workflows::WorkflowImplementer,
+    workflows::{WorkflowImplementation, WorkflowImplementer},
 };
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
@@ -559,6 +559,16 @@ impl TestWorker {
     #[allow(unused)]
     pub(crate) fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
         self.inner.register_workflow::<WI>();
+        self
+    }
+
+    pub(crate) fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.inner.register_workflow_with_factory::<W, F>(factory);
         self
     }
 

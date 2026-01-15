@@ -46,6 +46,12 @@ pub fn workflow(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// - Trait implementations for workflow definition and execution
 /// - Registration code for workers
 ///
+/// ## Macro Attributes
+///
+/// - `factory_only` - When set, the workflow must be registered using
+///   `register_workflow_with_factory` and does not need to implement `Default` or define an `#[init]`
+///   method. Ex: `#[workflow_methods(factory_only)]`
+///
 /// ## Method Attributes
 ///
 /// - `#[init]` - Optional initialization method. Signature: `fn new(input: T, ctx: &WorkflowContext) -> Self`
@@ -56,10 +62,11 @@ pub fn workflow(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// For a usage example, see the `temporalio_sdk` crate's documentation.
 #[proc_macro_attribute]
-pub fn workflow_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn workflow_methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let factory_only = !attr.is_empty() && attr.to_string().contains("factory_only");
     let def: workflow_definitions::WorkflowMethodsDefinition =
         parse_macro_input!(item as workflow_definitions::WorkflowMethodsDefinition);
-    def.codegen()
+    def.codegen_with_options(factory_only)
 }
 
 /// Marks a method within a `#[workflow_methods]` impl block as the initialization method.

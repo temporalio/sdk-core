@@ -17,28 +17,36 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
+use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
 
-async fn search_attr_updater(ctx: WorkflowContext) -> WorkflowResult<()> {
-    let mut int_val = ctx
-        .search_attributes()
-        .indexed_fields
-        .get(SEARCH_ATTR_INT)
-        .cloned()
-        .unwrap_or_default();
-    let orig_val = int_val.data[0];
-    int_val.data[0] += 1;
-    ctx.upsert_search_attributes([
-        (SEARCH_ATTR_TXT.to_string(), "goodbye".as_json_payload()?),
-        (SEARCH_ATTR_INT.to_string(), int_val),
-    ]);
-    // 49 is ascii 1
-    if orig_val == 49 {
-        Ok(WfExitValue::ContinueAsNew(Box::default()))
-    } else {
-        Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct SearchAttrUpdater;
+
+#[workflow_methods]
+impl SearchAttrUpdater {
+    #[run(name = "sends_upsert_search_attrs")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        let mut int_val = ctx
+            .search_attributes()
+            .indexed_fields
+            .get(SEARCH_ATTR_INT)
+            .cloned()
+            .unwrap_or_default();
+        let orig_val = int_val.data[0];
+        int_val.data[0] += 1;
+        ctx.upsert_search_attributes([
+            (SEARCH_ATTR_TXT.to_string(), "goodbye".as_json_payload()?),
+            (SEARCH_ATTR_INT.to_string(), int_val),
+        ]);
+        if orig_val == 49 {
+            Ok(WfExitValue::ContinueAsNew(Box::default()))
+        } else {
+            Ok(().into())
+        }
     }
 }
 
@@ -50,7 +58,7 @@ async fn sends_upsert() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name, search_attr_updater);
+    worker.register_workflow::<SearchAttrUpdater>();
     worker
         .submit_wf(
             wf_id.to_string(),
@@ -100,6 +108,36 @@ async fn sends_upsert() {
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
+#[workflow]
+#[derive(Default)]
+struct UpsertTestWf;
+
+#[workflow_methods]
+impl UpsertTestWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        const K1: &str = "foo";
+        const K2: &str = "bar";
+        ctx.upsert_search_attributes([
+            (
+                String::from(K1),
+                Payload {
+                    data: vec![0x01],
+                    ..Default::default()
+                },
+            ),
+            (
+                String::from(K2),
+                Payload {
+                    data: vec![0x02],
+                    ..Default::default()
+                },
+            ),
+        ]);
+        Ok(().into())
+    }
+}
+
 #[tokio::test]
 async fn upsert_search_attrs_from_workflow() {
     let mut t = TestHistoryBuilder::default();
@@ -129,27 +167,6 @@ async fn upsert_search_attrs_from_workflow() {
     });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(
-        DEFAULT_WORKFLOW_TYPE,
-        move |ctx: WorkflowContext| async move {
-            ctx.upsert_search_attributes([
-                (
-                    String::from(k1),
-                    Payload {
-                        data: vec![0x01],
-                        ..Default::default()
-                    },
-                ),
-                (
-                    String::from(k2),
-                    Payload {
-                        data: vec![0x02],
-                        ..Default::default()
-                    },
-                ),
-            ]);
-            Ok(().into())
-        },
-    );
+    worker.register_workflow::<UpsertTestWf>();
     worker.run().await.unwrap();
 }

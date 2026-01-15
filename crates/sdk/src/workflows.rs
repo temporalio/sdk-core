@@ -40,7 +40,7 @@
 //! }
 //! ```
 
-use crate::WorkflowContext;
+use crate::{WfExitValue, WorkflowContext};
 use futures_util::future::BoxFuture;
 use std::{collections::HashMap, fmt::Debug, sync::Arc};
 use temporalio_common::{
@@ -77,6 +77,10 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
     /// The marker struct for the run method that implements `WorkflowDefinition`
     type Run: WorkflowDefinition;
 
+    /// Whether this workflow has a user-defined `#[init]` method.
+    /// Set to `true` by the macro when `#[init]` is present, `false` otherwise.
+    const HAS_INIT: bool;
+
     /// Whether the init method accepts the workflow input.
     /// If true, input goes to init. If false, input goes to run.
     const INIT_TAKES_INPUT: bool;
@@ -95,7 +99,7 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
         &mut self,
         ctx: WorkflowContext,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
-    ) -> BoxFuture<'_, Result<Payload, WorkflowError>>;
+    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
 }
 
 /// Trait for executing signal handlers on a workflow.
@@ -158,9 +162,10 @@ pub(crate) type WorkflowInvocation = Arc<
             Vec<Payload>,
             PayloadConverter,
             WorkflowContext,
-        )
-            -> Result<BoxFuture<'static, Result<Payload, WorkflowError>>, PayloadConversionError>
-        + Send
+        ) -> Result<
+            BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
+            PayloadConversionError,
+        > + Send
         + Sync,
 >;
 
@@ -235,9 +240,54 @@ impl WorkflowDefinitions {
             let mut workflow = W::init(&ctx, init_input);
             Ok(
                 Box::pin(async move { workflow.run(ctx.clone(), run_input).await })
-                    as BoxFuture<'static, Result<Payload, WorkflowError>>,
+                    as BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
             )
         });
+        self.workflows.insert(
+            workflow_name,
+            WorkflowHandlers {
+                run,
+                signals: HashMap::new(),
+                queries: HashMap::new(),
+                updates: HashMap::new(),
+            },
+        );
+        self
+    }
+
+    /// Register a workflow with a custom factory for instance creation.
+    pub fn register_workflow_run_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        assert!(
+            !W::HAS_INIT,
+            "Workflows registered with a factory must not define an #[init] method. \
+             The factory replaces init for instance creation."
+        );
+
+        let workflow_name = <W::Run as WorkflowDefinition>::name();
+        let factory = Arc::new(factory);
+        let run = Arc::new(
+            move |payloads, converter: PayloadConverter, ctx: WorkflowContext| {
+                let ser_ctx = SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                };
+                let input: <W::Run as WorkflowDefinition>::Input =
+                    converter.from_payloads(&ser_ctx, payloads)?;
+
+                // Factory creates the instance - input always goes to run()
+                let mut workflow = factory();
+                Ok(
+                    Box::pin(async move { workflow.run(ctx.clone(), Some(input)).await })
+                        as BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
+                )
+            },
+        );
+
         self.workflows.insert(
             workflow_name,
             WorkflowHandlers {

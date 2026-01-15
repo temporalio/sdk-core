@@ -92,7 +92,7 @@ use crate::{
     },
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
-    workflows::{WorkflowDefinitions, WorkflowImplementer},
+    workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, future::BoxFuture};
@@ -109,7 +109,7 @@ use std::{
 };
 use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
-    ActivityDefinition,
+    ActivityDefinition, WorkflowDefinition,
     data_converters::{DataConverter, SerializationContextData},
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
@@ -277,6 +277,34 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
         self.workflows.register_workflow::<WI>();
         self
     }
+
+    /// Register a workflow with a custom factory for instance creation.
+    ///
+    /// # Warning: Advanced Usage
+    ///
+    /// This method is intended for scenarios requiring injection of un-serializable
+    /// state into workflows.
+    ///
+    /// **This can easily cause nondeterminism**
+    ///
+    /// Only use when you understand the implications and have a specific need that cannot be met
+    /// otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the workflow type defines an `#[init]` method. Workflows using
+    /// factory registration must not have `#[init]` to avoid ambiguity about
+    /// instance creation.
+    pub fn register_workflow_with_factory<W, F>(mut self, factory: F) -> Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.workflows
+            .register_workflow_run_with_factory::<W, F>(factory);
+        self
+    }
 }
 
 // Needs to exist to avoid https://github.com/elastio/bon/issues/359
@@ -309,6 +337,22 @@ impl WorkerOptions {
         self.workflows.register_workflow::<WI>();
         self
     }
+
+    /// Register a workflow with a custom factory for instance creation.
+    ///
+    /// # Warning: Advanced Usage
+    /// See [WorkerOptionsBuilder::register_workflow_with_factory] for more.
+    pub fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.workflows
+            .register_workflow_run_with_factory::<W, F>(factory);
+        self
+    }
+
     /// Returns all the registered workflows by cloning the current set.
     pub fn workflows(&self) -> WorkflowDefinitions {
         self.workflows.clone()
@@ -492,6 +536,21 @@ impl Worker {
         self.workflow_half
             .workflow_definitions
             .register_workflow::<WI>();
+        self
+    }
+
+    /// Register a workflow with a custom factory for instance creation.
+    ///
+    /// See [WorkerOptionsBuilder::register_workflow_with_factory] for more.
+    pub fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.workflow_half
+            .workflow_definitions
+            .register_workflow_run_with_factory::<W, F>(factory);
         self
     }
 
@@ -1187,7 +1246,7 @@ impl WorkflowFunction {
                 match invocation(input, converter, ctx) {
                     Ok(fut) => fut
                         .map(|r| match r {
-                            Ok(payload) => Ok(WfExitValue::Normal(payload)),
+                            Ok(exit_value) => Ok(exit_value),
                             Err(e) => Err(e.into()),
                         })
                         .boxed(),
