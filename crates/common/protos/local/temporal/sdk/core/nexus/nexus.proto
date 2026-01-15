@@ -3,6 +3,7 @@ syntax = "proto3";
 package coresdk.nexus;
 option ruby_package = "Temporalio::Internal::Bridge::Api::Nexus";
 
+import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/nexus/v1/message.proto";
@@ -54,6 +55,10 @@ message NexusTask {
         // user's operation handler to continue doing work.
         CancelNexusTask cancel_task = 2;
     }
+    // The deadline for this request, parsed from the "Request-Timeout" header.
+    // Only set when variant is `task` and the header was present with a valid value.
+    // Represented as an absolute timestamp.
+    google.protobuf.Timestamp request_deadline = 3;
 }
 
 message CancelNexusTask {

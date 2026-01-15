@@ -12,6 +12,7 @@ use futures_util::{
     Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
 };
+use prost_types::Timestamp;
 use std::{
     collections::HashMap,
     sync::{
@@ -264,6 +265,7 @@ where
 
                             let tt = TaskToken(t.resp.task_token.clone());
                             let mut timeout_task = None;
+                            let mut request_deadline: Option<Timestamp> = None;
                             if let Some(timeout_str) = t
                                 .resp
                                 .request
@@ -271,6 +273,7 @@ where
                                 .and_then(|r| r.header.get(REQUEST_TIMEOUT_HEADER))
                             {
                                 if let Ok(timeout_dur) = parse_request_timeout(timeout_str) {
+                                    request_deadline = Some((SystemTime::now() + timeout_dur).into());
                                     let tt_clone = tt.clone();
                                     let cancels_tx = self.cancels_tx.clone();
                                     timeout_task = Some(tokio::task::spawn(async move {
@@ -331,12 +334,14 @@ where
                             );
                             Some(Ok(NexusTask {
                                 variant: Some(nexus_task::Variant::Task(t.resp)),
+                                request_deadline,
                             }))
                         },
                         Err(e) => Some(Err(PollError::TonicError(e)))
                     },
                     TaskStreamInput::Cancel(c) => Some(Ok(NexusTask {
                         variant: Some(nexus_task::Variant::CancelTask(c)),
+                        request_deadline: None,
                     })),
                     TaskStreamInput::SourceComplete => {
                         source_done.cancel();

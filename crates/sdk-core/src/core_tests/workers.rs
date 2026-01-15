@@ -393,10 +393,16 @@ fn create_test_activity_task() -> PollActivityTaskQueueResponse {
 }
 
 fn create_test_nexus_task() -> PollNexusTaskQueueResponse {
+    create_test_nexus_task_with_headers(Default::default())
+}
+
+fn create_test_nexus_task_with_headers(
+    header: std::collections::HashMap<String, String>,
+) -> PollNexusTaskQueueResponse {
     PollNexusTaskQueueResponse {
         task_token: b"nex-task".to_vec(),
         request: Some(NexusRequest {
-            header: Default::default(),
+            header,
             scheduled_time: None,
             variant: Some(temporalio_common::protos::temporal::api::nexus::v1::request::Variant::StartOperation(
                 StartOperationRequest {
@@ -583,6 +589,156 @@ async fn test_task_type_combinations_unified(
             PollError::ShutDown
         );
     }
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[tokio::test]
+async fn nexus_request_deadline_missing_header() {
+    let mut client = mock_worker_client();
+    client
+        .expect_complete_nexus_task()
+        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
+    let nexus_task = create_test_nexus_task(); // No headers
+    let mut mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<_>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(nexus_task)]),
+    );
+    mocks.worker_cfg(|w| {
+        w.task_queue = "test-queue".to_string();
+        w.task_types = WorkerTaskTypes {
+            enable_workflows: false,
+            enable_local_activities: false,
+            enable_remote_activities: false,
+            enable_nexus: true,
+        };
+        w.skip_client_worker_set_check = true;
+    });
+    let worker = mock_worker(mocks);
+
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    assert!(
+        nexus_task.request_deadline.is_none(),
+        "request_deadline should be None when header is missing"
+    );
+
+    worker
+        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
+        .await
+        .unwrap();
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[tokio::test]
+async fn nexus_request_deadline_valid_header() {
+    let mut client = mock_worker_client();
+    client
+        .expect_complete_nexus_task()
+        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("request-timeout".to_string(), "30s".to_string());
+    let nexus_task = create_test_nexus_task_with_headers(headers);
+    let mut mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<_>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(nexus_task)]),
+    );
+    mocks.worker_cfg(|w| {
+        w.task_queue = "test-queue".to_string();
+        w.task_types = WorkerTaskTypes {
+            enable_workflows: false,
+            enable_local_activities: false,
+            enable_remote_activities: false,
+            enable_nexus: true,
+        };
+        w.skip_client_worker_set_check = true;
+    });
+    let worker = mock_worker(mocks);
+
+    let before = std::time::SystemTime::now();
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    let after = std::time::SystemTime::now();
+
+    assert!(
+        nexus_task.request_deadline.is_some(),
+        "request_deadline should be Some when valid header is present"
+    );
+    let deadline: std::time::SystemTime = nexus_task.request_deadline.unwrap().try_into().unwrap();
+    // Deadline should be approximately 30s from now
+    let expected_min = before + Duration::from_secs(30);
+    let expected_max = after + Duration::from_secs(30);
+    assert!(
+        deadline >= expected_min && deadline <= expected_max,
+        "deadline {:?} should be between {:?} and {:?}",
+        deadline,
+        expected_min,
+        expected_max
+    );
+
+    worker
+        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
+        .await
+        .unwrap();
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[tokio::test]
+async fn nexus_request_deadline_invalid_header() {
+    let mut client = mock_worker_client();
+    client
+        .expect_complete_nexus_task()
+        .returning(|_, _| Ok(RespondNexusTaskCompletedResponse::default()));
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("request-timeout".to_string(), "invalid".to_string());
+    let nexus_task = create_test_nexus_task_with_headers(headers);
+    let mut mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<_>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(nexus_task)]),
+    );
+    mocks.worker_cfg(|w| {
+        w.task_queue = "test-queue".to_string();
+        w.task_types = WorkerTaskTypes {
+            enable_workflows: false,
+            enable_local_activities: false,
+            enable_remote_activities: false,
+            enable_nexus: true,
+        };
+        w.skip_client_worker_set_check = true;
+    });
+    let worker = mock_worker(mocks);
+
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    assert!(
+        nexus_task.request_deadline.is_none(),
+        "request_deadline should be None when header is invalid"
+    );
+
+    worker
+        .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
+        .await
+        .unwrap();
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
     worker.shutdown().await;
     worker.finalize_shutdown().await;
 }
