@@ -10,19 +10,15 @@ use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 #[derive(Default)]
 struct InteractionWorkflow {
     counter: i32,
+    borrowed_across_await: Vec<&'static str>,
 }
 
 #[workflow_methods]
 impl InteractionWorkflow {
     #[run]
-    async fn run(
-        &mut self,
-        ctx: &mut WorkflowContext,
-        wait_for_signal: bool,
-    ) -> WorkflowResult<i32> {
-        if wait_for_signal {
-            ctx.wait_condition(|| self.counter != 0).await;
-        }
+    async fn run(&mut self, ctx: &mut WorkflowContext, wait_for_value: i32) -> WorkflowResult<i32> {
+        self.borrowed_across_await.push("run");
+        ctx.wait_condition(|| self.counter == wait_for_value).await;
         Ok(WfExitValue::Normal(self.counter))
     }
 
@@ -41,6 +37,16 @@ impl InteractionWorkflow {
         let old = self.counter;
         self.counter = value;
         old
+    }
+
+    #[update]
+    async fn change_and_wait(&mut self, ctx: &mut WorkflowContext, amount_and_wait: (i32, i32)) {
+        let baa = &mut self.borrowed_across_await;
+        baa.push("starting change_and_wait");
+        self.counter += amount_and_wait.0;
+        ctx.wait_condition(|| self.counter == amount_and_wait.1)
+            .await;
+        baa.push("done change_and_wait");
     }
 }
 

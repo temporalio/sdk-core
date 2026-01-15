@@ -919,9 +919,6 @@ impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
     }
 }
 
-// Note: The cluster_names custom setter from derive_builder is not supported in bon.
-// Users should manually construct the clusters vector if needed.
-
 /// Helper struct for `signal_with_start_workflow_execution`.
 #[derive(Clone, bon::Builder)]
 #[builder(on(String, into))]
