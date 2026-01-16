@@ -73,6 +73,13 @@ pub struct WorkflowHandle<ClientT, W> {
     _wf_type: PhantomData<W>,
 }
 
+impl<CT, W> WorkflowHandle<CT, W> {
+    /// Return the run id of the Workflow Execution pointed at by this handle, if there is one.
+    pub fn run_id(&self) -> Option<&str> {
+        self.info.run_id.as_deref()
+    }
+}
+
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
 #[derive(Debug)]
 pub struct WorkflowExecutionInfo {

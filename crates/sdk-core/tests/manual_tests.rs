@@ -24,9 +24,9 @@ use temporalio_client::{
     GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::{telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes};
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
@@ -41,6 +41,105 @@ impl JitteryEchoActivities {
         let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;
         Ok(echo)
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSpikyWf;
+
+#[workflow_methods]
+impl PollerLoadSpikyWf {
+    #[run(name = "poller_load")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        const SIGNAME: &str = "signame";
+        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
+        let drained_fut = sigchan.forward(sink::drain());
+
+        let real_stuff = async move {
+            for _ in 0..5 {
+                ctx.start_activity(
+                    JitteryEchoActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+            }
+        };
+        tokio::select! {
+            _ = drained_fut => {}
+            _ = real_stuff => {}
+        }
+
+        Ok(().into())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSustainedWf;
+
+#[workflow_methods]
+impl PollerLoadSustainedWf {
+    #[run(name = "poller_load")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        const SIGNAME: &str = "signame";
+        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
+        let drained_fut = sigchan.forward(sink::drain());
+
+        let real_stuff = async move {
+            let rs = ctx.random_seed();
+            let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
+            for _ in 0..100 {
+                let jitterms = rand.random_range(1000..3000);
+                ctx.timer(Duration::from_millis(jitterms)).await;
+            }
+        };
+        tokio::select! {
+            _ = drained_fut => {}
+            _ = real_stuff => {}
+        }
+
+        Ok(().into())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSpikeThenSustainedWf;
+
+#[workflow_methods]
+impl PollerLoadSpikeThenSustainedWf {
+    #[run(name = "poller_load")]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        const SIGNAME: &str = "signame";
+        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
+        let drained_fut = sigchan.forward(sink::drain());
+
+        let real_stuff = async move {
+            for _ in 0..5 {
+                ctx.start_activity(
+                    JitteryEchoActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+            }
+        };
+        tokio::select! {
+            _ = drained_fut => {}
+            _ = real_stuff => {}
+        }
+
+        Ok(().into())
     }
 }
 
@@ -77,31 +176,7 @@ async fn poller_load_spiky() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSpikyWf>();
     let client = starter.get_client().await;
 
     info!("Prom bound to {:?}", addr);
@@ -200,7 +275,6 @@ async fn poller_load_spiky() {
 
 #[tokio::test]
 async fn poller_load_sustained() {
-    const SIGNAME: &str = "signame";
     let num_workflows = 150;
     let wf_name = "poller_load";
     let (telemopts, addr, _aborter) =
@@ -224,25 +298,7 @@ async fn poller_load_sustained() {
     };
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            let rs = ctx.random_seed();
-            let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
-            for _ in 0..100 {
-                let jitterms = rand.random_range(1000..3000);
-                ctx.timer(Duration::from_millis(jitterms)).await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSustainedWf>();
     let client = starter.get_client().await;
 
     info!("Prom bound to {:?}", addr);
@@ -319,31 +375,7 @@ async fn poller_load_spike_then_sustained() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSpikeThenSustainedWf>();
     let client = starter.get_client().await;
 
     info!("Prom bound to {:?}", addr);

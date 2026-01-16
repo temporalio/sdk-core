@@ -42,23 +42,6 @@ use tokio_stream::StreamExt;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 
-/// Closure-based workflow function for replay compatibility with old history files.
-/// The macro-based ChangesWf should be equivalent but replay tests require exact matching.
-pub(crate) async fn changes_wf(ctx: WorkflowContext) -> WorkflowResult<()> {
-    if ctx.patched(MY_PATCH_ID) {
-        ctx.timer(Duration::from_millis(100)).await;
-    } else {
-        ctx.timer(Duration::from_millis(200)).await;
-    }
-    ctx.timer(Duration::from_millis(200)).await;
-    if ctx.patched(MY_PATCH_ID) {
-        ctx.timer(Duration::from_millis(100)).await;
-    } else {
-        ctx.timer(Duration::from_millis(200)).await;
-    }
-    Ok(().into())
-}
-
 #[workflow]
 #[derive(Default)]
 pub(crate) struct ChangesWf;

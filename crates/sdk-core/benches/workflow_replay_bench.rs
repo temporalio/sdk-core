@@ -17,7 +17,8 @@ use temporalio_common::{
     protos::{DEFAULT_WORKFLOW_TYPE, canned_histories},
     telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes},
 };
-use temporalio_sdk::{WorkflowContext, WorkflowFunction};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -37,12 +38,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("Small history replay", |b| {
         b.to_async(&tokio_runtime).iter_batched(
-            || {
-                let func = timers_wf(num_timers);
-                (func, replay_sdk_worker([hist.clone()]))
-            },
-            |(func, mut worker)| async move {
-                worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+            || replay_sdk_worker([hist.clone()]),
+            |mut worker| async move {
+                worker.register_workflow_with_factory(move || TimersWf { num_timers });
                 worker.run().await.unwrap();
             },
             BatchSize::SmallInput,
@@ -58,12 +56,9 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     c.bench_function("Large payloads history replay", |b| {
         b.to_async(&tokio_runtime).iter_batched(
-            || {
-                let func = big_signals_wf(num_tasks);
-                (func, replay_sdk_worker([hist.clone()]))
-            },
-            |(func, mut worker)| async move {
-                worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+            || replay_sdk_worker([hist.clone()]),
+            |mut worker| async move {
+                worker.register_workflow_with_factory(move || BigSignalsWf { num_tasks });
                 worker.run().await.unwrap();
             },
             BatchSize::SmallInput,
@@ -142,24 +137,38 @@ pub fn bench_metrics(c: &mut Criterion) {
 criterion_group!(benches, criterion_benchmark, bench_metrics);
 criterion_main!(benches);
 
-fn timers_wf(num_timers: u32) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WorkflowContext| async move {
-        for _ in 1..=num_timers {
+#[workflow]
+struct TimersWf {
+    num_timers: u32,
+}
+
+#[workflow_methods(factory_only)]
+impl TimersWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
         Ok(().into())
-    })
+    }
 }
 
-fn big_signals_wf(num_tasks: usize) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WorkflowContext| async move {
+#[workflow]
+struct BigSignalsWf {
+    num_tasks: usize,
+}
+
+#[workflow_methods(factory_only)]
+impl BigSignalsWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
         let mut sigs = ctx.make_signal_channel("bigsig");
-        for _ in 1..=num_tasks {
+        for _ in 1..=self.num_tasks {
             for _ in 1..=5 {
                 let _ = sigs.next().await.unwrap();
             }
         }
 
         Ok(().into())
-    })
+    }
 }

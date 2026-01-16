@@ -3,7 +3,7 @@ use crate::{
         ActivationAssertionsInterceptor, build_fake_sdk, history_from_proto_binary,
         init_core_replay_preloaded, replay_sdk_worker, replay_sdk_worker_stream,
     },
-    integ_tests::workflow_tests::patches::changes_wf,
+    integ_tests::workflow_tests::patches::ChangesWf,
 };
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
@@ -354,7 +354,6 @@ async fn multiple_histories_can_handle_dupe_run_ids() {
 }
 
 // Verifies SDK can decode patch markers before changing them to use json encoding.
-// Uses closure-based workflow for exact replay compatibility with the recorded history.
 #[tokio::test]
 async fn replay_old_patch_format() {
     let mut worker = replay_sdk_worker([HistoryForReplay::new(
@@ -363,7 +362,7 @@ async fn replay_old_patch_format() {
             .unwrap(),
         "fake".to_owned(),
     )]);
-    worker.register_wf("writes_change_markers", changes_wf);
+    worker.register_workflow::<ChangesWf>();
     worker.run().await.unwrap();
 }
 

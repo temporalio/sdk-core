@@ -4,7 +4,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use temporalio_client::WorkflowOptions;
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     temporal::api::{
@@ -14,8 +13,28 @@ use temporalio_common::protos::{
         workflowservice::v1::GetWorkflowExecutionHistoryResponse,
     },
 };
-use temporalio_sdk::WorkflowContext;
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
+
+#[workflow]
+struct WeirdPaginationWf {
+    sig_ctr: Arc<AtomicUsize>,
+}
+
+#[workflow_methods(factory_only)]
+impl WeirdPaginationWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        let mut sigchan = ctx.make_signal_channel("hi");
+        while sigchan.next().await.is_some() {
+            if self.sig_ctr.fetch_add(1, Ordering::AcqRel) == 1 {
+                break;
+            }
+        }
+        Ok(().into())
+    }
+}
 
 #[tokio::test]
 async fn weird_pagination_doesnt_drop_wft_events() {
@@ -97,7 +116,6 @@ async fn weird_pagination_doesnt_drop_wft_events() {
         })
         .times(1);
 
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::Raw(wft_resp)], mock_client);
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         cfg.max_cached_workflows = 2;
@@ -106,30 +124,31 @@ async fn weird_pagination_doesnt_drop_wft_events() {
 
     let sig_ctr = Arc::new(AtomicUsize::new(0));
     let sig_ctr_clone = sig_ctr.clone();
-    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| {
-        let sig_ctr_clone = sig_ctr_clone.clone();
-        async move {
-            let mut sigchan = ctx.make_signal_channel("hi");
-            while sigchan.next().await.is_some() {
-                if sig_ctr_clone.fetch_add(1, Ordering::AcqRel) == 1 {
-                    break;
-                }
-            }
-            Ok(().into())
-        }
+    worker.register_workflow_with_factory(move || WeirdPaginationWf {
+        sig_ctr: sig_ctr_clone.clone(),
     });
 
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
     worker.run_until_done().await.unwrap();
     assert_eq!(sig_ctr.load(Ordering::Acquire), 2);
+}
+
+#[workflow]
+struct ExtremePaginationWf {
+    sig_ctr: Arc<AtomicUsize>,
+}
+
+#[workflow_methods(factory_only)]
+impl ExtremePaginationWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        let mut sigchan = ctx.make_signal_channel("hi");
+        while sigchan.next().await.is_some() {
+            if self.sig_ctr.fetch_add(1, Ordering::AcqRel) == 5 {
+                break;
+            }
+        }
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -237,7 +256,6 @@ async fn extreme_pagination_doesnt_drop_wft_events_worker() {
     wft_resp.previous_started_event_id = 3;
     wft_resp.started_event_id = 15;
 
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::Raw(wft_resp)], mock_client);
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         cfg.max_cached_workflows = 2;
@@ -246,28 +264,10 @@ async fn extreme_pagination_doesnt_drop_wft_events_worker() {
 
     let sig_ctr = Arc::new(AtomicUsize::new(0));
     let sig_ctr_clone = sig_ctr.clone();
-    worker.register_wf(wf_type.to_owned(), move |ctx: WorkflowContext| {
-        let sig_ctr_clone = sig_ctr_clone.clone();
-        async move {
-            let mut sigchan = ctx.make_signal_channel("hi");
-            while sigchan.next().await.is_some() {
-                if sig_ctr_clone.fetch_add(1, Ordering::AcqRel) == 5 {
-                    break;
-                }
-            }
-            Ok(().into())
-        }
+    worker.register_workflow_with_factory(move || ExtremePaginationWf {
+        sig_ctr: sig_ctr_clone.clone(),
     });
 
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
     worker.run_until_done().await.unwrap();
     assert_eq!(sig_ctr.load(Ordering::Acquire), 6);
 }

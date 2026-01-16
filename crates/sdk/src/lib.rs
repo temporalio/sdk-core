@@ -499,19 +499,6 @@ impl Worker {
         move || w.initiate_shutdown()
     }
 
-    /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
-    /// `workflow_type`
-    pub fn register_wf(
-        &mut self,
-        workflow_type: impl Into<String>,
-        wf_function: impl Into<WorkflowFunction>,
-    ) {
-        self.workflow_half
-            .workflow_fns
-            .get_mut()
-            .insert(workflow_type.into(), wf_function.into());
-    }
-
     /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
         self.activity_half

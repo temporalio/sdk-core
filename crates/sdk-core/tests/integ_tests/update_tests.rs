@@ -37,9 +37,9 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, UpdateContext, WorkflowContext,
+    ActivityOptions, LocalActivityOptions, UpdateContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -645,27 +645,39 @@ async fn update_with_local_acts() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |ctx: UpdateContext, _: ()| async move {
-                ctx.wf_ctx
-                    .start_local_activity(
-                        StdActivities::delay,
-                        Duration::from_secs(3),
-                        LocalActivityOptions::default(),
-                    )?
-                    .await;
-                Ok("hi")
-            },
-        );
-        let mut sig = ctx.make_signal_channel("done");
-        sig.next().await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateWithLocalActsWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl UpdateWithLocalActsWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |ctx: UpdateContext, _: ()| async move {
+                    ctx.wf_ctx
+                        .start_local_activity(
+                            StdActivities::delay,
+                            Duration::from_secs(3),
+                            LocalActivityOptions::default(),
+                        )?
+                        .await;
+                    Ok("hi")
+                },
+            );
+            let mut sig = ctx.make_signal_channel("done");
+            sig.next().await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateWithLocalActsWf>();
+    let handle = starter
+        .start_with_worker(UpdateWithLocalActsWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         // make sure update has a chance to get registered
@@ -713,17 +725,29 @@ async fn update_rejection_sdk() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
-            move |_: UpdateContext, _: ()| async { Ok("hi") },
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateRejectionSdkWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl UpdateRejectionSdkWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
+                move |_: UpdateContext, _: ()| async { Ok("hi") },
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateRejectionSdkWf>();
+    let handle = starter
+        .start_with_worker(UpdateRejectionSdkWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -757,17 +781,29 @@ async fn update_fail_sdk() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |_: UpdateContext, _: ()| async { Err::<(), _>(anyhow!("nooooo")) },
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateFailSdkWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl UpdateFailSdkWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |_: UpdateContext, _: ()| async { Err::<(), _>(anyhow!("nooooo")) },
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateFailSdkWf>();
+    let handle = starter
+        .start_with_worker(UpdateFailSdkWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -801,21 +837,33 @@ async fn update_timer_sequence() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |ctx: UpdateContext, _: ()| async move {
-                ctx.wf_ctx.timer(Duration::from_millis(1)).await;
-                ctx.wf_ctx.timer(Duration::from_millis(1)).await;
-                Ok("done")
-            },
-        );
-        ctx.timer(Duration::from_secs(2)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateTimerSequenceWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl UpdateTimerSequenceWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |ctx: UpdateContext, _: ()| async move {
+                    ctx.wf_ctx.timer(Duration::from_millis(1)).await;
+                    ctx.wf_ctx.timer(Duration::from_millis(1)).await;
+                    Ok("done")
+                },
+            );
+            ctx.timer(Duration::from_secs(2)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateTimerSequenceWf>();
+    let handle = starter
+        .start_with_worker(UpdateTimerSequenceWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -850,23 +898,35 @@ async fn task_failure_during_validation() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    static FAILCT: AtomicUsize = AtomicUsize::new(0);
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| {
-                if FAILCT.fetch_add(1, Ordering::Relaxed) < 2 {
-                    panic!("ahhhhhh");
-                }
-                Ok(())
-            },
-            move |_: UpdateContext, _: ()| async move { Ok("done") },
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct TaskFailureDuringValidationWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl TaskFailureDuringValidationWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            static FAILCT: AtomicUsize = AtomicUsize::new(0);
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| {
+                    if FAILCT.fetch_add(1, Ordering::Relaxed) < 2 {
+                        panic!("ahhhhhh");
+                    }
+                    Ok(())
+                },
+                move |_: UpdateContext, _: ()| async move { Ok("done") },
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<TaskFailureDuringValidationWf>();
+    let handle = starter
+        .start_with_worker(TaskFailureDuringValidationWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -911,21 +971,33 @@ async fn task_failure_after_update() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    static FAILCT: AtomicUsize = AtomicUsize::new(0);
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |_: UpdateContext, _: ()| async move { Ok("done") },
-        );
-        ctx.timer(Duration::from_millis(1)).await;
-        if FAILCT.fetch_add(1, Ordering::Relaxed) < 1 {
-            panic!("ahhhhhh");
-        }
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct TaskFailureAfterUpdateWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl TaskFailureAfterUpdateWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            static FAILCT: AtomicUsize = AtomicUsize::new(0);
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |_: UpdateContext, _: ()| async move { Ok("done") },
+            );
+            ctx.timer(Duration::from_millis(1)).await;
+            if FAILCT.fetch_add(1, Ordering::Relaxed) < 1 {
+                panic!("ahhhhhh");
+            }
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<TaskFailureAfterUpdateWf>();
+    let handle = starter
+        .start_with_worker(TaskFailureAfterUpdateWf::name(), &mut worker)
+        .await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -977,31 +1049,43 @@ async fn worker_restarted_in_middle_of_update() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |ctx: UpdateContext, _: ()| async move {
-                ctx.wf_ctx
-                    .start_activity(
-                        BlockingActivities::blocks,
-                        "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
-                    )
-                    .unwrap()
-                    .await;
-                Ok(())
-            },
-        );
-        let mut sig = ctx.make_signal_channel("done");
-        sig.next().await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct WorkerRestartedInMiddleOfUpdateWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl WorkerRestartedInMiddleOfUpdateWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |ctx: UpdateContext, _: ()| async move {
+                    ctx.wf_ctx
+                        .start_activity(
+                            BlockingActivities::blocks,
+                            "hi!".to_string(),
+                            ActivityOptions {
+                                start_to_close_timeout: Some(Duration::from_secs(2)),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap()
+                        .await;
+                    Ok(())
+                },
+            );
+            let mut sig = ctx.make_signal_channel("done");
+            sig.next().await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<WorkerRestartedInMiddleOfUpdateWf>();
+    let handle = starter
+        .start_with_worker(WorkerRestartedInMiddleOfUpdateWf::name(), &mut worker)
+        .await;
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
@@ -1067,52 +1151,64 @@ async fn update_after_empty_wft() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    static ACT_STARTED: AtomicBool = AtomicBool::new(false);
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |ctx: UpdateContext, _: ()| async move {
-                if ACT_STARTED.load(Ordering::Acquire) {
-                    return Ok(());
-                }
-                ctx.wf_ctx
-                    .start_activity(
-                        StdActivities::echo,
-                        "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
-                    )
-                    .unwrap()
-                    .await;
-                Ok(())
-            },
-        );
-        let mut sig = ctx.make_signal_channel("signal");
-        let sig_handle = async {
-            sig.next().await;
-            ACT_STARTED.store(true, Ordering::Release);
-            ctx.start_activity(
-                StdActivities::echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
-            ACT_STARTED.store(false, Ordering::Release);
-        };
-        join!(sig_handle, async {
-            ctx.timer(Duration::from_secs(2)).await;
-        });
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateAfterEmptyWftWf;
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl UpdateAfterEmptyWftWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            static ACT_STARTED: AtomicBool = AtomicBool::new(false);
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |ctx: UpdateContext, _: ()| async move {
+                    if ACT_STARTED.load(Ordering::Acquire) {
+                        return Ok(());
+                    }
+                    ctx.wf_ctx
+                        .start_activity(
+                            StdActivities::echo,
+                            "hi!".to_string(),
+                            ActivityOptions {
+                                start_to_close_timeout: Some(Duration::from_secs(2)),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap()
+                        .await;
+                    Ok(())
+                },
+            );
+            let mut sig = ctx.make_signal_channel("signal");
+            let sig_handle = async {
+                sig.next().await;
+                ACT_STARTED.store(true, Ordering::Release);
+                ctx.start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+                ACT_STARTED.store(false, Ordering::Release);
+            };
+            join!(sig_handle, async {
+                ctx.timer(Duration::from_secs(2)).await;
+            });
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateAfterEmptyWftWf>();
+    let handle = starter
+        .start_with_worker(UpdateAfterEmptyWftWf::name(), &mut worker)
+        .await;
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
@@ -1159,40 +1255,52 @@ async fn update_lost_on_activity_mismatch() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WorkflowContext| async move {
-        let can_run = Arc::new(AtomicUsize::new(1));
-        let cr = can_run.clone();
-        ctx.update_handler(
-            "update",
-            |_: &_, _: ()| Ok(()),
-            move |_: UpdateContext, _: ()| {
-                let cr = cr.clone();
-                async move {
-                    cr.fetch_add(1, Ordering::Relaxed);
-                    Ok(())
-                }
-            },
-        );
-        for _ in 1..=3 {
-            let cr = can_run.clone();
-            ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
-            ctx.start_activity(
-                StdActivities::echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
-            can_run.fetch_sub(1, Ordering::Release);
-        }
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateLostOnActivityMismatchWf;
 
+    #[workflow_methods]
+    impl UpdateLostOnActivityMismatchWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            let can_run = Arc::new(AtomicUsize::new(1));
+            let cr = can_run.clone();
+            ctx.update_handler(
+                "update",
+                |_: &_, _: ()| Ok(()),
+                move |_: UpdateContext, _: ()| {
+                    let cr = cr.clone();
+                    async move {
+                        cr.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
+                    }
+                },
+            );
+            for _ in 1..=3 {
+                let cr = can_run.clone();
+                ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
+                ctx.start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+                can_run.fetch_sub(1, Ordering::Release);
+            }
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<UpdateLostOnActivityMismatchWf>();
     let core_worker = worker.core_worker();
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter
+        .start_with_worker(UpdateLostOnActivityMismatchWf::name(), &mut worker)
+        .await;
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {

@@ -4,9 +4,9 @@ use temporalio_client::{
     GetWorkflowResultOptions, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, ChildWorkflowOptions, WorkflowContext,
+    ActivityOptions, ChildWorkflowOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -43,13 +43,19 @@ pub(crate) async fn priority_values_sent_to_server() {
         }
     }
 
-    worker.register_activities(PriorityActivities);
-    worker.register_wf(
-        starter.get_task_queue(),
-        move |ctx: WorkflowContext| async move {
+    #[workflow]
+    #[derive(Default)]
+    struct ParentWf {
+        child_type: String,
+    }
+
+    #[workflow_methods]
+    impl ParentWf {
+        #[run]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
             let child = ctx.child_workflow(ChildWorkflowOptions {
                 workflow_id: format!("{}-child", ctx.task_queue()),
-                workflow_type: child_type.to_owned(),
+                workflow_type: self.child_type.clone(),
                 options: WorkflowOptions {
                     priority: Some(Priority {
                         priority_key: 4,
@@ -62,7 +68,7 @@ pub(crate) async fn priority_values_sent_to_server() {
             });
 
             let started = child
-                .start(&ctx)
+                .start(ctx)
                 .await
                 .into_started()
                 .expect("Child should start OK");
@@ -77,7 +83,6 @@ pub(crate) async fn priority_values_sent_to_server() {
                             fairness_key: "fair-act".to_string(),
                             fairness_weight: 1.1,
                         }),
-                        // Currently no priority info attached to eagerly run activities
                         do_not_eagerly_execute: true,
                         ..Default::default()
                     },
@@ -86,23 +91,44 @@ pub(crate) async fn priority_values_sent_to_server() {
             started.result().await;
             activity.await.unwrap_ok_payload();
             Ok(().into())
-        },
-    );
-    worker.register_wf(child_type.to_owned(), |ctx: WorkflowContext| async move {
-        assert_eq!(
-            ctx.workflow_initial_info().priority,
-            Some(common::v1::Priority {
-                priority_key: 4,
-                fairness_key: "fair-child".to_string(),
-                fairness_weight: 1.23
-            })
-        );
-        Ok(().into())
-    });
+        }
+    }
 
-    starter
-        .start_with_worker(starter.get_task_queue(), &mut worker)
-        .await;
+    #[workflow]
+    #[derive(Default)]
+    struct ChildWf;
+
+    #[workflow_methods]
+    impl ChildWf {
+        #[run(name = "child-wf")]
+        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+            assert_eq!(
+                ctx.workflow_initial_info().priority,
+                Some(common::v1::Priority {
+                    priority_key: 4,
+                    fairness_key: "fair-child".to_string(),
+                    fairness_weight: 1.23
+                })
+            );
+            Ok(().into())
+        }
+    }
+
+    worker.register_activities(PriorityActivities);
+    worker.register_workflow_with_factory::<ParentWf, _>(move || ParentWf {
+        child_type: child_type.to_owned(),
+    });
+    worker.register_workflow::<ChildWf>();
+
+    worker
+        .submit_workflow(
+            ParentWf::run,
+            starter.get_task_queue(),
+            (),
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;

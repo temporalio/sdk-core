@@ -55,7 +55,7 @@ use temporalio_common::{
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
-    Worker, WorkerOptions, WorkflowFunction,
+    Worker, WorkerOptions,
     activities::ActivityImplementer,
     interceptors::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
@@ -538,14 +538,6 @@ impl TestWorker {
 
     pub(crate) fn worker_instance_key(&self) -> Uuid {
         self.inner.worker_instance_key()
-    }
-
-    pub(crate) fn register_wf<F: Into<WorkflowFunction>>(
-        &mut self,
-        workflow_type: impl Into<String>,
-        wf_function: F,
-    ) {
-        self.inner.register_wf(workflow_type, wf_function)
     }
 
     pub(crate) fn register_activities<AI: ActivityImplementer>(
