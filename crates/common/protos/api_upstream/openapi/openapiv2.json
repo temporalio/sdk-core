@@ -13508,6 +13508,14 @@
         "endpointId": {
           "type": "string",
           "description": "Endpoint ID as resolved in the endpoint registry at the time this event was generated.\nThis is stored on the event and used internally by the server in case the endpoint is renamed from the time the\nevent was originally scheduled."
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Schedule-to-start timeout for this operation.\nSee ScheduleNexusOperationCommandAttributes.schedule_to_start_timeout for details."
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Start-to-close timeout for this operation.\nSee ScheduleNexusOperationCommandAttributes.start_to_close_timeout for details."
         }
       },
       "description": "Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command."
@@ -13823,6 +13831,14 @@
         "operationToken": {
           "type": "string",
           "description": "Operation token. Only set for asynchronous operations after a successful StartOperation call."
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Schedule-to-start timeout for this operation."
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Start-to-close timeout for this operation."
         }
       },
       "description": "PendingNexusOperationInfo contains the state of a pending Nexus operation."
