@@ -1,7 +1,7 @@
 use crate::{
     CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, UpdateContext,
-    UpdateFunctions, UpdateInfo, WfExitValue, WorkflowContext, WorkflowFunction, WorkflowResult,
-    panic_formatter,
+    UpdateFunctions, UpdateInfo, WfExitValue, WorkflowContext, WorkflowResult, panic_formatter,
+    workflows,
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
 use futures_util::{FutureExt, future::BoxFuture};
@@ -44,7 +44,38 @@ use tokio::sync::{
 };
 use tracing::Instrument;
 
-impl WorkflowFunction {
+pub(crate) struct WorkflowFunction<F> {
+    wf_func: F,
+}
+
+impl WorkflowFunction<()> {
+    pub(crate) fn from_invocation(
+        invocation: workflows::WorkflowInvocation,
+    ) -> WorkflowFunction<
+        impl Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>,
+    > {
+        WorkflowFunction {
+            wf_func: move |ctx: WorkflowContext| {
+                let input = ctx.get_args().to_vec();
+                let converter = ctx.payload_converter().clone();
+                match invocation(input, converter, ctx) {
+                    Ok(fut) => fut
+                        .map(|r| match r {
+                            Ok(exit_value) => Ok(exit_value),
+                            Err(e) => Err(e.into()),
+                        })
+                        .boxed(),
+                    Err(e) => async move { Err(anyhow::Error::from(e)) }.boxed(),
+                }
+            },
+        }
+    }
+}
+
+impl<F> WorkflowFunction<F>
+where
+    F: Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>,
+{
     /// Start a workflow function, returning a future that will resolve when the workflow does,
     /// and a channel that can be used to send it activations.
     pub(crate) fn start_workflow(
@@ -55,7 +86,7 @@ impl WorkflowFunction {
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
         payload_converter: PayloadConverter,
     ) -> (
-        impl Future<Output = WorkflowResult<Payload>> + use<>,
+        impl Future<Output = WorkflowResult<Payload>> + use<F>,
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(None);

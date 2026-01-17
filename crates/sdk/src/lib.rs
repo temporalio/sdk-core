@@ -78,6 +78,8 @@ mod workflow_context;
 mod workflow_future;
 pub mod workflows;
 
+use workflow_future::WorkflowFunction;
+
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
@@ -96,7 +98,6 @@ use crate::{
 };
 use anyhow::{Context, anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, future::BoxFuture};
-use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -385,8 +386,9 @@ impl WorkerOptions {
     }
 }
 
-/// A worker that can poll for and respond to workflow tasks by using [WorkflowFunction]s,
-/// and activity tasks by using activities defined with [temporalio_macros::activities].
+/// A worker that can poll for and respond to workflow tasks by using
+/// [temporalio_macros::workflow], and activity tasks by using activities defined with
+/// [temporalio_macros::activities].
 pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,
@@ -404,8 +406,6 @@ struct CommonWorker {
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
-    /// Maps workflow type to the function for executing workflow runs with that ID
-    workflow_fns: RefCell<HashMap<String, WorkflowFunction>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
 }
@@ -733,20 +733,7 @@ impl WorkflowHalf {
             let workflow_type = &sw.workflow_type;
             let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
-                let wf_fns_borrow = self.workflow_fns.borrow();
-
-                // First check function-based workflows, then macro-based workflows
-                if let Some(wf_function) = wf_fns_borrow.get(workflow_type) {
-                    wf_function.start_workflow(
-                        common.worker.get_config().namespace.clone(),
-                        common.task_queue.clone(),
-                        std::mem::take(sw),
-                        completions_tx.clone(),
-                        payload_converter.clone(),
-                    )
-                } else if let Some(invocation) =
-                    self.workflow_definitions.get_workflow(workflow_type)
-                {
+                if let Some(invocation) = self.workflow_definitions.get_workflow(workflow_type) {
                     WorkflowFunction::from_invocation(invocation).start_workflow(
                         common.worker.get_config().namespace.clone(),
                         common.task_queue.clone(),
@@ -1178,72 +1165,6 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-type WfFunc = dyn Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>
-    + Send
-    + Sync
-    + 'static;
-
-/// The user's async function / workflow code
-pub struct WorkflowFunction {
-    wf_func: Box<WfFunc>,
-}
-
-impl<F, Fut, O> From<F> for WorkflowFunction
-where
-    F: Fn(WorkflowContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-    O: Serialize,
-{
-    fn from(wf_func: F) -> Self {
-        Self::new(wf_func)
-    }
-}
-
-impl WorkflowFunction {
-    /// Build a workflow function from a closure or function pointer which accepts a [WorkflowContext]
-    pub fn new<F, Fut, O>(f: F) -> Self
-    where
-        F: Fn(WorkflowContext) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-        O: Serialize,
-    {
-        Self {
-            wf_func: Box::new(move |ctx: WorkflowContext| {
-                (f)(ctx)
-                    .map(|r| {
-                        r.and_then(|r| {
-                            Ok(match r {
-                                WfExitValue::ContinueAsNew(b) => WfExitValue::ContinueAsNew(b),
-                                WfExitValue::Cancelled => WfExitValue::Cancelled,
-                                WfExitValue::Evicted => WfExitValue::Evicted,
-                                WfExitValue::Normal(o) => WfExitValue::Normal(o.as_json_payload()?),
-                            })
-                        })
-                    })
-                    .boxed()
-            }),
-        }
-    }
-
-    pub(crate) fn from_invocation(invocation: workflows::WorkflowInvocation) -> Self {
-        Self {
-            wf_func: Box::new(move |ctx: WorkflowContext| {
-                let input = ctx.get_args().to_vec();
-                let converter = ctx.payload_converter().clone();
-                match invocation(input, converter, ctx) {
-                    Ok(fut) => fut
-                        .map(|r| match r {
-                            Ok(exit_value) => Ok(exit_value),
-                            Err(e) => Err(e.into()),
-                        })
-                        .boxed(),
-                    Err(e) => async move { Err(anyhow::Error::from(e)) }.boxed(),
-                }
-            }),
-        }
-    }
-}
-
 /// The result of running a workflow
 pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
 
@@ -1281,58 +1202,6 @@ pub enum ActExitValue<T> {
 impl<T: AsJsonPayloadExt> From<T> for ActExitValue<T> {
     fn from(t: T) -> Self {
         Self::Normal(t)
-    }
-}
-
-type BoxActFn = Arc<
-    dyn Fn(
-            ActivityContext,
-            Payload,
-        ) -> BoxFuture<'static, Result<ActExitValue<Payload>, ActivityError>>
-        + Send
-        + Sync,
->;
-
-/// Closures / functions which can be turned into activity functions implement this trait
-pub trait IntoActivityFunc<Args, Res, Out> {
-    /// Consume the closure or fn pointer and turned it into a boxed activity function
-    fn into_activity_fn(self) -> BoxActFn;
-}
-
-impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
-where
-    F: (Fn(ActivityContext, A) -> Rf) + Sync + Send + 'static,
-    A: FromJsonPayloadExt + Send,
-    Rf: Future<Output = Result<R, ActivityError>> + Send + 'static,
-    R: Into<ActExitValue<O>>,
-    O: AsJsonPayloadExt,
-{
-    fn into_activity_fn(self) -> BoxActFn {
-        let wrapper = move |ctx: ActivityContext, input: Payload| {
-            // Some minor gymnastics are required to avoid needing to clone the function
-            match A::from_json_payload(&input) {
-                Ok(deser) => self(ctx, deser)
-                    .map(|r| {
-                        r.and_then(|r| {
-                            let exit_val: ActExitValue<O> = r.into();
-                            match exit_val {
-                                ActExitValue::WillCompleteAsync => {
-                                    Ok(ActExitValue::WillCompleteAsync)
-                                }
-                                ActExitValue::Normal(x) => match x.as_json_payload() {
-                                    Ok(v) => Ok(ActExitValue::Normal(v)),
-                                    Err(e) => {
-                                        Err(ActivityError::NonRetryable(e.into_boxed_dyn_error()))
-                                    }
-                                },
-                            }
-                        })
-                    })
-                    .boxed(),
-                Err(e) => async move { Err(ActivityError::NonRetryable(e.into())) }.boxed(),
-            }
-        };
-        Arc::new(wrapper)
     }
 }
 
@@ -1455,6 +1324,7 @@ impl PrintablePanicType for EndPrintingAttempts {
 mod tests {
     use super::*;
     use temporalio_macros::activities;
+    use temporalio_macros::{workflow, workflow_methods};
 
     struct MyActivities {}
 
@@ -1482,7 +1352,7 @@ mod tests {
     }
 
     // Compile-only test for workflow context invocation
-    #[allow(dead_code, unreachable_code, unused, clippy::diverging_sub_expression)]
+    #[allow(unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
         let wf_ctx: WorkflowContext = unimplemented!();
         wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
@@ -1500,53 +1370,53 @@ mod tests {
         let _result = MyActivities::my_activity.run(ctx).await;
     }
 
-    /* TODO [rust-sdk-branch]: Use after implementing registration/invocation
-    // Workflow macro compile-time test - verifies the macros generate valid code
-    use temporalio_macros::{init, query, run, signal, update, workflow, workflow_methods};
-
     #[workflow]
-    #[allow(dead_code)]
     struct MyWorkflow {
         counter: u32,
     }
 
+    #[allow(dead_code)]
     #[workflow_methods]
     impl MyWorkflow {
         #[init]
-        pub fn new(_ctx: &WorkflowContext, _input: String) -> Self {
+        fn new(_ctx: &WorkflowContext, _input: String) -> Self {
             Self { counter: 0 }
         }
 
         #[run]
-        pub async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<String> {
+        async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<String> {
             Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
         }
 
         #[signal(name = "increment")]
-        pub fn increment_counter(&mut self, _ctx: &mut WorkflowContext, amount: u32) {
+        fn increment_counter(&mut self, _ctx: &mut WorkflowContext, amount: u32) {
             self.counter += amount;
         }
 
         #[signal]
-        pub async fn async_signal(&mut self, _ctx: &mut WorkflowContext) {
+        async fn async_signal(&mut self, _ctx: &mut WorkflowContext) {
             // Async signals are allowed
         }
 
         #[query]
-        pub fn get_counter(&self, _ctx: &WorkflowContext) -> u32 {
+        fn get_counter(&self, _ctx: &WorkflowContext) -> u32 {
             self.counter
         }
 
         #[update(name = "double")]
-        pub fn double_counter(&mut self, _ctx: &mut WorkflowContext) -> u32 {
+        fn double_counter(&mut self, _ctx: &mut WorkflowContext) -> u32 {
             self.counter *= 2;
             self.counter
         }
 
         #[update]
-        pub async fn async_update(&mut self, _ctx: &mut WorkflowContext, val: i32) -> i32 {
+        async fn async_update(&mut self, _ctx: &mut WorkflowContext, val: i32) -> i32 {
             val * 2
         }
     }
-    */
+
+    #[test]
+    fn test_workflow_registration() {
+        let _ = WorkerOptions::new("task_q").register_workflow::<MyWorkflow>();
+    }
 }
