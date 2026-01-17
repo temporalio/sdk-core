@@ -1,7 +1,7 @@
 use crate::{
-    CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, UpdateContext,
-    UpdateFunctions, UpdateInfo, WfExitValue, WorkflowContext, WorkflowResult, panic_formatter,
-    workflows,
+    BaseWorkflowContext, CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent,
+    UpdateContext, UpdateFunctions, UpdateInfo, WfExitValue, WorkflowResult, panic_formatter,
+    workflows::{DynWorkflowExecution, WorkflowExecutionFactory},
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
 use futures_util::{FutureExt, future::BoxFuture};
@@ -42,42 +42,25 @@ use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot, watch,
 };
-use tracing::Instrument;
 
-pub(crate) struct WorkflowFunction<F> {
-    wf_func: F,
+pub(crate) struct WorkflowFunction {
+    factory: WorkflowExecutionFactory,
 }
 
-impl WorkflowFunction<()> {
-    pub(crate) fn from_invocation(
-        invocation: workflows::WorkflowInvocation,
-    ) -> WorkflowFunction<
-        impl Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>,
-    > {
-        WorkflowFunction {
-            wf_func: move |ctx: WorkflowContext| {
-                let input = ctx.get_args().to_vec();
-                let converter = ctx.payload_converter().clone();
-                match invocation(input, converter, ctx) {
-                    Ok(fut) => fut
-                        .map(|r| match r {
-                            Ok(exit_value) => Ok(exit_value),
-                            Err(e) => Err(e.into()),
-                        })
-                        .boxed(),
-                    Err(e) => async move { Err(anyhow::Error::from(e)) }.boxed(),
-                }
-            },
-        }
+impl WorkflowFunction {
+    pub(crate) fn from_invocation(factory: WorkflowExecutionFactory) -> Self {
+        WorkflowFunction { factory }
     }
-}
 
-impl<F> WorkflowFunction<F>
-where
-    F: Fn(WorkflowContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>,
-{
     /// Start a workflow function, returning a future that will resolve when the workflow does,
     /// and a channel that can be used to send it activations.
+    ///
+    /// IMPORTANT: The returned future should be wrapped in `tokio::task::unconstrained` by the
+    /// caller. This prevents Tokio from imposing an artificial limit on how many commands can
+    /// be unblocked in one poll round. Without this, workflows with many concurrent operations
+    /// may not make progress.
+    ///
+    /// TODO: Now we *need* deadlock detection or we could hose the whole system
     pub(crate) fn start_workflow(
         &self,
         namespace: String,
@@ -85,32 +68,39 @@ where
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
         payload_converter: PayloadConverter,
-    ) -> (
-        impl Future<Output = WorkflowResult<Payload>> + use<F>,
-        UnboundedSender<WorkflowActivation>,
-    ) {
+    ) -> Result<
+        (
+            impl Future<Output = WorkflowResult<Payload>> + use<>,
+            UnboundedSender<WorkflowActivation>,
+        ),
+        anyhow::Error,
+    > {
         let (cancel_tx, cancel_rx) = watch::channel(None);
         let span = info_span!(
             "RunWorkflow",
             "otel.name" = format!("RunWorkflow:{}", &init_workflow_job.workflow_type),
             "otel.kind" = "server"
         );
-        let (wf_context, cmd_receiver) = WorkflowContext::new(
+
+        let input = init_workflow_job.arguments.clone();
+        let (base_ctx, cmd_receiver) = BaseWorkflowContext::new(
             namespace,
             task_queue,
             init_workflow_job,
             cancel_rx,
-            payload_converter,
+            payload_converter.clone(),
         );
+
+        // Create the workflow execution using the factory
+        let execution = (self.factory)(input, payload_converter, base_ctx.clone())
+            .context("Failed to create workflow execution")?;
+
         let (tx, incoming_activations) = unbounded_channel();
-        let inner_fut = (self.wf_func)(wf_context.clone()).instrument(span);
-        (
+        Ok((
             WorkflowFuture {
-                wf_ctx: wf_context,
-                // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
-                // an artificial limit on how many commands we can unblock in one poll round.
-                // TODO: Now we *need* deadlock detection or we could hose the whole system
-                inner: tokio::task::unconstrained(inner_fut).fuse().boxed(),
+                base_ctx,
+                execution,
+                span,
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
                 incoming_activations,
@@ -121,7 +111,7 @@ where
                 update_futures: Default::default(),
             },
             tx,
-        )
+        ))
     }
 }
 
@@ -139,8 +129,10 @@ enum SigChanOrBuffer {
 }
 
 pub(crate) struct WorkflowFuture {
-    /// Future produced by calling the workflow function
-    inner: BoxFuture<'static, WorkflowResult<Payload>>,
+    /// The workflow execution instance
+    execution: Box<dyn DynWorkflowExecution>,
+    /// The tracing span for this workflow
+    span: tracing::Span,
     /// Commands produced inside user's wf code
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
@@ -151,8 +143,8 @@ pub(crate) struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<Option<String>>,
-    /// Copy of the workflow context
-    wf_ctx: WorkflowContext,
+    /// Base workflow context for sending commands
+    base_ctx: BaseWorkflowContext,
     /// Maps signal IDs to channels to send down when they are signaled
     sig_chans: HashMap<String, SigChanOrBuffer>,
     /// Maps update handlers by name to implementations
@@ -247,7 +239,7 @@ impl WorkflowFuture {
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
                 Variant::UpdateRandomSeed(rs) => {
-                    self.wf_ctx.shared.write().random_seed = rs.randomness_seed;
+                    self.base_ctx.shared.write().random_seed = rs.randomness_seed;
                 }
                 Variant::QueryWorkflow(q) => {
                     error!(
@@ -277,7 +269,7 @@ impl WorkflowFuture {
                     }
                 }
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
-                    self.wf_ctx.shared.write().changes.insert(patch_id, true);
+                    self.base_ctx.shared.write().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?;
@@ -315,7 +307,7 @@ impl WorkflowFuture {
                                 );
                                 let handler_fut = (impls.handler)(
                                     UpdateContext {
-                                        wf_ctx: self.wf_ctx.clone(),
+                                        wf_ctx: self.base_ctx.clone(),
                                         info,
                                     },
                                     u.input.first().unwrap_or(&defp),
@@ -398,7 +390,7 @@ impl Future for WorkflowFuture {
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             {
-                let mut wlock = self.wf_ctx.shared.write();
+                let mut wlock = self.base_ctx.shared.write();
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
@@ -452,7 +444,7 @@ impl Future for WorkflowFuture {
                             // Push into the command channel here rather than activation_cmds
                             // directly to avoid completing and update before any final un-awaited
                             // commands started from within it.
-                            self.wf_ctx.send(
+                            self.base_ctx.send(
                                 update_response(
                                     instance_id,
                                     match v {
@@ -504,28 +496,29 @@ impl WorkflowFuture {
         activation_cmds: &mut Vec<WorkflowCommand>,
     ) -> Result<bool, Error> {
         // TODO [rust-sdk-branch]: Make sure this is *actually* safe before un-prototyping rust sdk
-        let mut res = match AssertUnwindSafe(&mut self.inner)
-            .catch_unwind()
-            .poll_unpin(cx)
-        {
-            Poll::Ready(Err(e)) => {
-                let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
-                warn!("{}", errmsg);
-                self.outgoing_completions
-                    .send(WorkflowActivationCompletion::fail(
-                        run_id,
-                        Failure {
-                            message: errmsg,
-                            ..Default::default()
-                        },
-                        None,
-                    ))
-                    .expect("Completion channel intact");
-                // Loop back up because we're about to get evicted
-                return Ok(true);
+        // Poll the execution within the span for proper tracing
+        let mut res = {
+            let _guard = self.span.enter();
+            match panic::catch_unwind(AssertUnwindSafe(|| self.execution.poll_run(cx))) {
+                Ok(Poll::Ready(r)) => Poll::Ready(r.map_err(anyhow::Error::from)),
+                Ok(Poll::Pending) => Poll::Pending,
+                Err(e) => {
+                    let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
+                    warn!("{}", errmsg);
+                    self.outgoing_completions
+                        .send(WorkflowActivationCompletion::fail(
+                            run_id,
+                            Failure {
+                                message: errmsg,
+                                ..Default::default()
+                            },
+                            None,
+                        ))
+                        .expect("Completion channel intact");
+                    // Loop back up because we're about to get evicted
+                    return Ok(true);
+                }
             }
-            Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Pending => Poll::Pending,
         };
 
         while let Ok(cmd) = self.incoming_commands.try_recv() {
@@ -535,7 +528,7 @@ impl WorkflowFuture {
                         CancellableID::Timer(seq) => {
                             self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
                             // Re-poll wf future since a timer is now unblocked
-                            res = self.inner.poll_unpin(cx);
+                            res = self.execution.poll_run(cx).map(|r| r.map_err(|e| e.into()));
                             workflow_command::Variant::CancelTimer(CancelTimer { seq })
                         }
                         CancellableID::Activity(seq) => {
@@ -640,7 +633,7 @@ impl WorkflowFuture {
                             let _ = chan.send(input);
                         }
                         // Re-poll wf future since signals may be unblocked
-                        res = self.inner.poll_unpin(cx);
+                        res = self.execution.poll_run(cx).map(|r| r.map_err(|e| e.into()));
                     }
                     self.sig_chans.insert(signame, SigChanOrBuffer::Chan(chan));
                 }

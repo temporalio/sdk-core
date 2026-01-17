@@ -5,8 +5,9 @@ pub struct BadWorkflow;
 
 #[workflow_methods]
 impl BadWorkflow {
+    // This should fail - run must be async
     #[run]
-    pub fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 }

@@ -28,7 +28,7 @@ struct ResetMeWf {
 #[workflow_methods(factory_only)]
 impl ResetMeWf {
     #[run(name = "reset_me_wf")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         ctx.timer(Duration::from_secs(1)).await;
         self.notify.notify_one();
@@ -121,7 +121,7 @@ struct ResetRandomseedWf {
 #[workflow_methods(factory_only)]
 impl ResetRandomseedWf {
     #[run(name = "reset_randomseed")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let _ = self.rand_seed.compare_exchange(
             0,
             ctx.random_seed(),

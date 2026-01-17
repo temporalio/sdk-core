@@ -22,7 +22,9 @@ use temporalio_common::{
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{Worker, WorkflowContext, WorkflowResult, interceptors::WorkerInterceptor};
+use temporalio_sdk::{
+    Worker, WorkflowContext, WorkflowContextView, WorkflowResult, interceptors::WorkerInterceptor,
+};
 use temporalio_sdk_core::{
     PollError,
     replay::{HistoryFeeder, HistoryForReplay},
@@ -43,12 +45,12 @@ struct TimersWf {
 #[workflow_methods]
 impl TimersWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, num_timers: u32) -> Self {
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
         Self { num_timers }
     }
 
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
@@ -261,12 +263,12 @@ struct OneTimerWf {
 #[workflow_methods]
 impl OneTimerWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, num_timers: u32) -> Self {
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
         Self { num_timers }
     }
 
     #[run(name = "onetimer")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
@@ -282,12 +284,12 @@ struct SeqTimerWf {
 #[workflow_methods]
 impl SeqTimerWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, num_timers: u32) -> Self {
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
         Self { num_timers }
     }
 
     #[run(name = "seqtimer")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }

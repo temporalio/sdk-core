@@ -51,7 +51,7 @@ struct PollerLoadSpikyWf;
 #[workflow_methods]
 impl PollerLoadSpikyWf {
     #[run(name = "poller_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
@@ -86,7 +86,7 @@ struct PollerLoadSustainedWf;
 #[workflow_methods]
 impl PollerLoadSustainedWf {
     #[run(name = "poller_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
@@ -115,7 +115,7 @@ struct PollerLoadSpikeThenSustainedWf;
 #[workflow_methods]
 impl PollerLoadSpikeThenSustainedWf {
     #[run(name = "poller_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());

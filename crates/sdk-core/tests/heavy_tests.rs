@@ -49,7 +49,7 @@ struct ActivityLoadWf {
 #[workflow_methods(factory_only)]
 impl ActivityLoadWf {
     #[run(name = "activity_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let input_str = "yo".to_string();
         let res = ctx
             .start_activity(
@@ -118,7 +118,7 @@ struct ChunkyActivityWf;
 #[workflow_methods]
 impl ChunkyActivityWf {
     #[run(name = "chunky_activity_wf")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let input_str = "yo".to_string();
         let res = ctx
             .start_activity(
@@ -213,7 +213,7 @@ struct WorkflowLoadWf;
 #[workflow_methods]
 impl WorkflowLoadWf {
     #[run(name = "workflow_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
@@ -359,7 +359,7 @@ struct ManyParallelTimersLonghistWf;
 #[workflow_methods]
 impl ManyParallelTimersLonghistWf {
     #[run(name = "can_paginate_long_history")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..120 {
             let mut futs = vec![];
             for _ in 0..100 {
@@ -429,7 +429,7 @@ struct PollerLoadWf;
 #[workflow_methods]
 impl PollerLoadWf {
     #[run(name = "poller_load")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());

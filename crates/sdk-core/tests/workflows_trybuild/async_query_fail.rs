@@ -1,4 +1,5 @@
 use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowContextView};
 
 #[workflow]
 pub struct BadWorkflow;
@@ -6,12 +7,13 @@ pub struct BadWorkflow;
 #[workflow_methods]
 impl BadWorkflow {
     #[run]
-    pub async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 
+    // This should fail - queries must not be async
     #[query]
-    pub async fn get_value(&self, _ctx: &WorkflowContext) -> u32 {
+    pub async fn get_value(&self, _ctx: &WorkflowContextView) -> u32 {
         42
     }
 }

@@ -37,8 +37,8 @@ struct SignalSender;
 impl SignalSender {
     #[run(name = "sender")]
     async fn run(
-        &mut self,
-        ctx: &mut WorkflowContext,
+        &self,
+        ctx: &mut WorkflowContext<Self>,
         (run_id, expect_failure): (String, bool),
     ) -> WorkflowResult<()> {
         let mut dat = SignalWorkflowOptions::new(RECEIVER_WFID, run_id, SIGNAME, [b"hi!"]);
@@ -80,7 +80,7 @@ struct SignalReceiver;
 #[workflow_methods]
 impl SignalReceiver {
     #[run(name = "receiver")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
         assert_eq!(&res.input, &[b"hi!".into()]);
         assert_eq!(
@@ -98,7 +98,7 @@ struct SignalWithCreateWfReceiver;
 #[workflow_methods]
 impl SignalWithCreateWfReceiver {
     #[run(name = "receiver_signal")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
         assert_eq!(&res.input, &[b"tada".into()]);
         assert_eq!(
@@ -173,7 +173,7 @@ struct SignalsChild;
 #[workflow_methods]
 impl SignalsChild {
     #[run(name = "child_signaler")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started_child = ctx
             .child_workflow(ChildWorkflowOptions {
                 workflow_id: "my_precious_child".to_string(),
@@ -181,13 +181,13 @@ impl SignalsChild {
                 input: vec![().as_json_payload().unwrap()],
                 ..Default::default()
             })
-            .start(ctx)
+            .start()
             .await
             .into_started()
             .expect("Must start ok");
         let mut sig = Signal::new(SIGNAME, [b"hi!"]);
         sig.data.with_header("tupac", b"shakur");
-        started_child.signal(ctx, sig).await.unwrap();
+        started_child.signal(sig).await.unwrap();
         started_child.result().await.status.unwrap();
         Ok(().into())
     }
@@ -220,7 +220,7 @@ struct SignalSenderCanned;
 #[workflow_methods]
 impl SignalSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
         dat.with_header("tupac", b"shakur");
         let res = ctx.signal_workflow(dat).await;
@@ -287,14 +287,14 @@ struct CancelsBeforeSending;
 #[workflow_methods]
 impl CancelsBeforeSending {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
             "fake_wid",
             "fake_rid",
             SIGNAME,
             [b"hi!"],
         ));
-        sig.cancel(ctx);
+        sig.cancel();
         let _res = sig.await;
         Ok(().into())
     }

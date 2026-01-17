@@ -14,12 +14,14 @@ use crate::{
 use futures_util::{FutureExt, Stream, StreamExt, future::Shared, task::Context};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
+    cell::RefCell,
     collections::HashMap,
     future,
     future::Future,
     marker::PhantomData,
     ops::Deref,
     pin::Pin,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -61,9 +63,11 @@ use temporalio_common::{
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
-/// Used within workflows to issue commands, get info, etc.
+/// Non-generic base context containing all workflow execution infrastructure.
+///
+/// This is used internally by futures and commands that don't need typed workflow state.
 #[derive(Clone)]
-pub struct WorkflowContext {
+pub struct BaseWorkflowContext {
     namespace: String,
     task_queue: String,
     inital_information: Arc<InitializeWorkflow>,
@@ -76,10 +80,45 @@ pub struct WorkflowContext {
     payload_converter: PayloadConverter,
 }
 
-impl WorkflowContext {
-    /// Create a new wf context, returning the context itself and a receiver which outputs commands
+/// Used within workflows to issue commands, get info, etc.
+///
+/// The type parameter `W` represents the workflow type. This enables type-safe
+/// access to workflow state via `state_mut()` for mutations.
+pub struct WorkflowContext<W> {
+    base: BaseWorkflowContext,
+
+    /// The workflow instance, wrapped for interior mutability.
+    workflow_state: Rc<RefCell<W>>,
+}
+
+impl<W> Clone for WorkflowContext<W> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            workflow_state: self.workflow_state.clone(),
+        }
+    }
+}
+
+/// Read-only view of workflow context for use in init and query handlers.
+///
+/// This provides access to workflow information but cannot issue commands.
+#[derive(Clone)]
+pub struct WorkflowContextView {
+    // Will be populated with read-only access to context information
+}
+
+impl WorkflowContextView {
+    /// Create a new empty view.
+    pub(crate) fn new() -> Self {
+        Self {}
+    }
+}
+
+impl BaseWorkflowContext {
+    /// Create a new base context, returning the context itself and a receiver which outputs commands
     /// sent from the workflow.
-    pub(super) fn new(
+    pub(crate) fn new(
         namespace: String,
         task_queue: String,
         init_workflow_job: InitializeWorkflow,
@@ -117,86 +156,25 @@ impl WorkflowContext {
         )
     }
 
-    /// Return the namespace the workflow is executing in
-    pub fn namespace(&self) -> &str {
-        &self.namespace
+    /// Buffer a command to be sent in the activation reply
+    pub(crate) fn send(&self, c: RustWfCmd) {
+        self.chan.send(c).expect("command channel intact");
     }
 
-    /// Return the task queue the workflow is executing in
-    pub fn task_queue(&self) -> &str {
-        &self.task_queue
-    }
-
-    /// Get the arguments provided to the workflow upon execution start
-    pub fn get_args(&self) -> &[Payload] {
-        self.inital_information.arguments.as_slice()
-    }
-
-    /// Return the current time according to the workflow (which is not wall-clock time).
-    pub fn workflow_time(&self) -> Option<SystemTime> {
-        self.shared.read().wf_time
-    }
-
-    /// Return the length of history so far at this point in the workflow
-    pub fn history_length(&self) -> u32 {
-        self.shared.read().history_length
-    }
-
-    /// Return the deployment version, if any,  as it was when this point in the workflow was first
-    /// reached. If this code is being executed for the first time, return this Worker's deployment
-    /// version if it has one.
-    pub fn current_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
-        self.shared.read().current_deployment_version.clone()
-    }
-
-    /// Return current values for workflow search attributes
-    pub fn search_attributes(&self) -> impl Deref<Target = SearchAttributes> + '_ {
-        RwLockReadGuard::map(self.shared.read(), |s| &s.search_attributes)
-    }
-
-    /// Return the workflow's randomness seed
-    pub fn random_seed(&self) -> u64 {
-        self.shared.read().random_seed
-    }
-
-    /// Returns true if the current workflow task is happening under replay
-    pub fn is_replaying(&self) -> bool {
-        self.shared.read().is_replaying
-    }
-
-    /// Returns the [PayloadConverter] currently used by the worker running this workflow.
-    pub fn payload_converter(&self) -> &PayloadConverter {
-        &self.payload_converter
-    }
-
-    /// Return various information that the workflow was initialized with. Will eventually become
-    /// a proper non-proto workflow info struct.
-    pub fn workflow_initial_info(&self) -> &InitializeWorkflow {
-        &self.inital_information
-    }
-
-    /// A future that resolves if/when the workflow is cancelled, with the user provided cause
-    pub async fn cancelled(&self) -> String {
-        if let Some(s) = self.am_cancelled.borrow().as_ref() {
-            return s.clone();
-        }
-        self.am_cancelled
-            .clone()
-            .changed()
-            .await
-            .expect("Cancelled send half not dropped");
-        self.am_cancelled
-            .borrow()
-            .as_ref()
-            .cloned()
-            .unwrap_or_default()
+    /// Cancel any cancellable operation by ID
+    fn cancel(&self, cancellable_id: CancellableID) {
+        self.send(RustWfCmd::Cancel(cancellable_id));
     }
 
     /// Request to create a timer
-    pub fn timer<T: Into<TimerOptions>>(&self, opts: T) -> impl CancellableFuture<TimerResult> {
+    pub fn timer<T: Into<TimerOptions>>(
+        &self,
+        opts: T,
+    ) -> impl CancellableFuture<TimerResult> + use<T> {
         let opts: TimerOptions = opts.into();
         let seq = self.seq_nums.write().next_timer_seq();
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Timer(seq));
+        let (cmd, unblocker) =
+            CancellableWFCommandFut::new(CancellableID::Timer(seq), self.clone());
         self.send(
             CommandCreateRequest {
                 cmd: WorkflowCommand {
@@ -237,7 +215,8 @@ impl WorkflowContext {
         };
         let payload = self.payload_converter.to_payload(&ctx, &input)?;
         let seq = self.seq_nums.write().next_activity_seq();
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
+        let (cmd, unblocker) =
+            CancellableWFCommandFut::new(CancellableID::Activity(seq), self.clone());
         if opts.task_queue.is_none() {
             opts.task_queue = Some(self.task_queue.clone());
         }
@@ -258,7 +237,7 @@ impl WorkflowContext {
         _activity: AD,
         input: AD::Input,
         opts: LocalActivityOptions,
-    ) -> Result<impl CancellableFuture<ActivityResolution> + '_, PayloadConversionError> {
+    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: &self.payload_converter,
@@ -268,32 +247,193 @@ impl WorkflowContext {
             AD::name().to_string(),
             payload,
             opts,
-            self,
+            self.clone(),
         ))
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
     fn local_activity_no_timer_retry(
-        &self,
+        self,
         activity_type: String,
         input: Payload,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         let seq = self.seq_nums.write().next_activity_seq();
-        let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::LocalActivity(seq));
+        let (cmd, unblocker) =
+            CancellableWFCommandFut::new(CancellableID::LocalActivity(seq), self.clone());
+        self.chan
+            .send(
+                CommandCreateRequest {
+                    cmd: opts.into_command(activity_type, input, seq),
+                    unblocker,
+                }
+                .into(),
+            )
+            .expect("command channel intact");
+        cmd
+    }
+
+    fn send_signal_wf(
+        self,
+        target: sig_we::Target,
+        signal: Signal,
+    ) -> impl CancellableFuture<SignalExternalWfResult> {
+        let seq = self.seq_nums.write().next_signal_external_wf_seq();
+        let (cmd, unblocker) =
+            CancellableWFCommandFut::new(CancellableID::SignalExternalWorkflow(seq), self.clone());
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(activity_type, input, seq),
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        SignalExternalWorkflowExecution {
+                            seq,
+                            signal_name: signal.signal_name,
+                            args: signal.data.input,
+                            target: Some(target),
+                            headers: signal.data.headers,
+                        }
+                        .into(),
+                    ),
+                    user_metadata: None,
+                },
                 unblocker,
             }
             .into(),
         );
         cmd
     }
+}
+
+impl<W> WorkflowContext<W> {
+    /// Create a new wf context from a base context and workflow state.
+    pub(crate) fn from_base(base: BaseWorkflowContext, workflow_state: Rc<RefCell<W>>) -> Self {
+        Self {
+            base,
+            workflow_state,
+        }
+    }
+
+    /// Get the base context for use by futures that don't need typed state access.
+    pub fn base(&self) -> &BaseWorkflowContext {
+        &self.base
+    }
+
+    /// Access workflow state mutably via closure.
+    ///
+    /// The borrow is scoped to the closure and cannot escape, preventing
+    /// borrows from being held across await points.
+    pub fn state_mut<R>(&self, f: impl FnOnce(&mut W) -> R) -> R {
+        f(&mut *self.workflow_state.borrow_mut())
+    }
+
+    /// Return the namespace the workflow is executing in
+    pub fn namespace(&self) -> &str {
+        &self.base.namespace
+    }
+
+    /// Return the task queue the workflow is executing in
+    pub fn task_queue(&self) -> &str {
+        &self.base.task_queue
+    }
+
+    /// Get the arguments provided to the workflow upon execution start
+    pub fn get_args(&self) -> &[Payload] {
+        self.base.inital_information.arguments.as_slice()
+    }
+
+    /// Return the current time according to the workflow (which is not wall-clock time).
+    pub fn workflow_time(&self) -> Option<SystemTime> {
+        self.base.shared.read().wf_time
+    }
+
+    /// Return the length of history so far at this point in the workflow
+    pub fn history_length(&self) -> u32 {
+        self.base.shared.read().history_length
+    }
+
+    /// Return the deployment version, if any,  as it was when this point in the workflow was first
+    /// reached. If this code is being executed for the first time, return this Worker's deployment
+    /// version if it has one.
+    pub fn current_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
+        self.base.shared.read().current_deployment_version.clone()
+    }
+
+    /// Return current values for workflow search attributes
+    pub fn search_attributes(&self) -> impl Deref<Target = SearchAttributes> + '_ {
+        RwLockReadGuard::map(self.base.shared.read(), |s| &s.search_attributes)
+    }
+
+    /// Return the workflow's randomness seed
+    pub fn random_seed(&self) -> u64 {
+        self.base.shared.read().random_seed
+    }
+
+    /// Returns true if the current workflow task is happening under replay
+    pub fn is_replaying(&self) -> bool {
+        self.base.shared.read().is_replaying
+    }
+
+    /// Returns the [PayloadConverter] currently used by the worker running this workflow.
+    pub fn payload_converter(&self) -> &PayloadConverter {
+        &self.base.payload_converter
+    }
+
+    /// Return various information that the workflow was initialized with. Will eventually become
+    /// a proper non-proto workflow info struct.
+    pub fn workflow_initial_info(&self) -> &InitializeWorkflow {
+        &self.base.inital_information
+    }
+
+    /// A future that resolves if/when the workflow is cancelled, with the user provided cause
+    pub async fn cancelled(&self) -> String {
+        if let Some(s) = self.base.am_cancelled.borrow().as_ref() {
+            return s.clone();
+        }
+        self.base
+            .am_cancelled
+            .clone()
+            .changed()
+            .await
+            .expect("Cancelled send half not dropped");
+        self.base
+            .am_cancelled
+            .borrow()
+            .as_ref()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Request to create a timer
+    pub fn timer<T: Into<TimerOptions>>(&self, opts: T) -> impl CancellableFuture<TimerResult> {
+        self.base.timer(opts)
+    }
+
+    /// Request to run an activity
+    pub fn start_activity<AD: ActivityDefinition>(
+        &self,
+        activity: AD,
+        input: AD::Input,
+        opts: ActivityOptions,
+    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+        self.base.start_activity(activity, input, opts)
+    }
+
+    /// Request to run a local activity
+    pub fn start_local_activity<AD: ActivityDefinition>(
+        &self,
+        activity: AD,
+        input: AD::Input,
+        opts: LocalActivityOptions,
+    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+        self.base.start_local_activity(activity, input, opts)
+    }
 
     /// Creates a child workflow stub with the provided options
     pub fn child_workflow(&self, opts: ChildWorkflowOptions) -> ChildWorkflow {
-        ChildWorkflow { opts }
+        ChildWorkflow {
+            opts,
+            base_ctx: self.base.clone(),
+        }
     }
 
     /// Check (or record) that this workflow history was created with the provided patch
@@ -308,7 +448,7 @@ impl WorkflowContext {
     }
 
     fn patch_impl(&self, patch_id: &str, deprecated: bool) -> bool {
-        self.send(
+        self.base.send(
             workflow_command::Variant::SetPatchMarker(SetPatchMarker {
                 patch_id: patch_id.to_string(),
                 deprecated,
@@ -316,15 +456,16 @@ impl WorkflowContext {
             .into(),
         );
         // See if we already know about the status of this change
-        if let Some(present) = self.shared.read().changes.get(patch_id) {
+        if let Some(present) = self.base.shared.read().changes.get(patch_id) {
             return *present;
         }
 
         // If we don't already know about the change, that means there is no marker in history,
         // and we should return false if we are replaying
-        let res = !self.shared.read().is_replaying;
+        let res = !self.base.shared.read().is_replaying;
 
-        self.shared
+        self.base
+            .shared
             .write()
             .changes
             .insert(patch_id.to_string(), res);
@@ -340,16 +481,16 @@ impl WorkflowContext {
     ) -> impl CancellableFuture<SignalExternalWfResult> {
         let options: SignalWorkflowOptions = opts.into();
         let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
-            namespace: self.namespace.clone(),
+            namespace: self.base.namespace.clone(),
             workflow_id: options.workflow_id,
             run_id: options.run_id.unwrap_or_default(),
         });
-        self.send_signal_wf(target, options.signal)
+        self.base.clone().send_signal_wf(target, options.signal)
     }
 
     /// Add or create a set of search attributes
     pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
-        self.send(RustWfCmd::NewNonblockingCmd(
+        self.base.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
                     search_attributes: Some(SearchAttributes {
@@ -362,7 +503,7 @@ impl WorkflowContext {
 
     /// Add or create a set of search attributes
     pub fn upsert_memo(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
-        self.send(RustWfCmd::NewNonblockingCmd(
+        self.base.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::ModifyWorkflowProperties(ModifyWorkflowProperties {
                 upserted_memo: Some(Memo {
                     fields: HashMap::from_iter(attr_iter),
@@ -374,13 +515,14 @@ impl WorkflowContext {
     /// Return a stream that produces values when the named signal is sent to this workflow
     pub fn make_signal_channel(&self, signal_name: impl Into<String>) -> DrainableSignalStream {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
+        self.base
+            .send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
         DrainableSignalStream(UnboundedReceiverStream::new(rx))
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
-        self.send(with.into());
+        self.base.send(with.into());
     }
 
     /// Request the cancellation of an external workflow. May resolve as a failure if the workflow
@@ -390,9 +532,9 @@ impl WorkflowContext {
         target: NamespacedWorkflowExecution,
         reason: String,
     ) -> impl Future<Output = CancelExternalWfResult> {
-        let seq = self.seq_nums.write().next_cancel_external_wf_seq();
+        let seq = self.base.seq_nums.write().next_cancel_external_wf_seq();
         let (cmd, unblocker) = WFCommandFut::new();
-        self.send(
+        self.base.send(
             CommandCreateRequest {
                 cmd: WorkflowCommand {
                     variant: Some(
@@ -424,7 +566,7 @@ impl WorkflowContext {
         validator: impl IntoUpdateValidatorFunc<Arg>,
         handler: impl IntoUpdateHandlerFunc<Arg, Res>,
     ) {
-        self.send(RustWfCmd::RegisterUpdate(
+        self.base.send(RustWfCmd::RegisterUpdate(
             name.into(),
             UpdateFunctions::new(validator, handler),
         ))
@@ -435,17 +577,20 @@ impl WorkflowContext {
         &self,
         opts: NexusOperationOptions,
     ) -> impl CancellableFuture<NexusStartResult> {
-        let seq = self.seq_nums.write().next_nexus_op_seq();
+        let seq = self.base.seq_nums.write().next_nexus_op_seq();
         let (result_future, unblocker) = WFCommandFut::new();
-        self.send(RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker });
+        self.base
+            .send(RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker });
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
             CancellableID::NexusOp(seq),
             NexusUnblockData {
                 result_future: result_future.shared(),
                 schedule_seq: seq,
+                base_ctx: self.base.clone(),
             },
+            self.base.clone(),
         );
-        self.send(
+        self.base.send(
             CommandCreateRequest {
                 cmd: opts.into_command(seq),
                 unblocker,
@@ -464,46 +609,6 @@ impl WorkflowContext {
                 Poll::Pending
             }
         })
-    }
-
-    /// Buffer a command to be sent in the activation reply
-    pub(crate) fn send(&self, c: RustWfCmd) {
-        self.chan.send(c).expect("command channel intact");
-    }
-
-    fn send_signal_wf(
-        &self,
-        target: sig_we::Target,
-        signal: Signal,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
-        let seq = self.seq_nums.write().next_signal_external_wf_seq();
-        let (cmd, unblocker) =
-            CancellableWFCommandFut::new(CancellableID::SignalExternalWorkflow(seq));
-        self.send(
-            CommandCreateRequest {
-                cmd: WorkflowCommand {
-                    variant: Some(
-                        SignalExternalWorkflowExecution {
-                            seq,
-                            signal_name: signal.signal_name,
-                            args: signal.data.input,
-                            target: Some(target),
-                            headers: signal.data.headers,
-                        }
-                        .into(),
-                    ),
-                    user_metadata: None,
-                },
-                unblocker,
-            }
-            .into(),
-        );
-        cmd
-    }
-
-    /// Cancel any cancellable operation by ID
-    fn cancel(&self, cancellable_id: CancellableID) {
-        self.send(RustWfCmd::Cancel(cancellable_id));
     }
 }
 
@@ -596,13 +701,13 @@ impl Stream for DrainableSignalStream {
 /// Used in the prototype SDK for cancelling operations like timers and activities.
 pub trait CancellableFuture<T>: Future<Output = T> {
     /// Cancel this Future
-    fn cancel(&self, cx: &WorkflowContext);
+    fn cancel(&self);
 }
 
 /// A Future that can be cancelled with a reason
 pub trait CancellableFutureWithReason<T>: CancellableFuture<T> {
     /// Cancel this Future with a reason
-    fn cancel_with_reason(&self, cx: &WorkflowContext, reason: String);
+    fn cancel_with_reason(&self, reason: String);
 }
 
 struct WFCommandFut<T, D> {
@@ -653,19 +758,28 @@ where
 struct CancellableWFCommandFut<T, D, ID = CancellableID> {
     cmd_fut: WFCommandFut<T, D>,
     cancellable_id: ID,
+    base_ctx: BaseWorkflowContext,
 }
 impl<T, ID> CancellableWFCommandFut<T, (), ID> {
-    fn new(cancellable_id: ID) -> (Self, oneshot::Sender<UnblockEvent>) {
-        Self::new_with_dat(cancellable_id, ())
+    fn new(
+        cancellable_id: ID,
+        base_ctx: BaseWorkflowContext,
+    ) -> (Self, oneshot::Sender<UnblockEvent>) {
+        Self::new_with_dat(cancellable_id, (), base_ctx)
     }
 }
 impl<T, D, ID> CancellableWFCommandFut<T, D, ID> {
-    fn new_with_dat(cancellable_id: ID, other_dat: D) -> (Self, oneshot::Sender<UnblockEvent>) {
+    fn new_with_dat(
+        cancellable_id: ID,
+        other_dat: D,
+        base_ctx: BaseWorkflowContext,
+    ) -> (Self, oneshot::Sender<UnblockEvent>) {
         let (cmd_fut, sender) = WFCommandFut::new_with_dat(other_dat);
         (
             Self {
                 cmd_fut,
                 cancellable_id,
+                base_ctx,
             },
             sender,
         )
@@ -688,53 +802,58 @@ where
     T: Unblockable<OtherDat = D>,
     ID: Clone + Into<CancellableID>,
 {
-    fn cancel(&self, cx: &WorkflowContext) {
-        cx.cancel(self.cancellable_id.clone().into());
+    fn cancel(&self) {
+        self.base_ctx.cancel(self.cancellable_id.clone().into());
     }
 }
 impl<T, D> CancellableFutureWithReason<T> for CancellableWFCommandFut<T, D, CancellableIDWithReason>
 where
     T: Unblockable<OtherDat = D>,
 {
-    fn cancel_with_reason(&self, cx: &WorkflowContext, reason: String) {
+    fn cancel_with_reason(&self, reason: String) {
         let new_id = self.cancellable_id.clone().with_reason(reason);
-        cx.cancel(new_id);
+        self.base_ctx.cancel(new_id);
     }
 }
 
-struct LATimerBackoffFut<'a> {
+struct LATimerBackoffFut {
     la_opts: LocalActivityOptions,
     activity_type: String,
     input: Payload,
-    current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Send + Unpin + 'a>>,
-    timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin + 'a>>>,
-    ctx: &'a WorkflowContext,
+    current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Send + Unpin>>,
+    timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Send + Unpin>>>,
+    base_ctx: BaseWorkflowContext,
     next_attempt: u32,
     next_sched_time: Option<prost_types::Timestamp>,
     did_cancel: AtomicBool,
 }
-impl<'a> LATimerBackoffFut<'a> {
+impl LATimerBackoffFut {
     pub(crate) fn new(
         activity_type: String,
         input: Payload,
         opts: LocalActivityOptions,
-        ctx: &'a WorkflowContext,
+        base_ctx: BaseWorkflowContext,
     ) -> Self {
+        let current_fut = Box::pin(base_ctx.clone().local_activity_no_timer_retry(
+            activity_type.clone(),
+            input.clone(),
+            opts.clone(),
+        ));
         Self {
-            la_opts: opts.clone(),
-            activity_type: activity_type.clone(),
-            input: input.clone(),
-            current_fut: Box::pin(ctx.local_activity_no_timer_retry(activity_type, input, opts)),
+            la_opts: opts,
+            activity_type,
+            input,
+            current_fut,
             timer_fut: None,
-            ctx,
+            base_ctx,
             next_attempt: 1,
             next_sched_time: None,
             did_cancel: AtomicBool::new(false),
         }
     }
 }
-impl Unpin for LATimerBackoffFut<'_> {}
-impl Future for LATimerBackoffFut<'_> {
+impl Unpin for LATimerBackoffFut {}
+impl Future for LATimerBackoffFut {
     type Output = ActivityResolution;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -749,11 +868,12 @@ impl Future for LATimerBackoffFut<'_> {
                         opts.attempt = Some(self.next_attempt);
                         opts.original_schedule_time
                             .clone_from(&self.next_sched_time);
-                        self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(
-                            self.activity_type.clone(),
-                            self.input.clone(),
-                            opts,
-                        ));
+                        self.current_fut =
+                            Box::pin(self.base_ctx.clone().local_activity_no_timer_retry(
+                                self.activity_type.clone(),
+                                self.input.clone(),
+                                opts,
+                            ));
                         Poll::Pending
                     } else {
                         Poll::Ready(ActivityResolution {
@@ -779,7 +899,7 @@ impl Future for LATimerBackoffFut<'_> {
                 });
             }
 
-            let timer_f = self.ctx.timer::<Duration>(
+            let timer_f = self.base_ctx.timer::<Duration>(
                 b.backoff_duration
                     .expect("Duration is set")
                     .try_into()
@@ -793,25 +913,27 @@ impl Future for LATimerBackoffFut<'_> {
         poll_res
     }
 }
-impl CancellableFuture<ActivityResolution> for LATimerBackoffFut<'_> {
-    fn cancel(&self, ctx: &WorkflowContext) {
+impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
+    fn cancel(&self) {
         self.did_cancel.store(true, Ordering::Release);
         if let Some(tf) = self.timer_fut.as_ref() {
-            tf.cancel(ctx);
+            tf.cancel();
         }
-        self.current_fut.cancel(ctx);
+        self.current_fut.cancel();
     }
 }
 
 /// A stub representing an unstarted child workflow.
-#[derive(Default, Debug, Clone)]
+#[derive(Clone)]
 pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
+    base_ctx: BaseWorkflowContext,
 }
 
 pub(crate) struct ChildWfCommon {
     workflow_id: String,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
+    base_ctx: BaseWorkflowContext,
 }
 
 /// Child workflow in pending state
@@ -844,24 +966,23 @@ pub struct StartedChildWorkflow {
 
 impl ChildWorkflow {
     /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(
-        self,
-        cx: &WorkflowContext,
-    ) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
-        let child_seq = cx.seq_nums.write().next_child_workflow_seq();
+    pub fn start(self) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
+        let child_seq = self.base_ctx.seq_nums.write().next_child_workflow_seq();
         // Immediately create the command/future for the result, otherwise if the user does
         // not await the result until *after* we receive an activation for it, there will be nothing
         // to match when unblocking.
-        let cancel_seq = cx.seq_nums.write().next_cancel_external_wf_seq();
-        let (result_cmd, unblocker) =
-            CancellableWFCommandFut::new(CancellableIDWithReason::ExternalWorkflow {
+        let cancel_seq = self.base_ctx.seq_nums.write().next_cancel_external_wf_seq();
+        let (result_cmd, unblocker) = CancellableWFCommandFut::new(
+            CancellableIDWithReason::ExternalWorkflow {
                 seqnum: cancel_seq,
                 execution: NamespacedWorkflowExecution {
                     workflow_id: self.opts.workflow_id.clone(),
                     ..Default::default()
                 },
-            });
-        cx.send(
+            },
+            self.base_ctx.clone(),
+        );
+        self.base_ctx.send(
             CommandSubscribeChildWorkflowCompletion {
                 seq: child_seq,
                 unblocker,
@@ -872,13 +993,15 @@ impl ChildWorkflow {
         let common = ChildWfCommon {
             workflow_id: self.opts.workflow_id.clone(),
             result_future: result_cmd,
+            base_ctx: self.base_ctx.clone(),
         };
 
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
             CancellableIDWithReason::ChildWorkflow { seqnum: child_seq },
             common,
+            self.base_ctx.clone(),
         );
-        cx.send(
+        self.base_ctx.send(
             CommandCreateRequest {
                 cmd: self.opts.into_command(child_seq),
                 unblocker,
@@ -898,8 +1021,8 @@ impl StartedChildWorkflow {
     }
 
     /// Cancel the child workflow
-    pub fn cancel(&self, cx: &WorkflowContext, reason: String) {
-        cx.send(RustWfCmd::NewNonblockingCmd(
+    pub fn cancel(&self, reason: String) {
+        self.common.base_ctx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {
                 child_workflow_seq: self.common.result_future.cancellable_id.seq_num(),
                 reason,
@@ -909,13 +1032,15 @@ impl StartedChildWorkflow {
     }
 
     /// Signal the child workflow
-    pub fn signal<'a, S: Into<Signal>>(
+    pub fn signal<S: Into<Signal>>(
         &self,
-        cx: &'a WorkflowContext,
         data: S,
-    ) -> impl CancellableFuture<SignalExternalWfResult> + use<'a, S> {
+    ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        cx.send_signal_wf(target, data.into())
+        self.common
+            .base_ctx
+            .clone()
+            .send_signal_wf(target, data.into())
     }
 }
 
@@ -930,6 +1055,7 @@ pub struct StartedNexusOperation {
 pub(crate) struct NexusUnblockData {
     result_future: Shared<WFCommandFut<NexusOperationResult, ()>>,
     schedule_seq: u32,
+    base_ctx: BaseWorkflowContext,
 }
 
 impl StartedNexusOperation {
@@ -937,7 +1063,9 @@ impl StartedNexusOperation {
         self.unblock_dat.result_future.clone().await
     }
 
-    pub fn cancel(&self, cx: &WorkflowContext) {
-        cx.cancel(CancellableID::NexusOp(self.unblock_dat.schedule_seq));
+    pub fn cancel(&self) {
+        self.unblock_dat
+            .base_ctx
+            .cancel(CancellableID::NexusOp(self.unblock_dat.schedule_seq));
     }
 }

@@ -27,7 +27,7 @@ struct MemoUpserter;
 #[workflow_methods]
 impl MemoUpserter {
     #[run(name = "can_upsert_memo")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.upsert_memo([
             (FIELD_A.to_string(), "enchi".as_json_payload().unwrap()),
             (FIELD_B.to_string(), 9001.as_json_payload().unwrap()),
@@ -78,7 +78,7 @@ struct ModifyPropsWf;
 #[workflow_methods]
 impl ModifyPropsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.upsert_memo([
             (
                 String::from("foo"),

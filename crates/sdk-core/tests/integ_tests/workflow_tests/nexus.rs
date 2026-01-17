@@ -39,7 +39,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext, WorkflowResult,
+    CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext, WorkflowContextView,
+    WorkflowResult,
 };
 use temporalio_sdk_core::PollError;
 use tokio::{
@@ -66,14 +67,14 @@ struct NexusBasicWf {
 #[workflow_methods]
 impl NexusBasicWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+    fn new(_ctx: &WorkflowContextView, endpoint: String) -> Self {
         Self { endpoint }
     }
 
     #[run]
     pub(crate) async fn run(
-        &mut self,
-        ctx: &mut WorkflowContext,
+        &self,
+        ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<Result<NexusOperationResult, Failure>> {
         match ctx
             .start_nexus_operation(NexusOperationOptions {
@@ -237,7 +238,7 @@ struct NexusAsyncWf {
 impl NexusAsyncWf {
     #[init]
     fn new(
-        _ctx: &WorkflowContext,
+        _ctx: &WorkflowContextView,
         (endpoint, schedule_to_close_timeout, outcome): (String, Option<Duration>, Outcome),
     ) -> Self {
         Self {
@@ -249,8 +250,8 @@ impl NexusAsyncWf {
 
     #[run]
     pub(crate) async fn run(
-        &mut self,
-        ctx: &mut WorkflowContext,
+        &self,
+        ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<NexusOperationResult> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
             endpoint: self.endpoint.clone(),
@@ -261,16 +262,16 @@ impl NexusAsyncWf {
         });
         if self.outcome == Outcome::CancelAfterRecordedBeforeStarted {
             ctx.timer(Duration::from_millis(1)).await;
-            started.cancel(ctx);
+            started.cancel();
         }
         let started = started.await.unwrap();
         let result = started.result();
         if matches!(self.outcome, Outcome::Cancel) {
-            started.cancel(ctx);
-            started.cancel(ctx);
+            started.cancel();
+            started.cancel();
         }
         let res = result.await;
-        started.cancel(ctx);
+        started.cancel();
         Ok(res.into())
     }
 }
@@ -283,13 +284,13 @@ struct AsyncCompleter {
 #[workflow_methods]
 impl AsyncCompleter {
     #[init]
-    fn new(_ctx: &WorkflowContext, outcome: Outcome) -> Self {
+    fn new(_ctx: &WorkflowContextView, outcome: Outcome) -> Self {
         Self { outcome }
     }
 
     #[allow(dead_code)] // Started via untyped submitter handle
     #[run]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<String> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         match self.outcome {
             Outcome::Succeed => Ok("completed async".to_string().into()),
             Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
@@ -527,19 +528,19 @@ struct NexusCancelBeforeStartWf {
 #[workflow_methods]
 impl NexusCancelBeforeStartWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+    fn new(_ctx: &WorkflowContextView, endpoint: String) -> Self {
         Self { endpoint }
     }
 
     #[run]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
             endpoint: self.endpoint.clone(),
             service: "svc".to_string(),
             operation: "op".to_string(),
             ..Default::default()
         });
-        started.cancel(ctx);
+        started.cancel();
         let res = started.await.unwrap_err();
         assert_eq!(res.message, "Nexus Operation cancelled before scheduled");
         if let FailureInfo::NexusOperationExecutionFailureInfo(fi) = res.failure_info.unwrap() {
@@ -595,12 +596,12 @@ struct NexusMustCompleteTaskWf {
 #[workflow_methods]
 impl NexusMustCompleteTaskWf {
     #[init]
-    fn new(_ctx: &WorkflowContext, endpoint: String) -> Self {
+    fn new(_ctx: &WorkflowContextView, endpoint: String) -> Self {
         Self { endpoint }
     }
 
     #[run]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // We just need to create the command, not await it.
         drop(ctx.start_nexus_operation(NexusOperationOptions {
             endpoint: self.endpoint.clone(),
@@ -714,7 +715,7 @@ struct NexusCancellationCallerWf {
 #[workflow_methods(factory_only)]
 impl NexusCancellationCallerWf {
     #[run(name = "nexus_cancellation_types")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<NexusOperationResult> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<NexusOperationResult> {
         let options = NexusOperationOptions {
             endpoint: self.endpoint.clone(),
             service: "svc".to_string(),
@@ -726,14 +727,14 @@ impl NexusCancellationCallerWf {
         let started = ctx.start_nexus_operation(options);
         let started = started.await.unwrap();
         let result = started.result();
-        started.cancel(ctx);
-        started.cancel(ctx);
+        started.cancel();
+        started.cancel();
 
         let res = result.await;
         self.caller_op_future_tx.send(true).unwrap();
 
         // Make sure cancel after op completion doesn't cause problems
-        started.cancel(ctx);
+        started.cancel();
 
         // We need to wait slightly so that the workflow is not complete at the same time
         // cancellation is invoked. If it does, the caller workflow will close and the server
@@ -754,7 +755,7 @@ struct AsyncCompleterWf {
 #[workflow_methods(factory_only)]
 impl AsyncCompleterWf {
     #[run(name = "async_completer")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // Wait for cancellation
         ctx.cancelled().await;
         self.cancellation_tx.send(true).unwrap();

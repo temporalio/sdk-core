@@ -7,7 +7,7 @@ pub struct MinimalWorkflow;
 #[workflow_methods]
 impl MinimalWorkflow {
     #[run]
-    pub async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 }

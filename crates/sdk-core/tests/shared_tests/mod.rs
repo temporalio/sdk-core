@@ -27,7 +27,7 @@ struct OversizeGrpcMessageWf {
 #[workflow_methods(factory_only)]
 impl OversizeGrpcMessageWf {
     #[run]
-    async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<Vec<u8>> {
+    async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
         if self.run_flag.load(Relaxed) {
             Ok(vec![].into())
         } else {

@@ -4,49 +4,59 @@ use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use temporalio_client::{WorkflowExecutionResult, WorkflowOptions};
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
 #[derive(Default)]
 struct InteractionWorkflow {
     counter: i32,
-    borrowed_across_await: Vec<&'static str>,
+    log: Vec<&'static str>,
 }
 
 #[workflow_methods]
 impl InteractionWorkflow {
+    // Async - uses &self, reads directly, mutates via ctx.state_mut()
     #[run]
-    async fn run(&mut self, ctx: &mut WorkflowContext, wait_for_value: i32) -> WorkflowResult<i32> {
-        self.borrowed_across_await.push("run");
+    async fn run(
+        &self,
+        ctx: &mut WorkflowContext<Self>,
+        wait_for_value: i32,
+    ) -> WorkflowResult<i32> {
+        ctx.state_mut(|s| s.log.push("run"));
         ctx.wait_condition(|| self.counter == wait_for_value).await;
         Ok(WfExitValue::Normal(self.counter))
     }
 
+    // Sync signal - uses &mut self, direct field access
     #[signal]
-    fn increment(&mut self, _ctx: &mut WorkflowContext, amount: i32) {
+    fn increment(&mut self, _ctx: &mut WorkflowContext<Self>, amount: i32) {
         self.counter += amount;
     }
 
+    // Query - uses &self with read-only context
     #[query]
-    fn get_counter(&self, _ctx: &WorkflowContext) -> i32 {
+    fn get_counter(&self, _ctx: &WorkflowContextView) -> i32 {
         self.counter
     }
 
+    // Sync update - uses &mut self, direct field access
     #[update]
-    fn set_counter(&mut self, _ctx: &mut WorkflowContext, value: i32) -> i32 {
+    fn set_counter(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
         let old = self.counter;
         self.counter = value;
         old
     }
 
+    // Async update - uses &self, reads directly, mutates via ctx.state_mut()
     #[update]
-    async fn change_and_wait(&mut self, ctx: &mut WorkflowContext, amount_and_wait: (i32, i32)) {
-        let baa = &mut self.borrowed_across_await;
-        baa.push("starting change_and_wait");
-        self.counter += amount_and_wait.0;
+    async fn change_and_wait(&self, ctx: &mut WorkflowContext<Self>, amount_and_wait: (i32, i32)) {
+        ctx.state_mut(|s| {
+            s.log.push("starting change_and_wait");
+            s.counter += amount_and_wait.0;
+        });
         ctx.wait_condition(|| self.counter == amount_and_wait.1)
             .await;
-        baa.push("done change_and_wait");
+        ctx.state_mut(|s| s.log.push("done change_and_wait"));
     }
 }
 

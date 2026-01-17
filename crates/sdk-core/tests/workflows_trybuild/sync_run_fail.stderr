@@ -1,5 +1,5 @@
 error: #[run] methods must be async
- --> tests/workflows_trybuild/sync_run_fail.rs:9:9
-  |
-9 |     pub fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
-  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> tests/workflows_trybuild/sync_run_fail.rs:10:9
+   |
+10 |     pub fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

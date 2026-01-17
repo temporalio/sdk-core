@@ -801,7 +801,7 @@ async fn activity_metrics() {
     #[workflow_methods]
     impl ActivityMetricsWf {
         #[run]
-        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let normal_act_pass = ctx
                 .start_activity(
                     PassFailActivities::pass_fail_act,
@@ -856,7 +856,7 @@ async fn activity_metrics() {
             )?;
             join!(local_act_pass, local_act_fail);
             // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
-            local_act_cancel.cancel(ctx);
+            local_act_cancel.cancel();
             local_act_cancel.await;
             Ok(().into())
         }
@@ -952,7 +952,11 @@ async fn nexus_metrics() {
     #[workflow_methods]
     impl NexusMetricsWf {
         #[run]
-        async fn run(&mut self, ctx: &mut WorkflowContext, endpoint: String) -> WorkflowResult<()> {
+        async fn run(
+            &self,
+            ctx: &mut WorkflowContext<Self>,
+            endpoint: String,
+        ) -> WorkflowResult<()> {
             let partial_op = NexusOperationOptions {
                 endpoint: endpoint.clone(),
                 service: "mysvc".to_string(),
@@ -1141,7 +1145,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     #[workflow_methods]
     impl EvictOnCompleteWf {
         #[run]
-        async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             Ok(().into())
         }
     }
@@ -1238,7 +1242,7 @@ async fn metrics_available_from_custom_slot_supplier() {
     #[workflow_methods]
     impl CustomSlotSupplierWf {
         #[run]
-        async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             Ok(().into())
         }
     }
@@ -1402,7 +1406,7 @@ async fn sticky_queue_label_strategy(
     #[workflow_methods]
     impl StickyQueueLabelStrategyWf {
         #[run]
-        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_millis(1)).await;
             Ok(().into())
         }
@@ -1491,7 +1495,7 @@ async fn resource_based_tuner_metrics() {
     #[workflow_methods]
     impl ResourceBasedTunerMetricsWf {
         #[run]
-        async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_millis(100)).await;
             Ok(().into())
         }

@@ -49,7 +49,7 @@ pub(crate) struct ChangesWf;
 #[workflow_methods]
 impl ChangesWf {
     #[run(name = "writes_change_markers")]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
             ctx.timer(Duration::from_millis(100)).await;
         } else {
@@ -87,7 +87,7 @@ pub(crate) struct NoChangeThenChangeWf {
 #[workflow_methods(factory_only)]
 impl NoChangeThenChangeWf {
     #[run(name = "can_add_change_markers")]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if self.did_die.load(Ordering::Acquire) {
             assert!(!ctx.patched(MY_PATCH_ID));
         }
@@ -129,7 +129,7 @@ pub(crate) struct ReplayWithChangeMarkerWf {
 #[workflow_methods(factory_only)]
 impl ReplayWithChangeMarkerWf {
     #[run(name = "replaying_with_patch_marker")]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         assert!(ctx.patched(MY_PATCH_ID));
         ctx.timer(Duration::from_millis(200)).await;
         if !self.did_die.load(Ordering::Acquire) {
@@ -166,7 +166,7 @@ struct TimerPatchedTimerWf {
 #[workflow_methods(factory_only)]
 impl TimerPatchedTimerWf {
     #[run(name = "timer_patched_timer")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(1)).await;
         if self.fail_once.load(Ordering::Acquire) {
             self.fail_once.store(false, Ordering::Release);
@@ -203,7 +203,7 @@ struct RemoveDeprecatedPatchNearOtherPatchWf {
 #[workflow_methods(factory_only)]
 impl RemoveDeprecatedPatchNearOtherPatchWf {
     #[run(name = "can_add_change_markers")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(200)).await;
         if !self.did_die.load(Ordering::Acquire) {
             assert!(ctx.deprecate_patch("getting-deprecated"));
@@ -245,7 +245,7 @@ struct DeprecatedPatchRemovalWf {
 #[workflow_methods(factory_only)]
 impl DeprecatedPatchRemovalWf {
     #[run(name = "deprecated_patch_removal")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if !self.did_die.load(Ordering::Acquire) {
             assert!(ctx.deprecate_patch("getting-deprecated"));
         }
@@ -386,7 +386,7 @@ impl FakeAct {
     }
 }
 
-async fn v1(ctx: &mut WorkflowContext) {
+async fn v1(ctx: &mut WorkflowContext<PatchWf>) {
     ctx.start_activity(
         FakeAct::nameless,
         (),
@@ -399,7 +399,7 @@ async fn v1(ctx: &mut WorkflowContext) {
     .await;
 }
 
-async fn v2(ctx: &mut WorkflowContext) -> bool {
+async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
     if ctx.patched(MY_PATCH_ID) {
         ctx.start_activity(
             FakeAct::nameless,
@@ -427,7 +427,7 @@ async fn v2(ctx: &mut WorkflowContext) -> bool {
     }
 }
 
-async fn v3(ctx: &mut WorkflowContext) {
+async fn v3(ctx: &mut WorkflowContext<PatchWf>) {
     ctx.deprecate_patch(MY_PATCH_ID);
     ctx.start_activity(
         FakeAct::nameless,
@@ -441,7 +441,7 @@ async fn v3(ctx: &mut WorkflowContext) {
     .await;
 }
 
-async fn v4(ctx: &mut WorkflowContext) {
+async fn v4(ctx: &mut WorkflowContext<PatchWf>) {
     ctx.start_activity(
         FakeAct::nameless,
         (),
@@ -471,7 +471,7 @@ struct PatchWf {
 #[workflow_methods(factory_only)]
 impl PatchWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         match self.version {
             1 => {
                 v1(ctx).await;
@@ -664,7 +664,7 @@ struct SameChangeMultipleSpotsWf;
 #[workflow_methods]
 impl SameChangeMultipleSpotsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
             ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
                 .await;
@@ -786,7 +786,7 @@ struct ManyPatchesWf {
 #[workflow_methods(factory_only)]
 impl ManyPatchesWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for i in 1..=self.num_patches {
             let _dontcare = ctx.patched(&format!("patch-{i}"));
             ctx.timer(ONE_SECOND).await;

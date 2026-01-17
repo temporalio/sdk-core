@@ -43,7 +43,7 @@ struct TimerTimeoutWf {
 #[workflow_methods(factory_only)]
 impl TimerTimeoutWf {
     #[run]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         self.run_ct.fetch_add(1, Ordering::SeqCst);
         let t = ctx.timer(Duration::from_secs(1));
         if !self.timed_out_once.load(Ordering::SeqCst) {
@@ -95,7 +95,7 @@ struct CacheMissWf {
 #[workflow_methods(factory_only)]
 impl CacheMissWf {
     #[run]
-    pub(crate) async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         self.barr.wait().await;
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())

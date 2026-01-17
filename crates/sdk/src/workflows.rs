@@ -6,7 +6,7 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
+//! use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
@@ -16,33 +16,44 @@
 //! #[workflow_methods]
 //! impl MyWorkflow {
 //!     #[init]
-//!     pub fn new(ctx: &WorkflowContext, input: String) -> Self {
+//!     pub fn new(ctx: &WorkflowContextView, input: String) -> Self {
 //!         Self { counter: 0 }
 //!     }
 //!
+//!     // Async methods use &self - mutations go through ctx.state_mut()
 //!     #[run]
-//!     pub async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<String> {
+//!     pub async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
 //!         Ok(WfExitValue::Normal(format!(
 //!             "Done with counter: {}",
 //!             self.counter
 //!         )))
 //!     }
 //!
+//!     // Sync signals use &mut self for direct mutations
 //!     #[signal]
-//!     pub fn increment(&mut self, ctx: &mut WorkflowContext, amount: u32) {
+//!     pub fn increment(&mut self, ctx: &mut WorkflowContext<Self>, amount: u32) {
 //!         self.counter += amount;
 //!     }
 //!
+//!     // Queries use &self with read-only context
 //!     #[query]
-//!     pub fn get_counter(&self, ctx: &WorkflowContext) -> u32 {
+//!     pub fn get_counter(&self, ctx: &WorkflowContextView) -> u32 {
 //!         self.counter
 //!     }
 //! }
 //! ```
 
-use crate::{WfExitValue, WorkflowContext};
-use futures_util::future::BoxFuture;
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use crate::{BaseWorkflowContext, WfExitValue, WorkflowContext, WorkflowContextView};
+use futures_util::future::{BoxFuture, Fuse, FutureExt, LocalBoxFuture};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fmt::Debug,
+    pin::Pin,
+    rc::Rc,
+    sync::Arc,
+    task::{Context as TaskContext, Poll},
+};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{
@@ -73,7 +84,7 @@ pub enum WorkflowError {
 /// - Initialization from serialized input
 /// - Execution of the main workflow function
 #[doc(hidden)]
-pub trait WorkflowImplementation: Sized + Send + 'static {
+pub trait WorkflowImplementation: Sized + 'static {
     /// The marker struct for the run method that implements `WorkflowDefinition`
     type Run: WorkflowDefinition;
 
@@ -89,30 +100,38 @@ pub trait WorkflowImplementation: Sized + Send + 'static {
     ///
     /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
     /// `input` will be `Some`. Otherwise it's `None`.
-    fn init(ctx: &WorkflowContext, input: Option<<Self::Run as WorkflowDefinition>::Input>)
-    -> Self;
+    fn init(
+        ctx: &WorkflowContextView,
+        input: Option<<Self::Run as WorkflowDefinition>::Input>,
+    ) -> Self;
 
     /// Execute the workflow's main run function.
     ///
+    /// Takes `&self` instead of `&mut self`. For state mutations, use `ctx.state_mut()`.
     /// If `INIT_TAKES_INPUT` is false, `input` will be `Some`. Otherwise it's `None`.
     fn run(
-        &mut self,
-        ctx: WorkflowContext,
+        &self,
+        ctx: WorkflowContext<Self>,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
-    ) -> BoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
+    ) -> LocalBoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
 }
 
-/// Trait for executing signal handlers on a workflow.
+/// Trait for executing synchronous signal handlers on a workflow.
 ///
-/// This trait is implemented for each signal method in a workflow and allows
-/// the worker to dispatch incoming signals to the appropriate handler.
+/// Sync signal handlers take `&mut self` and execute without await points.
 #[doc(hidden)]
-pub trait ExecutableSignal<S: SignalDefinition>: WorkflowImplementation {
+pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
     /// Handle an incoming signal with the given input.
-    ///
-    /// Signals may be synchronous or asynchronous, but the trait always returns
-    /// a boxed future for uniformity.
-    fn handle(&mut self, ctx: &mut WorkflowContext, input: S::Input) -> BoxFuture<'_, ()>;
+    fn handle(&mut self, ctx: &mut WorkflowContext<Self>, input: S::Input);
+}
+
+/// Trait for executing asynchronous signal handlers on a workflow.
+///
+/// Async signal handlers take `&self` and use `ctx.state_mut()` for mutations.
+#[doc(hidden)]
+pub trait ExecutableAsyncSignal<S: SignalDefinition>: WorkflowImplementation {
+    /// Handle an incoming signal with the given input.
+    fn handle(&self, ctx: &mut WorkflowContext<Self>, input: S::Input) -> LocalBoxFuture<'_, ()>;
 }
 
 /// Trait for executing query handlers on a workflow.
@@ -124,25 +143,37 @@ pub trait ExecutableQuery<Q: QueryDefinition>: WorkflowImplementation {
     /// Handle a query with the given input and return the result.
     ///
     /// Queries take `&self` (immutable) and cannot modify workflow state.
-    fn handle(&self, ctx: &WorkflowContext, input: Q::Input) -> Q::Output;
+    fn handle(&self, ctx: &WorkflowContextView, input: Q::Input) -> Q::Output;
 }
 
-/// Trait for executing update handlers on a workflow.
+/// Trait for executing synchronous update handlers on a workflow.
 ///
-/// Updates are operations that can mutate workflow state and return a result.
-/// They may be synchronous or asynchronous.
+/// Sync update handlers take `&mut self` and execute without await points.
 #[doc(hidden)]
-pub trait ExecutableUpdate<U: UpdateDefinition>: WorkflowImplementation {
+pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     /// Handle an update with the given input and return the result.
-    ///
-    /// Updates take `&mut self` and can modify workflow state.
-    fn handle(&mut self, ctx: &mut WorkflowContext, input: U::Input) -> BoxFuture<'_, U::Output>;
+    fn handle(&mut self, ctx: &mut WorkflowContext<Self>, input: U::Input) -> U::Output;
 
     /// Validate an update before it is applied.
-    ///
-    /// The default implementation always accepts the update.
-    /// Override this to add validation logic.
-    fn validate(&self, _ctx: &WorkflowContext, _input: &U::Input) -> Result<(), String> {
+    fn validate(&self, _ctx: &WorkflowContextView, _input: &U::Input) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+/// Trait for executing asynchronous update handlers on a workflow.
+///
+/// Async update handlers take `&self` and use `ctx.state_mut()` for mutations.
+#[doc(hidden)]
+pub trait ExecutableAsyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
+    /// Handle an update with the given input and return the result.
+    fn handle(
+        &self,
+        ctx: &mut WorkflowContext<Self>,
+        input: U::Input,
+    ) -> LocalBoxFuture<'_, U::Output>;
+
+    /// Validate an update before it is applied.
+    fn validate(&self, _ctx: &WorkflowContextView, _input: &U::Input) -> Result<(), String> {
         Ok(())
     }
 }
@@ -156,16 +187,116 @@ pub trait WorkflowImplementer: WorkflowImplementation {
     fn register_all(defs: &mut WorkflowDefinitions);
 }
 
-/// Type alias for workflow invocation functions
-pub(crate) type WorkflowInvocation = Arc<
+/// Type-erased trait for workflow execution instances.
+///
+/// This allows storing different workflow types in the same container.
+pub(crate) trait DynWorkflowExecution {
+    /// Poll the run future.
+    fn poll_run(
+        &mut self,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>>;
+}
+
+/// Manages a workflow execution, holding the workflow state and the run future.
+///
+/// # Safety
+///
+/// This type uses unsafe code to store a future that borrows `&self` from the workflow.
+/// The future is transmuted to `'static` lifetime for storage. This is safe because:
+///
+/// 1. The workflow state lives at a stable address inside `Rc<RefCell<W>>`
+/// 2. The future's references to `&self` point to this stable location
+/// 3. Between polls, the references in the future are "dormant" (not actively borrowed)
+/// 4. `state_mut()` on `WorkflowContext` is only called between polls, never during
+/// 5. Temporal's single-threaded execution model guarantees only one handler advances at a time
+///
+/// The key invariant: `borrow_mut()` on the RefCell only happens when the future is not
+/// being polled, so there's never a conflict between the future's `&self` and a mutable borrow.
+pub(crate) struct WorkflowExecution<W: WorkflowImplementation> {
+    _workflow: Rc<RefCell<W>>,
+    _ctx: WorkflowContext<W>,
+    /// The run future, wrapped in Fuse to safely handle re-polling after completion.
+    run_future: Fuse<LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>>,
+}
+
+impl<W: WorkflowImplementation> WorkflowExecution<W>
+where
+    <W::Run as WorkflowDefinition>::Input: Send,
+{
+    /// Create a new workflow execution using the workflow's `init` method.
+    pub(crate) fn new(
+        base_ctx: BaseWorkflowContext,
+        init_input: Option<<W::Run as WorkflowDefinition>::Input>,
+        run_input: Option<<W::Run as WorkflowDefinition>::Input>,
+    ) -> Self {
+        let view = WorkflowContextView::new();
+        let workflow = W::init(&view, init_input);
+        Self::new_with_workflow(workflow, base_ctx, run_input)
+    }
+
+    /// Create a new workflow execution from an already-created workflow instance.
+    pub(crate) fn new_with_workflow(
+        workflow: W,
+        base_ctx: BaseWorkflowContext,
+        run_input: Option<<W::Run as WorkflowDefinition>::Input>,
+    ) -> Self {
+        let workflow = Rc::new(RefCell::new(workflow));
+        let ctx = WorkflowContext::from_base(base_ctx, workflow.clone());
+
+        // SAFETY: We bypass RefCell's borrow checking and transmute the lifetime to 'static.
+        // This is safe because:
+        // 1. The workflow data lives at a stable address inside the RefCell (heap-allocated)
+        // 2. The Rc keeps the allocation alive for the lifetime of WorkflowExecution
+        // 3. state_mut() uses borrow_mut() which is only called between polls, never during
+        // 4. Temporal's single-threaded execution model ensures handlers don't overlap
+        //
+        // We use as_ptr() instead of borrow() because borrow() creates a Ref<W> that would
+        // be dropped at the end of this block, invalidating the borrow.
+        let run_future = {
+            let wf_ptr = workflow.as_ptr();
+            // SAFETY: The pointer remains valid because the Rc<RefCell<W>> is stored in self.
+            let wf_ref: &W = unsafe { &*wf_ptr };
+            let fut = wf_ref.run(ctx.clone(), run_input);
+            // SAFETY: Transmute the lifetime from '_ (tied to wf_ref) to 'static.
+            // See struct-level safety documentation for the full invariants.
+            let static_fut = unsafe {
+                std::mem::transmute::<
+                    LocalBoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>,
+                    LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
+                >(fut)
+            };
+            // Fuse ensures polling after completion returns Pending instead of panicking
+            static_fut.fuse()
+        };
+
+        Self {
+            _workflow: workflow,
+            _ctx: ctx,
+            run_future,
+        }
+    }
+}
+
+impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
+    fn poll_run(
+        &mut self,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>> {
+        Pin::new(&mut self.run_future).poll(cx)
+    }
+}
+
+/// Type alias for workflow execution factory functions.
+///
+/// Creates a new `WorkflowExecution` instance from the input payloads and context.
+pub(crate) type WorkflowExecutionFactory = Arc<
     dyn Fn(
             Vec<Payload>,
             PayloadConverter,
-            WorkflowContext,
-        ) -> Result<
-            BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
-            PayloadConversionError,
-        > + Send
+            BaseWorkflowContext,
+        ) -> Result<Box<dyn DynWorkflowExecution>, PayloadConversionError>
+        + Send
         + Sync,
 >;
 
@@ -194,7 +325,7 @@ pub(crate) type UpdateValidator =
 /// Contains all handlers for a single workflow type.
 #[derive(Clone)]
 struct WorkflowHandlers {
-    run: WorkflowInvocation,
+    factory: WorkflowExecutionFactory,
     signals: HashMap<&'static str, SignalHandler>,
     queries: HashMap<&'static str, QueryHandler>,
     updates: HashMap<&'static str, (UpdateHandler, UpdateValidator)>,
@@ -226,27 +357,27 @@ impl WorkflowDefinitions {
         <W::Run as WorkflowDefinition>::Input: Send,
     {
         let workflow_name = <W::Run as WorkflowDefinition>::name();
-        let run = Arc::new(move |payloads, converter: PayloadConverter, ctx| {
-            let ser_ctx = SerializationContext {
-                data: &SerializationContextData::Workflow,
-                converter: &converter,
-            };
-            let input = converter.from_payloads(&ser_ctx, payloads)?;
-            let (init_input, run_input) = if W::INIT_TAKES_INPUT {
-                (Some(input), None)
-            } else {
-                (None, Some(input))
-            };
-            let mut workflow = W::init(&ctx, init_input);
-            Ok(
-                Box::pin(async move { workflow.run(ctx.clone(), run_input).await })
-                    as BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
-            )
-        });
+        let factory: WorkflowExecutionFactory =
+            Arc::new(move |payloads, converter: PayloadConverter, base_ctx| {
+                let ser_ctx = SerializationContext {
+                    data: &SerializationContextData::Workflow,
+                    converter: &converter,
+                };
+                let input = converter.from_payloads(&ser_ctx, payloads)?;
+                let (init_input, run_input) = if W::INIT_TAKES_INPUT {
+                    (Some(input), None)
+                } else {
+                    (None, Some(input))
+                };
+                Ok(
+                    Box::new(WorkflowExecution::<W>::new(base_ctx, init_input, run_input))
+                        as Box<dyn DynWorkflowExecution>,
+                )
+            });
         self.workflows.insert(
             workflow_name,
             WorkflowHandlers {
-                run,
+                factory,
                 signals: HashMap::new(),
                 queries: HashMap::new(),
                 updates: HashMap::new(),
@@ -256,7 +387,7 @@ impl WorkflowDefinitions {
     }
 
     /// Register a workflow with a custom factory for instance creation.
-    pub fn register_workflow_run_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    pub fn register_workflow_run_with_factory<W, F>(&mut self, user_factory: F) -> &mut Self
     where
         W: WorkflowImplementation,
         <W::Run as WorkflowDefinition>::Input: Send,
@@ -269,9 +400,9 @@ impl WorkflowDefinitions {
         );
 
         let workflow_name = <W::Run as WorkflowDefinition>::name();
-        let factory = Arc::new(factory);
-        let run = Arc::new(
-            move |payloads, converter: PayloadConverter, ctx: WorkflowContext| {
+        let user_factory = Arc::new(user_factory);
+        let factory: WorkflowExecutionFactory =
+            Arc::new(move |payloads, converter: PayloadConverter, base_ctx| {
                 let ser_ctx = SerializationContext {
                     data: &SerializationContextData::Workflow,
                     converter: &converter,
@@ -279,19 +410,19 @@ impl WorkflowDefinitions {
                 let input: <W::Run as WorkflowDefinition>::Input =
                     converter.from_payloads(&ser_ctx, payloads)?;
 
-                // Factory creates the instance - input always goes to run()
-                let mut workflow = factory();
-                Ok(
-                    Box::pin(async move { workflow.run(ctx.clone(), Some(input)).await })
-                        as BoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
-                )
-            },
-        );
+                // User factory creates the instance - input always goes to run()
+                let workflow = user_factory();
+                Ok(Box::new(WorkflowExecution::<W>::new_with_workflow(
+                    workflow,
+                    base_ctx,
+                    Some(input),
+                )) as Box<dyn DynWorkflowExecution>)
+            });
 
         self.workflows.insert(
             workflow_name,
             WorkflowHandlers {
-                run,
+                factory,
                 signals: HashMap::new(),
                 queries: HashMap::new(),
                 updates: HashMap::new(),
@@ -300,11 +431,11 @@ impl WorkflowDefinitions {
         self
     }
 
-    /// Register a signal handler for a workflow.
+    /// Register a synchronous signal handler for a workflow.
     #[doc(hidden)]
     pub fn register_signal<W, S>(&mut self) -> &mut Self
     where
-        W: ExecutableSignal<S>,
+        W: ExecutableSyncSignal<S>,
         S: SignalDefinition,
     {
         let workflow_name = <W::Run as WorkflowDefinition>::name();
@@ -318,8 +449,33 @@ impl WorkflowDefinitions {
                 signal_name,
                 Arc::new(move |_payload, _converter| {
                     // Signal handlers will be invoked through the workflow instance
-                    // This is a placeholder - actual dispatch happens through the workflow
-                    todo!("Signal dispatch implementation")
+                    // TODO: Implement actual dispatch
+                    todo!("Sync signal dispatch implementation")
+                }),
+            );
+        self
+    }
+
+    /// Register an asynchronous signal handler for a workflow.
+    #[doc(hidden)]
+    pub fn register_async_signal<W, S>(&mut self) -> &mut Self
+    where
+        W: ExecutableAsyncSignal<S>,
+        S: SignalDefinition,
+    {
+        let workflow_name = <W::Run as WorkflowDefinition>::name();
+        let signal_name = S::name();
+
+        self.workflows
+            .get_mut(workflow_name)
+            .expect("Workflow must be registered before signals")
+            .signals
+            .insert(
+                signal_name,
+                Arc::new(move |_payload, _converter| {
+                    // Signal handlers will be invoked through the workflow instance
+                    // TODO: Implement actual dispatch
+                    todo!("Async signal dispatch implementation")
                 }),
             );
         self
@@ -349,11 +505,11 @@ impl WorkflowDefinitions {
         self
     }
 
-    /// Register an update handler for a workflow.
+    /// Register a synchronous update handler for a workflow.
     #[doc(hidden)]
     pub fn register_update<W, U>(&mut self) -> &mut Self
     where
-        W: ExecutableUpdate<U>,
+        W: ExecutableSyncUpdate<U>,
         U: UpdateDefinition,
     {
         let workflow_name = <W::Run as WorkflowDefinition>::name();
@@ -361,7 +517,36 @@ impl WorkflowDefinitions {
 
         let handler: UpdateHandler = Arc::new(move |_payload, _converter| {
             // Update handlers will be invoked through the workflow instance
-            todo!("Update dispatch implementation")
+            // TODO: Implement actual dispatch
+            todo!("Sync update dispatch implementation")
+        });
+        let validator: UpdateValidator = Arc::new(move |_payload, _converter| {
+            // Validation will be invoked through the workflow instance
+            Ok(())
+        });
+
+        self.workflows
+            .get_mut(workflow_name)
+            .expect("Workflow must be registered before updates")
+            .updates
+            .insert(update_name, (handler, validator));
+        self
+    }
+
+    /// Register an asynchronous update handler for a workflow.
+    #[doc(hidden)]
+    pub fn register_async_update<W, U>(&mut self) -> &mut Self
+    where
+        W: ExecutableAsyncUpdate<U>,
+        U: UpdateDefinition,
+    {
+        let workflow_name = <W::Run as WorkflowDefinition>::name();
+        let update_name = U::name();
+
+        let handler: UpdateHandler = Arc::new(move |_payload, _converter| {
+            // Update handlers will be invoked through the workflow instance
+            // TODO: Implement actual dispatch
+            todo!("Async update dispatch implementation")
         });
         let validator: UpdateValidator = Arc::new(move |_payload, _converter| {
             // Validation will be invoked through the workflow instance
@@ -381,9 +566,9 @@ impl WorkflowDefinitions {
         self.workflows.is_empty()
     }
 
-    /// Get the workflow invocation function for a given workflow type.
-    pub(crate) fn get_workflow(&self, workflow_type: &str) -> Option<WorkflowInvocation> {
-        self.workflows.get(workflow_type).map(|h| h.run.clone())
+    /// Get the workflow execution factory for a given workflow type.
+    pub(crate) fn get_workflow(&self, workflow_type: &str) -> Option<WorkflowExecutionFactory> {
+        self.workflows.get(workflow_type).map(|h| h.factory.clone())
     }
 
     /// Get the signal handler for a given workflow and signal type.

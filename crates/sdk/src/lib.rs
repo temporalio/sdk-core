@@ -82,9 +82,10 @@ use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
-    NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
-    StartedChildWorkflow, TimerOptions, WorkflowContext,
+    ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow, ChildWorkflowOptions,
+    LocalActivityOptions, NexusOperationOptions, PendingChildWorkflow, Signal, SignalData,
+    SignalWorkflowOptions, StartedChildWorkflow, TimerOptions, WorkflowContext,
+    WorkflowContextView,
 };
 
 use crate::{
@@ -548,6 +549,11 @@ impl Worker {
         let (common, wf_half, act_half) = self.split_apart();
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
+
+        // Workflows run in a LocalSet because they use Rc<RefCell> for state management.
+        // This allows them to not require Send/Sync bounds.
+        let workflow_local_set = tokio::task::LocalSet::new();
+
         let wf_future_joiner = async {
             UnboundedReceiverStream::new(wf_future_rx)
                 .map(Result::<_, anyhow::Error>::Ok)
@@ -590,45 +596,54 @@ impl Worker {
                 .context("Workflow completions processor encountered an error")
         };
         tokio::try_join!(
-            // Workflow polling loop
-            async {
-                loop {
-                    let mut activation = match common.worker.poll_workflow_activation().await {
-                        Err(PollError::ShutDown) => {
-                            break;
+            // Workflow-related tasks run inside LocalSet (allows !Send futures)
+            workflow_local_set.run_until(async {
+                tokio::try_join!(
+                    // Workflow polling loop
+                    async {
+                        loop {
+                            let mut activation =
+                                match common.worker.poll_workflow_activation().await {
+                                    Err(PollError::ShutDown) => {
+                                        break;
+                                    }
+                                    o => o?,
+                                };
+                            decode_payloads(
+                                &mut activation,
+                                common.data_converter.codec(),
+                                &SerializationContextData::Workflow,
+                            )
+                            .await;
+                            if let Some(ref i) = common.worker_interceptor {
+                                i.on_workflow_activation(&activation).await?;
+                            }
+                            if let Some(wf_fut) = wf_half
+                                .workflow_activation_handler(
+                                    common,
+                                    shutdown_token.clone(),
+                                    activation,
+                                    &completions_tx,
+                                )
+                                .await?
+                                && wf_future_tx.send(wf_fut).is_err()
+                            {
+                                panic!(
+                                    "Receive half of completion processor channel cannot be dropped"
+                                );
+                            }
                         }
-                        o => o?,
-                    };
-                    decode_payloads(
-                        &mut activation,
-                        common.data_converter.codec(),
-                        &SerializationContextData::Workflow,
-                    )
-                    .await;
-                    if let Some(ref i) = common.worker_interceptor {
-                        i.on_workflow_activation(&activation).await?;
-                    }
-                    if let Some(wf_fut) = wf_half
-                        .workflow_activation_handler(
-                            common,
-                            shutdown_token.clone(),
-                            activation,
-                            &completions_tx,
-                        )
-                        .await?
-                        && wf_future_tx.send(wf_fut).is_err()
-                    {
-                        panic!("Receive half of completion processor channel cannot be dropped");
-                    }
-                }
-                // Tell still-alive workflows to evict themselves
-                shutdown_token.cancel();
-                // It's important to drop these so the future and completion processors will
-                // terminate.
-                drop(wf_future_tx);
-                drop(completions_tx);
-                Result::<_, anyhow::Error>::Ok(())
-            },
+                        // Tell still-alive workflows to evict themselves
+                        shutdown_token.cancel();
+                        // It's important to drop these so the future and completion processors will
+                        // terminate.
+                        drop(wf_future_tx);
+                        drop(completions_tx);
+                        Result::<_, anyhow::Error>::Ok(())
+                    },
+                    wf_future_joiner,
+                )
+            }),
             // Only poll on the activity queue if activity functions have been registered. This
             // makes tests which use mocks dramatically more manageable.
             async {
@@ -655,7 +670,6 @@ impl Worker {
                 };
                 Result::<_, anyhow::Error>::Ok(())
             },
-            wf_future_joiner,
             wf_completion_processor,
         )?;
 
@@ -730,17 +744,30 @@ impl WorkflowHalf {
             Some(Variant::InitializeWorkflow(ref mut sw)) => Some(sw),
             _ => None,
         }) {
-            let workflow_type = &sw.workflow_type;
+            let workflow_type = sw.workflow_type.clone();
             let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
-                if let Some(invocation) = self.workflow_definitions.get_workflow(workflow_type) {
-                    WorkflowFunction::from_invocation(invocation).start_workflow(
+                if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
+                    match WorkflowFunction::from_invocation(factory).start_workflow(
                         common.worker.get_config().namespace.clone(),
                         common.task_queue.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
                         payload_converter,
-                    )
+                    ) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            warn!("Failed to create workflow {workflow_type}: {e}");
+                            completions_tx
+                                .send(WorkflowActivationCompletion::fail(
+                                    run_id,
+                                    format!("Failed to create workflow: {e}").into(),
+                                    Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+                                ))
+                                .expect("Completion channel intact");
+                            return Ok(None);
+                        }
+                    }
                 } else {
                     warn!("Workflow type {workflow_type} not found");
 
@@ -754,7 +781,11 @@ impl WorkflowHalf {
                     return Ok(None);
                 }
             };
-            let jh = tokio::spawn(async move {
+            // Wrap in unconstrained to prevent Tokio from imposing limits on commands per poll
+            let wff = tokio::task::unconstrained(wff);
+            // Workflows use spawn_local because they contain Rc<RefCell> for state management.
+            // The LocalSet is created in Worker::run().
+            let jh = tokio::task::spawn_local(async move {
                 tokio::select! {
                     r = wff.fuse() => r,
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
@@ -1216,8 +1247,8 @@ pub struct UpdateInfo {
 
 /// Context for a workflow update
 pub struct UpdateContext {
-    /// The workflow context, can be used to do normal workflow things inside the update handler
-    pub wf_ctx: WorkflowContext,
+    /// The base workflow context, can be used to issue commands like timers from the update handler
+    pub wf_ctx: BaseWorkflowContext,
     /// Additional update info
     pub info: UpdateInfo,
 }
@@ -1323,8 +1354,7 @@ impl PrintablePanicType for EndPrintingAttempts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temporalio_macros::activities;
-    use temporalio_macros::{workflow, workflow_methods};
+    use temporalio_macros::{activities, workflow, workflow_methods};
 
     struct MyActivities {}
 
@@ -1354,7 +1384,7 @@ mod tests {
     // Compile-only test for workflow context invocation
     #[allow(unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
-        let wf_ctx: WorkflowContext = unimplemented!();
+        let wf_ctx: WorkflowContext<MyWorkflow> = unimplemented!();
         wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
         wf_ctx.start_activity(
             MyActivities::takes_self,
@@ -1379,38 +1409,44 @@ mod tests {
     #[workflow_methods]
     impl MyWorkflow {
         #[init]
-        fn new(_ctx: &WorkflowContext, _input: String) -> Self {
+        fn new(_ctx: &WorkflowContextView, _input: String) -> Self {
             Self { counter: 0 }
         }
 
+        // Async run uses &self
         #[run]
-        async fn run(&mut self, _ctx: &mut WorkflowContext) -> WorkflowResult<String> {
+        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
             Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
         }
 
+        // Sync signal uses &mut self
         #[signal(name = "increment")]
-        fn increment_counter(&mut self, _ctx: &mut WorkflowContext, amount: u32) {
+        fn increment_counter(&mut self, _ctx: &mut WorkflowContext<Self>, amount: u32) {
             self.counter += amount;
         }
 
+        // Async signal uses &self
         #[signal]
-        async fn async_signal(&mut self, _ctx: &mut WorkflowContext) {
-            // Async signals are allowed
+        async fn async_signal(&self, _ctx: &mut WorkflowContext<Self>) {
+            // Async signals use &self
         }
 
+        // Query uses &self with read-only context
         #[query]
-        fn get_counter(&self, _ctx: &WorkflowContext) -> u32 {
+        fn get_counter(&self, _ctx: &WorkflowContextView) -> u32 {
             self.counter
         }
 
+        // Sync update uses &mut self
         #[update(name = "double")]
-        fn double_counter(&mut self, _ctx: &mut WorkflowContext) -> u32 {
+        fn double_counter(&mut self, _ctx: &mut WorkflowContext<Self>) -> u32 {
             self.counter *= 2;
             self.counter
         }
 
+        // Async update uses &self
         #[update]
-        async fn async_update(&mut self, _ctx: &mut WorkflowContext, val: i32) -> i32 {
+        async fn async_update(&self, _ctx: &mut WorkflowContext<Self>, val: i32) -> i32 {
             val * 2
         }
     }

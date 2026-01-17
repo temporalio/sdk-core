@@ -25,7 +25,7 @@ struct WeirdPaginationWf {
 #[workflow_methods(factory_only)]
 impl WeirdPaginationWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut sigchan = ctx.make_signal_channel("hi");
         while sigchan.next().await.is_some() {
             if self.sig_ctr.fetch_add(1, Ordering::AcqRel) == 1 {
@@ -140,7 +140,7 @@ struct ExtremePaginationWf {
 #[workflow_methods(factory_only)]
 impl ExtremePaginationWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut sigchan = ctx.make_signal_channel("hi");
         while sigchan.next().await.is_some() {
             if self.sig_ctr.fetch_add(1, Ordering::AcqRel) == 5 {

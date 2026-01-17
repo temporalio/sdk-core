@@ -29,7 +29,7 @@ struct SearchAttrUpdater;
 #[workflow_methods]
 impl SearchAttrUpdater {
     #[run(name = "sends_upsert_search_attrs")]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut int_val = ctx
             .search_attributes()
             .indexed_fields
@@ -115,7 +115,7 @@ struct UpsertTestWf;
 #[workflow_methods]
 impl UpsertTestWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const K1: &str = "foo";
         const K2: &str = "bar";
         ctx.upsert_search_attributes([
