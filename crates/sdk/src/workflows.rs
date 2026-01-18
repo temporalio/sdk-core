@@ -60,7 +60,10 @@ use temporalio_common::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData,
     },
-    protos::temporal::api::common::v1::Payload,
+    protos::temporal::api::{
+        common::v1::{Payload, Payloads},
+        failure::v1::Failure,
+    },
 };
 
 /// Error type for workflow operations
@@ -73,6 +76,15 @@ pub enum WorkflowError {
     /// Workflow execution error
     #[error("Workflow execution error: {0}")]
     Execution(#[from] anyhow::Error),
+}
+
+impl From<WorkflowError> for Failure {
+    fn from(err: WorkflowError) -> Self {
+        Failure {
+            message: err.to_string(),
+            ..Default::default()
+        }
+    }
 }
 
 /// Trait implemented by workflow structs to enable execution by the worker.
@@ -114,6 +126,49 @@ pub trait WorkflowImplementation: Sized + 'static {
         ctx: WorkflowContext<Self>,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
     ) -> LocalBoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
+
+    /// Dispatch an update request by name. Returns `None` if no handler for that name.
+    ///
+    /// The default implementation returns `None`. The macro generates an override with a
+    /// match statement dispatching to all registered update handlers.
+    fn dispatch_update(
+        &self,
+        _ctx: WorkflowContext<Self>,
+        _name: &str,
+        _payloads: Payloads,
+        _converter: &PayloadConverter,
+    ) -> Option<LocalBoxFuture<'_, Result<Payload, WorkflowError>>> {
+        None
+    }
+
+    /// Validate an update request by name. Returns `Ok(true)` if valid, `Ok(false)` if no handler.
+    ///
+    /// The default implementation returns `Ok(false)`. The macro generates an override with a
+    /// match statement dispatching to all registered update validators.
+    fn validate_update(
+        &self,
+        _ctx: &WorkflowContextView,
+        _name: &str,
+        _payloads: &Payloads,
+        _converter: &PayloadConverter,
+    ) -> Result<bool, WorkflowError> {
+        Ok(false)
+    }
+
+    /// Dispatch a signal by name. Returns `Ok(Some(future))` if handled, `Ok(None)` if no handler.
+    ///
+    /// For sync signals, the mutation happens immediately and returns a completed future.
+    /// For async signals, returns a future that must be polled to completion.
+    /// The default implementation returns `Ok(None)`. The macro generates an override.
+    fn dispatch_signal(
+        &self,
+        _ctx: WorkflowContext<Self>,
+        _name: &str,
+        _payloads: Payloads,
+        _converter: &PayloadConverter,
+    ) -> Result<Option<LocalBoxFuture<'_, ()>>, WorkflowError> {
+        Ok(None)
+    }
 }
 
 /// Trait for executing synchronous signal handlers on a workflow.
@@ -196,6 +251,36 @@ pub(crate) trait DynWorkflowExecution {
         &mut self,
         cx: &mut TaskContext<'_>,
     ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>>;
+
+    /// Validate an update request. Returns `Ok(true)` if valid, `Ok(false)` if no handler.
+    fn validate_update(
+        &self,
+        name: &str,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<bool, WorkflowError>;
+
+    /// Start an update handler. Returns `None` if no handler for that name.
+    ///
+    /// The returned future is transmuted to `'static` lifetime using the same safety
+    /// guarantees as the run future.
+    fn start_update(
+        &mut self,
+        name: &str,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> Option<LocalBoxFuture<'static, Result<Payload, WorkflowError>>>;
+
+    /// Dispatch a signal by name. Returns `Ok(Some(future))` if handled, `Ok(None)` if no handler.
+    ///
+    /// The returned future is transmuted to `'static` lifetime using the same safety
+    /// guarantees as the run future.
+    fn dispatch_signal(
+        &mut self,
+        name: &str,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError>;
 }
 
 /// Manages a workflow execution, holding the workflow state and the run future.
@@ -284,6 +369,60 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         cx: &mut TaskContext<'_>,
     ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>> {
         Pin::new(&mut self.run_future).poll(cx)
+    }
+
+    fn validate_update(
+        &self,
+        name: &str,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<bool, WorkflowError> {
+        let wf = self._workflow.borrow();
+        let view = WorkflowContextView::new();
+        wf.validate_update(&view, name, payloads, converter)
+    }
+
+    fn start_update(
+        &mut self,
+        name: &str,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> Option<LocalBoxFuture<'static, Result<Payload, WorkflowError>>> {
+        // SAFETY: Same lifetime transmutation pattern as run_future.
+        // The workflow lives in Rc<RefCell<W>> at a stable address.
+        // Update futures borrow &self from this stable location.
+        // state_mut() is only called between polls, never during.
+        let wf_ptr = self._workflow.as_ptr();
+        let wf_ref: &W = unsafe { &*wf_ptr };
+        let ctx = self._ctx.clone();
+
+        wf_ref
+            .dispatch_update(ctx, name, payloads, converter)
+            .map(|local_fut| {
+                // SAFETY: Transmute to 'static. See struct-level safety docs.
+                unsafe { std::mem::transmute(local_fut) }
+            })
+    }
+
+    fn dispatch_signal(
+        &mut self,
+        name: &str,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError> {
+        // SAFETY: Same lifetime transmutation pattern as run_future and updates.
+        let wf_ptr = self._workflow.as_ptr();
+        let wf_ref: &W = unsafe { &*wf_ptr };
+        let ctx = self._ctx.clone();
+
+        wf_ref
+            .dispatch_signal(ctx, name, payloads, converter)
+            .map(|opt| {
+                opt.map(|local_fut| {
+                    // SAFETY: Transmute to 'static. See struct-level safety docs.
+                    unsafe { std::mem::transmute(local_fut) }
+                })
+            })
     }
 }
 

@@ -597,11 +597,12 @@ impl Worker {
         };
         tokio::try_join!(
             // Workflow-related tasks run inside LocalSet (allows !Send futures)
-            workflow_local_set.run_until(async {
-                tokio::try_join!(
-                    // Workflow polling loop
-                    async {
-                        loop {
+            async {
+                workflow_local_set.run_until(async {
+                    tokio::try_join!(
+                        // Workflow polling loop
+                        async {
+                            loop {
                             let mut activation =
                                 match common.worker.poll_workflow_activation().await {
                                     Err(PollError::ShutDown) => {
@@ -643,7 +644,8 @@ impl Worker {
                     },
                     wf_future_joiner,
                 )
-            }),
+                }).await
+            },
             // Only poll on the activity queue if activity functions have been registered. This
             // makes tests which use mocks dramatically more manageable.
             async {
@@ -673,12 +675,10 @@ impl Worker {
             wf_completion_processor,
         )?;
 
-        debug!("Polling loops exited");
         if let Some(i) = self.common.worker_interceptor.as_ref() {
             i.on_shutdown(self);
         }
         self.common.worker.shutdown().await;
-        debug!("Worker shutdown complete");
         Ok(())
     }
 
