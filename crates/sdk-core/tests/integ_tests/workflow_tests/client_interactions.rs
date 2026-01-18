@@ -13,7 +13,6 @@ struct InteractionWorkflow {
 
 #[workflow_methods]
 impl InteractionWorkflow {
-    // Async - uses &self, reads directly, mutates via ctx.state_mut()
     #[run]
     async fn run(
         &self,
@@ -23,12 +22,11 @@ impl InteractionWorkflow {
         ctx.state_mut(|s| s.log.push("run"));
         let first_item_ref = self.log.first();
         ctx.wait_condition(|| self.counter == wait_for_value).await;
-        // Verify holding immutable ref over await doesn't break things
+        // SIGSEV - oops
         dbg!(first_item_ref);
         Ok(WfExitValue::Normal(self.counter))
     }
 
-    // Sync signal - uses &mut self, direct field access
     #[signal]
     fn increment(&mut self, _ctx: &mut WorkflowContext<Self>, amount: i32) {
         self.counter += amount;
@@ -42,30 +40,31 @@ impl InteractionWorkflow {
         self.counter
     }
 
-    // Sync update - uses &mut self, direct field access
     #[update]
     fn set_counter(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
+        self.log.push("set counter");
         let old = self.counter;
         self.counter = value;
         old
     }
 
-    // Async update - uses &self, reads directly, mutates via ctx.state_mut()
-    // Not tested yet, but kept for future async update tests
-    #[allow(dead_code)]
+    #[update]
+    fn invalidate_vec(&mut self, _ctx: &mut WorkflowContext<Self>) {
+        self.log = vec![]
+    }
+
     #[update]
     async fn change_and_wait(&self, ctx: &mut WorkflowContext<Self>, amount_and_wait: (i32, i32)) {
         ctx.state_mut(|s| {
             s.log.push("starting change_and_wait");
             s.counter += amount_and_wait.0;
         });
-        ctx.wait_condition(|| self.counter == amount_and_wait.1)
+        ctx.wait_condition(|| dbg!(self.counter) == amount_and_wait.1)
             .await;
         ctx.state_mut(|s| s.log.push("done change_and_wait"));
     }
 }
 
-// Debug test to trace signal flow
 #[tokio::test]
 async fn test_typed_signal() {
     let wf_name = InteractionWorkflow::name();
@@ -119,16 +118,24 @@ async fn test_typed_update() {
         .await
         .unwrap();
 
-    let updater = async {
+    let updates = async {
         let old_value = handle
-            .update(InteractionWorkflow::set_counter, 999)
+            .update(InteractionWorkflow::set_counter, 2)
             .await
             .unwrap();
         assert_eq!(old_value, 0);
+        handle
+            .update(InteractionWorkflow::invalidate_vec, ())
+            .await
+            .unwrap();
+        handle
+            .update(InteractionWorkflow::change_and_wait, (997, 999))
+            .await
+            .unwrap();
     };
 
-    let (_, worker_res) = tokio::join!(updater, worker.run_until_done());
-    worker_res.unwrap();
+    let (_, workerres) = tokio::join!(updates, worker.run_until_done());
+    workerres.unwrap();
 
     let res = handle
         .get_workflow_result(Default::default())

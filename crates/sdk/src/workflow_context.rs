@@ -80,6 +80,10 @@ pub struct BaseWorkflowContext {
     payload_converter: PayloadConverter,
 }
 
+// TODO [rust-sdk-branch]: We also need a SyncWorkflowContext which doesn't have state_mut (since
+// they get direct &mut access and it panics), as well as possibly non-future producing versions
+// of command starters, though, they still may want to start commands and store the futures on
+// state, so maybe not.
 /// Used within workflows to issue commands, get info, etc.
 ///
 /// The type parameter `W` represents the workflow type. This enables type-safe
