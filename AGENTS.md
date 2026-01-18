@@ -7,7 +7,9 @@ document as your quick reference when submitting pull requests.
 
 - Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly.
   Unit tests may be run with `cargo test`. If you are about to run a test, you do not need to run
-  `cargo build` separately first. Just run the test, and it will build.
+  `cargo build` separately first. Just run the test, and it will build. Running `cargo build --test`
+  DOES NOT build integration tests. Use `cargo lint` for checking if integration tests compile
+  without running them.
 - Always use `cargo lint` for checking lints / clippy. Do not use clippy directly.
 - It is EXTREMELY IMPORTANT that any added comments should explain why something needs to be done,
   rather than what it is. Comments that simply state a fact easily understood from type signatures
@@ -15,15 +17,17 @@ document as your quick reference when submitting pull requests.
   clarifying something nonobvious.
 - Always make every attempt to avoid explicit sleeps in test code. Instead rely on synchronization
   techniques like channels, Notify, etc.
+- Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
+  than 5 minutes. When making changes that may break integration tests, after compiling, run
+  integration tests with `timeout 180`, as it is possible to introduce test hangs.
+
 
 ## Repo Specific Utilities
 
 - `.cargo/config.toml` defines useful cargo aliases:
-  - `cargo lint` – run clippy on workspace crates
-  - `cargo test-lint` – run clippy on tests
+  - `cargo lint` – run clippy on workspace crates and integration tests
+  - `cargo test-lint` – run clippy on unit tests
   - `cargo integ-test` – run the integration test runner
-- `etc` - Various helper scripts and configuration
-  - `etc/docker` - Docker compose files to help with CI or more complex local testing
 
 ## Building and Testing
 
@@ -38,9 +42,6 @@ cargo test              # run unit tests
 cargo integ-test        # integration tests (starts ephemeral server by default)
 cargo test --test heavy_tests  # load tests -- agents do not need to run this and should not
 ```
-
-Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
-than 10 minutes.
 
 Documentation can be generated with `cargo doc`.
 
@@ -71,7 +72,7 @@ Reviewers will look for:
   - `crates/client/` – clients for communicating with Temporal clusters
   - `crates/core-api/` – API definitions exposed by core
   - `crates/core-c-bridge/` – C interface for core
-  - `crates/sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
+  - `crates/sdk/` – Rust SDK built on top of core
   - `crates/sdk-core-protos/` – protobuf definitions shared across crates
   - `crates/fsm/` – state machine implementation and macros
   - `crates/core/tests/` – integration, heavy, and manual tests

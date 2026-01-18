@@ -1104,7 +1104,9 @@ async fn long_local_activity_with_update(
                 LocalActivityOptions::default(),
             )?
             .await;
-            Ok(ctx.state(|wf| wf.update_counter.load(Ordering::Relaxed)).into())
+            Ok(ctx
+                .state(|wf| wf.update_counter.load(Ordering::Relaxed))
+                .into())
         }
     }
 

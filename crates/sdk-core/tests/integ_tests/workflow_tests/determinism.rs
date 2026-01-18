@@ -153,8 +153,10 @@ impl TimerWfFailsOnce {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         if ctx
-            .state(|wf| wf.did_fail
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed))
+            .state(|wf| {
+                wf.did_fail
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            })
             .is_ok()
         {
             panic!("Ahh");

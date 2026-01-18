@@ -25,9 +25,6 @@ impl InteractionWorkflow {
         self.counter += amount;
     }
 
-    // Query - uses &self with read-only context
-    // Note: Queries not yet implemented in Rust SDK, so this is unused for now
-    #[allow(dead_code)]
     #[query]
     fn get_counter(&self, _ctx: &WorkflowContextView) -> i32 {
         self.counter
@@ -140,11 +137,52 @@ async fn test_typed_update() {
     assert_eq!(result, 999);
 }
 
-// Query tests are commented out - queries are not yet implemented in the Rust SDK
-// See workflow_future.rs where QueryWorkflow variant logs an error
-/*
 #[tokio::test]
 async fn test_typed_query() {
-    ...
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let handle = worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            starter.get_task_queue().to_owned(),
+            100,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let querier = async {
+        let counter = handle
+            .query(InteractionWorkflow::get_counter, ())
+            .await
+            .unwrap();
+        assert_eq!(counter, 0);
+        handle
+            .signal(InteractionWorkflow::increment, 50)
+            .await
+            .unwrap();
+
+        let counter = handle
+            .query(InteractionWorkflow::get_counter, ())
+            .await
+            .unwrap();
+        assert_eq!(counter, 50);
+        handle
+            .signal(InteractionWorkflow::increment, 50)
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
+    worker_res.unwrap();
+
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    assert_eq!(result, 100);
 }
-*/

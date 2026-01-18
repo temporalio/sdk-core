@@ -758,7 +758,9 @@ impl AsyncCompleterWf {
         ctx.cancelled().await;
         ctx.state(|wf| wf.cancellation_tx.send(true).unwrap());
 
-        if ctx.state(|wf| wf.cancellation_type) == NexusOperationCancellationType::WaitCancellationCompleted {
+        if ctx.state(|wf| wf.cancellation_type)
+            == NexusOperationCancellationType::WaitCancellationCompleted
+        {
             ctx.wait_condition(|wf| wf.cancellation_wait_happened.load(Ordering::Relaxed))
                 .await;
         } else if ctx.state(|wf| wf.cancellation_type)

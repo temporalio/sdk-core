@@ -29,10 +29,10 @@ use temporalio_common::{
             workflow_commands::{
                 CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
                 CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
-                RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-                RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
-                ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand,
-                update_response, workflow_command,
+                QueryResult, QuerySuccess, RequestCancelActivity,
+                RequestCancelExternalWorkflowExecution, RequestCancelLocalActivity,
+                RequestCancelNexusOperation, ScheduleActivity, ScheduleLocalActivity, StartTimer,
+                UpdateResponse, WorkflowCommand, query_result, update_response, workflow_command,
             },
             workflow_completion,
             workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
@@ -328,9 +328,47 @@ impl WorkflowFuture {
                     self.base_ctx.shared.write().random_seed = rs.randomness_seed;
                 }
                 Variant::QueryWorkflow(q) => {
-                    error!(
-                        "Queries are not implemented in the Rust SDK. Got query '{}'",
-                        q.query_type
+                    debug!(query_type = %q.query_type, "Query received");
+                    let payloads = Payloads {
+                        payloads: q.arguments.clone(),
+                    };
+
+                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
+                        self.execution.dispatch_query(
+                            &q.query_type,
+                            &payloads,
+                            &self.payload_converter,
+                        )
+                    })) {
+                        Ok(r) => r,
+                        Err(e) => Some(Err(anyhow!(
+                            "Panic in query handler: {}",
+                            panic_formatter(e)
+                        )
+                        .into())),
+                    };
+
+                    let response = match dispatch_result {
+                        Some(Ok(payload)) => query_result::Variant::Succeeded(QuerySuccess {
+                            response: Some(payload),
+                        }),
+                        // TODO [rust-sdk-branch]: Return list of known queries in error
+                        None => query_result::Variant::Failed(Failure {
+                            message: format!("No query handler for '{}'", q.query_type),
+                            ..Default::default()
+                        }),
+                        Some(Err(e)) => query_result::Variant::Failed(Failure {
+                            message: e.to_string(),
+                            ..Default::default()
+                        }),
+                    };
+
+                    outgoing_cmds.push(
+                        workflow_command::Variant::RespondToQuery(QueryResult {
+                            query_id: q.query_id.clone(),
+                            variant: Some(response),
+                        })
+                        .into(),
                     );
                 }
                 Variant::CancelWorkflow(c) => {
@@ -353,18 +391,18 @@ impl WorkflowFuture {
                             &self.payload_converter,
                         )
                     })) {
-                        Ok(r) => r.map_err(|e| anyhow!(e)),
+                        Ok(r) => r,
                         Err(e) => {
                             bail!("Panic in signal handler: {}", panic_formatter(e));
                         }
                     };
 
                     match dispatch_result {
-                        Ok(Some(fut)) => {
+                        Some(Ok(fut)) => {
                             // Signal handler returned - track the future for polling
                             self.signal_futures.push(fut);
                         }
-                        Ok(None) => {
+                        None => {
                             // No trait-based handler, fall back to channel-based handling
                             let mut dat = SignalData::new(sig.input);
                             dat.headers = sig.headers;
@@ -380,7 +418,7 @@ impl WorkflowFuture {
                                 }
                             }
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             bail!("Signal handler error: {}", e);
                         }
                     }
@@ -408,18 +446,19 @@ impl WorkflowFuture {
                                 &self.payload_converter,
                             )
                         })) {
-                            Ok(r) => r.map_err(|e| anyhow!(e)),
+                            Ok(r) => r,
                             Err(e) => {
                                 bail!("Panic in update validator {}", panic_formatter(e));
                             }
                         }
                     } else {
-                        // When not validating, check if trait handler exists
-                        Ok(true) // Assume valid, will check handler below
+                        // When not validating, assume handler exists and is valid
+                        // Will check handler existence below
+                        Some(Ok(()))
                     };
 
                     match trait_val_result {
-                        Ok(true) => {
+                        Some(Ok(())) => {
                             // Trait handler exists and validation passed (or was skipped)
                             // Try to start the handler
                             let start_result = self.execution.start_update(
@@ -442,16 +481,16 @@ impl WorkflowFuture {
                                 self.handle_legacy_update(u, outgoing_cmds)?;
                             }
                         }
-                        Ok(false) => {
+                        None => {
                             // No trait handler, fall back to legacy closure-based
                             self.handle_legacy_update(u, outgoing_cmds)?;
                         }
-                        Err(e) => {
+                        Some(Err(e)) => {
                             // Validation failed
                             outgoing_cmds.push(
                                 update_response(
                                     u.protocol_instance_id,
-                                    update_response::Response::Rejected(e.into()),
+                                    update_response::Response::Rejected(anyhow!(e).into()),
                                 )
                                 .into(),
                             );

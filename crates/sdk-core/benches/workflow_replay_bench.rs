@@ -145,8 +145,8 @@ struct TimersWf {
 #[workflow_methods(factory_only)]
 impl TimersWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
-        for _ in 1..=self.num_timers {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for _ in 1..=ctx.state(|s| s.num_timers) {
             ctx.timer(Duration::from_secs(1)).await;
         }
         Ok(().into())
@@ -161,9 +161,9 @@ struct BigSignalsWf {
 #[workflow_methods(factory_only)]
 impl BigSignalsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut sigs = ctx.make_signal_channel("bigsig");
-        for _ in 1..=self.num_tasks {
+        for _ in 1..=ctx.state(|s| s.num_tasks) {
             for _ in 1..=5 {
                 let _ = sigs.next().await.unwrap();
             }

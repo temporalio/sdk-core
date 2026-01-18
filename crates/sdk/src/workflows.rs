@@ -139,32 +139,47 @@ pub trait WorkflowImplementation: Sized + 'static {
         None
     }
 
-    /// Validate an update request by name. Returns `Ok(true)` if valid, `Ok(false)` if no handler.
+    /// Validate an update request by name.
     ///
-    /// The default implementation returns `Ok(false)`. The macro generates an override with a
-    /// match statement dispatching to all registered update validators.
+    /// Returns `None` if no handler for that name, `Some(Ok(()))` if valid,
+    /// `Some(Err(...))` if validation failed.
     fn validate_update(
         &self,
         _ctx: &WorkflowContextView,
         _name: &str,
         _payloads: &Payloads,
         _converter: &PayloadConverter,
-    ) -> Result<bool, WorkflowError> {
-        Ok(false)
+    ) -> Option<Result<(), WorkflowError>> {
+        None
     }
 
-    /// Dispatch a signal by name. Returns `Ok(Some(future))` if handled, `Ok(None)` if no handler.
+    /// Dispatch a signal by name.
     ///
+    /// Returns `None` if no handler for that name, `Some(Ok(future))` if handled,
+    /// `Some(Err(...))` if the handler failed.
     /// For sync signals, the mutation happens immediately and returns a completed future.
     /// For async signals, returns a future that must be polled to completion.
-    /// The default implementation returns `Ok(None)`. The macro generates an override.
     fn dispatch_signal(
         _ctx: WorkflowContext<Self>,
         _name: &str,
         _payloads: Payloads,
         _converter: &PayloadConverter,
-    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError> {
-        Ok(None)
+    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>> {
+        None
+    }
+
+    /// Dispatch a query by name.
+    ///
+    /// Returns `None` if no handler for that name, `Some(Ok(payload))` on success,
+    /// `Some(Err(...))` on failure. Queries are synchronous and read-only.
+    fn dispatch_query(
+        &self,
+        _ctx: &WorkflowContextView,
+        _name: &str,
+        _payloads: &Payloads,
+        _converter: &PayloadConverter,
+    ) -> Option<Result<Payload, WorkflowError>> {
+        None
     }
 }
 
@@ -245,18 +260,15 @@ pub(crate) trait DynWorkflowExecution {
         cx: &mut TaskContext<'_>,
     ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>>;
 
-    /// Validate an update request. Returns `Ok(true)` if valid, `Ok(false)` if no handler.
+    /// Validate an update request. Returns `None` if no handler.
     fn validate_update(
         &self,
         name: &str,
         payloads: &Payloads,
         converter: &PayloadConverter,
-    ) -> Result<bool, WorkflowError>;
+    ) -> Option<Result<(), WorkflowError>>;
 
     /// Start an update handler. Returns `None` if no handler for that name.
-    ///
-    /// The returned future is transmuted to `'static` lifetime using the same safety
-    /// guarantees as the run future.
     fn start_update(
         &mut self,
         name: &str,
@@ -264,16 +276,21 @@ pub(crate) trait DynWorkflowExecution {
         converter: &PayloadConverter,
     ) -> Option<LocalBoxFuture<'static, Result<Payload, WorkflowError>>>;
 
-    /// Dispatch a signal by name. Returns `Ok(Some(future))` if handled, `Ok(None)` if no handler.
-    ///
-    /// The returned future is transmuted to `'static` lifetime using the same safety
-    /// guarantees as the run future.
+    /// Dispatch a signal by name. Returns `None` if no handler.
     fn dispatch_signal(
         &mut self,
         name: &str,
         payloads: Payloads,
         converter: &PayloadConverter,
-    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError>;
+    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>>;
+
+    /// Dispatch a query by name. Returns `None` if no handler.
+    fn dispatch_query(
+        &self,
+        name: &str,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Option<Result<Payload, WorkflowError>>;
 }
 
 /// Manages a workflow execution, holding the context and run future.
@@ -325,7 +342,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         name: &str,
         payloads: &Payloads,
         converter: &PayloadConverter,
-    ) -> Result<bool, WorkflowError> {
+    ) -> Option<Result<(), WorkflowError>> {
         let view = WorkflowContextView::new();
         self.ctx
             .state(|wf| wf.validate_update(&view, name, payloads, converter))
@@ -345,8 +362,19 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         name: &str,
         payloads: Payloads,
         converter: &PayloadConverter,
-    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError> {
+    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>> {
         W::dispatch_signal(self.ctx.clone(), name, payloads, converter)
+    }
+
+    fn dispatch_query(
+        &self,
+        name: &str,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Option<Result<Payload, WorkflowError>> {
+        let view = WorkflowContextView::new();
+        self.ctx
+            .state(|wf| wf.dispatch_query(&view, name, payloads, converter))
     }
 }
 
