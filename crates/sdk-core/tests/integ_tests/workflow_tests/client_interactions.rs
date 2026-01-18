@@ -2,7 +2,7 @@ use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use temporalio_client::{WorkflowExecutionResult, WorkflowOptions};
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
 #[derive(Default)]
@@ -11,18 +11,45 @@ struct InteractionWorkflow {
     log: Vec<&'static str>,
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct ReturnVal {
+    counter: i32,
+    log: Vec<String>,
+}
+
 #[workflow_methods]
 impl InteractionWorkflow {
     #[run]
-    async fn run(ctx: &mut WorkflowContext<Self>, wait_for_value: i32) -> WorkflowResult<i32> {
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        wait_for_value: i32,
+    ) -> WorkflowResult<ReturnVal> {
         ctx.state_mut(|s| s.log.push("run"));
         ctx.wait_condition(|s| s.counter == wait_for_value).await;
-        Ok(WfExitValue::Normal(ctx.state(|s| s.counter)))
+        let rval = ctx.state_mut(|s| {
+            s.log.push("run_done");
+            ReturnVal {
+                counter: s.counter,
+                log: std::mem::take(&mut s.log)
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            }
+        });
+        Ok(rval.into())
     }
 
     #[signal]
     fn increment(&mut self, _ctx: &mut WorkflowContext<Self>, amount: i32) {
         self.counter += amount;
+    }
+
+    #[signal]
+    async fn increment_and_wait(ctx: &mut WorkflowContext<Self>, amount_and_target: (i32, i32)) {
+        ctx.state_mut(|s| s.counter += amount_and_target.0);
+        ctx.wait_condition(|s| s.counter >= amount_and_target.1)
+            .await;
+        ctx.state_mut(|s| s.log.push("async signal done"));
     }
 
     #[query]
@@ -109,7 +136,7 @@ async fn test_typed_signal() {
         .await
         .unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    assert_eq!(result, 42);
+    assert_eq!(result.counter, 42);
 }
 
 #[tokio::test]
@@ -153,7 +180,7 @@ async fn test_typed_update() {
         .await
         .unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    assert_eq!(result, 999);
+    assert_eq!(result.counter, 999);
 }
 
 #[tokio::test]
@@ -203,7 +230,7 @@ async fn test_typed_query() {
         .await
         .unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    assert_eq!(result, 100);
+    assert_eq!(result.counter, 100);
 }
 
 #[tokio::test]
@@ -250,5 +277,54 @@ async fn test_update_validation() {
         .await
         .unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    assert_eq!(result, 42);
+    assert_eq!(result.counter, 42);
+}
+
+#[tokio::test]
+async fn test_async_signal() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let handle = worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            starter.get_task_queue().to_owned(),
+            100,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let signaler = async {
+        // Send async signal that adds 20 and waits for counter >= 50
+        handle
+            .signal(InteractionWorkflow::increment_and_wait, (20, 50))
+            .await
+            .unwrap();
+
+        // Send another signal to reach the target (20 + 30 = 50)
+        handle
+            .signal(InteractionWorkflow::increment, 30)
+            .await
+            .unwrap();
+
+        // Now send final signal to complete the workflow (50 + 50 = 100)
+        handle
+            .signal(InteractionWorkflow::increment, 50)
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(signaler, worker.run_until_done());
+    worker_res.unwrap();
+
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    assert_eq!(result.counter, 100);
+    assert!(result.log.contains(&"async signal done".to_owned()));
 }

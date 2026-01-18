@@ -1032,10 +1032,12 @@ impl WorkflowMethodsDefinition {
                             };
                             let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
                                 Ok(v) => v,
-                                Err(e) => return Some(Err(e.into())),
+                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
                             };
-                            let fut = #handler_call;
-                            Some(Ok(fut))
+                            Some(async move {
+                                #handler_call.await;
+                                Ok(())
+                            }.boxed_local())
                         }
                     }
                 } else {
@@ -1048,15 +1050,14 @@ impl WorkflowMethodsDefinition {
                             };
                             let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
                                 Ok(v) => v,
-                                Err(e) => return Some(Err(e.into())),
+                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
                             };
                             // Sync handler - get mutable access via state_mut
                             let mut ctx_for_handler = ctx.clone();
                             ctx.state_mut(|wf| {
                                 <Self as ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident>>::handle(wf, &mut ctx_for_handler, input)
                             });
-                            // Sync signals complete immediately, return an empty completed future
-                            Some(Ok(async {}.boxed_local()))
+                            Some(async { Ok(()) }.boxed_local())
                         }
                     }
                 }
@@ -1073,7 +1074,7 @@ impl WorkflowMethodsDefinition {
                     name: &str,
                     payloads: ::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
-                ) -> Option<Result<::futures_util::future::LocalBoxFuture<'static, ()>, ::temporalio_sdk::workflows::WorkflowError>> {
+                ) -> Option<::futures_util::future::LocalBoxFuture<'static, Result<(), ::temporalio_sdk::workflows::WorkflowError>>> {
                     use ::futures_util::FutureExt;
                     use ::temporalio_common::data_converters::GenericPayloadConverter;
 

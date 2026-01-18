@@ -169,7 +169,7 @@ pub(crate) struct WorkflowFuture {
         LocalBoxFuture<'static, Result<Payload, crate::workflows::WorkflowError>>,
     )>,
     /// Stores in-progress signal futures (trait-based dispatch, for async signals)
-    signal_futures: Vec<LocalBoxFuture<'static, ()>>,
+    signal_futures: Vec<LocalBoxFuture<'static, Result<(), crate::workflows::WorkflowError>>>,
 }
 
 impl WorkflowFuture {
@@ -398,7 +398,7 @@ impl WorkflowFuture {
                     };
 
                     match dispatch_result {
-                        Some(Ok(fut)) => {
+                        Some(fut) => {
                             // Signal handler returned - track the future for polling
                             self.signal_futures.push(fut);
                         }
@@ -417,9 +417,6 @@ impl WorkflowFuture {
                                     v.insert(SigChanOrBuffer::Buffer(vec![dat]));
                                 }
                             }
-                        }
-                        Some(Err(e)) => {
-                            bail!("Signal handler error: {}", e);
                         }
                     }
                 }
@@ -591,7 +588,24 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            // Drive update functions (legacy closure-based)
+            // Handle signals first
+            let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
+                .into_iter()
+                .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
+                    Poll::Ready(Ok(())) => None,
+                    Poll::Ready(Err(e)) => Some(Err(e)),
+                    Poll::Pending => Some(Ok(sig_fut)),
+                })
+                .collect();
+            match signal_result {
+                Ok(remaining) => self.signal_futures = remaining,
+                Err(e) => {
+                    self.fail_wft(run_id, anyhow!("Signal handler error: {}", e));
+                    continue 'activations;
+                }
+            }
+
+            // Then updates
             self.update_futures = std::mem::take(&mut self.update_futures)
                 .into_iter()
                 .filter_map(
@@ -617,7 +631,6 @@ impl Future for WorkflowFuture {
                 )
                 .collect();
 
-            // Drive update functions (trait-based dispatch)
             self.trait_update_futures = std::mem::take(&mut self.trait_update_futures)
                 .into_iter()
                 .filter_map(
@@ -639,23 +652,6 @@ impl Future for WorkflowFuture {
                     },
                 )
                 .collect();
-
-            // Drive signal handlers (trait-based dispatch, for async signals)
-            let signal_count_before = self.signal_futures.len();
-            self.signal_futures = std::mem::take(&mut self.signal_futures)
-                .into_iter()
-                .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
-                    Poll::Ready(()) => None,
-                    Poll::Pending => Some(sig_fut),
-                })
-                .collect();
-            if signal_count_before > 0 {
-                info!(
-                    signal_count_before,
-                    signal_count_after = self.signal_futures.len(),
-                    "Signal futures polled"
-                );
-            }
 
             // The commands from the initial activation should go _after_ the updates run. This
             // is still a bit of hacky nonsense, as the first poll of the WF future should be able

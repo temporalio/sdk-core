@@ -155,16 +155,15 @@ pub trait WorkflowImplementation: Sized + 'static {
 
     /// Dispatch a signal by name.
     ///
-    /// Returns `None` if no handler for that name, `Some(Ok(future))` if handled,
-    /// `Some(Err(...))` if the handler failed.
-    /// For sync signals, the mutation happens immediately and returns a completed future.
-    /// For async signals, returns a future that must be polled to completion.
+    /// Returns `None` if no handler for that name. For sync signals, the mutation happens
+    /// immediately and returns a completed future. For async signals, returns a future
+    /// that must be polled to completion.
     fn dispatch_signal(
         _ctx: WorkflowContext<Self>,
         _name: &str,
         _payloads: Payloads,
         _converter: &PayloadConverter,
-    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>> {
+    ) -> Option<LocalBoxFuture<'static, Result<(), WorkflowError>>> {
         None
     }
 
@@ -290,7 +289,7 @@ pub(crate) trait DynWorkflowExecution {
         name: &str,
         payloads: Payloads,
         converter: &PayloadConverter,
-    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>>;
+    ) -> Option<LocalBoxFuture<'static, Result<(), WorkflowError>>>;
 
     /// Dispatch a query by name. Returns `None` if no handler.
     fn dispatch_query(
@@ -370,7 +369,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         name: &str,
         payloads: Payloads,
         converter: &PayloadConverter,
-    ) -> Option<Result<LocalBoxFuture<'static, ()>, WorkflowError>> {
+    ) -> Option<LocalBoxFuture<'static, Result<(), WorkflowError>>> {
         W::dispatch_signal(self.ctx.clone(), name, payloads, converter)
     }
 
