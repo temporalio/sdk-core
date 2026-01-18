@@ -1,14 +1,20 @@
-use crate::WorkflowService;
+use crate::{WorkflowClientTrait, WorkflowService};
 use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
-use temporalio_common::protos::{
-    coresdk::FromPayloadsExt,
-    temporal::api::{
-        common::v1::{Payload, WorkflowExecution},
-        enums::v1::HistoryEventFilterType,
-        failure::v1::Failure,
-        history::v1::history_event::Attributes,
-        workflowservice::v1::GetWorkflowExecutionHistoryRequest,
+use temporalio_common::{
+    QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
+    data_converters::{RawValue, SerializationContextData},
+    protos::{
+        coresdk::FromPayloadsExt,
+        temporal::api::{
+            common::v1::{Payload, Payloads, WorkflowExecution},
+            enums::v1::HistoryEventFilterType,
+            failure::v1::Failure,
+            history::v1::history_event::Attributes,
+            query::v1::WorkflowQuery,
+            update::v1::WaitPolicy,
+            workflowservice::v1::GetWorkflowExecutionHistoryRequest,
+        },
     },
 };
 use tonic::IntoRequest;
@@ -60,11 +66,18 @@ impl Default for GetWorkflowResultOptions {
 
 /// A workflow handle which can refer to a specific workflow run, or a chain of workflow runs with
 /// the same workflow id.
-pub struct WorkflowHandle<ClientT, ResultT> {
+pub struct WorkflowHandle<ClientT, W> {
     client: ClientT,
     info: WorkflowExecutionInfo,
 
-    _res_type: PhantomData<ResultT>,
+    _wf_type: PhantomData<W>,
+}
+
+impl<CT, W> WorkflowHandle<CT, W> {
+    /// Return the run id of the Workflow Execution pointed at by this handle, if there is one.
+    pub fn run_id(&self) -> Option<&str> {
+        self.info.run_id.as_deref()
+    }
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
@@ -88,20 +101,30 @@ impl WorkflowExecutionInfo {
     }
 }
 
-/// A workflow handle to a workflow with unknown types. Uses raw payloads.
-pub(crate) type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, Vec<Payload>>;
+/// A workflow handle to a workflow with unknown types. Uses single argument raw payloads for input
+/// and output.
+pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, UntypedWorkflow>;
 
-impl<CT, RT> WorkflowHandle<CT, RT>
+/// Marker type for untyped workflow handles
+pub struct UntypedWorkflow;
+impl WorkflowDefinition for UntypedWorkflow {
+    type Input = RawValue;
+    type Output = RawValue;
+    fn name() -> &'static str {
+        ""
+    }
+}
+
+impl<CT, W> WorkflowHandle<CT, W>
 where
     CT: WorkflowService + Clone,
-    // TODO: Make more generic, capable of (de)serialization w/ serde
-    RT: FromPayloadsExt,
+    W: WorkflowDefinition,
 {
     pub(crate) fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
         Self {
             client,
             info,
-            _res_type: PhantomData::<RT>,
+            _wf_type: PhantomData::<W>,
         }
     }
 
@@ -119,30 +142,31 @@ where
     pub async fn get_workflow_result(
         &self,
         opts: GetWorkflowResultOptions,
-    ) -> Result<WorkflowExecutionResult<RT>, anyhow::Error> {
+    ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+    {
         let mut next_page_tok = vec![];
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
         loop {
-            let server_res = self
-                .client
-                .clone()
-                .get_workflow_execution_history(
-                    GetWorkflowExecutionHistoryRequest {
-                        namespace: self.info.namespace.to_string(),
-                        execution: Some(WorkflowExecution {
-                            workflow_id: self.info.workflow_id.clone(),
-                            run_id: run_id.clone(),
-                        }),
-                        skip_archival: true,
-                        wait_new_event: true,
-                        history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
-                        next_page_token: next_page_tok.clone(),
-                        ..Default::default()
-                    }
-                    .into_request(),
-                )
-                .await?
-                .into_inner();
+            let server_res = WorkflowService::get_workflow_execution_history(
+                &mut self.client.clone(),
+                GetWorkflowExecutionHistoryRequest {
+                    namespace: self.info.namespace.to_string(),
+                    execution: Some(WorkflowExecution {
+                        workflow_id: self.info.workflow_id.clone(),
+                        run_id: run_id.clone(),
+                    }),
+                    skip_archival: true,
+                    wait_new_event: true,
+                    history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
+                    next_page_token: next_page_tok.clone(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
 
             let mut history = server_res
                 .history
@@ -166,12 +190,19 @@ where
                 };
             }
 
+            let dc = self.client.data_converter();
+
             break match event_attrs {
                 Some(Attributes::WorkflowExecutionCompletedEventAttributes(attrs)) => {
                     follow!(attrs);
-                    Ok(WorkflowExecutionResult::Succeeded(RT::from_payloads(
-                        attrs.result,
-                    )))
+                    let payload = attrs
+                        .result
+                        .and_then(|p| p.payloads.into_iter().next())
+                        .unwrap_or_default();
+                    let result: W::Output = dc
+                        .from_payload(&SerializationContextData::Workflow, payload)
+                        .await?;
+                    Ok(WorkflowExecutionResult::Succeeded(result))
                 }
                 Some(Attributes::WorkflowExecutionFailedEventAttributes(attrs)) => {
                     follow!(attrs);
@@ -207,6 +238,110 @@ where
                      Event details: {o:?}"
                 )),
             };
+        }
+    }
+
+    /// Send a typed signal to the workflow
+    pub async fn signal<S>(&self, _signal: S, input: S::Input) -> Result<(), anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        S: SignalDefinition<Workflow = W>,
+        S::Input: Send,
+    {
+        let payloads = self
+            .client
+            .data_converter()
+            .to_payloads(&SerializationContextData::Workflow, &input)
+            .await?;
+        self.client
+            .signal_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                S::name().to_string(),
+                Some(Payloads { payloads }),
+                None,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Query the workflow with typed input and output
+    pub async fn query<Q>(&self, _query: Q, input: Q::Input) -> Result<Q::Output, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        Q: QueryDefinition<Workflow = W>,
+        Q::Input: Send,
+    {
+        let dc = self.client.data_converter();
+        let payloads = dc
+            .to_payloads(&SerializationContextData::Workflow, &input)
+            .await?;
+        let response = self
+            .client
+            .query_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                WorkflowQuery {
+                    query_type: Q::name().to_string(),
+                    query_args: Some(Payloads { payloads }),
+                    header: None,
+                },
+            )
+            .await?;
+
+        let result_payloads = response
+            .query_result
+            .map(|p| p.payloads)
+            .unwrap_or_default();
+
+        dc.from_payloads(&SerializationContextData::Workflow, result_payloads)
+            .await
+            .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
+    }
+
+    /// Send an update to the workflow with typed input and output
+    pub async fn update<U>(&self, _update: U, input: U::Input) -> Result<U::Output, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        U: UpdateDefinition<Workflow = W>,
+        U::Input: Send,
+    {
+        let dc = self.client.data_converter();
+        let payloads = dc
+            .to_payloads(&SerializationContextData::Workflow, &input)
+            .await?;
+        let response = self
+            .client
+            .update_workflow_execution(
+                self.info.workflow_id.clone(),
+                self.info.run_id.clone().unwrap_or_default(),
+                U::name().to_string(),
+                WaitPolicy {
+                    lifecycle_stage: 2, // UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED
+                },
+                Some(Payloads { payloads }),
+            )
+            .await?;
+
+        let outcome = response
+            .outcome
+            .ok_or_else(|| anyhow!("Update returned no outcome"))?;
+
+        match outcome.value {
+            Some(
+                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
+                    success,
+                ),
+            ) => dc
+                .from_payloads(&SerializationContextData::Workflow, success.payloads)
+                .await
+                .map_err(|e| anyhow!("Failed to deserialize update result: {}", e)),
+            Some(
+                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
+                    failure,
+                ),
+            ) => Err(anyhow!("Update failed: {:?}", failure)),
+            None => Err(anyhow!("Update returned no outcome value")),
         }
     }
 }

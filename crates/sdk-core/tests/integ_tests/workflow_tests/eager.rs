@@ -2,10 +2,19 @@ use crate::common::{CoreWfStarter, NAMESPACE, get_integ_connection};
 use std::time::Duration;
 use temporalio_client::{Client, WorkflowClientTrait};
 use temporalio_common::worker::WorkerTaskTypes;
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 
-pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
-    Ok(().into())
+#[workflow]
+#[derive(Default)]
+pub(crate) struct EagerWf;
+
+#[workflow_methods]
+impl EagerWf {
+    #[run(name = "eager_wf_start")]
+    pub(crate) async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -17,7 +26,7 @@ async fn eager_wf_start() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), eager_wf);
+    worker.register_workflow::<EagerWf>();
     starter.eager_start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
@@ -31,14 +40,14 @@ async fn eager_wf_start_different_clients() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), eager_wf);
+    worker.register_workflow::<EagerWf>();
 
     let connection = get_integ_connection(None).await;
     let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
     let client = Client::new(connection, client_opts);
     let w = starter.get_worker().await;
     let res = client
-        .start_workflow(
+        .start_workflow_old(
             vec![],
             w.get_config().task_queue.clone(), // task_queue
             wf_name.to_string(),               // workflow_id

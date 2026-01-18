@@ -57,9 +57,10 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions, WfContext,
+    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions,
+    WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -267,7 +268,7 @@ async fn one_slot_worker_reports_available_slot() {
 
         // Start a workflow so that a task will get delivered
         client
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 tq.to_owned(),
                 "one_slot_metric_test".to_owned(),
@@ -793,71 +794,80 @@ async fn activity_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        let normal_act_pass = ctx
-            .start_activity(
+    #[workflow]
+    #[derive(Default)]
+    struct ActivityMetricsWf;
+
+    #[workflow_methods]
+    impl ActivityMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let normal_act_pass = ctx
+                .start_activity(
+                    PassFailActivities::pass_fail_act,
+                    "pass".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(1)),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            let normal_act_fail = ctx
+                .start_activity(
+                    PassFailActivities::pass_fail_act,
+                    "fail".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(1)),
+                        retry_policy: Some(RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            join!(normal_act_pass, normal_act_fail);
+            let local_act_pass = ctx.start_local_activity(
                 PassFailActivities::pass_fail_act,
                 "pass".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        let normal_act_fail = ctx
-            .start_activity(
+                LocalActivityOptions::default(),
+            )?;
+            let local_act_fail = ctx.start_local_activity(
                 PassFailActivities::pass_fail_act,
                 "fail".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    retry_policy: Some(RetryPolicy {
+                LocalActivityOptions {
+                    retry_policy: RetryPolicy {
                         maximum_attempts: 1,
                         ..Default::default()
-                    }),
+                    },
                     ..Default::default()
                 },
-            )
-            .unwrap();
-        join!(normal_act_pass, normal_act_fail);
-        let local_act_pass = ctx.start_local_activity(
-            PassFailActivities::pass_fail_act,
-            "pass".to_string(),
-            LocalActivityOptions::default(),
-        )?;
-        let local_act_fail = ctx.start_local_activity(
-            PassFailActivities::pass_fail_act,
-            "fail".to_string(),
-            LocalActivityOptions {
-                retry_policy: RetryPolicy {
-                    maximum_attempts: 1,
+            )?;
+            let local_act_cancel = ctx.start_local_activity(
+                PassFailActivities::pass_fail_act,
+                "cancel".to_string(),
+                LocalActivityOptions {
+                    retry_policy: RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
-                ..Default::default()
-            },
-        )?;
-        let local_act_cancel = ctx.start_local_activity(
-            PassFailActivities::pass_fail_act,
-            "cancel".to_string(),
-            LocalActivityOptions {
-                retry_policy: RetryPolicy {
-                    maximum_attempts: 1,
-                    ..Default::default()
-                },
-                ..Default::default()
-            },
-        )?;
-        join!(local_act_pass, local_act_fail);
-        // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
-        local_act_cancel.cancel(&ctx);
-        local_act_cancel.await;
-        Ok(().into())
-    });
+            )?;
+            join!(local_act_pass, local_act_fail);
+            // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
+            local_act_cancel.cancel();
+            local_act_cancel.await;
+            Ok(().into())
+        }
+    }
 
+    worker.register_workflow::<ActivityMetricsWf>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            ActivityMetricsWf::run,
             wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await
@@ -865,10 +875,11 @@ async fn activity_metrics() {
     worker.run_until_done().await.unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    let wf_type = ActivityMetricsWf::name();
     assert!(body.contains(&format!(
         "temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_activity_schedule_to_start_latency_count{{\
@@ -878,42 +889,42 @@ async fn activity_metrics() {
     assert!(body.contains(&format!(
         "temporal_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 2"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 2"
     )));
     assert!(body.contains(&format!(
         "temporal_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 1"
     )));
 
     assert!(body.contains(&format!(
         "temporal_local_activity_total{{activity_type=\"pass_fail_act\",namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 3"
+             workflow_type=\"{wf_type}\"}} 3"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_cancelled{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 3"
+             workflow_type=\"{wf_type}\"}} 3"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
 }
 
@@ -934,14 +945,20 @@ async fn nexus_metrics() {
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
-        let partial_op = NexusOperationOptions {
-            endpoint: endpoint.clone(),
-            service: "mysvc".to_string(),
-            operation: "myop".to_string(),
-            ..Default::default()
-        };
-        async move {
+    #[workflow]
+    #[derive(Default)]
+    struct NexusMetricsWf;
+
+    #[workflow_methods]
+    impl NexusMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>, endpoint: String) -> WorkflowResult<()> {
+            let partial_op = NexusOperationOptions {
+                endpoint: endpoint.clone(),
+                service: "mysvc".to_string(),
+                operation: "myop".to_string(),
+                ..Default::default()
+            };
             join!(
                 async {
                     ctx.start_nexus_operation(partial_op.clone())
@@ -978,9 +995,18 @@ async fn nexus_metrics() {
             );
             Ok(().into())
         }
-    });
+    }
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.register_workflow::<NexusMetricsWf>();
+    worker
+        .submit_workflow(
+            NexusMetricsWf::run,
+            wf_name.to_owned(),
+            endpoint,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
 
     let nexus_polling = async {
         for _ in 0..5 {
@@ -1108,16 +1134,24 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        wf_name.to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    #[workflow]
+    #[derive(Default)]
+    struct EvictOnCompleteWf;
 
+    #[workflow_methods]
+    impl EvictOnCompleteWf {
+        #[run]
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<EvictOnCompleteWf>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            EvictOnCompleteWf::run,
             wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await
@@ -1197,16 +1231,24 @@ async fn metrics_available_from_custom_slot_supplier() {
     starter.sdk_config.tuner = Arc::new(tb.build());
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        "s_wf".to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    #[workflow]
+    #[derive(Default)]
+    struct CustomSlotSupplierWf;
 
+    #[workflow_methods]
+    impl CustomSlotSupplierWf {
+        #[run]
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<CustomSlotSupplierWf>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            CustomSlotSupplierWf::run,
             "s_wf".to_owned(),
-            "s_wf".to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await
@@ -1353,15 +1395,25 @@ async fn sticky_queue_label_strategy(
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.clone(), |ctx: WfContext| async move {
-        ctx.timer(Duration::from_millis(1)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct StickyQueueLabelStrategyWf;
+
+    #[workflow_methods]
+    impl StickyQueueLabelStrategyWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(Duration::from_millis(1)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<StickyQueueLabelStrategyWf>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            StickyQueueLabelStrategyWf::run,
             wf_name.clone(),
-            wf_name,
-            vec![],
+            (),
             WorkflowOptions {
                 enable_eager_workflow_start: false,
                 ..Default::default()
@@ -1432,16 +1484,25 @@ async fn resource_based_tuner_metrics() {
 
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.timer(Duration::from_millis(100)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct ResourceBasedTunerMetricsWf;
 
+    #[workflow_methods]
+    impl ResourceBasedTunerMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(Duration::from_millis(100)).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<ResourceBasedTunerMetricsWf>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            ResourceBasedTunerMetricsWf::run,
             wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await

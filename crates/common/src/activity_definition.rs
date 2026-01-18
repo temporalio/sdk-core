@@ -3,10 +3,10 @@
 
 use crate::data_converters::{TemporalDeserializable, TemporalSerializable};
 
-/// Typically, you will want to use the `#[activities]` and `#[activity]` macro to define activities.
-/// However, this trait may be implemented manually if desired.
-///
 /// Implement on a marker struct to define an activity.
+///
+/// Typically, you will want to use the `#[activity]` attribute within an `#[activities]` macro to
+/// define activities. However, this trait may be implemented manually if desired.
 pub trait ActivityDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable + TemporalSerializable + 'static;

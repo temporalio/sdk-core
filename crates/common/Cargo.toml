@@ -80,6 +80,8 @@ url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 
 [build-dependencies]
+prost = { workspace = true }
+prost-types = "0.14"
 tonic-prost-build = { workspace = true }
 
 [lints]
@@ -88,3 +90,4 @@ workspace = true
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
 tempfile = "3.21"
+tokio = { version = "1.47", features = ["macros", "rt"] }

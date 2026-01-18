@@ -5,7 +5,7 @@ use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOpt
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
-        IntoPayloadsExt,
+        AsJsonPayloadExt, IntoPayloadsExt,
         workflow_activation::{
             ResolveSignalExternalWorkflow, WorkflowActivationJob, workflow_activation_job,
         },
@@ -18,8 +18,9 @@ use temporalio_common::protos::{
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext,
+    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WorkflowContext,
     WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
@@ -28,20 +29,27 @@ use uuid::Uuid;
 const SIGNAME: &str = "signame";
 const RECEIVER_WFID: &str = "sends-signal-signal-receiver";
 
-async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
-    let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
-        .unwrap()
-        .to_owned();
-    let mut dat = SignalWorkflowOptions::new(RECEIVER_WFID, run_id, SIGNAME, [b"hi!"]);
-    dat.with_header("tupac", b"shakur");
-    let sigres = ctx.signal_workflow(dat).await;
-    if ctx.get_args().get(1).is_some() {
-        // We expect failure
-        assert!(sigres.is_err());
-    } else {
-        sigres.unwrap();
+#[workflow]
+#[derive(Default)]
+struct SignalSender;
+
+#[workflow_methods]
+impl SignalSender {
+    #[run(name = "sender")]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        (run_id, expect_failure): (String, bool),
+    ) -> WorkflowResult<()> {
+        let mut dat = SignalWorkflowOptions::new(RECEIVER_WFID, run_id, SIGNAME, [b"hi!"]);
+        dat.with_header("tupac", b"shakur");
+        let sigres = ctx.signal_workflow(dat).await;
+        if expect_failure {
+            assert!(sigres.is_err());
+        } else {
+            sigres.unwrap();
+        }
+        Ok(().into())
     }
-    Ok(().into())
 }
 
 #[tokio::test]
@@ -50,13 +58,13 @@ async fn sends_signal_to_missing_wf() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), signal_sender);
+    worker.register_workflow::<SignalSender>();
 
     worker
-        .submit_wf(
+        .submit_workflow(
+            SignalSender::run,
             wf_name,
-            wf_name,
-            vec![Uuid::new_v4().to_string().into(), [1].into()],
+            (Uuid::new_v4().to_string(), true),
             WorkflowOptions::default(),
         )
         .await
@@ -64,24 +72,40 @@ async fn sends_signal_to_missing_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
-    let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
-    assert_eq!(&res.input, &[b"hi!".into()]);
-    assert_eq!(
-        *res.headers.get("tupac").expect("tupac header exists"),
-        b"shakur".into()
-    );
-    Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct SignalReceiver;
+
+#[workflow_methods]
+impl SignalReceiver {
+    #[run(name = "receiver")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+        assert_eq!(&res.input, &[b"hi!".into()]);
+        assert_eq!(
+            *res.headers.get("tupac").expect("tupac header exists"),
+            b"shakur".into()
+        );
+        Ok(().into())
+    }
 }
 
-async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
-    let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
-    assert_eq!(&res.input, &[b"tada".into()]);
-    assert_eq!(
-        *res.headers.get("tupac").expect("tupac header exists"),
-        b"shakur".into()
-    );
-    Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct SignalWithCreateWfReceiver;
+
+#[workflow_methods]
+impl SignalWithCreateWfReceiver {
+    #[run(name = "receiver_signal")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+        assert_eq!(&res.input, &[b"tada".into()]);
+        assert_eq!(
+            *res.headers.get("tupac").expect("tupac header exists"),
+            b"shakur".into()
+        );
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -89,14 +113,14 @@ async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf("sender", signal_sender);
-    worker.register_wf("receiver", signal_receiver);
+    worker.register_workflow::<SignalSender>();
+    worker.register_workflow::<SignalReceiver>();
 
     let receiver_run_id = worker
         .submit_wf(
             RECEIVER_WFID,
             "receiver",
-            vec![],
+            vec![().as_json_payload().unwrap()],
             WorkflowOptions::default(),
         )
         .await
@@ -105,7 +129,7 @@ async fn sends_signal_to_other_wf() {
         .submit_wf(
             "sends-signal-sender",
             "sender",
-            vec![receiver_run_id.into()],
+            vec![(receiver_run_id, false).as_json_payload().unwrap()],
             WorkflowOptions::default(),
         )
         .await
@@ -118,7 +142,7 @@ async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf("receiver_signal", signal_with_create_wf_receiver);
+    worker.register_workflow::<SignalWithCreateWfReceiver>();
 
     let client = starter.get_client().await;
     let mut header: HashMap<String, Payload> = HashMap::new();
@@ -128,6 +152,7 @@ async fn sends_signal_with_create_wf() {
         .workflow_id("sends_signal_with_create_wf")
         .workflow_type("receiver_signal")
         .signal_name(SIGNAME)
+        .maybe_input(vec![().as_json_payload().unwrap()].into_payloads())
         .maybe_signal_input(vec![b"tada".into()].into_payloads())
         .maybe_signal_header(Some(header.into()))
         .build();
@@ -140,22 +165,31 @@ async fn sends_signal_with_create_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
-    let started_child = ctx
-        .child_workflow(ChildWorkflowOptions {
-            workflow_id: "my_precious_child".to_string(),
-            workflow_type: "child_receiver".to_string(),
-            ..Default::default()
-        })
-        .start(&ctx)
-        .await
-        .into_started()
-        .expect("Must start ok");
-    let mut sig = Signal::new(SIGNAME, [b"hi!"]);
-    sig.data.with_header("tupac", b"shakur");
-    started_child.signal(&ctx, sig).await.unwrap();
-    started_child.result().await.status.unwrap();
-    Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct SignalsChild;
+
+#[workflow_methods]
+impl SignalsChild {
+    #[run(name = "child_signaler")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started_child = ctx
+            .child_workflow(ChildWorkflowOptions {
+                workflow_id: "my_precious_child".to_string(),
+                workflow_type: "receiver".to_string(),
+                input: vec![().as_json_payload().unwrap()],
+                ..Default::default()
+            })
+            .start()
+            .await
+            .into_started()
+            .expect("Must start ok");
+        let mut sig = Signal::new(SIGNAME, [b"hi!"]);
+        sig.data.with_header("tupac", b"shakur");
+        started_child.signal(sig).await.unwrap();
+        started_child.result().await.status.unwrap();
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -163,14 +197,14 @@ async fn sends_signal_to_child() {
     let mut starter = CoreWfStarter::new("sends_signal_to_child");
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf("child_signaler", signals_child);
-    worker.register_wf("child_receiver", signal_receiver);
+    worker.register_workflow::<SignalsChild>();
+    worker.register_workflow::<SignalReceiver>();
 
     worker
         .submit_wf(
             "sends-signal-to-child",
             "child_signaler",
-            vec![],
+            vec![().as_json_payload().unwrap()],
             WorkflowOptions::default(),
         )
         .await
@@ -178,14 +212,22 @@ async fn sends_signal_to_child() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signal_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
-    let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
-    dat.with_header("tupac", b"shakur");
-    let res = ctx.signal_workflow(dat).await;
-    if res.is_err() {
-        Err(anyhow::anyhow!("Signal fail!"))
-    } else {
-        Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct SignalSenderCanned;
+
+#[workflow_methods]
+impl SignalSenderCanned {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
+        dat.with_header("tupac", b"shakur");
+        let res = ctx.signal_workflow(dat).await;
+        if res.is_err() {
+            Err(anyhow::anyhow!("Signal fail!"))
+        } else {
+            Ok(().into())
+        }
     }
 }
 
@@ -233,8 +275,28 @@ async fn sends_signal(#[case] fails: bool) {
         });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, signal_sender_canned);
+    worker.register_workflow::<SignalSenderCanned>();
     worker.run().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancelsBeforeSending;
+
+#[workflow_methods]
+impl CancelsBeforeSending {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
+            "fake_wid",
+            "fake_rid",
+            SIGNAME,
+            [b"hi!"],
+        ));
+        sig.cancel();
+        let _res = sig.await;
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -271,16 +333,6 @@ async fn cancels_before_sending() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
-            "fake_wid",
-            "fake_rid",
-            SIGNAME,
-            [b"hi!"],
-        ));
-        sig.cancel(&ctx);
-        let _res = sig.await;
-        Ok(().into())
-    });
+    worker.register_workflow::<CancelsBeforeSending>();
     worker.run().await.unwrap();
 }

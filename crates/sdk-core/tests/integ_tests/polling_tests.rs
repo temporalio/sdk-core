@@ -31,7 +31,8 @@ use temporalio_common::{
     },
     telemetry::{CoreLogStreamConsumer, Logger, TelemetryOptions},
 };
-use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, RuntimeOptions, TunerHolder,
     ephemeral_server::{TemporalDevServerConfig, default_cached_download},
@@ -166,7 +167,7 @@ async fn switching_worker_client_changes_poll() {
         // Start a workflow on both servers
         info!("Starting workflows");
         let wf1 = client1
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 "my-task-queue".to_owned(),
                 "my-workflow-1".to_owned(),
@@ -177,7 +178,7 @@ async fn switching_worker_client_changes_poll() {
             .await
             .unwrap();
         let wf2 = client2
-            .start_workflow(
+            .start_workflow_old(
                 vec![],
                 "my-task-queue".to_owned(),
                 "my-workflow-2".to_owned(),
@@ -241,6 +242,30 @@ async fn switching_worker_client_changes_poll() {
     }
 }
 
+#[workflow]
+#[derive(Default)]
+struct OnlyOneWorkflowSlotAndTwoPollers;
+
+#[workflow_methods]
+impl OnlyOneWorkflowSlotAndTwoPollers {
+    #[run(name = "only_one_workflow_slot_and_two_pollers")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for _ in 0..3 {
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+        }
+        Ok(().into())
+    }
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling: bool) {
@@ -260,36 +285,22 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        for _ in 0..3 {
-            ctx.start_activity(
-                StdActivities::echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
-        }
-        Ok(().into())
-    });
+    worker.register_workflow::<OnlyOneWorkflowSlotAndTwoPollers>();
     worker
-        .submit_wf(
+        .submit_workflow(
+            OnlyOneWorkflowSlotAndTwoPollers::run,
             starter.get_task_queue(),
-            wf_name.to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await
         .unwrap();
     let wf2id = format!("{}-2", starter.get_task_queue());
     worker
-        .submit_wf(
+        .submit_workflow(
+            OnlyOneWorkflowSlotAndTwoPollers::run,
             wf2id.clone(),
-            wf_name.to_owned(),
-            vec![],
+            (),
             WorkflowOptions::default(),
         )
         .await
@@ -402,7 +413,7 @@ async fn replace_client_works_after_polling_failure() {
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server
-                .start_workflow(
+                .start_workflow_old(
                     vec![],
                     task_queue.clone(),
                     wf_name.into(),
@@ -446,7 +457,7 @@ async fn replace_client_works_after_polling_failure() {
             )
             .await;
             let wf_2 = client_for_integ_server
-                .start_workflow(
+                .start_workflow_old(
                     vec![],
                     task_queue,
                     wf_name.into(),
