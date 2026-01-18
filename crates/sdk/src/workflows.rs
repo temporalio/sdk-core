@@ -222,7 +222,11 @@ pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     fn handle(&mut self, ctx: &mut WorkflowContext<Self>, input: U::Input) -> U::Output;
 
     /// Validate an update before it is applied.
-    fn validate(&self, _ctx: &WorkflowContextView, _input: &U::Input) -> Result<(), String> {
+    fn validate(
+        &self,
+        _ctx: &WorkflowContextView,
+        _input: &U::Input,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }
@@ -236,7 +240,11 @@ pub trait ExecutableAsyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     fn handle(ctx: WorkflowContext<Self>, input: U::Input) -> LocalBoxFuture<'static, U::Output>;
 
     /// Validate an update before it is applied.
-    fn validate(&self, _ctx: &WorkflowContextView, _input: &U::Input) -> Result<(), String> {
+    fn validate(
+        &self,
+        _ctx: &WorkflowContextView,
+        _input: &U::Input,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }

@@ -136,6 +136,12 @@ struct UpdateMethod {
     is_async: bool,
     input_type: Option<Type>,
     output_type: Option<Type>,
+    validator: Option<syn::Ident>,
+}
+
+struct ValidatorMethod {
+    method: syn::ImplItemFn,
+    update_name: syn::Ident,
 }
 
 impl Parse for WorkflowMethodsDefinition {
@@ -146,6 +152,7 @@ impl Parse for WorkflowMethodsDefinition {
         let mut signals = Vec::new();
         let mut queries = Vec::new();
         let mut updates = Vec::new();
+        let mut validators = Vec::new();
 
         for item in &impl_block.items {
             if let ImplItem::Fn(method) = item {
@@ -154,17 +161,25 @@ impl Parse for WorkflowMethodsDefinition {
                 let has_signal = has_attr(&method.attrs, "signal");
                 let has_query = has_attr(&method.attrs, "query");
                 let has_update = has_attr(&method.attrs, "update");
+                let has_update_validator = has_attr(&method.attrs, "update_validator");
 
                 // Count how many workflow attributes are present
-                let attr_count = [has_init, has_run, has_signal, has_query, has_update]
-                    .iter()
-                    .filter(|&&b| b)
-                    .count();
+                let attr_count = [
+                    has_init,
+                    has_run,
+                    has_signal,
+                    has_query,
+                    has_update,
+                    has_update_validator,
+                ]
+                .iter()
+                .filter(|&&b| b)
+                .count();
 
                 if attr_count > 1 {
                     return Err(syn::Error::new_spanned(
                         method,
-                        "A method can only have one of #[init], #[run], #[signal], #[query], or #[update]",
+                        "A method can only have one of #[init], #[run], #[signal], #[query], #[update], or #[update_validator]",
                     ));
                 }
 
@@ -190,6 +205,8 @@ impl Parse for WorkflowMethodsDefinition {
                     queries.push(parse_query_method(method)?);
                 } else if has_update {
                     updates.push(parse_update_method(method)?);
+                } else if has_update_validator {
+                    validators.push(parse_validator_method(method)?);
                 }
             }
         }
@@ -200,6 +217,32 @@ impl Parse for WorkflowMethodsDefinition {
                 "#[workflow_methods] requires exactly one #[run] method",
             )
         })?;
+
+        // Validate that all validator targets exist and link them to updates
+        for validator in &validators {
+            let target_exists = updates
+                .iter()
+                .any(|u| u.method.sig.ident == validator.update_name);
+            if !target_exists {
+                return Err(syn::Error::new_spanned(
+                    &validator.method,
+                    format!(
+                        "No #[update] method '{}' found for validator",
+                        validator.update_name
+                    ),
+                ));
+            }
+        }
+
+        // Link validators to their updates
+        for update in &mut updates {
+            if let Some(validator) = validators
+                .iter()
+                .find(|v| v.update_name == update.method.sig.ident)
+            {
+                update.validator = Some(validator.method.sig.ident.clone());
+            }
+        }
 
         Ok(WorkflowMethodsDefinition {
             impl_block,
@@ -361,7 +404,35 @@ fn parse_update_method(method: &syn::ImplItemFn) -> syn::Result<UpdateMethod> {
         is_async,
         input_type,
         output_type,
+        validator: None,
     })
+}
+
+fn parse_validator_method(method: &syn::ImplItemFn) -> syn::Result<ValidatorMethod> {
+    if method.sig.asyncness.is_some() {
+        return Err(syn::Error::new_spanned(
+            &method.sig,
+            "#[update_validator] methods must not be async",
+        ));
+    }
+
+    validate_immut_self_receiver(method)?;
+
+    let update_name = extract_validator_target(&method.attrs)?;
+
+    Ok(ValidatorMethod {
+        method: method.clone(),
+        update_name,
+    })
+}
+
+fn extract_validator_target(attrs: &[Attribute]) -> syn::Result<syn::Ident> {
+    for attr in attrs {
+        if attr.path().is_ident("update_validator") {
+            return attr.parse_args();
+        }
+    }
+    unreachable!("extract_validator_target called without update_validator attribute")
 }
 
 fn validate_mut_self_receiver(method: &syn::ImplItemFn) -> syn::Result<()> {
@@ -504,7 +575,8 @@ impl WorkflowMethodsDefinition {
                     || has_attr(&method.attrs, "run")
                     || has_attr(&method.attrs, "signal")
                     || has_attr(&method.attrs, "query")
-                    || has_attr(&method.attrs, "update");
+                    || has_attr(&method.attrs, "update")
+                    || has_attr(&method.attrs, "update_validator");
 
                 // Strip workflow-related attributes
                 method.attrs.retain(|attr| {
@@ -513,6 +585,7 @@ impl WorkflowMethodsDefinition {
                         && !attr.path().is_ident("signal")
                         && !attr.path().is_ident("query")
                         && !attr.path().is_ident("update")
+                        && !attr.path().is_ident("update_validator")
                 });
 
                 // Rename workflow methods with __ prefix
@@ -785,6 +858,17 @@ impl WorkflowMethodsDefinition {
         };
 
         let has_input = update.input_type.is_some();
+        let validate_impl = if let Some(ref validator_name) = update.validator {
+            let prefixed_validator = format_ident!("__{}", validator_name);
+            quote! {
+                fn validate(&self, ctx: &::temporalio_sdk::WorkflowContextView, input: &<#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input) -> Result<(), Box<dyn ::std::error::Error + Send + Sync>> {
+                    self.#prefixed_validator(ctx, input)
+                }
+            }
+        } else {
+            quote! {}
+        };
+
         let executable_impl = if update.is_async {
             let handle_body =
                 generate_async_handler_body(impl_type, &info.prefixed_method, has_input);
@@ -797,6 +881,8 @@ impl WorkflowMethodsDefinition {
                         use ::futures_util::FutureExt;
                         #handle_body
                     }
+
+                    #validate_impl
                 }
             }
         } else {
@@ -810,6 +896,8 @@ impl WorkflowMethodsDefinition {
                     ) -> <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output {
                         #method_call
                     }
+
+                    #validate_impl
                 }
             }
         };
@@ -1109,7 +1197,7 @@ impl WorkflowMethodsDefinition {
                             Err(e) => return Some(Err(e.into())),
                         };
                         Some(<Self as #validate_trait>::validate(self, ctx, &input)
-                            .map_err(|s| ::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(s))))
+                            .map_err(|e| ::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e))))
                     }
                 }
             })

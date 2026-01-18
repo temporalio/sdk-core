@@ -52,6 +52,25 @@ impl InteractionWorkflow {
         ctx.wait_condition(|s| s.counter == amount_and_wait.1).await;
         ctx.state_mut(|s| s.log.push("done change_and_wait"));
     }
+
+    #[update_validator(validated_set)]
+    fn validate_validated_set(
+        &self,
+        _ctx: &WorkflowContextView,
+        value: &i32,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if *value < 0 {
+            Err("Value must be non-negative".into())
+        } else {
+            Ok(())
+        }
+    }
+    #[update]
+    fn validated_set(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
+        let old = self.counter;
+        self.counter = value;
+        old
+    }
 }
 
 // TODO: add another test that uses wait condition concurrently with some future that uses
@@ -185,4 +204,51 @@ async fn test_typed_query() {
         .unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result, 100);
+}
+
+#[tokio::test]
+async fn test_update_validation() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let handle = worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            starter.get_task_queue().to_owned(),
+            42,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let updater = async {
+        let old_value = handle
+            .update(InteractionWorkflow::validated_set, 10)
+            .await
+            .unwrap();
+        assert_eq!(old_value, 0);
+
+        let result = handle.update(InteractionWorkflow::validated_set, -5).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("non-negative"));
+
+        let old_value = handle
+            .update(InteractionWorkflow::validated_set, 42)
+            .await
+            .unwrap();
+        assert_eq!(old_value, 10);
+    };
+
+    let (_, worker_res) = tokio::join!(updater, worker.run_until_done());
+    worker_res.unwrap();
+
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    assert_eq!(result, 42);
 }

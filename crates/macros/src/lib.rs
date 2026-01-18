@@ -113,6 +113,22 @@ pub fn update(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+/// Marks a method within a `#[workflow_methods]` impl block as a validator for an update handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// The parameter specifies which update this validator applies to:
+/// `#[update_validator(my_update)]`
+///
+/// The validator method must:
+/// - Take `&self` (not `&mut self`)
+/// - Take `&WorkflowContextView` as the first parameter
+/// - Take a reference to the update's input type as the second parameter
+/// - Return `Result<(), Box<dyn std::error::Error + Send + Sync>>`
+#[proc_macro_attribute]
+pub fn update_validator(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
 /// Parses a DSL for defining finite state machines, and produces code implementing the
 /// [StateMachine](trait.StateMachine.html) trait.
 ///
