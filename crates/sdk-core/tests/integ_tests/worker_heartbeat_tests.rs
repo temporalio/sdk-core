@@ -186,7 +186,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     impl HeartbeatBasicWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 NotifyActivities::pass_fail_act,
                 "pass".to_string(),
@@ -337,7 +337,7 @@ async fn docker_worker_heartbeat_tuner() {
     impl HeartbeatTunerWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 StdActivities::echo,
                 "pass".to_string(),
@@ -630,11 +630,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
     impl StickyCacheMissWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(
-            &self,
-            ctx: &mut WorkflowContext<Self>,
-            wf_marker: String,
-        ) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>, wf_marker: String) -> WorkflowResult<()> {
             ctx.start_activity(
                 StickyCacheActivities::sticky_cache_history_act,
                 wf_marker.clone(),
@@ -733,7 +729,7 @@ async fn worker_heartbeat_multiple_workers() {
     impl MultiWorkersWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             Ok(().into())
         }
     }
@@ -859,7 +855,7 @@ async fn worker_heartbeat_failure_metrics() {
     impl FailureMetricsWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let _ = ctx
                 .start_activity(
                     FailingActivities::failing_act,
@@ -1044,7 +1040,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     impl NoRuntimeHeartbeatWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 StdActivities::echo,
                 "pass".to_string(),
@@ -1116,7 +1112,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     impl SkipClientWorkerSetCheckWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 StdActivities::echo,
                 "pass".to_string(),

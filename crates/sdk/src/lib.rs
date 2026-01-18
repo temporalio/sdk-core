@@ -1413,40 +1413,35 @@ mod tests {
             Self { counter: 0 }
         }
 
-        // Async run uses &self
         #[run]
-        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-            Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+            Ok(WfExitValue::Normal(format!(
+                "Counter: {}",
+                ctx.state(|s| s.counter)
+            )))
         }
 
-        // Sync signal uses &mut self
         #[signal(name = "increment")]
         fn increment_counter(&mut self, _ctx: &mut WorkflowContext<Self>, amount: u32) {
             self.counter += amount;
         }
 
-        // Async signal uses &self
         #[signal]
-        async fn async_signal(&self, _ctx: &mut WorkflowContext<Self>) {
-            // Async signals use &self
-        }
+        async fn async_signal(_ctx: &mut WorkflowContext<Self>) {}
 
-        // Query uses &self with read-only context
         #[query]
         fn get_counter(&self, _ctx: &WorkflowContextView) -> u32 {
             self.counter
         }
 
-        // Sync update uses &mut self
         #[update(name = "double")]
         fn double_counter(&mut self, _ctx: &mut WorkflowContext<Self>) -> u32 {
             self.counter *= 2;
             self.counter
         }
 
-        // Async update uses &self
         #[update]
-        async fn async_update(&self, _ctx: &mut WorkflowContext<Self>, val: i32) -> i32 {
+        async fn async_update(_ctx: &mut WorkflowContext<Self>, val: i32) -> i32 {
             val * 2
         }
     }

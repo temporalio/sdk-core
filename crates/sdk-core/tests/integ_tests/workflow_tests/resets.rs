@@ -28,10 +28,10 @@ struct ResetMeWf {
 #[workflow_methods(factory_only)]
 impl ResetMeWf {
     #[run(name = "reset_me_wf")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         ctx.timer(Duration::from_secs(1)).await;
-        self.notify.notify_one();
+        ctx.state(|wf| wf.notify.notify_one());
         let _ = ctx
             .make_signal_channel(POST_RESET_SIG)
             .next()
@@ -121,24 +121,28 @@ struct ResetRandomseedWf {
 #[workflow_methods(factory_only)]
 impl ResetRandomseedWf {
     #[run(name = "reset_randomseed")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let _ = self.rand_seed.compare_exchange(
-            0,
-            ctx.random_seed(),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        );
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let _ = ctx.state(|wf| {
+            wf.rand_seed.compare_exchange(
+                0,
+                ctx.random_seed(),
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+        });
         ctx.timer(Duration::from_millis(100)).await;
         ctx.timer(Duration::from_millis(100)).await;
-        if self
-            .did_fail
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        if ctx
+            .state(|wf| {
+                wf.did_fail
+                    .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+            })
             .is_ok()
         {
-            self.notify.notify_one();
+            ctx.state(|wf| wf.notify.notify_one());
             panic!("Ahh");
         }
-        if self.rand_seed.load(Ordering::Relaxed) == ctx.random_seed() {
+        if ctx.state(|wf| wf.rand_seed.load(Ordering::Relaxed)) == ctx.random_seed() {
             ctx.timer(Duration::from_millis(100)).await;
         } else {
             ctx.start_local_activity(
@@ -149,7 +153,7 @@ impl ResetRandomseedWf {
             .await;
         }
         let _ = ctx.make_signal_channel(POST_FAIL_SIG).next().await.unwrap();
-        self.notify.notify_one();
+        ctx.state(|wf| wf.notify.notify_one());
         let _ = ctx
             .make_signal_channel(POST_RESET_SIG)
             .next()

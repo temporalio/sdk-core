@@ -42,14 +42,12 @@ use temporalio_sdk_core::{
 
 #[workflow]
 #[derive(Clone)]
-struct ActivityLoadWf {
-    task_queue: Option<String>,
-}
+struct ActivityLoadWf;
 
 #[workflow_methods(factory_only)]
 impl ActivityLoadWf {
     #[run(name = "activity_load")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>, tq: String) -> WorkflowResult<()> {
         let input_str = "yo".to_string();
         let res = ctx
             .start_activity(
@@ -57,7 +55,7 @@ impl ActivityLoadWf {
                 input_str.clone(),
                 ActivityOptions {
                     activity_id: Some("act-1".to_string()),
-                    task_queue: self.task_queue.clone(),
+                    task_queue: Some(tq),
                     schedule_to_start_timeout: Some(Duration::from_secs(8)),
                     start_to_close_timeout: Some(Duration::from_secs(8)),
                     schedule_to_close_timeout: Some(Duration::from_secs(8)),
@@ -85,19 +83,18 @@ async fn activity_load() {
     starter.sdk_config.tuner =
         Arc::new(TunerHolder::fixed_size(CONCURRENCY, CONCURRENCY, 100, 100));
     starter.sdk_config.register_activities(StdActivities);
-    let task_queue = Some(starter.get_task_queue().to_owned());
+    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     let starting = Instant::now();
-    worker.register_workflow_with_factory(move || ActivityLoadWf {
-        task_queue: task_queue.clone(),
-    });
+    worker.register_workflow::<ActivityLoadWf>();
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
         let wf_id = format!("activity_load_{i}");
+        let tq = task_queue.clone();
         async move {
             worker
-                .submit_workflow(ActivityLoadWf::run, wf_id, (), WorkflowOptions::default())
+                .submit_workflow(ActivityLoadWf::run, wf_id, tq, WorkflowOptions::default())
                 .await
                 .unwrap();
         }
@@ -118,7 +115,7 @@ struct ChunkyActivityWf;
 #[workflow_methods]
 impl ChunkyActivityWf {
     #[run(name = "chunky_activity_wf")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let input_str = "yo".to_string();
         let res = ctx
             .start_activity(
@@ -213,7 +210,7 @@ struct WorkflowLoadWf;
 #[workflow_methods]
 impl WorkflowLoadWf {
     #[run(name = "workflow_load")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
@@ -359,7 +356,7 @@ struct ManyParallelTimersLonghistWf;
 #[workflow_methods]
 impl ManyParallelTimersLonghistWf {
     #[run(name = "can_paginate_long_history")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..120 {
             let mut futs = vec![];
             for _ in 0..100 {
@@ -429,7 +426,7 @@ struct PollerLoadWf;
 #[workflow_methods]
 impl PollerLoadWf {
     #[run(name = "poller_load")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         const SIGNAME: &str = "signame";
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());

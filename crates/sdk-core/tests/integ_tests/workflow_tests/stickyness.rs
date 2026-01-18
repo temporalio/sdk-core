@@ -43,12 +43,12 @@ struct TimerTimeoutWf {
 #[workflow_methods(factory_only)]
 impl TimerTimeoutWf {
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        self.run_ct.fetch_add(1, Ordering::SeqCst);
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.state(|wf| wf.run_ct.fetch_add(1, Ordering::SeqCst));
         let t = ctx.timer(Duration::from_secs(1));
-        if !self.timed_out_once.load(Ordering::SeqCst) {
+        if !ctx.state(|wf| wf.timed_out_once.load(Ordering::SeqCst)) {
             ctx.force_task_fail(anyhow::anyhow!("I AM SLAIN!"));
-            self.timed_out_once.store(true, Ordering::SeqCst);
+            ctx.state(|wf| wf.timed_out_once.store(true, Ordering::SeqCst));
         }
         t.await;
         Ok(().into())
@@ -95,8 +95,8 @@ struct CacheMissWf {
 #[workflow_methods(factory_only)]
 impl CacheMissWf {
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        self.barr.wait().await;
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.state(|wf| wf.barr.clone()).wait().await;
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     }

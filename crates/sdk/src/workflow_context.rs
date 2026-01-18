@@ -317,9 +317,12 @@ impl<W> WorkflowContext<W> {
         }
     }
 
-    /// Get the base context for use by futures that don't need typed state access.
-    pub fn base(&self) -> &BaseWorkflowContext {
-        &self.base
+    /// Access workflow state immutably via closure.
+    ///
+    /// The borrow is scoped to the closure and cannot escape, preventing
+    /// borrows from being held across await points.
+    pub fn state<R>(&self, f: impl FnOnce(&W) -> R) -> R {
+        f(&*self.workflow_state.borrow())
     }
 
     /// Access workflow state mutably via closure.
@@ -604,10 +607,16 @@ impl<W> WorkflowContext<W> {
         cmd
     }
 
-    /// Wait for some condition to become true, yielding the workflow if it is not.
-    pub fn wait_condition(&self, mut condition: impl FnMut() -> bool) -> impl Future<Output = ()> {
+    /// Wait for some condition on workflow state to become true, yielding the workflow if not.
+    ///
+    /// The condition closure receives an immutable reference to the workflow state,
+    /// which is borrowed only for the duration of each poll (not across await points).
+    pub fn wait_condition<'a>(
+        &'a self,
+        mut condition: impl FnMut(&W) -> bool + 'a,
+    ) -> impl Future<Output = ()> + 'a {
         future::poll_fn(move |_cx: &mut Context<'_>| {
-            if condition() {
+            if condition(&*self.workflow_state.borrow()) {
                 Poll::Ready(())
             } else {
                 Poll::Pending

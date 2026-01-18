@@ -37,7 +37,7 @@ struct ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf;
 #[workflow_methods]
 impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx
             .start_activity(
                 StdActivities::delay,

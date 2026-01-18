@@ -64,7 +64,7 @@ struct OneActivityWorkflow;
 #[workflow_methods]
 impl OneActivityWorkflow {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>, input: String) -> WorkflowResult<String> {
+    async fn run(ctx: &mut WorkflowContext<Self>, input: String) -> WorkflowResult<String> {
         let r = ctx
             .start_activity(
                 StdActivities::echo,
@@ -907,7 +907,7 @@ struct OneActivityAbandonCancelledBeforeStarted;
 #[workflow_methods]
 impl OneActivityAbandonCancelledBeforeStarted {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -959,7 +959,7 @@ struct OneActivityAbandonCancelledAfterComplete;
 #[workflow_methods]
 impl OneActivityAbandonCancelledAfterComplete {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -1047,7 +1047,7 @@ async fn it_can_complete_async() {
     #[workflow_methods]
     impl AsyncCompletionWorkflow {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let async_response = "agence";
             let activity_resolution = ctx
                 .start_activity(
@@ -1150,7 +1150,7 @@ async fn graceful_shutdown() {
     #[workflow_methods]
     impl GracefulShutdownWorkflow {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let act_futs = (1..=10).map(|_| {
                 ctx.start_activity(
                     SleeperActivities::sleeper,
@@ -1244,7 +1244,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
     #[workflow_methods]
     impl ActivityLocalTimeoutWorkflow {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let res = ctx
                 .start_activity(
                     CancellableEchoActivities::cancellable_echo,
@@ -1309,7 +1309,7 @@ async fn long_activity_timeout_repro() {
     #[workflow_methods]
     impl LongActivityTimeoutReproWorkflow {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let mut iter = 1;
             loop {
                 let res = ctx
@@ -1381,7 +1381,7 @@ async fn pass_activity_summary_to_metadata() {
     #[workflow_methods]
     impl ActivitySummaryWorkflow {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 StdActivities::default,
                 (),
@@ -1443,7 +1443,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     #[workflow_methods]
     impl AbandonedActivitiesWorkflow {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let act_fut = ctx.start_activity(
                 StdActivities::default,
                 (),
@@ -1476,7 +1476,7 @@ struct ImmediateActivityCancelationWorkflow;
 #[workflow_methods]
 impl ImmediateActivityCancelationWorkflow {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let cancel_activity_future =
             ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?;
         cancel_activity_future.cancel();

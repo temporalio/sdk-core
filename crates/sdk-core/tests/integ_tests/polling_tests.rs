@@ -249,7 +249,7 @@ struct OnlyOneWorkflowSlotAndTwoPollers;
 #[workflow_methods]
 impl OnlyOneWorkflowSlotAndTwoPollers {
     #[run(name = "only_one_workflow_slot_and_two_pollers")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..3 {
             ctx.start_activity(
                 StdActivities::echo,

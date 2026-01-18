@@ -4,7 +4,10 @@ use crate::{
     workflows::{DynWorkflowExecution, WorkflowExecutionFactory},
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
-use futures_util::{FutureExt, future::{BoxFuture, LocalBoxFuture}};
+use futures_util::{
+    FutureExt,
+    future::{BoxFuture, LocalBoxFuture},
+};
 use std::{
     collections::{HashMap, hash_map::Entry},
     future::Future,
@@ -161,7 +164,10 @@ pub(crate) struct WorkflowFuture {
     /// Stores in-progress update futures (legacy closure-based)
     update_futures: Vec<(String, BoxFuture<'static, Result<Payload, Error>>)>,
     /// Stores in-progress update futures (trait-based dispatch)
-    trait_update_futures: Vec<(String, LocalBoxFuture<'static, Result<Payload, crate::workflows::WorkflowError>>)>,
+    trait_update_futures: Vec<(
+        String,
+        LocalBoxFuture<'static, Result<Payload, crate::workflows::WorkflowError>>,
+    )>,
     /// Stores in-progress signal futures (trait-based dispatch, for async signals)
     signal_futures: Vec<LocalBoxFuture<'static, ()>>,
 }
@@ -341,8 +347,11 @@ impl WorkflowFuture {
 
                     // Try trait-based dispatch first
                     let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.execution
-                            .dispatch_signal(&sig.signal_name, payloads, &self.payload_converter)
+                        self.execution.dispatch_signal(
+                            &sig.signal_name,
+                            payloads,
+                            &self.payload_converter,
+                        )
                     })) {
                         Ok(r) => r.map_err(|e| anyhow!(e)),
                         Err(e) => {
@@ -390,12 +399,14 @@ impl WorkflowFuture {
                         payloads: u.input.clone(),
                     };
 
-
                     // Try trait-based dispatch first
                     let trait_val_result = if u.run_validator {
                         match panic::catch_unwind(AssertUnwindSafe(|| {
-                            self.execution
-                                .validate_update(&u.name, &payloads, &self.payload_converter)
+                            self.execution.validate_update(
+                                &u.name,
+                                &payloads,
+                                &self.payload_converter,
+                            )
                         })) {
                             Ok(r) => r.map_err(|e| anyhow!(e)),
                             Err(e) => {
@@ -406,7 +417,6 @@ impl WorkflowFuture {
                         // When not validating, check if trait handler exists
                         Ok(true) // Assume valid, will check handler below
                     };
-
 
                     match trait_val_result {
                         Ok(true) => {
@@ -813,23 +823,19 @@ impl WorkflowFuture {
                     WfExitValue::ContinueAsNew(cmd) => {
                         workflow_command::Variant::ContinueAsNewWorkflowExecution(*cmd)
                     }
-                    WfExitValue::Cancelled => {
-                        workflow_command::Variant::CancelWorkflowExecution(
-                            CancelWorkflowExecution {},
-                        )
-                    }
+                    WfExitValue::Cancelled => workflow_command::Variant::CancelWorkflowExecution(
+                        CancelWorkflowExecution {},
+                    ),
                     WfExitValue::Evicted => {
                         panic!("Don't explicitly return this")
                     }
                 },
-                Err(e) => {
-                    workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                        failure: Some(Failure {
-                            message: e.to_string(),
-                            ..Default::default()
-                        }),
-                    })
-                }
+                Err(e) => workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
+                    failure: Some(Failure {
+                        message: e.to_string(),
+                        ..Default::default()
+                    }),
+                }),
             };
             activation_cmds.push(cmd.into())
         }

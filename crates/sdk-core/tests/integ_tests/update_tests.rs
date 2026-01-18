@@ -653,7 +653,7 @@ async fn update_with_local_acts() {
     impl UpdateWithLocalActsWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.update_handler(
                 "update",
                 |_: &_, _: ()| Ok(()),
@@ -733,7 +733,7 @@ async fn update_rejection_sdk() {
     impl UpdateRejectionSdkWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.update_handler(
                 "update",
                 |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
@@ -789,7 +789,7 @@ async fn update_fail_sdk() {
     impl UpdateFailSdkWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.update_handler(
                 "update",
                 |_: &_, _: ()| Ok(()),
@@ -845,7 +845,7 @@ async fn update_timer_sequence() {
     impl UpdateTimerSequenceWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.update_handler(
                 "update",
                 |_: &_, _: ()| Ok(()),
@@ -906,7 +906,7 @@ async fn task_failure_during_validation() {
     impl TaskFailureDuringValidationWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             static FAILCT: AtomicUsize = AtomicUsize::new(0);
             ctx.update_handler(
                 "update",
@@ -979,7 +979,7 @@ async fn task_failure_after_update() {
     impl TaskFailureAfterUpdateWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             static FAILCT: AtomicUsize = AtomicUsize::new(0);
             ctx.update_handler(
                 "update",
@@ -1057,7 +1057,7 @@ async fn worker_restarted_in_middle_of_update() {
     impl WorkerRestartedInMiddleOfUpdateWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.update_handler(
                 "update",
                 |_: &_, _: ()| Ok(()),
@@ -1159,7 +1159,7 @@ async fn update_after_empty_wft() {
     impl UpdateAfterEmptyWftWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             static ACT_STARTED: AtomicBool = AtomicBool::new(false);
             ctx.update_handler(
                 "update",
@@ -1263,7 +1263,7 @@ async fn update_lost_on_activity_mismatch() {
     impl UpdateLostOnActivityMismatchWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let can_run = Arc::new(AtomicUsize::new(1));
             let cr = can_run.clone();
             ctx.update_handler(
@@ -1279,7 +1279,7 @@ async fn update_lost_on_activity_mismatch() {
             );
             for _ in 1..=3 {
                 let cr = can_run.clone();
-                ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
+                ctx.wait_condition(|_| cr.load(Ordering::Relaxed) > 0).await;
                 ctx.start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),

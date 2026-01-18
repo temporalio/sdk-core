@@ -179,7 +179,7 @@ struct ResourceBasedNonStickyWf;
 #[workflow_methods]
 impl ResourceBasedNonStickyWf {
     #[run]
-    async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         Ok(().into())
     }
 }
@@ -237,11 +237,11 @@ async fn oversize_grpc_message() {
     impl OversizeGrpcMessageWf {
         #[run]
         #[allow(dead_code)]
-        async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
-            if self.has_run.load(Relaxed) {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
+            if ctx.state(|wf| wf.has_run.load(Relaxed)) {
                 Ok(vec![].into())
             } else {
-                self.has_run.store(true, Relaxed);
+                ctx.state(|wf| wf.has_run.store(true, Relaxed));
                 let result: Vec<u8> = vec![0; 5000000];
                 Ok(result.into())
             }
@@ -413,12 +413,12 @@ async fn activity_tasks_from_completion_reserve_slots() {
     #[workflow_methods(factory_only)]
     impl ActivityTasksCompletionWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())?
                 .await;
             ctx.start_activity(FakeAct::act2, (), ActivityOptions::default())?
                 .await;
-            self.complete_token.cancel();
+            ctx.state(|wf| wf.complete_token.cancel());
             Ok(().into())
         }
     }
@@ -483,7 +483,7 @@ async fn max_wft_respected() {
     #[workflow_methods]
     impl MaxWftWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             drop(
                 ACTIVE_COUNT
                     .try_acquire()
@@ -574,7 +574,7 @@ async fn history_length_with_fail_and_timeout(
     #[workflow_methods]
     impl HistoryLengthWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             assert_eq!(ctx.history_length(), 3);
             ctx.timer(Duration::from_secs(1)).await;
             assert_eq!(ctx.history_length(), 14);
@@ -631,7 +631,7 @@ async fn sets_build_id_from_wft_complete() {
     #[workflow_methods]
     impl BuildIdWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             // First task, it should be empty, since replaying and nothing in first WFT completed
             assert_eq!(ctx.current_deployment_version(), None);
             ctx.timer(Duration::from_secs(1)).await;
@@ -775,7 +775,7 @@ async fn test_custom_slot_supplier_simple() {
     #[workflow_methods]
     impl SlotSupplierWorkflow {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let _result = ctx
                 .start_activity(
                     StdActivities::no_op,

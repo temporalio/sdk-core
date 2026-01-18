@@ -73,12 +73,11 @@ impl NexusBasicWf {
 
     #[run]
     pub(crate) async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<Result<NexusOperationResult, Failure>> {
         match ctx
             .start_nexus_operation(NexusOperationOptions {
-                endpoint: self.endpoint.clone(),
+                endpoint: ctx.state(|wf| wf.endpoint.clone()),
                 service: "svc".to_string(),
                 operation: "op".to_string(),
                 schedule_to_close_timeout: Some(Duration::from_secs(3)),
@@ -250,23 +249,22 @@ impl NexusAsyncWf {
 
     #[run]
     pub(crate) async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<NexusOperationResult> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
-            endpoint: self.endpoint.clone(),
+            endpoint: ctx.state(|wf| wf.endpoint.clone()),
             service: "svc".to_string(),
             operation: "op".to_string(),
-            schedule_to_close_timeout: self.schedule_to_close_timeout,
+            schedule_to_close_timeout: ctx.state(|wf| wf.schedule_to_close_timeout),
             ..Default::default()
         });
-        if self.outcome == Outcome::CancelAfterRecordedBeforeStarted {
+        if ctx.state(|wf| wf.outcome) == Outcome::CancelAfterRecordedBeforeStarted {
             ctx.timer(Duration::from_millis(1)).await;
             started.cancel();
         }
         let started = started.await.unwrap();
         let result = started.result();
-        if matches!(self.outcome, Outcome::Cancel) {
+        if matches!(ctx.state(|wf| wf.outcome), Outcome::Cancel) {
             started.cancel();
             started.cancel();
         }
@@ -290,8 +288,8 @@ impl AsyncCompleter {
 
     #[allow(dead_code)] // Started via untyped submitter handle
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-        match self.outcome {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        match ctx.state(|wf| wf.outcome) {
             Outcome::Succeed => Ok("completed async".to_string().into()),
             Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
                 ctx.cancelled().await;
@@ -533,9 +531,9 @@ impl NexusCancelBeforeStartWf {
     }
 
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
-            endpoint: self.endpoint.clone(),
+            endpoint: ctx.state(|wf| wf.endpoint.clone()),
             service: "svc".to_string(),
             operation: "op".to_string(),
             ..Default::default()
@@ -544,7 +542,7 @@ impl NexusCancelBeforeStartWf {
         let res = started.await.unwrap_err();
         assert_eq!(res.message, "Nexus Operation cancelled before scheduled");
         if let FailureInfo::NexusOperationExecutionFailureInfo(fi) = res.failure_info.unwrap() {
-            assert_eq!(fi.endpoint, self.endpoint);
+            assert_eq!(fi.endpoint, ctx.state(|wf| wf.endpoint.clone()));
             assert_eq!(fi.service, "svc");
             assert_eq!(fi.operation, "op");
         } else {
@@ -601,10 +599,10 @@ impl NexusMustCompleteTaskWf {
     }
 
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // We just need to create the command, not await it.
         drop(ctx.start_nexus_operation(NexusOperationOptions {
-            endpoint: self.endpoint.clone(),
+            endpoint: ctx.state(|wf| wf.endpoint.clone()),
             service: "svc".to_string(),
             operation: "op".to_string(),
             ..Default::default()
@@ -715,13 +713,13 @@ struct NexusCancellationCallerWf {
 #[workflow_methods(factory_only)]
 impl NexusCancellationCallerWf {
     #[run(name = "nexus_cancellation_types")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<NexusOperationResult> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<NexusOperationResult> {
         let options = NexusOperationOptions {
-            endpoint: self.endpoint.clone(),
+            endpoint: ctx.state(|wf| wf.endpoint.clone()),
             service: "svc".to_string(),
             operation: "op".to_string(),
-            schedule_to_close_timeout: self.schedule_to_close_timeout,
-            cancellation_type: Some(self.cancellation_type),
+            schedule_to_close_timeout: ctx.state(|wf| wf.schedule_to_close_timeout),
+            cancellation_type: Some(ctx.state(|wf| wf.cancellation_type)),
             ..Default::default()
         };
         let started = ctx.start_nexus_operation(options);
@@ -731,7 +729,7 @@ impl NexusCancellationCallerWf {
         started.cancel();
 
         let res = result.await;
-        self.caller_op_future_tx.send(true).unwrap();
+        ctx.state(|wf| wf.caller_op_future_tx.send(true).unwrap());
 
         // Make sure cancel after op completion doesn't cause problems
         started.cancel();
@@ -755,15 +753,15 @@ struct AsyncCompleterWf {
 #[workflow_methods(factory_only)]
 impl AsyncCompleterWf {
     #[run(name = "async_completer")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // Wait for cancellation
         ctx.cancelled().await;
-        self.cancellation_tx.send(true).unwrap();
+        ctx.state(|wf| wf.cancellation_tx.send(true).unwrap());
 
-        if self.cancellation_type == NexusOperationCancellationType::WaitCancellationCompleted {
-            ctx.wait_condition(|| self.cancellation_wait_happened.load(Ordering::Relaxed))
+        if ctx.state(|wf| wf.cancellation_type) == NexusOperationCancellationType::WaitCancellationCompleted {
+            ctx.wait_condition(|wf| wf.cancellation_wait_happened.load(Ordering::Relaxed))
                 .await;
-        } else if self.cancellation_type
+        } else if ctx.state(|wf| wf.cancellation_type)
             == NexusOperationCancellationType::WaitCancellationRequested
         {
             // For WAIT_REQUESTED, wait until the caller nexus op future has been resolved. This
@@ -775,7 +773,7 @@ impl AsyncCompleterWf {
             signal_chan.next().await;
         }
 
-        self.handler_exited_tx.send(true).unwrap();
+        ctx.state(|wf| wf.handler_exited_tx.send(true).unwrap());
         Ok(WfExitValue::<()>::Cancelled)
     }
 }

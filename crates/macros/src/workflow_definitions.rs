@@ -68,30 +68,20 @@ fn generate_method_call(prefixed_method: &syn::Ident, has_input: bool) -> TokenS
     }
 }
 
-/// Generate a registration statement for a handler type
-fn generate_handler_registration(
-    method: &syn::ImplItemFn,
-    module_ident: &syn::Ident,
-    register_fn: &str,
+/// Generate an async handler body that awaits the method call.
+/// Async handlers don't take self - they access state via ctx.state()/state_mut()
+fn generate_async_handler_body(
+    impl_type: &Type,
+    prefixed_method: &syn::Ident,
+    has_input: bool,
 ) -> TokenStream2 {
-    let struct_name = method_name_to_pascal_case(&method.sig.ident);
-    let struct_ident = format_ident!("{}", struct_name);
-    let register_ident = format_ident!("{}", register_fn);
-    quote! {
-        defs.#register_ident::<Self, #module_ident::#struct_ident>();
-    }
-}
-
-/// Generate an async handler body that clones ctx and awaits the method call
-fn generate_async_handler_body(prefixed_method: &syn::Ident, has_input: bool) -> TokenStream2 {
     let method_call = if has_input {
-        quote! { self.#prefixed_method(&mut ctx, input) }
+        quote! { #impl_type::#prefixed_method(&mut ctx, input) }
     } else {
-        quote! { self.#prefixed_method(&mut ctx) }
+        quote! { #impl_type::#prefixed_method(&mut ctx) }
     };
 
     quote! {
-        let ctx = ctx.clone();
         async move {
             let mut ctx = ctx;
             #method_call.await
@@ -293,8 +283,8 @@ fn parse_run_method(method: &syn::ImplItemFn) -> syn::Result<RunMethod> {
         ));
     }
 
-    // Run methods use &self because they're async - mutations go through ctx.state_mut()
-    validate_immut_self_receiver_for_async(method, "run")?;
+    // Async run methods must not have self to prevent unsound references across awaits
+    validate_no_self_receiver_for_async(method, "run")?;
 
     let input_type = extract_input_type(&method.sig)?;
     let output_type = extract_workflow_result_type(&method.sig)?;
@@ -311,9 +301,9 @@ fn parse_signal_method(method: &syn::ImplItemFn) -> syn::Result<SignalMethod> {
     let attributes = extract_method_attributes(&method.attrs, "signal")?;
     let is_async = method.sig.asyncness.is_some();
 
-    // Async signals use &self (mutations via ctx.state_mut()), sync signals use &mut self
+    // Async signals must not have self, sync signals use &mut self
     if is_async {
-        validate_immut_self_receiver_for_async(method, "signal")?;
+        validate_no_self_receiver_for_async(method, "signal")?;
     } else {
         validate_mut_self_receiver(method)?;
     }
@@ -355,9 +345,9 @@ fn parse_update_method(method: &syn::ImplItemFn) -> syn::Result<UpdateMethod> {
     let attributes = extract_method_attributes(&method.attrs, "update")?;
     let is_async = method.sig.asyncness.is_some();
 
-    // Async updates use &self (mutations via ctx.state_mut()), sync updates use &mut self
+    // Async updates must not have self, sync updates use &mut self
     if is_async {
-        validate_immut_self_receiver_for_async(method, "update")?;
+        validate_no_self_receiver_for_async(method, "update")?;
     } else {
         validate_mut_self_receiver(method)?;
     }
@@ -416,40 +406,26 @@ fn validate_immut_self_receiver(method: &syn::ImplItemFn) -> syn::Result<()> {
     }
 }
 
-fn validate_immut_self_receiver_for_async(
+fn validate_no_self_receiver_for_async(
     method: &syn::ImplItemFn,
     attr_name: &str,
 ) -> syn::Result<()> {
-    match method.sig.inputs.first() {
-        Some(FnArg::Receiver(receiver)) => {
-            if receiver.reference.is_none() {
-                return Err(syn::Error::new_spanned(
-                    receiver,
-                    format!(
-                        "Async #[{attr_name}] methods must use `&self` as the receiver (not `self`)"
-                    ),
-                ));
-            }
-            if receiver.mutability.is_some() {
-                return Err(syn::Error::new_spanned(
-                    receiver,
-                    format!(
-                        "Async #[{attr_name}] methods must use `&self` as the receiver (not `&mut self`). \
-                         Use ctx.state_mut() for state mutations in async handlers."
-                    ),
-                ));
-            }
-            Ok(())
-        }
-        _ => Err(syn::Error::new_spanned(
-            &method.sig,
-            format!("Async #[{attr_name}] methods must have `&self` as the first parameter"),
-        )),
+    // Async workflow methods must NOT have a self receiver to prevent unsound references
+    // across await points (signals/updates can mutate state during awaits).
+    if let Some(FnArg::Receiver(receiver)) = method.sig.inputs.first() {
+        return Err(syn::Error::new_spanned(
+            receiver,
+            format!(
+                "Async #[{attr_name}] methods must not have a self parameter. \
+                 Use WorkflowContext to access state safely."
+            ),
+        ));
     }
+    Ok(())
 }
 
 fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
-    // Skip self, then find parameter after context
+    // Skip self (if present), then find parameter after context
     let mut found_ctx = false;
     for arg in &sig.inputs {
         match arg {
@@ -625,7 +601,7 @@ impl WorkflowMethodsDefinition {
 
         let workflow_impl =
             self.generate_workflow_implementation(impl_type, &module_ident, factory_only);
-        let implementer_impl = self.generate_workflow_implementer(impl_type, &module_ident);
+        let implementer_impl = self.generate_workflow_implementer(impl_type);
 
         let const_impl = quote! {
             impl #impl_type {
@@ -690,14 +666,14 @@ impl WorkflowMethodsDefinition {
 
         let has_input = signal.input_type.is_some();
         let executable_impl = if signal.is_async {
-            let handle_body = generate_async_handler_body(&info.prefixed_method, has_input);
+            let handle_body =
+                generate_async_handler_body(impl_type, &info.prefixed_method, has_input);
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
-                        &self,
-                        ctx: &mut ::temporalio_sdk::WorkflowContext<Self>,
+                        ctx: ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::SignalDefinition>::Input,
-                    ) -> ::futures_util::future::LocalBoxFuture<'_, ()> {
+                    ) -> ::futures_util::future::LocalBoxFuture<'static, ()> {
                         use ::futures_util::FutureExt;
                         #handle_body
                     }
@@ -810,14 +786,14 @@ impl WorkflowMethodsDefinition {
 
         let has_input = update.input_type.is_some();
         let executable_impl = if update.is_async {
-            let handle_body = generate_async_handler_body(&info.prefixed_method, has_input);
+            let handle_body =
+                generate_async_handler_body(impl_type, &info.prefixed_method, has_input);
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
-                        &self,
-                        ctx: &mut ::temporalio_sdk::WorkflowContext<Self>,
+                        ctx: ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
-                    ) -> ::futures_util::future::LocalBoxFuture<'_, <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output> {
+                    ) -> ::futures_util::future::LocalBoxFuture<'static, <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output> {
                         use ::futures_util::FutureExt;
                         #handle_body
                     }
@@ -892,9 +868,9 @@ impl WorkflowMethodsDefinition {
         };
 
         let run_call = if run_has_input {
-            quote! { self.#prefixed_run(&mut ctx, input.expect("run takes input")).await }
+            quote! { Self::#prefixed_run(&mut ctx, input.expect("run takes input")).await }
         } else {
-            quote! { self.#prefixed_run(&mut ctx).await }
+            quote! { Self::#prefixed_run(&mut ctx).await }
         };
 
         let run_impl_body = quote! {
@@ -952,11 +928,11 @@ impl WorkflowMethodsDefinition {
                     // Async signal handler
                     let handler_call = if has_input {
                         quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(self, &mut ctx, input)
+                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(ctx.clone(), input)
                         }
                     } else {
                         quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(self, &mut ctx, ())
+                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(ctx.clone(), ())
                         }
                     };
 
@@ -999,12 +975,11 @@ impl WorkflowMethodsDefinition {
         } else {
             quote! {
                 fn dispatch_signal(
-                    &self,
-                    mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
+                    ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     name: &str,
                     payloads: ::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
-                ) -> Result<Option<::futures_util::future::LocalBoxFuture<'_, ()>>, ::temporalio_sdk::workflows::WorkflowError> {
+                ) -> Result<Option<::futures_util::future::LocalBoxFuture<'static, ()>>, ::temporalio_sdk::workflows::WorkflowError> {
                     use ::futures_util::FutureExt;
                     use ::temporalio_common::data_converters::GenericPayloadConverter;
 
@@ -1037,11 +1012,11 @@ impl WorkflowMethodsDefinition {
                     // Async update handler
                     let handler_call = if has_input {
                         quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(self, &mut ctx, input)
+                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(ctx.clone(), input)
                         }
                     } else {
                         quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(self, &mut ctx, ())
+                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(ctx.clone(), ())
                         }
                     };
 
@@ -1138,12 +1113,11 @@ impl WorkflowMethodsDefinition {
         } else {
             quote! {
                 fn dispatch_update(
-                    &self,
                     mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     name: &str,
                     payloads: ::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
-                ) -> Option<::futures_util::future::LocalBoxFuture<'_, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>>> {
+                ) -> Option<::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>>> {
                     use ::futures_util::FutureExt;
                     use ::temporalio_common::data_converters::GenericPayloadConverter;
 
@@ -1185,10 +1159,9 @@ impl WorkflowMethodsDefinition {
                 }
 
                 fn run(
-                    &self,
                     ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
-                ) -> ::futures_util::future::LocalBoxFuture<'_, Result<::temporalio_sdk::WfExitValue<::temporalio_common::protos::temporal::api::common::v1::Payload>, ::temporalio_sdk::workflows::WorkflowError>> {
+                ) -> ::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_sdk::WfExitValue<::temporalio_common::protos::temporal::api::common::v1::Payload>, ::temporalio_sdk::workflows::WorkflowError>> {
                     #run_impl_body
                 }
 
@@ -1198,46 +1171,11 @@ impl WorkflowMethodsDefinition {
         }
     }
 
-    fn generate_workflow_implementer(
-        &self,
-        impl_type: &Type,
-        module_ident: &syn::Ident,
-    ) -> TokenStream2 {
-        let mut registrations = vec![quote! {
-            defs.register_workflow_run::<Self>();
-        }];
-
-        // Register signals - use async or sync registration based on handler type
-        registrations.extend(self.signals.iter().map(|s| {
-            let register_fn = if s.is_async {
-                "register_async_signal"
-            } else {
-                "register_signal"
-            };
-            generate_handler_registration(&s.method, module_ident, register_fn)
-        }));
-
-        // Register queries (always sync)
-        registrations.extend(
-            self.queries
-                .iter()
-                .map(|q| generate_handler_registration(&q.method, module_ident, "register_query")),
-        );
-
-        // Register updates - use async or sync registration based on handler type
-        registrations.extend(self.updates.iter().map(|u| {
-            let register_fn = if u.is_async {
-                "register_async_update"
-            } else {
-                "register_update"
-            };
-            generate_handler_registration(&u.method, module_ident, register_fn)
-        }));
-
+    fn generate_workflow_implementer(&self, impl_type: &Type) -> TokenStream2 {
         quote! {
             impl ::temporalio_sdk::workflows::WorkflowImplementer for #impl_type {
                 fn register_all(defs: &mut ::temporalio_sdk::workflows::WorkflowDefinitions) {
-                    #(#registrations)*
+                    defs.register_workflow_run::<Self>();
                 }
             }
         }

@@ -14,17 +14,10 @@ struct InteractionWorkflow {
 #[workflow_methods]
 impl InteractionWorkflow {
     #[run]
-    async fn run(
-        &self,
-        ctx: &mut WorkflowContext<Self>,
-        wait_for_value: i32,
-    ) -> WorkflowResult<i32> {
+    async fn run(ctx: &mut WorkflowContext<Self>, wait_for_value: i32) -> WorkflowResult<i32> {
         ctx.state_mut(|s| s.log.push("run"));
-        let first_item_ref = self.log.first();
-        ctx.wait_condition(|| self.counter == wait_for_value).await;
-        // SIGSEV - oops
-        dbg!(first_item_ref);
-        Ok(WfExitValue::Normal(self.counter))
+        ctx.wait_condition(|s| s.counter == wait_for_value).await;
+        Ok(WfExitValue::Normal(ctx.state(|s| s.counter)))
     }
 
     #[signal]
@@ -54,16 +47,18 @@ impl InteractionWorkflow {
     }
 
     #[update]
-    async fn change_and_wait(&self, ctx: &mut WorkflowContext<Self>, amount_and_wait: (i32, i32)) {
+    async fn change_and_wait(ctx: &mut WorkflowContext<Self>, amount_and_wait: (i32, i32)) {
         ctx.state_mut(|s| {
             s.log.push("starting change_and_wait");
             s.counter += amount_and_wait.0;
         });
-        ctx.wait_condition(|| dbg!(self.counter) == amount_and_wait.1)
-            .await;
+        ctx.wait_condition(|s| s.counter == amount_and_wait.1).await;
         ctx.state_mut(|s| s.log.push("done change_and_wait"));
     }
 }
+
+// TODO: add another test that uses wait condition concurrently with some future that uses
+// state_mut
 
 #[tokio::test]
 async fn test_typed_signal() {

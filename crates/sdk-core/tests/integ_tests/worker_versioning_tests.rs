@@ -240,7 +240,7 @@ struct ActivityHasDeploymentStampWf;
 #[workflow_methods]
 impl ActivityHasDeploymentStampWf {
     #[run(name = "activity_has_deployment_stamp")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.start_activity(
             StdActivities::echo,
             "hi!".to_string(),

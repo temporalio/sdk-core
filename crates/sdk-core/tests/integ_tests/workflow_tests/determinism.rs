@@ -37,8 +37,8 @@ pub(crate) struct TimerWfNondeterministic {
 #[workflow_methods(factory_only)]
 impl TimerWfNondeterministic {
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let run_ct = self.run_ct.fetch_add(1, Ordering::Relaxed);
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let run_ct = ctx.state(|wf| wf.run_ct.fetch_add(1, Ordering::Relaxed));
 
         match run_ct {
             1 | 3 => {
@@ -90,8 +90,8 @@ struct TaskFailReplayWf {
 #[workflow_methods(factory_only)]
 impl TaskFailReplayWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        if self.did_fail.load(Ordering::Relaxed) {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        if ctx.state(|wf| wf.did_fail.load(Ordering::Relaxed)) {
             assert!(ctx.is_replaying());
         }
         ctx.start_activity(
@@ -104,8 +104,8 @@ impl TaskFailReplayWf {
         )
         .unwrap()
         .await;
-        if !self.did_fail.load(Ordering::Relaxed) {
-            self.did_fail.store(true, Ordering::Relaxed);
+        if !ctx.state(|wf| wf.did_fail.load(Ordering::Relaxed)) {
+            ctx.state(|wf| wf.did_fail.store(true, Ordering::Relaxed));
             panic!("Die on purpose");
         }
         Ok(().into())
@@ -150,11 +150,11 @@ struct TimerWfFailsOnce {
 #[workflow_methods(factory_only)]
 impl TimerWfFailsOnce {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
-        if self
-            .did_fail
-            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        if ctx
+            .state(|wf| wf.did_fail
+            .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed))
             .is_ok()
         {
             panic!("Ahh");
@@ -207,8 +207,8 @@ struct NondeterministicTimerWf {
 #[workflow_methods(factory_only)]
 impl NondeterministicTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        if self.started_count.fetch_add(1, Ordering::Relaxed) == 0 {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        if ctx.state(|wf| wf.started_count.fetch_add(1, Ordering::Relaxed)) == 0 {
             ctx.timer(Duration::from_secs(1)).await;
         }
         ctx.timer(Duration::from_secs(1)).await;
@@ -269,7 +269,6 @@ struct ActivityIdOrTypeChangeWf;
 impl ActivityIdOrTypeChangeWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
         (id_change, local_act): (bool, bool),
     ) -> WorkflowResult<()> {
@@ -368,7 +367,7 @@ struct ChildWfIdOrTypeChangeWf;
 #[workflow_methods]
 impl ChildWfIdOrTypeChangeWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>, id_change: bool) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>, id_change: bool) -> WorkflowResult<()> {
         ctx.child_workflow(if id_change {
             ChildWorkflowOptions {
                 workflow_id: "I'm bad and wrong!".to_string(),
@@ -446,7 +445,7 @@ struct ReproChannelMissingWf;
 #[workflow_methods]
 impl ReproChannelMissingWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.patched("wrongid");
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())

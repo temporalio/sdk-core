@@ -81,7 +81,7 @@ struct ParallelWorkflowsWf;
 #[workflow_methods]
 impl ParallelWorkflowsWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     }
@@ -486,7 +486,7 @@ struct SlowCompletesWf;
 #[workflow_methods]
 impl SlowCompletesWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..3 {
             ctx.start_activity(
                 StdActivities::echo,
@@ -814,7 +814,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[workflow_methods]
     impl NondeterminismTimerWf {
         #[run(name = NONDETERMINISM_WF_NAME)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_secs(1000)).await;
             Ok(().into())
         }
@@ -857,7 +857,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[workflow_methods]
     impl NondeterminismActivityWf {
         #[run(name = NONDETERMINISM_WF_NAME)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_owned(),
@@ -917,7 +917,7 @@ async fn history_out_of_order_on_restart() {
     #[workflow_methods(factory_only)]
     impl HistoryOutOfOrderWf1 {
         #[run(name = HISTORY_OUT_OF_ORDER_WF_NAME)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_local_activity(
                 StdActivities::echo,
                 "hi".to_string(),
@@ -936,8 +936,7 @@ async fn history_out_of_order_on_restart() {
                 },
             )?
             .await;
-            // Interrupt this sleep on first go
-            self.hit_sleep.notify_one();
+            ctx.state(|wf| wf.hit_sleep.notify_one());
             ctx.timer(Duration::from_secs(5)).await;
             Ok(().into())
         }
@@ -950,7 +949,7 @@ async fn history_out_of_order_on_restart() {
     #[workflow_methods]
     impl HistoryOutOfOrderWf2 {
         #[run(name = HISTORY_OUT_OF_ORDER_WF_NAME)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_local_activity(
                 StdActivities::echo,
                 "hi".to_string(),
@@ -1051,7 +1050,7 @@ async fn pass_timer_summary_to_metadata() {
     #[workflow_methods]
     impl PassTimerSummaryWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(TimerOptions {
                 duration: Duration::from_secs(1),
                 summary: Some("timer summary".to_string()),
