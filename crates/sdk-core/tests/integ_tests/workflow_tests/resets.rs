@@ -1,5 +1,4 @@
 use crate::common::{CoreWfStarter, NAMESPACE, activity_functions::StdActivities};
-use futures_util::StreamExt;
 use std::{
     sync::{
         Arc,
@@ -23,6 +22,7 @@ const POST_RESET_SIG: &str = "post-reset";
 #[workflow]
 struct ResetMeWf {
     notify: Arc<Notify>,
+    post_reset_received: bool,
 }
 
 #[workflow_methods(factory_only)]
@@ -32,12 +32,13 @@ impl ResetMeWf {
         ctx.timer(Duration::from_secs(1)).await;
         ctx.timer(Duration::from_secs(1)).await;
         ctx.state(|wf| wf.notify.notify_one());
-        let _ = ctx
-            .make_signal_channel(POST_RESET_SIG)
-            .next()
-            .await
-            .unwrap();
+        ctx.wait_condition(|s| s.post_reset_received).await;
         Ok(().into())
+    }
+
+    #[signal(name = "post-reset")]
+    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.post_reset_received = true;
     }
 }
 
@@ -53,6 +54,7 @@ async fn reset_workflow() {
     let notify_clone = notify.clone();
     worker.register_workflow_with_factory(move || ResetMeWf {
         notify: notify_clone.clone(),
+        post_reset_received: false,
     });
 
     let handle = worker
@@ -116,6 +118,8 @@ struct ResetRandomseedWf {
     did_fail: Arc<AtomicBool>,
     rand_seed: Arc<AtomicU64>,
     notify: Arc<Notify>,
+    post_fail_received: bool,
+    post_reset_received: bool,
 }
 
 #[workflow_methods(factory_only)]
@@ -152,14 +156,20 @@ impl ResetRandomseedWf {
             )?
             .await;
         }
-        let _ = ctx.make_signal_channel(POST_FAIL_SIG).next().await.unwrap();
+        ctx.wait_condition(|s| s.post_fail_received).await;
         ctx.state(|wf| wf.notify.notify_one());
-        let _ = ctx
-            .make_signal_channel(POST_RESET_SIG)
-            .next()
-            .await
-            .unwrap();
+        ctx.wait_condition(|s| s.post_reset_received).await;
         Ok(().into())
+    }
+
+    #[signal(name = "post-fail")]
+    fn post_fail(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.post_fail_received = true;
+    }
+
+    #[signal(name = "post-reset")]
+    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.post_reset_received = true;
     }
 }
 
@@ -184,6 +194,8 @@ async fn reset_randomseed() {
         did_fail: did_fail.clone(),
         rand_seed: rand_seed.clone(),
         notify: notify_clone.clone(),
+        post_fail_received: false,
+        post_reset_received: false,
     });
     worker.register_activities(StdActivities);
 

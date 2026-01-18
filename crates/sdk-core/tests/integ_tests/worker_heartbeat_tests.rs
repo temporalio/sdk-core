@@ -3,7 +3,6 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
-use futures_util::StreamExt;
 use prost_types::{Duration as PbDuration, Timestamp};
 use std::{
     collections::HashSet,
@@ -14,9 +13,7 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use temporalio_client::{
-    Client, NamespacedClient, WfClientExt, WorkflowClientTrait, WorkflowService,
-};
+use temporalio_client::{Client, NamespacedClient, WfClientExt, WorkflowOptions, WorkflowService};
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -822,8 +819,6 @@ static ACT_FAIL: Notify = Notify::const_new();
 static WF_FAIL: Notify = Notify::const_new();
 #[tokio::test]
 async fn worker_heartbeat_failure_metrics() {
-    const WORKFLOW_CONTINUE_SIGNAL: &str = "workflow-continue";
-
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
@@ -849,12 +844,13 @@ async fn worker_heartbeat_failure_metrics() {
 
     #[workflow]
     #[derive(Default)]
-    struct FailureMetricsWf;
+    struct FailureMetricsWf {
+        signal_received: bool,
+    }
 
     #[workflow_methods]
     impl FailureMetricsWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let _ = ctx
                 .start_activity(
@@ -880,11 +876,13 @@ async fn worker_heartbeat_failure_metrics() {
                 panic!("expected WF panic");
             }
 
-            // Signal here to avoid workflow from completing and shutdown heartbeat from sending
-            // before we check workflow_slots.last_interval_failure_tasks
-            let mut proceed_signal = ctx.make_signal_channel(WORKFLOW_CONTINUE_SIGNAL);
-            proceed_signal.next().await.unwrap();
+            ctx.wait_condition(|s| s.signal_received).await;
             Ok(().into())
+        }
+
+        #[signal]
+        fn handle_continue_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.signal_received = true;
         }
     }
 
@@ -896,9 +894,15 @@ async fn worker_heartbeat_failure_metrics() {
         ..Default::default()
     });
 
-    let _ = starter
-        .start_with_worker(FailureMetricsWf::name(), &mut worker)
-        .await;
+    let handle = worker
+        .submit_workflow(
+            FailureMetricsWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
 
     let test_fut = async {
         ACT_FAIL.notified().await;
@@ -988,14 +992,8 @@ async fn worker_heartbeat_failure_metrics() {
         )
         .await
         .unwrap();
-        client
-            .signal_workflow_execution(
-                starter.get_wf_id().to_string(),
-                String::new(),
-                WORKFLOW_CONTINUE_SIGNAL.to_string(),
-                None,
-                None,
-            )
+        handle
+            .signal(FailureMetricsWf::handle_continue_signal, ())
             .await
             .unwrap();
     };

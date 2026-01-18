@@ -47,7 +47,6 @@ use tokio::{
     join,
     sync::{mpsc, watch},
 };
-use tokio_stream::StreamExt;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub(crate) enum Outcome {
@@ -748,6 +747,7 @@ struct AsyncCompleterWf {
     cancellation_wait_happened: Arc<AtomicBool>,
     cancellation_tx: watch::Sender<bool>,
     handler_exited_tx: watch::Sender<bool>,
+    proceed_signal_received: bool,
 }
 
 #[workflow_methods(factory_only)]
@@ -771,12 +771,16 @@ impl AsyncCompleterWf {
             // NexusOperationCancelRequestCompleted (written after cancel handler responds)
             // rather than NexusOperationCanceled (written after handler workflow completes as
             // cancelled).
-            let mut signal_chan = ctx.make_signal_channel("proceed-to-exit");
-            signal_chan.next().await;
+            ctx.wait_condition(|wf| wf.proceed_signal_received).await;
         }
 
         ctx.state(|wf| wf.handler_exited_tx.send(true).unwrap());
         Ok(WfExitValue::<()>::Cancelled)
+    }
+
+    #[signal(name = "proceed-to-exit")]
+    fn handle_proceed_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.proceed_signal_received = true;
     }
 }
 
@@ -829,6 +833,7 @@ async fn nexus_cancellation_types(
             cancellation_wait_happened: cancellation_wait_happened.clone(),
             cancellation_tx: cancellation_tx.clone(),
             handler_exited_tx: handler_exited_tx.clone(),
+            proceed_signal_received: false,
         }
     });
     let submitter = worker.get_submitter_handle();

@@ -211,32 +211,25 @@ struct WorkflowLoadWf;
 impl WorkflowLoadWf {
     #[run(name = "workflow_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        const SIGNAME: &str = "signame";
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-                ctx.timer(Duration::from_secs(1)).await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
+        for _ in 0..5 {
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            ctx.timer(Duration::from_secs(1)).await;
         }
 
         Ok(().into())
     }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -427,31 +420,24 @@ struct PollerLoadWf;
 impl PollerLoadWf {
     #[run(name = "poller_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        const SIGNAME: &str = "signame";
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryActivities::jittery_echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
+        for _ in 0..5 {
+            ctx.start_activity(
+                JitteryActivities::jittery_echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
         }
 
         Ok(().into())
     }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test]

@@ -38,7 +38,6 @@ use temporalio_sdk::{
 };
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
 use tokio::{join, sync::Notify};
-use tokio_stream::StreamExt;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 
@@ -240,6 +239,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
 struct DeprecatedPatchRemovalWf {
     did_die: Arc<AtomicBool>,
     notify: Arc<Notify>,
+    signal_received: bool,
 }
 
 #[workflow_methods(factory_only)]
@@ -250,7 +250,7 @@ impl DeprecatedPatchRemovalWf {
             assert!(ctx.deprecate_patch("getting-deprecated"));
         }
         ctx.state(|wf| wf.notify.notify_one());
-        ctx.make_signal_channel("sig").next().await;
+        ctx.wait_condition(|s| s.signal_received).await;
 
         ctx.timer(Duration::from_millis(1)).await;
 
@@ -259,6 +259,11 @@ impl DeprecatedPatchRemovalWf {
             ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
         }
         Ok(().into())
+    }
+
+    #[signal(name = "sig")]
+    fn handle_sig(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.signal_received = true;
     }
 }
 
@@ -276,6 +281,7 @@ async fn deprecated_patch_removal() {
     worker.register_workflow_with_factory(move || DeprecatedPatchRemovalWf {
         did_die: did_die.clone(),
         notify: send_sig_clone.clone(),
+        signal_received: false,
     });
 
     starter.start_with_worker(wf_name, &mut worker).await;

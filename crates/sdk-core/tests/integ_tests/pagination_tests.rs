@@ -1,5 +1,4 @@
 use crate::common::*;
-use futures_util::StreamExt;
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -20,19 +19,21 @@ use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_clie
 #[workflow]
 struct WeirdPaginationWf {
     sig_ctr: Arc<AtomicUsize>,
+    signal_count: usize,
 }
 
 #[workflow_methods(factory_only)]
 impl WeirdPaginationWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let mut sigchan = ctx.make_signal_channel("hi");
-        while sigchan.next().await.is_some() {
-            if ctx.state(|wf| wf.sig_ctr.fetch_add(1, Ordering::AcqRel)) == 1 {
-                break;
-            }
-        }
+        ctx.wait_condition(|s| s.signal_count >= 2).await;
         Ok(().into())
+    }
+
+    #[signal(name = "hi")]
+    fn hi(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.signal_count += 1;
+        self.sig_ctr.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -126,6 +127,7 @@ async fn weird_pagination_doesnt_drop_wft_events() {
     let sig_ctr_clone = sig_ctr.clone();
     worker.register_workflow_with_factory(move || WeirdPaginationWf {
         sig_ctr: sig_ctr_clone.clone(),
+        signal_count: 0,
     });
 
     worker.run_until_done().await.unwrap();
@@ -135,19 +137,21 @@ async fn weird_pagination_doesnt_drop_wft_events() {
 #[workflow]
 struct ExtremePaginationWf {
     sig_ctr: Arc<AtomicUsize>,
+    signal_count: usize,
 }
 
 #[workflow_methods(factory_only)]
 impl ExtremePaginationWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let mut sigchan = ctx.make_signal_channel("hi");
-        while sigchan.next().await.is_some() {
-            if ctx.state(|wf| wf.sig_ctr.fetch_add(1, Ordering::AcqRel)) == 5 {
-                break;
-            }
-        }
+        ctx.wait_condition(|s| s.signal_count >= 6).await;
         Ok(().into())
+    }
+
+    #[signal(name = "hi")]
+    fn hi(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        self.signal_count += 1;
+        self.sig_ctr.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -266,6 +270,7 @@ async fn extreme_pagination_doesnt_drop_wft_events_worker() {
     let sig_ctr_clone = sig_ctr.clone();
     worker.register_workflow_with_factory(move || ExtremePaginationWf {
         sig_ctr: sig_ctr_clone.clone(),
+        signal_count: 0,
     });
 
     worker.run_until_done().await.unwrap();

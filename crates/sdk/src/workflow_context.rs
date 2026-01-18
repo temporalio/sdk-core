@@ -7,11 +7,11 @@ pub use options::{
 
 use crate::{
     CancelExternalWfResult, CancellableID, CancellableIDWithReason, CommandCreateRequest,
-    CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc, IntoUpdateValidatorFunc,
-    NexusStartResult, RustWfCmd, SignalExternalWfResult, SupportsCancelReason, TimerResult,
-    UnblockEvent, Unblockable, UpdateFunctions, workflow_context::options::IntoWorkflowCommand,
+    CommandSubscribeChildWorkflowCompletion, NexusStartResult, RustWfCmd, SignalExternalWfResult,
+    SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
+    workflow_context::options::IntoWorkflowCommand,
 };
-use futures_util::{FutureExt, Stream, StreamExt, future::Shared, task::Context};
+use futures_util::{FutureExt, future::Shared, task::Context};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     cell::RefCell,
@@ -60,8 +60,7 @@ use temporalio_common::{
     },
     worker::WorkerDeploymentVersion,
 };
-use tokio::sync::{mpsc, oneshot, watch};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio::sync::{oneshot, watch};
 
 /// Non-generic base context containing all workflow execution infrastructure.
 ///
@@ -80,19 +79,18 @@ pub struct BaseWorkflowContext {
     payload_converter: PayloadConverter,
 }
 
-// TODO [rust-sdk-branch]: We also need a SyncWorkflowContext which doesn't have state_mut (since
-// they get direct &mut access and it panics), as well as possibly non-future producing versions
-// of command starters, though, they still may want to start commands and store the futures on
-// state, so maybe not.
+// TODO [rust-sdk-branch]: may want a SyncWorkflowContext which doesn't have state_mut (since
+// they get direct &mut access and it panics)
 /// Used within workflows to issue commands, get info, etc.
 ///
 /// The type parameter `W` represents the workflow type. This enables type-safe
 /// access to workflow state via `state_mut()` for mutations.
 pub struct WorkflowContext<W> {
     base: BaseWorkflowContext,
-
-    /// The workflow instance, wrapped for interior mutability.
+    /// The workflow instance
     workflow_state: Rc<RefCell<W>>,
+    /// Headers from the current handler invocation (signal, update, etc.)
+    headers: Rc<HashMap<String, Payload>>,
 }
 
 impl<W> Clone for WorkflowContext<W> {
@@ -100,6 +98,7 @@ impl<W> Clone for WorkflowContext<W> {
         Self {
             base: self.base.clone(),
             workflow_state: self.workflow_state.clone(),
+            headers: self.headers.clone(),
         }
     }
 }
@@ -109,7 +108,7 @@ impl<W> Clone for WorkflowContext<W> {
 /// This provides access to workflow information but cannot issue commands.
 #[derive(Clone)]
 pub struct WorkflowContextView {
-    // Will be populated with read-only access to context information
+    // TODO [rust-sdk-branch]: populate with read-only access to context information
 }
 
 impl WorkflowContextView {
@@ -314,6 +313,7 @@ impl<W> WorkflowContext<W> {
         Self {
             base,
             workflow_state,
+            headers: Rc::new(HashMap::new()),
         }
     }
 
@@ -378,6 +378,23 @@ impl<W> WorkflowContext<W> {
     /// Returns true if the current workflow task is happening under replay
     pub fn is_replaying(&self) -> bool {
         self.base.shared.read().is_replaying
+    }
+
+    /// Returns the headers for the current handler invocation (signal, update, query, etc.).
+    ///
+    /// When called from within a signal handler, returns the headers that were sent with that
+    /// signal. When called from the main workflow run method, returns an empty map.
+    pub fn headers(&self) -> &HashMap<String, Payload> {
+        &self.headers
+    }
+
+    /// Returns a new context with the specified headers set.
+    pub(crate) fn with_headers(&self, headers: HashMap<String, Payload>) -> Self {
+        Self {
+            base: self.base.clone(),
+            workflow_state: self.workflow_state.clone(),
+            headers: Rc::new(headers),
+        }
     }
 
     /// Returns the [PayloadConverter] currently used by the worker running this workflow.
@@ -519,14 +536,6 @@ impl<W> WorkflowContext<W> {
         ))
     }
 
-    /// Return a stream that produces values when the named signal is sent to this workflow
-    pub fn make_signal_channel(&self, signal_name: impl Into<String>) -> DrainableSignalStream {
-        let (tx, rx) = mpsc::unbounded_channel();
-        self.base
-            .send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
-        DrainableSignalStream(UnboundedReceiverStream::new(rx))
-    }
-
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
@@ -559,24 +568,6 @@ impl<W> WorkflowContext<W> {
             .into(),
         );
         cmd
-    }
-
-    /// Register an update handler by providing the handler name, a validator function, and an
-    /// update handler. The validator must not mutate workflow state and is synchronous. The handler
-    /// may mutate workflow state (though, that's annoying right now in the prototype) and is async.
-    ///
-    /// Note that if you want a validator that always passes, you will likely need to provide type
-    /// annotations to make the compiler happy, like: `|_: &_, _: T| Ok(())`
-    pub fn update_handler<Arg, Res>(
-        &self,
-        name: impl Into<String>,
-        validator: impl IntoUpdateValidatorFunc<Arg>,
-        handler: impl IntoUpdateHandlerFunc<Arg, Res>,
-    ) {
-        self.base.send(RustWfCmd::RegisterUpdate(
-            name.into(),
-            UpdateFunctions::new(validator, handler),
-        ))
     }
 
     /// Start a nexus operation
@@ -677,37 +668,6 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
-}
-
-/// Helper Wrapper that can drain the channel into a Vec<SignalData> in a blocking way.  Useful
-/// for making sure channels are empty before ContinueAsNew-ing a workflow
-pub struct DrainableSignalStream(UnboundedReceiverStream<SignalData>);
-
-impl DrainableSignalStream {
-    pub fn drain_all(self) -> Vec<SignalData> {
-        let mut receiver = self.0.into_inner();
-        let mut signals = vec![];
-        while let Ok(s) = receiver.try_recv() {
-            signals.push(s);
-        }
-        signals
-    }
-
-    pub fn drain_ready(&mut self) -> Vec<SignalData> {
-        let mut signals = vec![];
-        while let Some(s) = self.0.next().now_or_never().flatten() {
-            signals.push(s);
-        }
-        signals
-    }
-}
-
-impl Stream for DrainableSignalStream {
-    type Item = SignalData;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.0).poll_next(cx)
-    }
 }
 
 /// A Future that can be cancelled.

@@ -89,6 +89,37 @@ fn generate_async_handler_body(
     }
 }
 
+/// Generate an async update handler body that returns Result.
+/// If is_fallible, the method already returns Result; otherwise wrap in Ok.
+fn generate_async_update_handler_body(
+    impl_type: &Type,
+    prefixed_method: &syn::Ident,
+    has_input: bool,
+    is_fallible: bool,
+) -> TokenStream2 {
+    let method_call = if has_input {
+        quote! { #impl_type::#prefixed_method(&mut ctx, input) }
+    } else {
+        quote! { #impl_type::#prefixed_method(&mut ctx) }
+    };
+
+    if is_fallible {
+        quote! {
+            async move {
+                let mut ctx = ctx;
+                #method_call.await
+            }.boxed_local()
+        }
+    } else {
+        quote! {
+            async move {
+                let mut ctx = ctx;
+                Ok(#method_call.await)
+            }.boxed_local()
+        }
+    }
+}
+
 /// Parsed representation of a `#[workflow_methods]` impl block
 pub(crate) struct WorkflowMethodsDefinition {
     impl_block: ItemImpl,
@@ -135,7 +166,10 @@ struct UpdateMethod {
     attributes: MethodAttributes,
     is_async: bool,
     input_type: Option<Type>,
+    /// The Ok type if fallible, or the direct return type if infallible
     output_type: Option<Type>,
+    /// True if the handler returns Result<T, E>, false if it returns T directly
+    is_fallible: bool,
     validator: Option<syn::Ident>,
 }
 
@@ -396,7 +430,7 @@ fn parse_update_method(method: &syn::ImplItemFn) -> syn::Result<UpdateMethod> {
     }
 
     let input_type = extract_input_type(&method.sig)?;
-    let output_type = extract_simple_output_type(&method.sig);
+    let (output_type, is_fallible) = extract_update_output_type(&method.sig);
 
     Ok(UpdateMethod {
         method: method.clone(),
@@ -404,6 +438,7 @@ fn parse_update_method(method: &syn::ImplItemFn) -> syn::Result<UpdateMethod> {
         is_async,
         input_type,
         output_type,
+        is_fallible,
         validator: None,
     })
 }
@@ -550,6 +585,28 @@ fn extract_simple_output_type(sig: &syn::Signature) -> Option<Type> {
     match &sig.output {
         ReturnType::Type(_, ty) => Some((**ty).clone()),
         ReturnType::Default => None,
+    }
+}
+
+/// Check if a return type looks like a Result and extract the Ok type if so.
+/// Returns (ok_type, is_result) where:
+/// - If the type looks like `Result<T, E>`, returns (T, true)
+/// - Otherwise returns (original_type, false)
+fn extract_update_output_type(sig: &syn::Signature) -> (Option<Type>, bool) {
+    match &sig.output {
+        ReturnType::Default => (None, false),
+        ReturnType::Type(_, ty) => {
+            if let Type::Path(TypePath { path, .. }) = &**ty
+                && let Some(segment) = path.segments.last()
+                && segment.ident == "Result"
+                && let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first()
+            {
+                (Some(ok_ty.clone()), true)
+            } else {
+                (Some((**ty).clone()), false)
+            }
+        }
     }
 }
 
@@ -870,14 +927,18 @@ impl WorkflowMethodsDefinition {
         };
 
         let executable_impl = if update.is_async {
-            let handle_body =
-                generate_async_handler_body(impl_type, &info.prefixed_method, has_input);
+            let handle_body = generate_async_update_handler_body(
+                impl_type,
+                &info.prefixed_method,
+                has_input,
+                update.is_fallible,
+            );
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
                         ctx: ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
-                    ) -> ::futures_util::future::LocalBoxFuture<'static, <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output> {
+                    ) -> ::futures_util::future::LocalBoxFuture<'static, Result<<#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output, Box<dyn ::std::error::Error + Send + Sync>>> {
                         use ::futures_util::FutureExt;
                         #handle_body
                     }
@@ -887,14 +948,19 @@ impl WorkflowMethodsDefinition {
             }
         } else {
             let method_call = generate_method_call(&info.prefixed_method, has_input);
+            let body = if update.is_fallible {
+                quote! { #method_call }
+            } else {
+                quote! { Ok(#method_call) }
+            };
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
                         &mut self,
                         ctx: &mut ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
-                    ) -> <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output {
-                        #method_call
+                    ) -> Result<<#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output, Box<dyn ::std::error::Error + Send + Sync>> {
+                        #body
                     }
 
                     #validate_impl
@@ -1128,7 +1194,8 @@ impl WorkflowMethodsDefinition {
                             let converter = converter.clone();
                             let fut = #handler_call;
                             Some(async move {
-                                let result: #output_type = fut.await;
+                                let result: #output_type = fut.await
+                                    .map_err(|e| ::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))?;
                                 let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
                                     data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
                                     converter: &converter,
@@ -1152,14 +1219,21 @@ impl WorkflowMethodsDefinition {
                             // Sync handler - get mutable access via state_mut
                             // Clone ctx so we can pass it to the handler (needed for issuing commands)
                             let mut ctx_for_handler = ctx.clone();
-                            let result: #output_type = ctx.state_mut(|wf| {
+                            let result = ctx.state_mut(|wf| {
                                 <Self as ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident>>::handle(wf, &mut ctx_for_handler, input)
                             });
-                            let payload = match converter.to_payload(&ser_ctx, &result) {
-                                Ok(p) => p,
-                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                            };
-                            Some(async move { Ok(payload) }.boxed_local())
+                            match result {
+                                Ok(value) => {
+                                    let payload = match converter.to_payload(&ser_ctx, &value) {
+                                        Ok(p) => p,
+                                        Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
+                                    };
+                                    Some(async move { Ok(payload) }.boxed_local())
+                                }
+                                Err(e) => Some(async move {
+                                    Err(::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))
+                                }.boxed_local()),
+                            }
                         }
                     }
                 }

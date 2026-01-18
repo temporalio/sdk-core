@@ -4,20 +4,22 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use futures_util::{StreamExt, future, future::join_all};
+use futures_util::{future, future::join_all};
 use std::{
     sync::{
-        Arc, LazyLock,
+        LazyLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
-use temporalio_client::{Client, NamespacedClient, WorkflowClientTrait, WorkflowService};
+use temporalio_client::{
+    Client, NamespacedClient, WorkflowClientTrait, WorkflowOptions, WorkflowService,
+};
 use temporalio_common::{
     prost_dur,
     protos::{
         coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
+            ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
             workflow_activation::{
                 WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
@@ -39,7 +41,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, UpdateContext, WorkflowContext, WorkflowResult,
+    ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -643,68 +645,59 @@ async fn update_with_local_acts() {
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
 
     #[workflow]
     #[derive(Default)]
-    struct UpdateWithLocalActsWf;
+    struct UpdateWithLocalActsWf {
+        done: bool,
+    }
 
     #[workflow_methods]
     impl UpdateWithLocalActsWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |ctx: UpdateContext, _: ()| async move {
-                    ctx.wf_ctx
-                        .start_local_activity(
-                            StdActivities::delay,
-                            Duration::from_secs(3),
-                            LocalActivityOptions::default(),
-                        )?
-                        .await;
-                    Ok("hi")
-                },
-            );
-            let mut sig = ctx.make_signal_channel("done");
-            sig.next().await;
+            ctx.wait_condition(|s| s.done).await;
             Ok(().into())
+        }
+
+        #[signal]
+        fn done_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.done = true;
+        }
+
+        #[update]
+        async fn do_update(
+            ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            ctx.start_local_activity(
+                StdActivities::delay,
+                Duration::from_secs(3),
+                LocalActivityOptions::default(),
+            )?
+            .await;
+            Ok("hi".to_string())
         }
     }
 
     worker.register_workflow::<UpdateWithLocalActsWf>();
-    let handle = starter
-        .start_with_worker(UpdateWithLocalActsWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            UpdateWithLocalActsWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        // make sure update has a chance to get registered
-        tokio::time::sleep(Duration::from_millis(100)).await;
         // do a handful at once
-        let updates = (1..=5).map(|_| {
-            client.update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-        });
+        let updates = (1..=5).map(|_| handle.update(UpdateWithLocalActsWf::do_update, ()));
         for res in join_all(updates).await {
-            assert!(res.unwrap().outcome.unwrap().is_success());
+            assert!(res.unwrap() == "hi");
         }
-        client
-            .signal_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "done".to_string(),
-                None,
-                None,
-            )
+        handle
+            .signal(UpdateWithLocalActsWf::done_signal, ())
             .await
             .unwrap();
     };
@@ -724,7 +717,6 @@ async fn update_rejection_sdk() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     #[workflow]
     #[derive(Default)]
     struct UpdateRejectionSdkWf;
@@ -732,37 +724,42 @@ async fn update_rejection_sdk() {
     #[workflow_methods]
     impl UpdateRejectionSdkWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
-                move |_: UpdateContext, _: ()| async { Ok("hi") },
-            );
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
+        }
+
+        #[update_validator(do_update)]
+        fn validate_do_update(
+            &self,
+            _ctx: &WorkflowContextView,
+            _: &(),
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Err("ahhhhh noooo".into())
+        }
+
+        #[update]
+        async fn do_update(
+            _ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            Ok("hi".to_string())
         }
     }
 
     worker.register_workflow::<UpdateRejectionSdkWf>();
-    let handle = starter
-        .start_with_worker(UpdateRejectionSdkWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            UpdateRejectionSdkWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(!res.outcome.unwrap().is_success());
+        let res = handle.update(UpdateRejectionSdkWf::do_update, ()).await;
+        assert!(res.is_err());
     };
     let run = async {
         worker.run_until_done().await.unwrap();
@@ -780,7 +777,6 @@ async fn update_fail_sdk() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     #[workflow]
     #[derive(Default)]
     struct UpdateFailSdkWf;
@@ -788,37 +784,33 @@ async fn update_fail_sdk() {
     #[workflow_methods]
     impl UpdateFailSdkWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |_: UpdateContext, _: ()| async { Err::<(), _>(anyhow!("nooooo")) },
-            );
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
+        }
+
+        #[update]
+        async fn do_update(
+            _ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            Err("nooooo".into())
         }
     }
 
     worker.register_workflow::<UpdateFailSdkWf>();
-    let handle = starter
-        .start_with_worker(UpdateFailSdkWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            UpdateFailSdkWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(!res.outcome.unwrap().is_success());
+        let res = handle.update(UpdateFailSdkWf::do_update, ()).await;
+        assert!(res.is_err());
     };
     let run = async {
         worker.run_until_done().await.unwrap();
@@ -836,49 +828,45 @@ async fn update_timer_sequence() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     #[workflow]
     #[derive(Default)]
-    struct UpdateTimerSequenceWf;
+    struct UpdateTimerSequenceWf {
+        done: bool,
+    }
 
     #[workflow_methods]
     impl UpdateTimerSequenceWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |ctx: UpdateContext, _: ()| async move {
-                    ctx.wf_ctx.timer(Duration::from_millis(1)).await;
-                    ctx.wf_ctx.timer(Duration::from_millis(1)).await;
-                    Ok("done")
-                },
-            );
-            ctx.timer(Duration::from_secs(2)).await;
+            ctx.wait_condition(|s| s.done).await;
             Ok(().into())
+        }
+
+        #[update]
+        async fn do_update(
+            ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            ctx.timer(Duration::from_millis(1)).await;
+            ctx.timer(Duration::from_millis(1)).await;
+            ctx.state_mut(|s| s.done = true);
+            Ok("done".to_string())
         }
     }
 
     worker.register_workflow::<UpdateTimerSequenceWf>();
-    let handle = starter
-        .start_with_worker(UpdateTimerSequenceWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            UpdateTimerSequenceWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(res.outcome.unwrap().is_success());
+        let res = handle.update(UpdateTimerSequenceWf::do_update, ()).await;
+        assert!(res.unwrap() == "done");
     };
     let run = async {
         worker.run_until_done().await.unwrap();
@@ -897,7 +885,6 @@ async fn task_failure_during_validation() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     #[workflow]
     #[derive(Default)]
     struct TaskFailureDuringValidationWf;
@@ -905,43 +892,48 @@ async fn task_failure_during_validation() {
     #[workflow_methods]
     impl TaskFailureDuringValidationWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            static FAILCT: AtomicUsize = AtomicUsize::new(0);
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| {
-                    if FAILCT.fetch_add(1, Ordering::Relaxed) < 2 {
-                        panic!("ahhhhhh");
-                    }
-                    Ok(())
-                },
-                move |_: UpdateContext, _: ()| async move { Ok("done") },
-            );
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
+        }
+
+        #[update_validator(do_update)]
+        fn validate_do_update(
+            &self,
+            _ctx: &WorkflowContextView,
+            _: &(),
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            static FAILCT: AtomicUsize = AtomicUsize::new(0);
+            if FAILCT.fetch_add(1, Ordering::Relaxed) < 2 {
+                panic!("ahhhhhh");
+            }
+            Ok(())
+        }
+
+        #[update]
+        async fn do_update(
+            _ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            Ok("done".to_string())
         }
     }
 
     worker.register_workflow::<TaskFailureDuringValidationWf>();
-    let handle = starter
-        .start_with_worker(TaskFailureDuringValidationWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            TaskFailureDuringValidationWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(res.outcome.unwrap().is_success());
+        let res = handle
+            .update(TaskFailureDuringValidationWf::do_update, ())
+            .await;
+        assert!(res.unwrap() == "done");
     };
     let run = async {
         worker.run_until_done().await.unwrap();
@@ -970,7 +962,6 @@ async fn task_failure_after_update() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     #[workflow]
     #[derive(Default)]
     struct TaskFailureAfterUpdateWf;
@@ -978,41 +969,37 @@ async fn task_failure_after_update() {
     #[workflow_methods]
     impl TaskFailureAfterUpdateWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             static FAILCT: AtomicUsize = AtomicUsize::new(0);
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |_: UpdateContext, _: ()| async move { Ok("done") },
-            );
             ctx.timer(Duration::from_millis(1)).await;
             if FAILCT.fetch_add(1, Ordering::Relaxed) < 1 {
                 panic!("ahhhhhh");
             }
             Ok(().into())
         }
+
+        #[update]
+        async fn do_update(
+            _ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            Ok("done".to_string())
+        }
     }
 
     worker.register_workflow::<TaskFailureAfterUpdateWf>();
-    let handle = starter
-        .start_with_worker(TaskFailureAfterUpdateWf::name(), &mut worker)
-        .await;
-    let wf_id = starter.get_task_queue().to_string();
+    let handle = worker
+        .submit_workflow(
+            TaskFailureAfterUpdateWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(res.outcome.unwrap().is_success());
+        let res = handle.update(TaskFailureAfterUpdateWf::do_update, ()).await;
+        assert!(res.unwrap() == "done");
     };
     let run = async {
         worker.run_until_done().await.unwrap();
@@ -1051,65 +1038,61 @@ async fn worker_restarted_in_middle_of_update() {
 
     #[workflow]
     #[derive(Default)]
-    struct WorkerRestartedInMiddleOfUpdateWf;
+    struct WorkerRestartedInMiddleOfUpdateWf {
+        done: bool,
+    }
 
     #[workflow_methods]
     impl WorkerRestartedInMiddleOfUpdateWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |ctx: UpdateContext, _: ()| async move {
-                    ctx.wf_ctx
-                        .start_activity(
-                            BlockingActivities::blocks,
-                            "hi!".to_string(),
-                            ActivityOptions {
-                                start_to_close_timeout: Some(Duration::from_secs(2)),
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap()
-                        .await;
-                    Ok(())
-                },
-            );
-            let mut sig = ctx.make_signal_channel("done");
-            sig.next().await;
+            ctx.wait_condition(|s| s.done).await;
             Ok(().into())
+        }
+
+        #[signal]
+        fn done_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.done = true;
+        }
+
+        #[update]
+        async fn do_update(
+            ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            ctx.start_activity(
+                BlockingActivities::blocks,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(2)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            Ok(())
         }
     }
 
     worker.register_workflow::<WorkerRestartedInMiddleOfUpdateWf>();
-    let handle = starter
-        .start_with_worker(WorkerRestartedInMiddleOfUpdateWf::name(), &mut worker)
-        .await;
+    let handle = worker
+        .submit_workflow(
+            WorkerRestartedInMiddleOfUpdateWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
-            .await
-            .unwrap();
-        assert!(res.outcome.unwrap().is_success());
-        client
-            .signal_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "done".to_string(),
-                None,
-                None,
-            )
+        let res = handle
+            .update(WorkerRestartedInMiddleOfUpdateWf::do_update, ())
+            .await;
+        assert!(res.is_ok());
+        handle
+            .signal(WorkerRestartedInMiddleOfUpdateWf::done_signal, ())
             .await
             .unwrap();
     };
@@ -1149,42 +1132,21 @@ async fn update_after_empty_wft() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
+
+    static ACT_STARTED: AtomicBool = AtomicBool::new(false);
 
     #[workflow]
     #[derive(Default)]
-    struct UpdateAfterEmptyWftWf;
+    struct UpdateAfterEmptyWftWf {
+        signal_received: bool,
+    }
 
     #[workflow_methods]
     impl UpdateAfterEmptyWftWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            static ACT_STARTED: AtomicBool = AtomicBool::new(false);
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |ctx: UpdateContext, _: ()| async move {
-                    if ACT_STARTED.load(Ordering::Acquire) {
-                        return Ok(());
-                    }
-                    ctx.wf_ctx
-                        .start_activity(
-                            StdActivities::echo,
-                            "hi!".to_string(),
-                            ActivityOptions {
-                                start_to_close_timeout: Some(Duration::from_secs(2)),
-                                ..Default::default()
-                            },
-                        )
-                        .unwrap()
-                        .await;
-                    Ok(())
-                },
-            );
-            let mut sig = ctx.make_signal_channel("signal");
             let sig_handle = async {
-                sig.next().await;
+                ctx.wait_condition(|s| s.signal_received).await;
                 ACT_STARTED.store(true, Ordering::Release);
                 ctx.start_activity(
                     StdActivities::echo,
@@ -1203,39 +1165,51 @@ async fn update_after_empty_wft() {
             });
             Ok(().into())
         }
+
+        #[signal]
+        fn signal_handler(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.signal_received = true;
+        }
+
+        #[update]
+        async fn do_update(ctx: &mut WorkflowContext<Self>, _: ()) {
+            if ACT_STARTED.load(Ordering::Acquire) {
+                return;
+            }
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(2)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+        }
     }
 
     worker.register_workflow::<UpdateAfterEmptyWftWf>();
-    let handle = starter
-        .start_with_worker(UpdateAfterEmptyWftWf::name(), &mut worker)
-        .await;
+    let handle = worker
+        .submit_workflow(
+            UpdateAfterEmptyWftWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
 
-    let wf_id = starter.get_task_queue().to_string();
     let update = async {
-        client
-            .signal_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "signal".to_string(),
-                None,
-                None,
-            )
+        handle
+            .signal(UpdateAfterEmptyWftWf::signal_handler, ())
             .await
             .unwrap();
         tokio::time::sleep(Duration::from_millis(500)).await;
-        let res = client
-            .update_workflow_execution(
-                wf_id.clone(),
-                "".to_string(),
-                "update".to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                },
-                [().as_json_payload().unwrap()].into_payloads(),
-            )
+        handle
+            .update(UpdateAfterEmptyWftWf::do_update, ())
             .await
             .unwrap();
-        assert!(res.outcome.unwrap().is_success());
     };
     let runner = async {
         worker.run_until_done().await.unwrap();
@@ -1253,33 +1227,20 @@ async fn update_lost_on_activity_mismatch() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
 
     #[workflow]
     #[derive(Default)]
-    struct UpdateLostOnActivityMismatchWf;
+    struct UpdateLostOnActivityMismatchWf {
+        can_run: usize,
+    }
 
     #[workflow_methods]
     impl UpdateLostOnActivityMismatchWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let can_run = Arc::new(AtomicUsize::new(1));
-            let cr = can_run.clone();
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |_: UpdateContext, _: ()| {
-                    let cr = cr.clone();
-                    async move {
-                        cr.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    }
-                },
-            );
+            ctx.state_mut(|s| s.can_run = 1);
             for _ in 1..=3 {
-                let cr = can_run.clone();
-                ctx.wait_condition(|_| cr.load(Ordering::Relaxed) > 0).await;
+                ctx.wait_condition(|s| s.can_run > 0).await;
                 ctx.start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
@@ -1290,38 +1251,39 @@ async fn update_lost_on_activity_mismatch() {
                 )
                 .unwrap()
                 .await;
-                can_run.fetch_sub(1, Ordering::Release);
+                ctx.state_mut(|s| s.can_run -= 1);
             }
             Ok(().into())
+        }
+
+        #[update]
+        fn do_update(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.can_run += 1;
         }
     }
 
     worker.register_workflow::<UpdateLostOnActivityMismatchWf>();
     let core_worker = worker.core_worker();
-    let handle = starter
-        .start_with_worker(UpdateLostOnActivityMismatchWf::name(), &mut worker)
-        .await;
+    let handle = worker
+        .submit_workflow(
+            UpdateLostOnActivityMismatchWf::run,
+            starter.get_wf_id(),
+            (),
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
 
-    let wf_id = starter.get_task_queue().to_string();
     let update = async {
         // Need time to get to condition
         tokio::time::sleep(Duration::from_millis(200)).await;
         // Evict wf
-        core_worker.request_workflow_eviction(handle.info().run_id.as_ref().unwrap());
+        core_worker.request_workflow_eviction(handle.run_id().unwrap());
         for _ in 1..=2 {
-            let res = client
-                .update_workflow_execution(
-                    wf_id.clone(),
-                    "".to_string(),
-                    "update".to_string(),
-                    WaitPolicy {
-                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                    },
-                    [().as_json_payload().unwrap()].into_payloads(),
-                )
+            handle
+                .update(UpdateLostOnActivityMismatchWf::do_update, ())
                 .await
                 .unwrap();
-            assert!(res.outcome.unwrap().is_success());
         }
     };
     let runner = async {

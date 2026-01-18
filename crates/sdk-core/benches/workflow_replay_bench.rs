@@ -7,7 +7,6 @@ use crate::common::{
     DONT_AUTO_INIT_INTEG_TELEM, get_integ_runtime_options, prom_metrics, replay_sdk_worker,
 };
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use futures_util::StreamExt;
 use std::{
     sync::{Arc, mpsc},
     thread,
@@ -58,7 +57,10 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.to_async(&tokio_runtime).iter_batched(
             || replay_sdk_worker([hist.clone()]),
             |mut worker| async move {
-                worker.register_workflow_with_factory(move || BigSignalsWf { num_tasks });
+                worker.register_workflow_with_factory(move || BigSignalsWf {
+                    num_tasks,
+                    signal_count: 0,
+                });
                 worker.run().await.unwrap();
             },
             BatchSize::SmallInput,
@@ -156,19 +158,20 @@ impl TimersWf {
 #[workflow]
 struct BigSignalsWf {
     num_tasks: usize,
+    signal_count: usize,
 }
 
 #[workflow_methods(factory_only)]
 impl BigSignalsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let mut sigs = ctx.make_signal_channel("bigsig");
-        for _ in 1..=ctx.state(|s| s.num_tasks) {
-            for _ in 1..=5 {
-                let _ = sigs.next().await.unwrap();
-            }
-        }
-
+        let target_count = ctx.state(|s| s.num_tasks * 5);
+        ctx.wait_condition(|s| s.signal_count >= target_count).await;
         Ok(().into())
+    }
+
+    #[signal(name = "bigsig")]
+    fn handle_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: Vec<u8>) {
+        self.signal_count += 1;
     }
 }

@@ -13,15 +13,15 @@ use std::{
     ops::Sub,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicI64, AtomicU8, AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{WfClientExt, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_ACTIVITY_TYPE, canned_histories,
     coresdk::{
-        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
+        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         activity_result::ActivityExecutionResult,
         workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
@@ -32,20 +32,16 @@ use temporalio_common::protos::{
     temporal::api::{
         command::v1::{RecordMarkerCommandAttributes, command},
         common::v1::RetryPolicy,
-        enums::v1::{
-            CommandType, EventType, TimeoutType, UpdateWorkflowExecutionLifecycleStage,
-            WorkflowTaskFailedCause,
-        },
+        enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::{Failure, failure::FailureInfo},
         history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
         query::v1::WorkflowQuery,
-        update::v1::WaitPolicy,
     },
     test_utils::{query_ok, schedule_local_activity_cmd, start_timer_cmd},
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, LocalActivityOptions, UpdateContext, WorkflowContext,
+    ActivityOptions, CancellableFuture, LocalActivityOptions, WorkflowContext, WorkflowContextView,
     WorkflowResult,
     activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
@@ -1070,51 +1066,45 @@ async fn long_local_activity_with_update(
     starter.sdk_config.register_activities(StdActivities);
 
     #[workflow]
+    #[derive(Default)]
     struct LongLocalActivityWithUpdateWf {
-        update_counter: Arc<AtomicUsize>,
+        update_counter: usize,
+        update_inner_timer: u64,
     }
 
-    #[workflow_methods(factory_only)]
+    #[workflow_methods]
     impl LongLocalActivityWithUpdateWf {
+        #[init]
+        fn init(_ctx: &WorkflowContextView, update_inner_timer: u64) -> Self {
+            Self {
+                update_counter: 1,
+                update_inner_timer,
+            }
+        }
+
         #[run]
-        async fn run(
-            ctx: &mut WorkflowContext<Self>,
-            update_inner_timer: u64,
-        ) -> WorkflowResult<usize> {
-            let uc = ctx.state(|wf| wf.update_counter.clone());
-            ctx.update_handler(
-                "update",
-                |_: &_, _: ()| Ok(()),
-                move |u: UpdateContext, _: ()| {
-                    let uc = uc.clone();
-                    async move {
-                        if update_inner_timer != 0 {
-                            u.wf_ctx
-                                .timer(Duration::from_millis(update_inner_timer))
-                                .await;
-                        }
-                        uc.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    }
-                },
-            );
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<usize> {
             ctx.start_local_activity(
                 StdActivities::delay,
                 Duration::from_secs(6),
                 LocalActivityOptions::default(),
             )?
             .await;
-            Ok(ctx
-                .state(|wf| wf.update_counter.load(Ordering::Relaxed))
-                .into())
+            Ok(ctx.state(|wf| wf.update_counter).into())
+        }
+
+        #[update]
+        async fn do_update(ctx: &mut WorkflowContext<Self>, _: ()) {
+            let update_inner_timer = ctx.state(|s| s.update_inner_timer);
+            if update_inner_timer != 0 {
+                ctx.timer(Duration::from_millis(update_inner_timer)).await;
+            }
+            ctx.state_mut(|s| s.update_counter += 1);
         }
     }
 
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-    worker.register_workflow_with_factory(move || LongLocalActivityWithUpdateWf {
-        update_counter: Arc::new(AtomicUsize::new(1)),
-    });
+    worker.register_workflow::<LongLocalActivityWithUpdateWf>();
 
     let handle = worker
         .submit_workflow(
@@ -1126,20 +1116,11 @@ async fn long_local_activity_with_update(
         .await
         .unwrap();
 
-    let wf_id = starter.get_task_queue().to_string();
     let update = async {
         loop {
             tokio::time::sleep(Duration::from_millis(update_interval_ms)).await;
-            let _ = client
-                .update_workflow_execution(
-                    wf_id.clone(),
-                    "".to_string(),
-                    "update".to_string(),
-                    WaitPolicy {
-                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
-                    },
-                    [().as_json_payload().unwrap()].into_payloads(),
-                )
+            let _ = handle
+                .update(LongLocalActivityWithUpdateWf::do_update, ())
                 .await;
         }
     };
@@ -1185,15 +1166,20 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
 
     #[workflow]
     #[derive(Default)]
-    struct LocalActivityWithHeartbeatOnlyCausesOneWakeupWf;
+    struct LocalActivityWithHeartbeatOnlyCausesOneWakeupWf {
+        la_resolved: bool,
+    }
 
     #[workflow_methods]
     impl LocalActivityWithHeartbeatOnlyCausesOneWakeupWf {
         #[run]
-        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let mut wakeup_counter = 1;
-            let la_resolved = AtomicBool::new(false);
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<usize> {
+            let mut wakeup_counter = 0;
             tokio::join!(
+                // Interestingly - needed because if the condition is polled first, we won't see
+                // that resolved is true.
+                // TODO [rust-sdk-branch] - See if we can fix this and know that we should re-poll.
+                biased;
                 async {
                     ctx.start_local_activity(
                         StdActivities::delay,
@@ -1202,17 +1188,14 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
                     )
                     .unwrap()
                     .await;
-                    la_resolved.store(true, Ordering::Relaxed);
+                    ctx.state_mut(|s| s.la_resolved = true);
                 },
-                async {
-                    ctx.wait_condition(|_| {
-                        wakeup_counter += 1;
-                        la_resolved.load(Ordering::Relaxed)
-                    })
-                    .await;
-                }
+                ctx.wait_condition(|_| {
+                    wakeup_counter += 1;
+                    ctx.state(|s| s.la_resolved)
+                })
             );
-            Ok(().into())
+            Ok(wakeup_counter.into())
         }
     }
 
@@ -1229,10 +1212,11 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    handle
+    let r = handle
         .get_workflow_result(Default::default())
         .await
         .unwrap();
+    assert_eq!(r.unwrap_success(), 2);
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await

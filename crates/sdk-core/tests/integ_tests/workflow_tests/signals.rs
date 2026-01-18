@@ -1,5 +1,4 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
-use futures_util::StreamExt;
 use std::collections::HashMap;
 use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::{
@@ -40,7 +39,12 @@ impl SignalSender {
         ctx: &mut WorkflowContext<Self>,
         (run_id, expect_failure): (String, bool),
     ) -> WorkflowResult<()> {
-        let mut dat = SignalWorkflowOptions::new(RECEIVER_WFID, run_id, SIGNAME, [b"hi!"]);
+        let mut dat = SignalWorkflowOptions::new(
+            RECEIVER_WFID,
+            run_id,
+            SIGNAME,
+            ["hi!".to_string().as_json_payload().unwrap()],
+        );
         dat.with_header("tupac", b"shakur");
         let sigres = ctx.signal_workflow(dat).await;
         if expect_failure {
@@ -74,37 +78,53 @@ async fn sends_signal_to_missing_wf() {
 
 #[workflow]
 #[derive(Default)]
-struct SignalReceiver;
+struct SignalReceiver {
+    received: bool,
+}
 
 #[workflow_methods]
 impl SignalReceiver {
     #[run(name = "receiver")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
-        assert_eq!(&res.input, &[b"hi!".into()]);
+        ctx.wait_condition(|s| s.received).await;
+        Ok(().into())
+    }
+
+    #[signal(name = "signame")]
+    fn handle_signal(&mut self, ctx: &mut WorkflowContext<Self>, input: String) {
+        assert_eq!(input, "hi!");
+        let headers = ctx.headers();
         assert_eq!(
-            *res.headers.get("tupac").expect("tupac header exists"),
+            *headers.get("tupac").expect("tupac header exists"),
             b"shakur".into()
         );
-        Ok(().into())
+        self.received = true;
     }
 }
 
 #[workflow]
 #[derive(Default)]
-struct SignalWithCreateWfReceiver;
+struct SignalWithCreateWfReceiver {
+    received: bool,
+}
 
 #[workflow_methods]
 impl SignalWithCreateWfReceiver {
     #[run(name = "receiver_signal")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
-        assert_eq!(&res.input, &[b"tada".into()]);
+        ctx.wait_condition(|s| s.received).await;
+        Ok(().into())
+    }
+
+    #[signal(name = "signame")]
+    fn handle_signal(&mut self, ctx: &mut WorkflowContext<Self>, input: String) {
+        assert_eq!(input, "tada");
+        let headers = ctx.headers();
         assert_eq!(
-            *res.headers.get("tupac").expect("tupac header exists"),
+            *headers.get("tupac").expect("tupac header exists"),
             b"shakur".into()
         );
-        Ok(().into())
+        self.received = true;
     }
 }
 
@@ -153,7 +173,7 @@ async fn sends_signal_with_create_wf() {
         .workflow_type("receiver_signal")
         .signal_name(SIGNAME)
         .maybe_input(vec![().as_json_payload().unwrap()].into_payloads())
-        .maybe_signal_input(vec![b"tada".into()].into_payloads())
+        .maybe_signal_input(vec!["tada".to_string().as_json_payload().unwrap()].into_payloads())
         .maybe_signal_header(Some(header.into()))
         .build();
     let res = client
@@ -184,7 +204,7 @@ impl SignalsChild {
             .await
             .into_started()
             .expect("Must start ok");
-        let mut sig = Signal::new(SIGNAME, [b"hi!"]);
+        let mut sig = Signal::new(SIGNAME, ["hi!".to_string().as_json_payload().unwrap()]);
         sig.data.with_header("tupac", b"shakur");
         started_child.signal(sig).await.unwrap();
         started_child.result().await.status.unwrap();
@@ -220,7 +240,12 @@ struct SignalSenderCanned;
 impl SignalSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
+        let mut dat = SignalWorkflowOptions::new(
+            "fake_wid",
+            "fake_rid",
+            SIGNAME,
+            ["hi!".to_string().as_json_payload().unwrap()],
+        );
         dat.with_header("tupac", b"shakur");
         let res = ctx.signal_workflow(dat).await;
         if res.is_err() {
@@ -255,7 +280,7 @@ async fn sends_signal(#[case] fails: bool) {
                     [Command { attributes: Some(
                         command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs)),..}] => {
                         assert_eq!(attrs.signal_name, SIGNAME);
-                        assert_eq!(attrs.input.as_ref().unwrap().payloads[0], b"hi!".into());
+                        assert_eq!(attrs.input.as_ref().unwrap().payloads[0], "hi!".to_string().as_json_payload().unwrap());
                         assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(),
                                    b"shakur".into());
                     }
@@ -291,7 +316,7 @@ impl CancelsBeforeSending {
             "fake_wid",
             "fake_rid",
             SIGNAME,
-            [b"hi!"],
+            ["hi!".to_string().as_json_payload().unwrap()],
         ));
         sig.cancel();
         let _res = sig.await;

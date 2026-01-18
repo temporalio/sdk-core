@@ -8,7 +8,7 @@ use temporalio_common::{
         coresdk::FromPayloadsExt,
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
-            enums::v1::HistoryEventFilterType,
+            enums::v1::{HistoryEventFilterType, UpdateWorkflowExecutionLifecycleStage},
             failure::v1::Failure,
             history::v1::history_event::Attributes,
             query::v1::WorkflowQuery,
@@ -241,7 +241,7 @@ where
         }
     }
 
-    /// Send a typed signal to the workflow
+    /// Send a signal to the workflow
     pub async fn signal<S>(&self, _signal: S, input: S::Input) -> Result<(), anyhow::Error>
     where
         CT: WorkflowClientTrait,
@@ -265,7 +265,7 @@ where
         Ok(())
     }
 
-    /// Query the workflow with typed input and output
+    /// Query the workflow
     pub async fn query<Q>(&self, _query: Q, input: Q::Input) -> Result<Q::Output, anyhow::Error>
     where
         CT: WorkflowClientTrait,
@@ -299,7 +299,7 @@ where
             .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
     }
 
-    /// Send an update to the workflow with typed input and output
+    /// Send an update to the workflow
     pub async fn update<U>(&self, _update: U, input: U::Input) -> Result<U::Output, anyhow::Error>
     where
         CT: WorkflowClientTrait,
@@ -317,7 +317,7 @@ where
                 self.info.run_id.clone().unwrap_or_default(),
                 U::name().to_string(),
                 WaitPolicy {
-                    lifecycle_stage: 2, // UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed.into(),
                 },
                 Some(Payloads { payloads }),
             )

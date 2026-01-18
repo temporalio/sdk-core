@@ -52,31 +52,24 @@ struct PollerLoadSpikyWf;
 impl PollerLoadSpikyWf {
     #[run(name = "poller_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        const SIGNAME: &str = "signame";
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
+        for _ in 0..5 {
+            ctx.start_activity(
+                JitteryEchoActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
         }
 
         Ok(().into())
     }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[workflow]
@@ -87,25 +80,18 @@ struct PollerLoadSustainedWf;
 impl PollerLoadSustainedWf {
     #[run(name = "poller_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        const SIGNAME: &str = "signame";
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            let rs = ctx.random_seed();
-            let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
-            for _ in 0..100 {
-                let jitterms = rand.random_range(1000..3000);
-                ctx.timer(Duration::from_millis(jitterms)).await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
+        let rs = ctx.random_seed();
+        let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
+        for _ in 0..100 {
+            let jitterms = rand.random_range(1000..3000);
+            ctx.timer(Duration::from_millis(jitterms)).await;
         }
 
         Ok(().into())
     }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[workflow]
@@ -116,31 +102,24 @@ struct PollerLoadSpikeThenSustainedWf;
 impl PollerLoadSpikeThenSustainedWf {
     #[run(name = "poller_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        const SIGNAME: &str = "signame";
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
+        for _ in 0..5 {
+            ctx.start_activity(
+                JitteryEchoActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
         }
 
         Ok(().into())
     }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test]

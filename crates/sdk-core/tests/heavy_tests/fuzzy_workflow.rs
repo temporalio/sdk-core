@@ -1,13 +1,12 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities};
-use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
+use futures_util::{StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
-use std::{future, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
+use temporalio_common::protos::coresdk::{AsJsonPayloadExt, IntoPayloadsExt};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::TunerHolder;
-use tokio_util::sync::CancellationToken;
 
 const FUZZY_SIG: &str = "fuzzy_sig";
 
@@ -32,22 +31,24 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
 
 #[workflow]
 #[derive(Default)]
-struct FuzzyWf;
+struct FuzzyWf {
+    done: bool,
+}
 
 #[workflow_methods]
 impl FuzzyWf {
     #[run(name = "fuzzy_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let sigchan = ctx.make_signal_channel(FUZZY_SIG).map(|sd| {
-            FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal")
-        });
-        let done = CancellationToken::new();
-        let done_setter = done.clone();
+        ctx.wait_condition(|s| s.done).await;
+        Ok(().into())
+    }
 
-        sigchan
-            .take_until(done.cancelled())
-            .for_each_concurrent(None, |action| match action {
-                FuzzyWfAction::DoAct => ctx
+    #[signal(name = "fuzzy_sig")]
+    async fn fuzzy_signal(ctx: &mut WorkflowContext<Self>, action: FuzzyWfAction) {
+        match action {
+            FuzzyWfAction::Shutdown => ctx.state_mut(|s| s.done = true),
+            FuzzyWfAction::DoAct => {
+                let _ = ctx
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
@@ -57,9 +58,10 @@ impl FuzzyWf {
                         },
                     )
                     .unwrap()
-                    .map(|_| ())
-                    .boxed(),
-                FuzzyWfAction::DoLocalAct => ctx
+                    .await;
+            }
+            FuzzyWfAction::DoLocalAct => {
+                let _ = ctx
                     .start_local_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
@@ -69,16 +71,9 @@ impl FuzzyWf {
                         },
                     )
                     .unwrap()
-                    .map(|_| ())
-                    .boxed(),
-                FuzzyWfAction::Shutdown => {
-                    done_setter.cancel();
-                    future::ready(()).boxed()
-                }
-            })
-            .await;
-
-        Ok(().into())
+                    .await;
+            }
+        }
     }
 }
 
