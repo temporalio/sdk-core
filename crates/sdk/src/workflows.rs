@@ -119,25 +119,23 @@ pub trait WorkflowImplementation: Sized + 'static {
 
     /// Execute the workflow's main run function.
     ///
-    /// Takes `&self` instead of `&mut self`. For state mutations, use `ctx.state_mut()`.
+    /// This is a static method - workflow state is accessed via `ctx.state()` or `ctx.state_mut()`.
     /// If `INIT_TAKES_INPUT` is false, `input` will be `Some`. Otherwise it's `None`.
     fn run(
-        &self,
         ctx: WorkflowContext<Self>,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
-    ) -> LocalBoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>;
+    ) -> LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>;
 
     /// Dispatch an update request by name. Returns `None` if no handler for that name.
     ///
     /// The default implementation returns `None`. The macro generates an override with a
     /// match statement dispatching to all registered update handlers.
     fn dispatch_update(
-        &self,
         _ctx: WorkflowContext<Self>,
         _name: &str,
         _payloads: Payloads,
         _converter: &PayloadConverter,
-    ) -> Option<LocalBoxFuture<'_, Result<Payload, WorkflowError>>> {
+    ) -> Option<LocalBoxFuture<'static, Result<Payload, WorkflowError>>> {
         None
     }
 
@@ -161,12 +159,11 @@ pub trait WorkflowImplementation: Sized + 'static {
     /// For async signals, returns a future that must be polled to completion.
     /// The default implementation returns `Ok(None)`. The macro generates an override.
     fn dispatch_signal(
-        &self,
         _ctx: WorkflowContext<Self>,
         _name: &str,
         _payloads: Payloads,
         _converter: &PayloadConverter,
-    ) -> Result<Option<LocalBoxFuture<'_, ()>>, WorkflowError> {
+    ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError> {
         Ok(None)
     }
 }
@@ -182,11 +179,11 @@ pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
 
 /// Trait for executing asynchronous signal handlers on a workflow.
 ///
-/// Async signal handlers take `&self` and use `ctx.state_mut()` for mutations.
+/// Async signal handlers access state via `ctx.state()` or `ctx.state_mut()`.
 #[doc(hidden)]
 pub trait ExecutableAsyncSignal<S: SignalDefinition>: WorkflowImplementation {
     /// Handle an incoming signal with the given input.
-    fn handle(&self, ctx: &mut WorkflowContext<Self>, input: S::Input) -> LocalBoxFuture<'_, ()>;
+    fn handle(ctx: WorkflowContext<Self>, input: S::Input) -> LocalBoxFuture<'static, ()>;
 }
 
 /// Trait for executing query handlers on a workflow.
@@ -217,15 +214,11 @@ pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
 
 /// Trait for executing asynchronous update handlers on a workflow.
 ///
-/// Async update handlers take `&self` and use `ctx.state_mut()` for mutations.
+/// Async update handlers access state via `ctx.state()` or `ctx.state_mut()`.
 #[doc(hidden)]
 pub trait ExecutableAsyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     /// Handle an update with the given input and return the result.
-    fn handle(
-        &self,
-        ctx: &mut WorkflowContext<Self>,
-        input: U::Input,
-    ) -> LocalBoxFuture<'_, U::Output>;
+    fn handle(ctx: WorkflowContext<Self>, input: U::Input) -> LocalBoxFuture<'static, U::Output>;
 
     /// Validate an update before it is applied.
     fn validate(&self, _ctx: &WorkflowContextView, _input: &U::Input) -> Result<(), String> {
@@ -283,24 +276,9 @@ pub(crate) trait DynWorkflowExecution {
     ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError>;
 }
 
-/// Manages a workflow execution, holding the workflow state and the run future.
-///
-/// # Safety
-///
-/// This type uses unsafe code to store a future that borrows `&self` from the workflow.
-/// The future is transmuted to `'static` lifetime for storage. This is safe because:
-///
-/// 1. The workflow state lives at a stable address inside `Rc<RefCell<W>>`
-/// 2. The future's references to `&self` point to this stable location
-/// 3. Between polls, the references in the future are "dormant" (not actively borrowed)
-/// 4. `state_mut()` on `WorkflowContext` is only called between polls, never during
-/// 5. Temporal's single-threaded execution model guarantees only one handler advances at a time
-///
-/// The key invariant: `borrow_mut()` on the RefCell only happens when the future is not
-/// being polled, so there's never a conflict between the future's `&self` and a mutable borrow.
+/// Manages a workflow execution, holding the context and run future.
 pub(crate) struct WorkflowExecution<W: WorkflowImplementation> {
-    _workflow: Rc<RefCell<W>>,
-    _ctx: WorkflowContext<W>,
+    ctx: WorkflowContext<W>,
     /// The run future, wrapped in Fuse to safely handle re-polling after completion.
     run_future: Fuse<LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>>,
 }
@@ -327,39 +305,10 @@ where
         run_input: Option<<W::Run as WorkflowDefinition>::Input>,
     ) -> Self {
         let workflow = Rc::new(RefCell::new(workflow));
-        let ctx = WorkflowContext::from_base(base_ctx, workflow.clone());
+        let ctx = WorkflowContext::from_base(base_ctx, workflow);
+        let run_future = W::run(ctx.clone(), run_input).fuse();
 
-        // SAFETY: We bypass RefCell's borrow checking and transmute the lifetime to 'static.
-        // This is safe because:
-        // 1. The workflow data lives at a stable address inside the RefCell (heap-allocated)
-        // 2. The Rc keeps the allocation alive for the lifetime of WorkflowExecution
-        // 3. state_mut() uses borrow_mut() which is only called between polls, never during
-        // 4. Temporal's single-threaded execution model ensures handlers don't overlap
-        //
-        // We use as_ptr() instead of borrow() because borrow() creates a Ref<W> that would
-        // be dropped at the end of this block, invalidating the borrow.
-        let run_future = {
-            let wf_ptr = workflow.as_ptr();
-            // SAFETY: The pointer remains valid because the Rc<RefCell<W>> is stored in self.
-            let wf_ref: &W = unsafe { &*wf_ptr };
-            let fut = wf_ref.run(ctx.clone(), run_input);
-            // SAFETY: Transmute the lifetime from '_ (tied to wf_ref) to 'static.
-            // See struct-level safety documentation for the full invariants.
-            let static_fut = unsafe {
-                std::mem::transmute::<
-                    LocalBoxFuture<'_, Result<WfExitValue<Payload>, WorkflowError>>,
-                    LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>,
-                >(fut)
-            };
-            // Fuse ensures polling after completion returns Pending instead of panicking
-            static_fut.fuse()
-        };
-
-        Self {
-            _workflow: workflow,
-            _ctx: ctx,
-            run_future,
-        }
+        Self { ctx, run_future }
     }
 }
 
@@ -377,9 +326,9 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         payloads: &Payloads,
         converter: &PayloadConverter,
     ) -> Result<bool, WorkflowError> {
-        let wf = self._workflow.borrow();
         let view = WorkflowContextView::new();
-        wf.validate_update(&view, name, payloads, converter)
+        self.ctx
+            .state_closure(|wf| wf.validate_update(&view, name, payloads, converter))
     }
 
     fn start_update(
@@ -388,20 +337,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         payloads: Payloads,
         converter: &PayloadConverter,
     ) -> Option<LocalBoxFuture<'static, Result<Payload, WorkflowError>>> {
-        // SAFETY: Same lifetime transmutation pattern as run_future.
-        // The workflow lives in Rc<RefCell<W>> at a stable address.
-        // Update futures borrow &self from this stable location.
-        // state_mut() is only called between polls, never during.
-        let wf_ptr = self._workflow.as_ptr();
-        let wf_ref: &W = unsafe { &*wf_ptr };
-        let ctx = self._ctx.clone();
-
-        wf_ref
-            .dispatch_update(ctx, name, payloads, converter)
-            .map(|local_fut| {
-                // SAFETY: Transmute to 'static. See struct-level safety docs.
-                unsafe { std::mem::transmute(local_fut) }
-            })
+        W::dispatch_update(self.ctx.clone(), name, payloads, converter)
     }
 
     fn dispatch_signal(
@@ -410,19 +346,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         payloads: Payloads,
         converter: &PayloadConverter,
     ) -> Result<Option<LocalBoxFuture<'static, ()>>, WorkflowError> {
-        // SAFETY: Same lifetime transmutation pattern as run_future and updates.
-        let wf_ptr = self._workflow.as_ptr();
-        let wf_ref: &W = unsafe { &*wf_ptr };
-        let ctx = self._ctx.clone();
-
-        wf_ref
-            .dispatch_signal(ctx, name, payloads, converter)
-            .map(|opt| {
-                opt.map(|local_fut| {
-                    // SAFETY: Transmute to 'static. See struct-level safety docs.
-                    unsafe { std::mem::transmute(local_fut) }
-                })
-            })
+        W::dispatch_signal(self.ctx.clone(), name, payloads, converter)
     }
 }
 

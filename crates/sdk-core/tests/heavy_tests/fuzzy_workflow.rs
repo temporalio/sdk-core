@@ -37,7 +37,7 @@ struct FuzzyWf;
 #[workflow_methods]
 impl FuzzyWf {
     #[run(name = "fuzzy_wf")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let sigchan = ctx.make_signal_channel(FUZZY_SIG).map(|sd| {
             FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal")
         });

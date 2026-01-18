@@ -28,7 +28,7 @@ pub(crate) struct TimerWf;
 #[workflow_methods]
 impl TimerWf {
     #[run(name = "timer_wf_new")]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     }
@@ -137,7 +137,7 @@ struct ParallelTimerWf;
 #[workflow_methods]
 impl ParallelTimerWf {
     #[run(name = "parallel_timers")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let t1 = ctx.timer(Duration::from_secs(1));
         let t2 = ctx.timer(Duration::from_secs(1));
         let _ = tokio::join!(t1, t2);
@@ -164,7 +164,7 @@ struct HappyTimerWf;
 #[workflow_methods]
 impl HappyTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(5)).await;
         Ok(().into())
     }
@@ -201,7 +201,7 @@ struct MismatchedTimerWf;
 #[workflow_methods]
 impl MismatchedTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(5)).await;
         Ok(().into())
     }
@@ -229,7 +229,7 @@ struct CancelTimerWf;
 #[workflow_methods]
 impl CancelTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
         ctx.timer(Duration::from_secs(5)).await;
         cancel_timer_fut.cancel();
@@ -271,7 +271,7 @@ struct CancelBeforeSentWf;
 #[workflow_methods]
 impl CancelBeforeSentWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
         cancel_timer_fut.cancel();
         cancel_timer_fut.await;

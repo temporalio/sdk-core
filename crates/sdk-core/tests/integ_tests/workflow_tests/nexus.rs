@@ -73,7 +73,6 @@ impl NexusBasicWf {
 
     #[run]
     pub(crate) async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<Result<NexusOperationResult, Failure>> {
         match ctx
@@ -250,7 +249,6 @@ impl NexusAsyncWf {
 
     #[run]
     pub(crate) async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
     ) -> WorkflowResult<NexusOperationResult> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
@@ -290,7 +288,7 @@ impl AsyncCompleter {
 
     #[allow(dead_code)] // Started via untyped submitter handle
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         match self.outcome {
             Outcome::Succeed => Ok("completed async".to_string().into()),
             Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
@@ -533,7 +531,7 @@ impl NexusCancelBeforeStartWf {
     }
 
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started = ctx.start_nexus_operation(NexusOperationOptions {
             endpoint: self.endpoint.clone(),
             service: "svc".to_string(),
@@ -601,7 +599,7 @@ impl NexusMustCompleteTaskWf {
     }
 
     #[run]
-    pub(crate) async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // We just need to create the command, not await it.
         drop(ctx.start_nexus_operation(NexusOperationOptions {
             endpoint: self.endpoint.clone(),
@@ -715,7 +713,7 @@ struct NexusCancellationCallerWf {
 #[workflow_methods(factory_only)]
 impl NexusCancellationCallerWf {
     #[run(name = "nexus_cancellation_types")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<NexusOperationResult> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<NexusOperationResult> {
         let options = NexusOperationOptions {
             endpoint: self.endpoint.clone(),
             service: "svc".to_string(),
@@ -755,7 +753,7 @@ struct AsyncCompleterWf {
 #[workflow_methods(factory_only)]
 impl AsyncCompleterWf {
     #[run(name = "async_completer")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // Wait for cancellation
         ctx.cancelled().await;
         self.cancellation_tx.send(true).unwrap();

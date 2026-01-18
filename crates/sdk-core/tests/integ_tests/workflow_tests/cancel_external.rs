@@ -21,7 +21,7 @@ struct CancelSender;
 #[workflow_methods]
 impl CancelSender {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>, run_id: String) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>, run_id: String) -> WorkflowResult<()> {
         let sigres = ctx
             .cancel_external(
                 NamespacedWorkflowExecution {
@@ -44,7 +44,7 @@ struct CancelReceiver;
 #[workflow_methods]
 impl CancelReceiver {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         let r = ctx.cancelled().await;
         Ok(r.into())
     }
@@ -100,7 +100,7 @@ struct CancelSenderCanned;
 #[workflow_methods]
 impl CancelSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx
             .cancel_external(
                 NamespacedWorkflowExecution {

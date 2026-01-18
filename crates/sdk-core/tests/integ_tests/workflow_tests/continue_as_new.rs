@@ -20,7 +20,7 @@ struct ContinueAsNewWf;
 #[workflow_methods]
 impl ContinueAsNewWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>, run_ct: u8) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>, run_ct: u8) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(if run_ct < 5 {
             WfExitValue::continue_as_new(ContinueAsNewWorkflowExecution {
@@ -80,7 +80,7 @@ struct WfWithTimer;
 #[workflow_methods]
 impl WfWithTimer {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::continue_as_new(
             ContinueAsNewWorkflowExecution {

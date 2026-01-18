@@ -50,7 +50,7 @@ impl TimersWf {
     }
 
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
@@ -268,7 +268,7 @@ impl OneTimerWf {
     }
 
     #[run(name = "onetimer")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
@@ -289,7 +289,7 @@ impl SeqTimerWf {
     }
 
     #[run(name = "seqtimer")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 1..=self.num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }

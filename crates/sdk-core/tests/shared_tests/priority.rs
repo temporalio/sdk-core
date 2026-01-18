@@ -52,7 +52,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     #[workflow_methods]
     impl ParentWf {
         #[run]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let child = ctx.child_workflow(ChildWorkflowOptions {
                 workflow_id: format!("{}-child", ctx.task_queue()),
                 workflow_type: self.child_type.clone(),
@@ -101,7 +101,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     #[workflow_methods]
     impl ChildWf {
         #[run(name = "child-wf")]
-        async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             assert_eq!(
                 ctx.workflow_initial_info().priority,
                 Some(common::v1::Priority {

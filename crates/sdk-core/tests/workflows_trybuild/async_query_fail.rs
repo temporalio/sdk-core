@@ -7,7 +7,7 @@ pub struct BadWorkflow;
 #[workflow_methods]
 impl BadWorkflow {
     #[run]
-    pub async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    pub async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         Ok(WfExitValue::Normal(()))
     }
 

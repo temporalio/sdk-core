@@ -37,7 +37,6 @@ struct SignalSender;
 impl SignalSender {
     #[run(name = "sender")]
     async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
         (run_id, expect_failure): (String, bool),
     ) -> WorkflowResult<()> {
@@ -80,7 +79,7 @@ struct SignalReceiver;
 #[workflow_methods]
 impl SignalReceiver {
     #[run(name = "receiver")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
         assert_eq!(&res.input, &[b"hi!".into()]);
         assert_eq!(
@@ -98,7 +97,7 @@ struct SignalWithCreateWfReceiver;
 #[workflow_methods]
 impl SignalWithCreateWfReceiver {
     #[run(name = "receiver_signal")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
         assert_eq!(&res.input, &[b"tada".into()]);
         assert_eq!(
@@ -173,7 +172,7 @@ struct SignalsChild;
 #[workflow_methods]
 impl SignalsChild {
     #[run(name = "child_signaler")]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started_child = ctx
             .child_workflow(ChildWorkflowOptions {
                 workflow_id: "my_precious_child".to_string(),
@@ -220,7 +219,7 @@ struct SignalSenderCanned;
 #[workflow_methods]
 impl SignalSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
         dat.with_header("tupac", b"shakur");
         let res = ctx.signal_workflow(dat).await;
@@ -287,7 +286,7 @@ struct CancelsBeforeSending;
 #[workflow_methods]
 impl CancelsBeforeSending {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
             "fake_wid",
             "fake_rid",

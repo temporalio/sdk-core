@@ -1,0 +1,11 @@
+error[E0502]: cannot borrow `*ctx` as immutable because it is also borrowed as mutable
+  --> tests/workflows_trybuild/state_guard_across_await_fail.rs:21:9
+   |
+16 |         let guard = ctx.state();
+   |                     --- mutable borrow occurs here
+...
+21 |         ctx.timer(Duration::from_secs(1)).await;
+   |         ^^^ immutable borrow occurs here
+...
+24 |         let final_value = guard.counter;
+   |                           ----- mutable borrow later used here

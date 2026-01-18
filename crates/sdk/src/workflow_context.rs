@@ -95,6 +95,26 @@ pub struct WorkflowContext<W> {
     workflow_state: Rc<RefCell<W>>,
 }
 
+/// Guard that provides immutable access to workflow state.
+///
+/// This guard holds a mutable borrow of the `WorkflowContext`, preventing any
+/// other context methods from being called while it exists. This ensures that
+/// the guard cannot be held across await points, since await points require
+/// calling methods on the context.
+pub struct StateGuard<'a, W> {
+    ctx: &'a mut WorkflowContext<W>,
+}
+
+impl<W> Deref for StateGuard<'_, W> {
+    type Target = W;
+
+    fn deref(&self) -> &W {
+        // Safety: The RefCell borrow is scoped to this deref call.
+        // The guard's lifetime is tied to &mut WorkflowContext, not the RefCell borrow.
+        unsafe { &*self.ctx.workflow_state.as_ptr() }
+    }
+}
+
 impl<W> Clone for WorkflowContext<W> {
     fn clone(&self) -> Self {
         Self {
@@ -317,9 +337,21 @@ impl<W> WorkflowContext<W> {
         }
     }
 
-    /// Get the base context for use by futures that don't need typed state access.
-    pub fn base(&self) -> &BaseWorkflowContext {
-        &self.base
+    /// Access workflow state immutably, returning a guard that auto-derefs to `&W`.
+    ///
+    /// The guard holds a mutable borrow of the context, which prevents calling
+    /// any async methods (like `timer()`) while the guard is held. This makes it
+    /// a compile-time error to hold the guard across await points.
+    pub fn state(&mut self) -> StateGuard<'_, W> {
+        StateGuard { ctx: self }
+    }
+
+    /// Access workflow state immutably via closure.
+    ///
+    /// The borrow is scoped to the closure and cannot escape, preventing
+    /// borrows from being held across await points.
+    pub fn state_closure<R>(&self, f: impl FnOnce(&W) -> R) -> R {
+        f(&*self.workflow_state.borrow())
     }
 
     /// Access workflow state mutably via closure.
@@ -604,10 +636,16 @@ impl<W> WorkflowContext<W> {
         cmd
     }
 
-    /// Wait for some condition to become true, yielding the workflow if it is not.
-    pub fn wait_condition(&self, mut condition: impl FnMut() -> bool) -> impl Future<Output = ()> {
+    /// Wait for some condition on workflow state to become true, yielding the workflow if not.
+    ///
+    /// The condition closure receives an immutable reference to the workflow state,
+    /// which is borrowed only for the duration of each poll (not across await points).
+    pub fn wait_condition<'a>(
+        &'a self,
+        mut condition: impl FnMut(&W) -> bool + 'a,
+    ) -> impl Future<Output = ()> + 'a {
         future::poll_fn(move |_cx: &mut Context<'_>| {
-            if condition() {
+            if condition(&*self.workflow_state.borrow()) {
                 Poll::Ready(())
             } else {
                 Poll::Pending

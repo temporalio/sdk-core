@@ -15,8 +15,8 @@ impl MyWorkflow {
 
     // Async run uses &self
     #[run]
-    pub async fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-        Ok(WfExitValue::Normal(format!("Counter: {}", self.counter)))
+    pub async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        Ok(WfExitValue::Normal("hi".to_owned()))
     }
 
     // Sync signal uses &mut self
@@ -25,11 +25,8 @@ impl MyWorkflow {
         self.counter += amount;
     }
 
-    // Async signal uses &self
     #[signal]
-    pub async fn async_signal(&self, _ctx: &mut WorkflowContext<Self>) {
-        // Async signals use &self
-    }
+    pub async fn async_signal(_ctx: &mut WorkflowContext<Self>) {}
 
     // Query uses &self with read-only context
     #[query]
@@ -37,16 +34,14 @@ impl MyWorkflow {
         self.counter
     }
 
-    // Sync update uses &mut self
     #[update(name = "double")]
     pub fn double_counter(&mut self, _ctx: &mut WorkflowContext<Self>) -> u32 {
         self.counter *= 2;
         self.counter
     }
 
-    // Async update uses &self
     #[update]
-    pub async fn async_update(&self, _ctx: &mut WorkflowContext<Self>, val: i32) -> i32 {
+    pub async fn async_update(_ctx: &mut WorkflowContext<Self>, val: i32) -> i32 {
         val * 2
     }
 }

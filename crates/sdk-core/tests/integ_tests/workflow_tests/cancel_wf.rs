@@ -20,7 +20,7 @@ struct CancelledWf;
 #[workflow_methods]
 impl CancelledWf {
     #[run]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut reason = "".to_string();
         let cancelled = tokio::select! {
             _ = ctx.timer(Duration::from_secs(500)) => false,
@@ -88,7 +88,7 @@ struct WfWithTimer;
 #[workflow_methods]
 impl WfWithTimer {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(&self, ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::Cancelled)
     }

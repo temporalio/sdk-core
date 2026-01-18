@@ -95,7 +95,6 @@ struct DataConverterTestWorkflow;
 impl DataConverterTestWorkflow {
     #[run]
     async fn run(
-        &self,
         ctx: &mut WorkflowContext<Self>,
         input: TrackedWrapper,
     ) -> WorkflowResult<TrackedWrapper> {
@@ -189,7 +188,6 @@ struct MultiArgs2Workflow;
 impl MultiArgs2Workflow {
     #[run]
     async fn run(
-        &self,
         _ctx: &mut WorkflowContext<Self>,
         input: MultiArgs2<String, i32>,
     ) -> WorkflowResult<String> {
