@@ -512,7 +512,6 @@ async fn activity_timeout_no_double_resolve() {
 }
 
 #[tokio::test]
-#[ignore = "TODO [rust-sdk-branch]: Broken by workflow state changes, fix"]
 async fn can_heartbeat_acts_during_shutdown() {
     let mut mock_client = mock_worker_client();
     mock_client

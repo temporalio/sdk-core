@@ -41,10 +41,10 @@ use temporalio_sdk_core::{
 };
 
 #[workflow]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct ActivityLoadWf;
 
-#[workflow_methods(factory_only)]
+#[workflow_methods]
 impl ActivityLoadWf {
     #[run(name = "activity_load")]
     async fn run(ctx: &mut WorkflowContext<Self>, tq: String) -> WorkflowResult<()> {

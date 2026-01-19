@@ -296,9 +296,6 @@ impl WorkerActivityTasks {
     pub(crate) async fn shutdown(&self) {
         self.initiate_shutdown();
         let _ = self.completers_lock.write().await;
-        // Also cancel the poll_returned_shutdown_token in case poll was never called
-        // (e.g., no activities registered). Otherwise this wait would hang forever.
-        self.poll_returned_shutdown_token.cancel();
         self.poll_returned_shutdown_token.cancelled().await;
         self.heartbeat_manager.shutdown().await;
     }
