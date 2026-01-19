@@ -58,6 +58,19 @@ impl InteractionWorkflow {
         self.counter
     }
 
+    #[query]
+    fn get_counter_checked(
+        &self,
+        _ctx: &WorkflowContextView,
+        min: i32,
+    ) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
+        if self.counter < min {
+            Err(format!("Counter {} is below minimum {}", self.counter, min).into())
+        } else {
+            Ok(self.counter)
+        }
+    }
+
     #[update]
     fn set_counter(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
         self.log.push("set counter");
@@ -333,4 +346,55 @@ async fn test_async_signal() {
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 100);
     assert!(result.log.contains(&"async signal done".to_owned()));
+}
+
+#[tokio::test]
+async fn test_fallible_query() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let handle = worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            starter.get_task_queue().to_owned(),
+            100,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let querier = async {
+        let result = handle
+            .query(InteractionWorkflow::get_counter_checked, 10)
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("below minimum"));
+        handle
+            .signal(InteractionWorkflow::increment, 50)
+            .await
+            .unwrap();
+        let counter = handle
+            .query(InteractionWorkflow::get_counter_checked, 10)
+            .await
+            .unwrap();
+        assert_eq!(counter, 50);
+        handle
+            .signal(InteractionWorkflow::increment, 50)
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
+    worker_res.unwrap();
+
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    assert_eq!(result.counter, 100);
 }

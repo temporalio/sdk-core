@@ -159,6 +159,7 @@ struct QueryMethod {
     attributes: MethodAttributes,
     input_type: Option<Type>,
     output_type: Option<Type>,
+    is_fallible: bool,
 }
 
 struct UpdateMethod {
@@ -408,13 +409,14 @@ fn parse_query_method(method: &syn::ImplItemFn) -> syn::Result<QueryMethod> {
     validate_immut_self_receiver(method)?;
 
     let input_type = extract_input_type(&method.sig)?;
-    let output_type = extract_simple_output_type(&method.sig);
+    let (output_type, is_fallible) = extract_maybe_result_output_type(&method.sig);
 
     Ok(QueryMethod {
         method: method.clone(),
         attributes,
         input_type,
         output_type,
+        is_fallible,
     })
 }
 
@@ -430,7 +432,7 @@ fn parse_update_method(method: &syn::ImplItemFn) -> syn::Result<UpdateMethod> {
     }
 
     let input_type = extract_input_type(&method.sig)?;
-    let (output_type, is_fallible) = extract_update_output_type(&method.sig);
+    let (output_type, is_fallible) = extract_maybe_result_output_type(&method.sig);
 
     Ok(UpdateMethod {
         method: method.clone(),
@@ -581,18 +583,11 @@ fn extract_workflow_result_type(sig: &syn::Signature) -> syn::Result<Option<Type
     }
 }
 
-fn extract_simple_output_type(sig: &syn::Signature) -> Option<Type> {
-    match &sig.output {
-        ReturnType::Type(_, ty) => Some((**ty).clone()),
-        ReturnType::Default => None,
-    }
-}
-
 /// Check if a return type looks like a Result and extract the Ok type if so.
 /// Returns (ok_type, is_result) where:
 /// - If the type looks like `Result<T, E>`, returns (T, true)
 /// - Otherwise returns (original_type, false)
-fn extract_update_output_type(sig: &syn::Signature) -> (Option<Type>, bool) {
+fn extract_maybe_result_output_type(sig: &syn::Signature) -> (Option<Type>, bool) {
     match &sig.output {
         ReturnType::Default => (None, false),
         ReturnType::Type(_, ty) => {
@@ -852,6 +847,12 @@ impl WorkflowMethodsDefinition {
 
         let method_call = generate_method_call(prefixed_method, query.input_type.is_some());
 
+        let body = if query.is_fallible {
+            quote! { #method_call }
+        } else {
+            quote! { Ok(#method_call) }
+        };
+
         let run_struct_ident = self.run_struct_ident();
         let trait_impl = quote! {
             impl ::temporalio_common::QueryDefinition for #module_ident::#struct_ident {
@@ -872,8 +873,8 @@ impl WorkflowMethodsDefinition {
                     &self,
                     ctx: &::temporalio_sdk::WorkflowContextView,
                     input: <#module_ident::#struct_ident as ::temporalio_common::QueryDefinition>::Input,
-                ) -> <#module_ident::#struct_ident as ::temporalio_common::QueryDefinition>::Output {
-                    #method_call
+                ) -> Result<<#module_ident::#struct_ident as ::temporalio_common::QueryDefinition>::Output, Box<dyn ::std::error::Error + Send + Sync>> {
+                    #body
                 }
             }
         };
@@ -1341,10 +1342,16 @@ impl WorkflowMethodsDefinition {
                             Ok(v) => v,
                             Err(e) => return Some(Err(e.into())),
                         };
-                        let result: #output_type = <Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::handle(self, ctx, input);
-                        match converter.to_payload(&ser_ctx, &result) {
-                            Ok(p) => Some(Ok(p)),
-                            Err(e) => Some(Err(e.into())),
+                        let result: Result<#output_type, Box<dyn ::std::error::Error + Send + Sync>> =
+                            <Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::handle(self, ctx, input);
+                        match result {
+                            Ok(value) => {
+                                match converter.to_payload(&ser_ctx, &value) {
+                                    Ok(p) => Some(Ok(p)),
+                                    Err(e) => Some(Err(e.into())),
+                                }
+                            }
+                            Err(e) => Some(Err(::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))),
                         }
                     }
                 }

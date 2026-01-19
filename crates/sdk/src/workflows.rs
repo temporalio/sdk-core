@@ -205,7 +205,12 @@ pub trait ExecutableQuery<Q: QueryDefinition>: WorkflowImplementation {
     /// Handle a query with the given input and return the result.
     ///
     /// Queries take `&self` (immutable) and cannot modify workflow state.
-    fn handle(&self, ctx: &WorkflowContextView, input: Q::Input) -> Q::Output;
+    /// Returning an error will cause the query to fail with that error message.
+    fn handle(
+        &self,
+        ctx: &WorkflowContextView,
+        input: Q::Input,
+    ) -> Result<Q::Output, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Trait for executing synchronous update handlers on a workflow.
