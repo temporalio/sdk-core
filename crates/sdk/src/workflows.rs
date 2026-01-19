@@ -59,7 +59,7 @@ use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-        SerializationContextData,
+        SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
     protos::temporal::api::{
         common::v1::{Payload, Payloads},
@@ -86,13 +86,6 @@ impl From<WorkflowError> for Failure {
             ..Default::default()
         }
     }
-}
-
-/// Data passed to handler dispatch methods (signals, updates, queries).
-pub(crate) struct DispatchData<'a> {
-    pub(crate) payloads: Payloads,
-    pub(crate) headers: HashMap<String, Payload>,
-    pub(crate) converter: &'a PayloadConverter,
 }
 
 /// Trait implemented by workflow structs to enable execution by the worker.
@@ -187,6 +180,22 @@ pub trait WorkflowImplementation: Sized + 'static {
 pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
     /// Handle an incoming signal with the given input.
     fn handle(&mut self, ctx: &mut WorkflowContext<Self>, input: S::Input);
+
+    /// Dispatch the signal with payload deserialization.
+    fn dispatch(
+        ctx: WorkflowContext<Self>,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> LocalBoxFuture<'static, Result<(), WorkflowError>> {
+        match deserialize_input::<S::Input>(payloads.payloads, converter) {
+            Ok(input) => {
+                let mut ctx_clone = ctx.clone();
+                ctx.state_mut(|wf| Self::handle(wf, &mut ctx_clone, input));
+                std::future::ready(Ok(())).boxed_local()
+            }
+            Err(e) => std::future::ready(Err(e)).boxed_local(),
+        }
+    }
 }
 
 /// Trait for executing asynchronous signal handlers on a workflow.
@@ -194,6 +203,18 @@ pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
 pub trait ExecutableAsyncSignal<S: SignalDefinition>: WorkflowImplementation {
     /// Handle an incoming signal with the given input.
     fn handle(ctx: WorkflowContext<Self>, input: S::Input) -> LocalBoxFuture<'static, ()>;
+
+    /// Dispatch the signal with payload deserialization.
+    fn dispatch(
+        ctx: WorkflowContext<Self>,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> LocalBoxFuture<'static, Result<(), WorkflowError>> {
+        match deserialize_input::<S::Input>(payloads.payloads, converter) {
+            Ok(input) => Self::handle(ctx, input).map(|()| Ok(())).boxed_local(),
+            Err(e) => std::future::ready(Err(e)).boxed_local(),
+        }
+    }
 }
 
 /// Trait for executing query handlers on a workflow.
@@ -211,6 +232,18 @@ pub trait ExecutableQuery<Q: QueryDefinition>: WorkflowImplementation {
         ctx: &WorkflowContextView,
         input: Q::Input,
     ) -> Result<Q::Output, Box<dyn std::error::Error + Send + Sync>>;
+
+    /// Dispatch the query with payload deserialization and output serialization.
+    fn dispatch(
+        &self,
+        ctx: &WorkflowContextView,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<Payload, WorkflowError> {
+        let input = deserialize_input::<Q::Input>(payloads.payloads.clone(), converter)?;
+        let output = self.handle(ctx, input).map_err(wrap_handler_error)?;
+        serialize_output(&output, converter)
+    }
 }
 
 /// Trait for executing synchronous update handlers on a workflow.
@@ -232,6 +265,39 @@ pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
+
+    /// Dispatch the update with payload deserialization and output serialization.
+    fn dispatch(
+        ctx: WorkflowContext<Self>,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> LocalBoxFuture<'static, Result<Payload, WorkflowError>> {
+        let input = match deserialize_input::<U::Input>(payloads.payloads, converter) {
+            Ok(v) => v,
+            Err(e) => return std::future::ready(Err(e)).boxed_local(),
+        };
+        let converter = converter.clone();
+        let mut ctx_clone = ctx.clone();
+        let result = ctx.state_mut(|wf| Self::handle(wf, &mut ctx_clone, input));
+        match result {
+            Ok(output) => match serialize_output(&output, &converter) {
+                Ok(payload) => std::future::ready(Ok(payload)).boxed_local(),
+                Err(e) => std::future::ready(Err(e)).boxed_local(),
+            },
+            Err(e) => std::future::ready(Err(wrap_handler_error(e))).boxed_local(),
+        }
+    }
+
+    /// Dispatch validation with payload deserialization.
+    fn dispatch_validate(
+        &self,
+        ctx: &WorkflowContextView,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<(), WorkflowError> {
+        let input = deserialize_input::<U::Input>(payloads.payloads.clone(), converter)?;
+        self.validate(ctx, &input).map_err(wrap_handler_error)
+    }
 }
 
 /// Trait for executing asynchronous update handlers on a workflow.
@@ -252,6 +318,42 @@ pub trait ExecutableAsyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
+
+    /// Dispatch the update with payload deserialization and output serialization.
+    fn dispatch(
+        ctx: WorkflowContext<Self>,
+        payloads: Payloads,
+        converter: &PayloadConverter,
+    ) -> LocalBoxFuture<'static, Result<Payload, WorkflowError>> {
+        let input = match deserialize_input::<U::Input>(payloads.payloads, converter) {
+            Ok(v) => v,
+            Err(e) => return std::future::ready(Err(e)).boxed_local(),
+        };
+        let converter = converter.clone();
+        async move {
+            let output = Self::handle(ctx, input).await.map_err(wrap_handler_error)?;
+            serialize_output(&output, &converter)
+        }
+        .boxed_local()
+    }
+
+    /// Dispatch validation with payload deserialization.
+    fn dispatch_validate(
+        &self,
+        ctx: &WorkflowContextView,
+        payloads: &Payloads,
+        converter: &PayloadConverter,
+    ) -> Result<(), WorkflowError> {
+        let input = deserialize_input::<U::Input>(payloads.payloads.clone(), converter)?;
+        self.validate(ctx, &input).map_err(wrap_handler_error)
+    }
+}
+
+/// Data passed to handler dispatch methods (signals, updates, queries).
+pub(crate) struct DispatchData<'a> {
+    pub(crate) payloads: Payloads,
+    pub(crate) headers: HashMap<String, Payload>,
+    pub(crate) converter: &'a PayloadConverter,
 }
 
 /// Trait implemented by workflow types to enable registration with workers.
@@ -497,5 +599,50 @@ impl Debug for WorkflowDefinitions {
         f.debug_struct("WorkflowDefinitions")
             .field("workflows", &self.workflows.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// Deserialize handler input from payloads.
+pub fn deserialize_input<I: TemporalDeserializable + 'static>(
+    payloads: Vec<Payload>,
+    converter: &PayloadConverter,
+) -> Result<I, WorkflowError> {
+    let ctx = SerializationContext {
+        data: &SerializationContextData::Workflow,
+        converter,
+    };
+    converter.from_payloads(&ctx, payloads).map_err(Into::into)
+}
+
+/// Serialize handler output to a payload.
+pub fn serialize_output<O: TemporalSerializable + 'static>(
+    output: &O,
+    converter: &PayloadConverter,
+) -> Result<Payload, WorkflowError> {
+    let ctx = SerializationContext {
+        data: &SerializationContextData::Workflow,
+        converter,
+    };
+    converter.to_payload(&ctx, output).map_err(Into::into)
+}
+
+/// Wrap a handler error into WorkflowError.
+pub fn wrap_handler_error(e: Box<dyn std::error::Error + Send + Sync>) -> WorkflowError {
+    WorkflowError::Execution(anyhow::anyhow!(e))
+}
+
+/// Serialize a workflow exit value to a payload.
+pub fn serialize_exit_value<T: TemporalSerializable + 'static>(
+    exit_value: WfExitValue<T>,
+    converter: &PayloadConverter,
+) -> Result<WfExitValue<Payload>, WorkflowError> {
+    match exit_value {
+        WfExitValue::Normal(v) => {
+            let payload = serialize_output(&v, converter)?;
+            Ok(WfExitValue::Normal(payload))
+        }
+        WfExitValue::ContinueAsNew(cmd) => Ok(WfExitValue::ContinueAsNew(cmd)),
+        WfExitValue::Cancelled => Ok(WfExitValue::Cancelled),
+        WfExitValue::Evicted => Ok(WfExitValue::Evicted),
     }
 }

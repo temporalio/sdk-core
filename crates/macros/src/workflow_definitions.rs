@@ -59,7 +59,7 @@ impl HandlerCodegenInfo {
     }
 }
 
-/// Generate a method call with or without input parameter
+/// Generate a method call with or without input parameter (for sync methods with &mut self)
 fn generate_method_call(prefixed_method: &syn::Ident, has_input: bool) -> TokenStream2 {
     if has_input {
         quote! { self.#prefixed_method(ctx, input) }
@@ -68,8 +68,8 @@ fn generate_method_call(prefixed_method: &syn::Ident, has_input: bool) -> TokenS
     }
 }
 
-/// Generate an async handler body that awaits the method call.
-/// Async handlers don't take self - they access state via ctx.state()/state_mut()
+/// Generate an async handler body. The async move block is required because the underlying
+/// method borrows ctx, and we need to move ctx into the block to make the future 'static.
 fn generate_async_handler_body(
     impl_type: &Type,
     prefixed_method: &syn::Ident,
@@ -80,17 +80,11 @@ fn generate_async_handler_body(
     } else {
         quote! { #impl_type::#prefixed_method(&mut ctx) }
     };
-
-    quote! {
-        async move {
-            let mut ctx = ctx;
-            #method_call.await
-        }.boxed_local()
-    }
+    quote! { async move { #method_call.await }.boxed_local() }
 }
 
 /// Generate an async update handler body that returns Result.
-/// If is_fallible, the method already returns Result; otherwise wrap in Ok.
+/// If is_fallible, the method already returns Result; otherwise wrap in Ok via .map().
 fn generate_async_update_handler_body(
     impl_type: &Type,
     prefixed_method: &syn::Ident,
@@ -102,21 +96,10 @@ fn generate_async_update_handler_body(
     } else {
         quote! { #impl_type::#prefixed_method(&mut ctx) }
     };
-
     if is_fallible {
-        quote! {
-            async move {
-                let mut ctx = ctx;
-                #method_call.await
-            }.boxed_local()
-        }
+        quote! { async move { #method_call.await }.boxed_local() }
     } else {
-        quote! {
-            async move {
-                let mut ctx = ctx;
-                Ok(#method_call.await)
-            }.boxed_local()
-        }
+        quote! { async move { #method_call.await }.map(Ok).boxed_local() }
     }
 }
 
@@ -796,7 +779,7 @@ impl WorkflowMethodsDefinition {
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
-                        ctx: ::temporalio_sdk::WorkflowContext<Self>,
+                        mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::SignalDefinition>::Input,
                     ) -> ::futures_util::future::LocalBoxFuture<'static, ()> {
                         use ::futures_util::FutureExt;
@@ -937,7 +920,7 @@ impl WorkflowMethodsDefinition {
             quote! {
                 impl ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
-                        ctx: ::temporalio_sdk::WorkflowContext<Self>,
+                        mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
                     ) -> ::futures_util::future::LocalBoxFuture<'static, Result<<#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output, Box<dyn ::std::error::Error + Send + Sync>>> {
                         use ::futures_util::FutureExt;
@@ -1030,34 +1013,10 @@ impl WorkflowMethodsDefinition {
 
         let run_impl_body = quote! {
             use ::futures_util::FutureExt;
-            use ::temporalio_common::data_converters::GenericPayloadConverter;
             async move {
-                let mut ctx = ctx;
                 let result = #run_call;
                 match result {
-                    Ok(exit_value) => {
-                        match exit_value {
-                            ::temporalio_sdk::WfExitValue::Normal(v) => {
-                                let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                    data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                    converter: &ctx.payload_converter(),
-                                };
-                                ctx.payload_converter()
-                                    .to_payload(&ser_ctx, &v)
-                                    .map(::temporalio_sdk::WfExitValue::Normal)
-                                    .map_err(Into::into)
-                            }
-                            ::temporalio_sdk::WfExitValue::ContinueAsNew(cmd) => {
-                                Ok(::temporalio_sdk::WfExitValue::ContinueAsNew(cmd))
-                            }
-                            ::temporalio_sdk::WfExitValue::Cancelled => {
-                                Ok(::temporalio_sdk::WfExitValue::Cancelled)
-                            }
-                            ::temporalio_sdk::WfExitValue::Evicted => {
-                                Ok(::temporalio_sdk::WfExitValue::Evicted)
-                            }
-                        }
-                    }
+                    Ok(exit_value) => ::temporalio_sdk::workflows::serialize_exit_value(exit_value, &ctx.payload_converter()),
                     Err(e) => Err(e.into()),
                 }
             }.boxed_local()
@@ -1076,56 +1035,14 @@ impl WorkflowMethodsDefinition {
                 );
                 let struct_ident = &info.struct_ident;
                 let handler_name = &info.handler_name;
-                let input_type = &info.input_type_tokens;
-                let has_input = s.input_type.is_some();
 
                 if s.is_async {
-                    // Async signal handler
-                    let handler_call = if has_input {
-                        quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(ctx.clone(), input)
-                        }
-                    } else {
-                        quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::handle(ctx.clone(), ())
-                        }
-                    };
-
                     quote! {
-                        #handler_name => {
-                            let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                converter,
-                            };
-                            let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
-                                Ok(v) => v,
-                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                            };
-                            Some(async move {
-                                #handler_call.await;
-                                Ok(())
-                            }.boxed_local())
-                        }
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableAsyncSignal<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
                     }
                 } else {
-                    // Sync signal handler - execute immediately
                     quote! {
-                        #handler_name => {
-                            let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                converter,
-                            };
-                            let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
-                                Ok(v) => v,
-                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                            };
-                            // Sync handler - get mutable access via state_mut
-                            let mut ctx_for_handler = ctx.clone();
-                            ctx.state_mut(|wf| {
-                                <Self as ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident>>::handle(wf, &mut ctx_for_handler, input)
-                            });
-                            Some(async { Ok(()) }.boxed_local())
-                        }
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
                     }
                 }
             })
@@ -1142,9 +1059,6 @@ impl WorkflowMethodsDefinition {
                     payloads: ::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
                 ) -> Option<::futures_util::future::LocalBoxFuture<'static, Result<(), ::temporalio_sdk::workflows::WorkflowError>>> {
-                    use ::futures_util::FutureExt;
-                    use ::temporalio_common::data_converters::GenericPayloadConverter;
-
                     match name {
                         #(#dispatch_signal_arms)*
                         _ => None,
@@ -1166,76 +1080,14 @@ impl WorkflowMethodsDefinition {
                 );
                 let struct_ident = &info.struct_ident;
                 let handler_name = &info.handler_name;
-                let input_type = &info.input_type_tokens;
-                let output_type = type_to_tokens(u.output_type.as_ref());
-                let has_input = u.input_type.is_some();
 
                 if u.is_async {
-                    // Async update handler
-                    let handler_call = if has_input {
-                        quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(ctx.clone(), input)
-                        }
-                    } else {
-                        quote! {
-                            <Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::handle(ctx.clone(), ())
-                        }
-                    };
-
                     quote! {
-                        #handler_name => {
-                            let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                converter,
-                            };
-                            let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
-                                Ok(v) => v,
-                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                            };
-                            let converter = converter.clone();
-                            let fut = #handler_call;
-                            Some(async move {
-                                let result: #output_type = fut.await
-                                    .map_err(|e| ::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))?;
-                                let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                    data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                    converter: &converter,
-                                };
-                                converter.to_payload(&ser_ctx, &result).map_err(Into::into)
-                            }.boxed_local())
-                        }
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
                     }
                 } else {
-                    // Sync update handler - wrap in async block
                     quote! {
-                        #handler_name => {
-                            let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                                data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                                converter,
-                            };
-                            let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads) {
-                                Ok(v) => v,
-                                Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                            };
-                            // Sync handler - get mutable access via state_mut
-                            // Clone ctx so we can pass it to the handler (needed for issuing commands)
-                            let mut ctx_for_handler = ctx.clone();
-                            let result = ctx.state_mut(|wf| {
-                                <Self as ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident>>::handle(wf, &mut ctx_for_handler, input)
-                            });
-                            match result {
-                                Ok(value) => {
-                                    let payload = match converter.to_payload(&ser_ctx, &value) {
-                                        Ok(p) => p,
-                                        Err(e) => return Some(async move { Err(e.into()) }.boxed_local()),
-                                    };
-                                    Some(async move { Ok(payload) }.boxed_local())
-                                }
-                                Err(e) => Some(async move {
-                                    Err(::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))
-                                }.boxed_local()),
-                            }
-                        }
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
                     }
                 }
             })
@@ -1254,7 +1106,6 @@ impl WorkflowMethodsDefinition {
                 );
                 let struct_ident = &info.struct_ident;
                 let handler_name = &info.handler_name;
-                let input_type = &info.input_type_tokens;
 
                 let validate_trait = if u.is_async {
                     quote! { ::temporalio_sdk::workflows::ExecutableAsyncUpdate<#module_ident::#struct_ident> }
@@ -1263,18 +1114,7 @@ impl WorkflowMethodsDefinition {
                 };
 
                 quote! {
-                    #handler_name => {
-                        let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                            data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                            converter,
-                        };
-                        let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads.clone()) {
-                            Ok(v) => v,
-                            Err(e) => return Some(Err(e.into())),
-                        };
-                        Some(<Self as #validate_trait>::validate(self, ctx, &input)
-                            .map_err(|e| ::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e))))
-                    }
+                    #handler_name => Some(<Self as #validate_trait>::dispatch_validate(self, ctx, payloads, converter)),
                 }
             })
             .collect();
@@ -1285,14 +1125,11 @@ impl WorkflowMethodsDefinition {
         } else {
             quote! {
                 fn dispatch_update(
-                    mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
+                    ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     name: &str,
                     payloads: ::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
                 ) -> Option<::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>>> {
-                    use ::futures_util::FutureExt;
-                    use ::temporalio_common::data_converters::GenericPayloadConverter;
-
                     match name {
                         #(#dispatch_update_arms)*
                         _ => None,
@@ -1306,7 +1143,6 @@ impl WorkflowMethodsDefinition {
                     payloads: &::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
                 ) -> Option<Result<(), ::temporalio_sdk::workflows::WorkflowError>> {
-                    use ::temporalio_common::data_converters::GenericPayloadConverter;
 
                     match name {
                         #(#validate_update_arms)*
@@ -1329,31 +1165,9 @@ impl WorkflowMethodsDefinition {
                 );
                 let struct_ident = &info.struct_ident;
                 let handler_name = &info.handler_name;
-                let input_type = &info.input_type_tokens;
-                let output_type = type_to_tokens(q.output_type.as_ref());
 
                 quote! {
-                    #handler_name => {
-                        let ser_ctx = ::temporalio_common::data_converters::SerializationContext {
-                            data: &::temporalio_common::data_converters::SerializationContextData::Workflow,
-                            converter,
-                        };
-                        let input: #input_type = match converter.from_payloads(&ser_ctx, payloads.payloads.clone()) {
-                            Ok(v) => v,
-                            Err(e) => return Some(Err(e.into())),
-                        };
-                        let result: Result<#output_type, Box<dyn ::std::error::Error + Send + Sync>> =
-                            <Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::handle(self, ctx, input);
-                        match result {
-                            Ok(value) => {
-                                match converter.to_payload(&ser_ctx, &value) {
-                                    Ok(p) => Some(Ok(p)),
-                                    Err(e) => Some(Err(e.into())),
-                                }
-                            }
-                            Err(e) => Some(Err(::temporalio_sdk::workflows::WorkflowError::Execution(::anyhow::anyhow!(e)))),
-                        }
-                    }
+                    #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::dispatch(self, ctx, payloads, converter)),
                 }
             })
             .collect();
@@ -1370,8 +1184,6 @@ impl WorkflowMethodsDefinition {
                     payloads: &::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
                 ) -> Option<Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::workflows::WorkflowError>> {
-                    use ::temporalio_common::data_converters::GenericPayloadConverter;
-
                     match name {
                         #(#dispatch_query_arms)*
                         _ => None,
@@ -1395,7 +1207,7 @@ impl WorkflowMethodsDefinition {
                 }
 
                 fn run(
-                    ctx: ::temporalio_sdk::WorkflowContext<Self>,
+                    mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> ::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_sdk::WfExitValue<::temporalio_common::protos::temporal::api::common::v1::Payload>, ::temporalio_sdk::workflows::WorkflowError>> {
                     #run_impl_body
