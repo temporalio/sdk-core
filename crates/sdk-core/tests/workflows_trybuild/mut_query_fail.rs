@@ -1,5 +1,4 @@
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowContextView};
 
 #[workflow]
 pub struct BadWorkflow;
