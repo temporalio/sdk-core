@@ -535,7 +535,7 @@ fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
 }
 
 fn is_wf_context_type(ty: &Type) -> bool {
-    // Check for WorkflowContext, WorkflowContextView, &WorkflowContext, or &mut WorkflowContext
+    // Check for WorkflowContext or WorkflowContextView
     let inner_type = match ty {
         Type::Reference(r) => &*r.elem,
         other => other,
@@ -985,11 +985,11 @@ impl WorkflowMethodsDefinition {
             let prefixed_init = format_ident!("__{}", init_method.method.sig.ident);
             if init_has_input {
                 quote! {
-                    #impl_type::#prefixed_init(ctx, input.expect("init takes input"))
+                    #impl_type::#prefixed_init(&ctx, input.expect("init takes input"))
                 }
             } else {
                 quote! {
-                    #impl_type::#prefixed_init(ctx)
+                    #impl_type::#prefixed_init(&ctx)
                 }
             }
         } else if factory_only {
@@ -1042,7 +1042,7 @@ impl WorkflowMethodsDefinition {
                     }
                 } else {
                     quote! {
-                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident>>::dispatch(ctx, payloads, converter)),
                     }
                 }
             })
@@ -1087,7 +1087,7 @@ impl WorkflowMethodsDefinition {
                     }
                 } else {
                     quote! {
-                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident>>::dispatch(ctx.clone(), payloads, converter)),
+                        #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident>>::dispatch(ctx, payloads, converter)),
                     }
                 }
             })
@@ -1114,7 +1114,7 @@ impl WorkflowMethodsDefinition {
                 };
 
                 quote! {
-                    #handler_name => Some(<Self as #validate_trait>::dispatch_validate(self, ctx, payloads, converter)),
+                    #handler_name => Some(<Self as #validate_trait>::dispatch_validate(self, &ctx, payloads, converter)),
                 }
             })
             .collect();
@@ -1138,7 +1138,7 @@ impl WorkflowMethodsDefinition {
 
                 fn validate_update(
                     &self,
-                    ctx: &::temporalio_sdk::WorkflowContextView,
+                    ctx: ::temporalio_sdk::WorkflowContextView,
                     name: &str,
                     payloads: &::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
@@ -1167,7 +1167,7 @@ impl WorkflowMethodsDefinition {
                 let handler_name = &info.handler_name;
 
                 quote! {
-                    #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::dispatch(self, ctx, payloads, converter)),
+                    #handler_name => Some(<Self as ::temporalio_sdk::workflows::ExecutableQuery<#module_ident::#struct_ident>>::dispatch(self, &ctx, payloads, converter)),
                 }
             })
             .collect();
@@ -1179,7 +1179,7 @@ impl WorkflowMethodsDefinition {
             quote! {
                 fn dispatch_query(
                     &self,
-                    ctx: &::temporalio_sdk::WorkflowContextView,
+                    ctx: ::temporalio_sdk::WorkflowContextView,
                     name: &str,
                     payloads: &::temporalio_common::protos::temporal::api::common::v1::Payloads,
                     converter: &::temporalio_common::data_converters::PayloadConverter,
@@ -1200,7 +1200,7 @@ impl WorkflowMethodsDefinition {
                 const INIT_TAKES_INPUT: bool = #init_has_input;
 
                 fn init(
-                    ctx: &::temporalio_sdk::WorkflowContextView,
+                    ctx: ::temporalio_sdk::WorkflowContextView,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> Self {
                     #init_body

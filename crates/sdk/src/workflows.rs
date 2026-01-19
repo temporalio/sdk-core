@@ -110,7 +110,7 @@ pub trait WorkflowImplementation: Sized + 'static {
     /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
     /// `input` will be `Some`. Otherwise it's `None`.
     fn init(
-        ctx: &WorkflowContextView,
+        ctx: WorkflowContextView,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
     ) -> Self;
 
@@ -138,7 +138,7 @@ pub trait WorkflowImplementation: Sized + 'static {
     /// `Some(Err(...))` if validation failed.
     fn validate_update(
         &self,
-        _ctx: &WorkflowContextView,
+        _ctx: WorkflowContextView,
         _name: &str,
         _payloads: &Payloads,
         _converter: &PayloadConverter,
@@ -166,7 +166,7 @@ pub trait WorkflowImplementation: Sized + 'static {
     /// `Some(Err(...))` on failure. Queries are synchronous and read-only.
     fn dispatch_query(
         &self,
-        _ctx: &WorkflowContextView,
+        _ctx: WorkflowContextView,
         _name: &str,
         _payloads: &Payloads,
         _converter: &PayloadConverter,
@@ -174,6 +174,10 @@ pub trait WorkflowImplementation: Sized + 'static {
         None
     }
 }
+
+// NOTE: In the below traits, the dispatch functions take context by ownership while the handle
+// methods take them by ref when sync and by ownership when async. They must be owned by async
+// handlers since the returned futures must be 'static.
 
 /// Trait for executing synchronous signal handlers on a workflow.
 #[doc(hidden)]
@@ -416,7 +420,7 @@ where
         run_input: Option<<W::Run as WorkflowDefinition>::Input>,
     ) -> Self {
         let view = WorkflowContextView::new();
-        let workflow = W::init(&view, init_input);
+        let workflow = W::init(view, init_input);
         Self::new_with_workflow(workflow, base_ctx, run_input)
     }
 
@@ -449,7 +453,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
     ) -> Option<Result<(), WorkflowError>> {
         let view = WorkflowContextView::new();
         self.ctx
-            .state(|wf| wf.validate_update(&view, name, &data.payloads, data.converter))
+            .state(|wf| wf.validate_update(view, name, &data.payloads, data.converter))
     }
 
     fn start_update(
@@ -477,7 +481,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
     ) -> Option<Result<Payload, WorkflowError>> {
         let view = WorkflowContextView::new();
         self.ctx
-            .state(|wf| wf.dispatch_query(&view, name, &data.payloads, data.converter))
+            .state(|wf| wf.dispatch_query(view, name, &data.payloads, data.converter))
     }
 }
 

@@ -230,7 +230,7 @@ impl WorkflowFuture {
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
                 Variant::UpdateRandomSeed(rs) => {
-                    self.base_ctx.shared.write().random_seed = rs.randomness_seed;
+                    self.base_ctx.shared_mut().random_seed = rs.randomness_seed;
                 }
                 Variant::QueryWorkflow(q) => {
                     debug!(query_type = %q.query_type, "Query received");
@@ -309,7 +309,7 @@ impl WorkflowFuture {
                     // TODO [rust-sdk-branch]: Buffer signals w/ no handler
                 }
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
-                    self.base_ctx.shared.write().changes.insert(patch_id, true);
+                    self.base_ctx.shared_mut().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?;
@@ -434,7 +434,7 @@ impl Future for WorkflowFuture {
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             {
-                let mut wlock = self.base_ctx.shared.write();
+                let mut wlock = self.base_ctx.shared_mut();
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
