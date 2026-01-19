@@ -10,9 +10,7 @@ pub trait WorkflowDefinition {
     /// Type of the output of the workflow
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
     /// The workflow type name
-    fn name() -> &'static str
-    where
-        Self: Sized;
+    fn name(&self) -> &str;
 }
 
 /// Implement on a marker struct to define a query.
@@ -25,9 +23,7 @@ pub trait QueryDefinition {
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
-    fn name() -> &'static str
-    where
-        Self: Sized;
+    fn name(&self) -> &str;
 }
 
 /// Implement on a marker struct to define a signal.
@@ -39,9 +35,7 @@ pub trait SignalDefinition {
     type Workflow: WorkflowDefinition;
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
 
-    fn name() -> &'static str
-    where
-        Self: Sized;
+    fn name(&self) -> &str;
 }
 
 /// Implement on a marker struct to define an update.
@@ -54,7 +48,5 @@ pub trait UpdateDefinition {
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
-    fn name() -> &'static str
-    where
-        Self: Sized;
+    fn name(&self) -> &str;
 }

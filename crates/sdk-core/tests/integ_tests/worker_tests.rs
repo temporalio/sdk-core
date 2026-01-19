@@ -110,12 +110,13 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
     let mut starter = CoreWfStarter::new(wf_type);
     let mut worker = starter.worker().await;
 
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = format!("wce-{}", Uuid::new_v4());
     let run_id = worker
         .submit_wf(
-            format!("wce-{}", Uuid::new_v4()),
             "unregistered".to_string(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id).build(),
         )
         .await
         .unwrap();
@@ -200,13 +201,13 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     // Workflow doesn't actually need to do anything. We just need to see that we don't get stuck
     // by assigning all slots to sticky pollers.
     worker.register_workflow::<ResourceBasedNonStickyWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
             .submit_workflow(
                 ResourceBasedNonStickyWf::run,
-                format!("{wf_name}_{i}"),
                 (),
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -802,8 +803,13 @@ async fn test_custom_slot_supplier_simple() {
 
     worker.register_workflow::<SlotSupplierWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(SlotSupplierWorkflow::run, "test-wf", (), Default::default())
+        .submit_workflow(
+            SlotSupplierWorkflow::run,
+            (),
+            WorkflowOptions::new(task_queue, "test-wf".to_owned()).build(),
+        )
         .await
         .unwrap();
 

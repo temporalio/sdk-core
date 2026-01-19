@@ -7,25 +7,28 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::WorkflowClientTrait;
-use temporalio_common::protos::{
-    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
-    constants::PATCH_MARKER_NAME,
-    coresdk::{
-        AsJsonPayloadExt, FromJsonPayloadExt,
-        common::decode_change_marker_details,
-        workflow_activation::{NotifyHasPatch, WorkflowActivationJob, workflow_activation_job},
-    },
-    temporal::api::{
-        command::v1::{
-            RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
-            UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
+use temporalio_client::{SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait};
+use temporalio_common::{
+    data_converters::RawValue,
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, VERSION_SEARCH_ATTR_KEY,
+        constants::PATCH_MARKER_NAME,
+        coresdk::{
+            AsJsonPayloadExt, FromJsonPayloadExt,
+            common::decode_change_marker_details,
+            workflow_activation::{NotifyHasPatch, WorkflowActivationJob, workflow_activation_job},
         },
-        common::v1::ActivityType,
-        enums::v1::{CommandType, EventType, IndexedValueType},
-        history::v1::{
-            ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
-            ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
+        temporal::api::{
+            command::v1::{
+                RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
+                UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
+            },
+            common::v1::ActivityType,
+            enums::v1::{CommandType, EventType, IndexedValueType},
+            history::v1::{
+                ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
+                ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
+            },
         },
     },
 };
@@ -288,7 +291,12 @@ async fn deprecated_patch_removal() {
     let sig_fut = async {
         send_sig.notified().await;
         client
-            .signal_workflow_execution(wf_id, "".to_string(), "sig".to_string(), None, None)
+            .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
+            .signal(
+                UntypedSignal::new("sig"),
+                RawValue::empty(),
+                SignalOptions::default(),
+            )
             .await
             .unwrap()
     };

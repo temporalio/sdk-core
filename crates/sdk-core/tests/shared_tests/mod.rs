@@ -56,7 +56,6 @@ pub(crate) async fn grpc_message_too_large() {
     let mut sdk = starter.worker().await;
     sdk.submit_workflow(
         OversizeGrpcMessageWf::run,
-        starter.get_wf_id().to_string(),
         (),
         starter.workflow_options.clone(),
     )

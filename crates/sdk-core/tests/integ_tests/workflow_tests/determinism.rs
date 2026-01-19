@@ -69,12 +69,12 @@ async fn test_determinism_error_then_recovers() {
     worker.register_workflow_with_factory(move || TimerWfNondeterministic {
         run_ct: run_ct_clone.clone(),
     });
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             TimerWfNondeterministic::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -125,12 +125,12 @@ async fn task_fail_causes_replay_unset_too_soon() {
         did_fail: did_fail_clone.clone(),
     });
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             TaskFailReplayWf::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -189,12 +189,12 @@ async fn test_panic_wf_task_rejected_properly() {
     worker.register_workflow_with_factory(move || TimerWfFailsOnce {
         did_fail: did_fail.clone(),
     });
+    let task_queue = "fake_tq".to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -250,12 +250,12 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         started_count: count_clone.clone(),
     });
 
+    let task_queue = "fake_tq".to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -350,12 +350,12 @@ async fn activity_id_or_type_change_is_nondeterministic(
     });
     worker.register_workflow::<ActivityIdOrTypeChangeWf>();
 
+    let task_queue = "fake_tq".to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![(id_change, local_act).as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -428,12 +428,12 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
 
     worker.register_workflow::<ChildWfIdOrTypeChangeWf>();
 
+    let task_queue = "fake_tq".to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![id_change.as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -481,12 +481,12 @@ async fn repro_channel_missing_because_nondeterminism() {
 
         worker.register_workflow::<ReproChannelMissingWf>();
 
+        let task_queue = "fake_tq".to_owned();
         worker
             .submit_wf(
-                wf_id.to_owned(),
                 wf_type.to_owned(),
                 vec![],
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
             )
             .await
             .unwrap();

@@ -15,6 +15,8 @@ mod task_token;
 #[cfg(feature = "test-utilities")]
 pub mod test_utils;
 
+use std::time::Duration;
+
 #[cfg(feature = "history_builders")]
 pub use history_builder::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
@@ -2807,6 +2809,11 @@ pub fn camel_case_to_screaming_snake(val: &str) -> String {
         }
     }
     out
+}
+
+pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time::SystemTime> {
+    std::time::SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(ts.seconds as u64) + Duration::from_nanos(ts.nanos as u64))
 }
 
 #[cfg(test)]

@@ -662,10 +662,7 @@ impl WorkflowMethodsDefinition {
                 type Input = #input_type;
                 type Output = #output_type;
 
-                fn name() -> &'static str
-                where
-                    Self: Sized,
-                {
+                fn name(&self) -> &str {
                     #workflow_name
                 }
             }
@@ -674,10 +671,7 @@ impl WorkflowMethodsDefinition {
                 type Input = #input_type;
                 type Output = #output_type;
 
-                fn name() -> &'static str
-                where
-                    Self: Sized,
-                {
+                fn name(&self) -> &str {
                     #workflow_name
                 }
             }
@@ -714,8 +708,8 @@ impl WorkflowMethodsDefinition {
         let const_impl = quote! {
             impl #impl_type {
                 /// Returns the workflow type name
-                pub fn name() -> &'static str {
-                    <Self as ::temporalio_common::WorkflowDefinition>::name()
+                pub const fn name() -> &'static str {
+                    #workflow_name
                 }
 
                 #(#const_definitions)*
@@ -763,10 +757,7 @@ impl WorkflowMethodsDefinition {
                 type Workflow = #module_ident::#run_struct_ident;
                 type Input = #input_type;
 
-                fn name() -> &'static str
-                where
-                    Self: Sized,
-                {
+                fn name(&self) -> &str {
                     #signal_name
                 }
             }
@@ -843,10 +834,7 @@ impl WorkflowMethodsDefinition {
                 type Input = #input_type;
                 type Output = #output_type;
 
-                fn name() -> &'static str
-                where
-                    Self: Sized,
-                {
+                fn name(&self) -> &str {
                     #query_name
                 }
             }
@@ -889,10 +877,7 @@ impl WorkflowMethodsDefinition {
                 type Input = #input_type;
                 type Output = #output_type;
 
-                fn name() -> &'static str
-                where
-                    Self: Sized,
-                {
+                fn name(&self) -> &str {
                     #update_name
                 }
             }
@@ -1198,6 +1183,10 @@ impl WorkflowMethodsDefinition {
 
                 const HAS_INIT: bool = #has_init;
                 const INIT_TAKES_INPUT: bool = #init_has_input;
+
+                fn name() -> &'static str {
+                    <#impl_type>::name()
+                }
 
                 fn init(
                     ctx: ::temporalio_sdk::WorkflowContextView,

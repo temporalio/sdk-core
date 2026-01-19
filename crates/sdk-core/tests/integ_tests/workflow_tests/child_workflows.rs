@@ -2,7 +2,9 @@ use crate::common::{CoreWfStarter, build_fake_sdk, mock_sdk, mock_sdk_cfg};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    CancelWorkflowOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
     protos::{
         TestHistoryBuilder, canned_histories,
@@ -107,12 +109,12 @@ async fn child_workflow_happy_path() {
     worker.register_workflow::<HappyParent>();
     worker.register_workflow::<ChildWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_wf(
-            "parent".to_string(),
             PARENT_WF_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "parent".to_string()).build(),
         )
         .await
         .unwrap();
@@ -177,29 +179,26 @@ async fn abandoned_child_bug_repro() {
     });
     worker.register_workflow::<AbandonedChildBugReproChild>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             AbandonedChildBugReproParent::run,
-            "parent-abandoner",
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "parent-abandoner").build(),
         )
         .await
         .unwrap();
     let client = starter.get_client().await;
     let canceller = async {
         barr.wait().await;
-        client
-            .cancel_workflow_execution(
-                "parent-abandoner".to_string(),
-                None,
-                "die".to_string(),
-                None,
-            )
+        let parent_handle = client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner", "");
+        parent_handle
+            .cancel(CancelWorkflowOptions::builder().reason("die").build())
             .await
             .unwrap();
-        client
-            .cancel_workflow_execution("abandoned-child".to_string(), None, "die".to_string(), None)
+        let child_handle = client.get_workflow_handle::<UntypedWorkflow>("abandoned-child", "");
+        child_handle
+            .cancel(CancelWorkflowOptions::builder().reason("die").build())
             .await
             .unwrap();
     };
@@ -266,25 +265,22 @@ async fn abandoned_child_resolves_post_cancel() {
     });
     worker.register_workflow::<AbandonedChildResolvesPostCancelChild>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             AbandonedChildResolvesPostCancelParent::run,
-            "parent-abandoner-resolving",
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "parent-abandoner-resolving").build(),
         )
         .await
         .unwrap();
     let client = starter.get_client().await;
     let canceller = async {
         barr.wait().await;
-        client
-            .cancel_workflow_execution(
-                "parent-abandoner-resolving".to_string(),
-                None,
-                "die".to_string(),
-                None,
-            )
+        let handle =
+            client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving", "");
+        handle
+            .cancel(CancelWorkflowOptions::builder().reason("die").build())
             .await
             .unwrap();
     };
@@ -346,12 +342,12 @@ async fn cancelled_child_gets_reason() {
     worker.register_workflow::<CancelledChildGetsReasonParent>();
     worker.register_workflow::<CancelledChildGetsReasonChild>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             CancelledChildGetsReasonParent::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), task_queue).build(),
         )
         .await
         .unwrap();
@@ -411,12 +407,12 @@ async fn signal_child_workflow(#[case] serial: bool) {
     ));
 
     worker.register_workflow_with_factory(move || SignalChildWorkflowWf { serial });
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -635,12 +631,12 @@ async fn pass_child_workflow_summary_to_metadata() {
     worker.register_workflow_with_factory(move || PassChildWorkflowSummaryToMetadata {
         child_wf_id: child_wf_id.clone(),
     });
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

@@ -199,12 +199,13 @@ async fn activity_has_deployment_stamp() {
             .await
             .unwrap();
 
+        let task_queue = starter.get_task_queue().to_owned();
+        let workflow_id = starter.get_wf_id();
         submitter
             .submit_wf(
-                starter.get_wf_id(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue, workflow_id).build(),
             )
             .await
             .unwrap();

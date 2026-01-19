@@ -33,7 +33,7 @@ use temporalio_sdk_core::{
 use tokio::join;
 
 fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
-    let hi = t.get_full_history_info().unwrap().into();
+    let hi = t.get_full_history_info().unwrap();
     HistoryForReplay::new(hi, "fake".to_string())
 }
 

@@ -2,8 +2,10 @@ use crate::common::{CoreWfStarter, activity_functions::StdActivities};
 use futures_util::{StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::protos::coresdk::{AsJsonPayloadExt, IntoPayloadsExt};
+use temporalio_client::{
+    SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+};
+use temporalio_common::{data_converters::RawValue, protos::coresdk::AsJsonPayloadExt};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::TunerHolder;
@@ -89,11 +91,16 @@ async fn fuzzy_workflow() {
     worker.register_activities(StdActivities);
 
     let client = starter.get_client().await;
+    let task_queue = starter.get_task_queue().to_owned();
 
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}");
         worker
-            .submit_workflow(FuzzyWf::run, wfid.clone(), (), WorkflowOptions::default())
+            .submit_workflow(
+                FuzzyWf::run,
+                (),
+                WorkflowOptions::new(task_queue.clone(), wfid).build(),
+            )
             .await
             .unwrap();
     }
@@ -106,13 +113,19 @@ async fn fuzzy_workflow() {
         for action in actions {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
-                    client.signal_workflow_execution(
-                        format!("{wf_name}_{i}"),
-                        "".to_string(),
-                        FUZZY_SIG.to_string(),
-                        [action.as_json_payload().expect("Serializes ok")].into_payloads(),
-                        None,
-                    )
+                    let handle =
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                    async move {
+                        handle
+                            .signal(
+                                UntypedSignal::new(FUZZY_SIG),
+                                RawValue::new(vec![
+                                    action.as_json_payload().expect("Serializes ok"),
+                                ]),
+                                SignalOptions::default(),
+                            )
+                            .await
+                    }
                 })
                 .collect();
             sends

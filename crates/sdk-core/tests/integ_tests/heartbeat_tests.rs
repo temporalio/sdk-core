@@ -218,18 +218,15 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
 
     worker.register_workflow::<ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    handle.get_result(Default::default()).await.unwrap();
 }

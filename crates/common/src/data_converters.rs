@@ -277,14 +277,62 @@ pub trait TemporalDeserializable: Sized {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct RawValue {
-    pub payload: Payload,
+    pub payloads: Vec<Payload>,
+}
+impl RawValue {
+    /// An empty (payload-less) RawValue.
+    pub fn empty() -> Self {
+        Self {
+            payloads: Vec::new(),
+        }
+    }
+
+    /// Create a new RawValue from a vector of payloads.
+    pub fn new(payloads: Vec<Payload>) -> Self {
+        Self { payloads }
+    }
+
+    pub fn from_value<T: TemporalSerializable + 'static>(
+        value: &T,
+        converter: &PayloadConverter,
+    ) -> RawValue {
+        RawValue::new(vec![
+            converter
+                .to_payload(
+                    &SerializationContext {
+                        data: &SerializationContextData::None,
+                        converter,
+                    },
+                    value,
+                )
+                .unwrap(),
+        ])
+    }
+
+    pub fn to_value<T: TemporalDeserializable + 'static>(self, converter: &PayloadConverter) -> T {
+        converter
+            .from_payload(
+                &SerializationContext {
+                    data: &SerializationContextData::None,
+                    converter,
+                },
+                self.payloads.into_iter().next().unwrap(),
+            )
+            .unwrap()
+    }
 }
 
 impl TemporalSerializable for RawValue {
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
-        Ok(self.payload.clone())
+        Ok(self.payloads.first().cloned().unwrap_or_default())
+    }
+    fn to_payloads(
+        &self,
+        _: &SerializationContext<'_>,
+    ) -> Result<Vec<Payload>, PayloadConversionError> {
+        Ok(self.payloads.clone())
     }
 }
 
@@ -293,7 +341,13 @@ impl TemporalDeserializable for RawValue {
         _: &SerializationContext<'_>,
         p: Payload,
     ) -> Result<Self, PayloadConversionError> {
-        Ok(RawValue { payload: p })
+        Ok(RawValue { payloads: vec![p] })
+    }
+    fn from_payloads(
+        _: &SerializationContext<'_>,
+        payloads: Vec<Payload>,
+    ) -> Result<Self, PayloadConversionError> {
+        Ok(RawValue { payloads })
     }
 }
 

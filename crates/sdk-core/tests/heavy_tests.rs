@@ -22,7 +22,11 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporalio_client::{GetWorkflowResultOptions, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    GetWorkflowResultOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowOptions,
+};
+use temporalio_common::data_converters::RawValue;
 use temporalio_macros::{activities, workflow, workflow_methods};
 
 use temporalio_common::{
@@ -94,7 +98,11 @@ async fn activity_load() {
         let tq = task_queue.clone();
         async move {
             worker
-                .submit_workflow(ActivityLoadWf::run, wf_id, tq, WorkflowOptions::default())
+                .submit_workflow(
+                    ActivityLoadWf::run,
+                    tq.clone(),
+                    WorkflowOptions::new(tq, wf_id).build(),
+                )
                 .await
                 .unwrap();
         }
@@ -172,6 +180,7 @@ async fn chunky_activities_resource_based() {
     starter.sdk_config.tuner = Arc::new(tuner);
 
     starter.sdk_config.register_activities(ChunkyActivities);
+    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     let starting = Instant::now();
@@ -179,16 +188,15 @@ async fn chunky_activities_resource_based() {
     join_all((0..WORKFLOWS).map(|i| {
         let worker = &worker;
         let wf_id = format!("chunk_activity_{i}");
+        let tq = task_queue.clone();
         async move {
             worker
                 .submit_workflow(
                     ChunkyActivityWf::run,
-                    wf_id,
                     (),
-                    WorkflowOptions {
-                        id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
-                        ..Default::default()
-                    },
+                    WorkflowOptions::new(tq, wf_id)
+                        .id_reuse_policy(WorkflowIdReusePolicy::TerminateIfRunning)
+                        .build(),
                 )
                 .await
                 .unwrap();
@@ -248,6 +256,7 @@ async fn workflow_load() {
     starter.sdk_config.activity_task_poller_behavior = PollerBehavior::SimpleMaximum(10);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 100, 100, 100));
     starter.sdk_config.register_activities(StdActivities);
+    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     worker.register_workflow::<WorkflowLoadWf>();
     let client = starter.get_client().await;
@@ -258,9 +267,8 @@ async fn workflow_load() {
         let handle = worker
             .submit_workflow(
                 WorkflowLoadWf::run,
-                wfid.clone(),
                 (),
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue.clone(), wfid).build(),
             )
             .await
             .unwrap();
@@ -271,13 +279,17 @@ async fn workflow_load() {
         loop {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
-                    client.signal_workflow_execution(
-                        format!("{wf_name}_{i}"),
-                        "".to_string(),
-                        SIGNAME.to_string(),
-                        None,
-                        None,
-                    )
+                    let handle =
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                    async move {
+                        handle
+                            .signal(
+                                UntypedSignal::new(SIGNAME),
+                                RawValue::empty(),
+                                SignalOptions::default(),
+                            )
+                            .await
+                    }
                 })
                 .collect();
             sends
@@ -301,6 +313,7 @@ async fn evict_while_la_running_no_interference() {
     // starter.max_wft(20);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(100, 10, 20, 1));
     starter.sdk_config.register_activities(StdActivities);
+    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<LaProblemWorkflow>();
@@ -312,9 +325,8 @@ async fn evict_while_la_running_no_interference() {
         let handle = worker
             .submit_workflow(
                 LaProblemWorkflow::run,
-                &wf_id,
                 (),
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue.clone(), wf_id.clone()).build(),
             )
             .await
             .unwrap();
@@ -325,12 +337,11 @@ async fn evict_while_la_running_no_interference() {
             tokio::time::sleep(Duration::from_secs(1)).await;
             cw.request_workflow_eviction(&run_id);
             client
-                .signal_workflow_execution(
-                    wf_id,
-                    run_id.clone(),
-                    "whaatever".to_string(),
-                    None,
-                    None,
+                .get_workflow_handle::<UntypedWorkflow>(wf_id, run_id)
+                .signal(
+                    UntypedSignal::new("whaatever"),
+                    RawValue::empty(),
+                    SignalOptions::default(),
                 )
                 .await
                 .unwrap();
@@ -370,27 +381,26 @@ async fn can_paginate_long_history() {
 
     let mut worker = starter.worker().await;
     worker.register_workflow::<ManyParallelTimersLonghistWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             ManyParallelTimersLonghistWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     let run_id = handle.run_id().unwrap().to_owned();
     let client = starter.get_client().await;
     tokio::spawn(async move {
+        let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, run_id);
         loop {
             for _ in 0..10 {
-                client
-                    .signal_workflow_execution(
-                        wf_name.to_owned(),
-                        run_id.clone(),
-                        "sig".to_string(),
-                        None,
-                        None,
+                handle
+                    .signal(
+                        UntypedSignal::new("sig"),
+                        RawValue::empty(),
+                        SignalOptions::default(),
                     )
                     .await
                     .unwrap();
@@ -465,18 +475,17 @@ async fn poller_autoscaling_basic_loadtest() {
     worker.register_workflow::<PollerLoadWf>();
     let client = starter.get_client().await;
 
+    let task_queue = starter.get_task_queue().to_owned();
     let mut workflow_handles = vec![];
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}-{}", rand_6_chars());
         let handle = worker
             .submit_workflow(
                 PollerLoadWf::run,
-                wfid.clone(),
                 (),
-                WorkflowOptions {
-                    execution_timeout: Some(Duration::from_secs(120)),
-                    ..Default::default()
-                },
+                WorkflowOptions::new(task_queue.clone(), wfid)
+                    .execution_timeout(Duration::from_secs(120))
+                    .build(),
             )
             .await
             .unwrap();
@@ -487,9 +496,7 @@ async fn poller_autoscaling_basic_loadtest() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         ah.abort();
@@ -501,13 +508,17 @@ async fn poller_autoscaling_basic_loadtest() {
             loop {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
-                        client.signal_workflow_execution(
-                            format!("{wf_name}_{i}"),
-                            "".to_string(),
-                            SIGNAME.to_string(),
-                            None,
-                            None,
-                        )
+                        let handle = client
+                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        async move {
+                            handle
+                                .signal(
+                                    UntypedSignal::new(SIGNAME),
+                                    RawValue::empty(),
+                                    SignalOptions::default(),
+                                )
+                                .await
+                        }
                     })
                     .collect();
                 sends

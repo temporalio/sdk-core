@@ -41,12 +41,12 @@ async fn continue_as_new_happy_path() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<ContinueAsNewWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             ContinueAsNewWf::run,
-            wf_name.to_string(),
             1u8,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_string()).build(),
         )
         .await
         .unwrap();
@@ -63,10 +63,15 @@ async fn continue_as_new_multiple_concurrent() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<ContinueAsNewWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let wf_names = (1..=20).map(|i| format!("{wf_name}-{i}"));
     for name in wf_names.clone() {
         worker
-            .submit_workflow(ContinueAsNewWf::run, name, 1u8, WorkflowOptions::default())
+            .submit_workflow(
+                ContinueAsNewWf::run,
+                1u8,
+                WorkflowOptions::new(task_queue.clone(), name).build(),
+            )
             .await
             .unwrap();
     }

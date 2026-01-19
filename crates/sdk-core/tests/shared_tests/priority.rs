@@ -1,8 +1,6 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{
-    GetWorkflowResultOptions, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
-};
+use temporalio_client::{GetWorkflowResultOptions, Priority, UntypedWorkflow, WorkflowClientTrait};
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
@@ -56,14 +54,11 @@ pub(crate) async fn priority_values_sent_to_server() {
             let child = ctx.child_workflow(ChildWorkflowOptions {
                 workflow_id: format!("{}-child", ctx.task_queue()),
                 workflow_type: ctx.state(|wf| wf.child_type.clone()),
-                options: WorkflowOptions {
-                    priority: Some(Priority {
-                        priority_key: 4,
-                        fairness_key: "fair-child".to_string(),
-                        fairness_weight: 1.23,
-                    }),
-                    ..Default::default()
-                },
+                priority: Some(Priority {
+                    priority_key: 4,
+                    fairness_key: "fair-child".to_string(),
+                    fairness_weight: 1.23,
+                }),
                 ..Default::default()
             });
 
@@ -121,32 +116,25 @@ pub(crate) async fn priority_values_sent_to_server() {
     worker.register_workflow::<ChildWf>();
 
     worker
-        .submit_workflow(
-            ParentWf::run,
-            starter.get_task_queue(),
-            (),
-            starter.workflow_options.clone(),
-        )
+        .submit_workflow(ParentWf::run, (), starter.workflow_options.clone())
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let handle = client.get_untyped_workflow_handle(starter.get_task_queue(), "");
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue(), "");
     let res = handle
-        .get_workflow_result(GetWorkflowResultOptions::default())
+        .get_result(GetWorkflowResultOptions::default())
         .await
         .unwrap();
     // Expect workflow success
     res.unwrap_success();
-    let history = client
-        .get_workflow_execution_history(starter.get_task_queue().to_owned(), None, vec![])
+    let events = handle
+        .fetch_history(Default::default())
         .await
         .unwrap()
-        .history
-        .unwrap();
-    let workflow_init_event = history
-        .events
+        .into_events();
+    let workflow_init_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::WorkflowExecutionStartedEventAttributes(e) =
@@ -162,8 +150,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         workflow_init_event.priority.as_ref().unwrap().priority_key,
         1
     );
-    let child_init_event = history
-        .events
+    let child_init_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(e) =
@@ -176,8 +163,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         })
         .unwrap();
     assert_eq!(child_init_event.priority.as_ref().unwrap().priority_key, 4);
-    let activity_sched_event = history
-        .events
+    let activity_sched_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::ActivityTaskScheduledEventAttributes(e) =

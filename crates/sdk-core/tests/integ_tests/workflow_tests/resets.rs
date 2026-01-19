@@ -6,9 +6,15 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporalio_common::protos::temporal::api::{
-    common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
+use temporalio_client::{
+    SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowService,
+};
+use temporalio_common::{
+    data_converters::RawValue,
+    protos::temporal::api::{
+        common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
+    },
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
@@ -57,8 +63,13 @@ async fn reset_workflow() {
         post_reset_received: false,
     });
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(ResetMeWf::run, wf_name, (), WorkflowOptions::default())
+        .submit_workflow(
+            ResetMeWf::run,
+            (),
+            WorkflowOptions::new(task_queue, wf_name).build(),
+        )
         .await
         .unwrap();
     let run_id = handle.info().run_id.clone().unwrap();
@@ -87,21 +98,20 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
-        WorkflowClientTrait::signal_workflow_execution(
-            &client,
-            wf_name.to_owned(),
-            "".to_owned(),
-            POST_RESET_SIG.to_owned(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        client
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .signal(
+                UntypedSignal::new(POST_RESET_SIG),
+                RawValue::empty(),
+                SignalOptions::default(),
+            )
+            .await
+            .unwrap();
 
         // Wait for the now-reset workflow to finish
         client
-            .get_untyped_workflow_handle(wf_name.to_owned(), "")
-            .get_workflow_result(Default::default())
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .get_result(Default::default())
             .await
             .unwrap();
         starter.shutdown().await;
@@ -199,12 +209,12 @@ async fn reset_randomseed() {
     });
     worker.register_activities(StdActivities);
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             ResetRandomseedWf::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -213,16 +223,15 @@ async fn reset_randomseed() {
     let mut client = starter.get_client().await;
     let client_fur = async {
         notify.notified().await;
-        WorkflowClientTrait::signal_workflow_execution(
-            &client,
-            wf_name.to_owned(),
-            run_id.clone(),
-            POST_FAIL_SIG.to_string(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        client
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), run_id.clone())
+            .signal(
+                UntypedSignal::new(POST_FAIL_SIG),
+                RawValue::empty(),
+                SignalOptions::default(),
+            )
+            .await
+            .unwrap();
         notify.notified().await;
         // Reset the workflow to be after first timer has fired
         client
@@ -244,21 +253,20 @@ async fn reset_randomseed() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
-        WorkflowClientTrait::signal_workflow_execution(
-            &client,
-            wf_name.to_owned(),
-            "".to_owned(),
-            POST_RESET_SIG.to_owned(),
-            None,
-            None,
-        )
-        .await
-        .unwrap();
+        client
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .signal(
+                UntypedSignal::new(POST_RESET_SIG),
+                RawValue::empty(),
+                SignalOptions::default(),
+            )
+            .await
+            .unwrap();
 
         // Wait for the now-reset workflow to finish
         client
-            .get_untyped_workflow_handle(wf_name.to_owned(), "")
-            .get_workflow_result(Default::default())
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .get_result(Default::default())
             .await
             .unwrap();
         starter.shutdown().await;

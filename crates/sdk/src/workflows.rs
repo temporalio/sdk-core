@@ -105,6 +105,9 @@ pub trait WorkflowImplementation: Sized + 'static {
     /// If true, input goes to init. If false, input goes to run.
     const INIT_TAKES_INPUT: bool;
 
+    /// Returns the workflow type name.
+    fn name() -> &'static str;
+
     /// Initialize the workflow instance.
     ///
     /// This is called when a new workflow execution starts. If `INIT_TAKES_INPUT` is true,
@@ -523,7 +526,7 @@ impl WorkflowDefinitions {
     where
         <W::Run as WorkflowDefinition>::Input: Send,
     {
-        let workflow_name = <W::Run as WorkflowDefinition>::name();
+        let workflow_name = W::name();
         let factory: WorkflowExecutionFactory =
             Arc::new(move |payloads, converter: PayloadConverter, base_ctx| {
                 let ser_ctx = SerializationContext {
@@ -558,7 +561,7 @@ impl WorkflowDefinitions {
              The factory replaces init for instance creation."
         );
 
-        let workflow_name = <W::Run as WorkflowDefinition>::name();
+        let workflow_name = W::name();
         let user_factory = Arc::new(user_factory);
         let factory: WorkflowExecutionFactory =
             Arc::new(move |payloads, converter: PayloadConverter, base_ctx| {

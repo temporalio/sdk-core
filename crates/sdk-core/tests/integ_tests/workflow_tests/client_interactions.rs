@@ -1,7 +1,13 @@
 use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
-use temporalio_client::{WorkflowExecutionResult, WorkflowOptions};
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_client::{
+    QueryOptions, SignalOptions, UntypedQuery, UntypedSignal, UntypedUpdate, UpdateOptions,
+    WorkflowExecutionResult, WorkflowOptions,
+};
+use temporalio_common::{
+    data_converters::{PayloadConverter, RawValue},
+    worker::WorkerTaskTypes,
+};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 
@@ -125,12 +131,16 @@ async fn test_typed_signal() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             42, // Wait for counter == 42
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_signal", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
@@ -138,7 +148,7 @@ async fn test_typed_signal() {
     // Send signal concurrently with worker
     let signaler = async {
         handle
-            .signal(InteractionWorkflow::increment, 42)
+            .signal(InteractionWorkflow::increment, 42, SignalOptions::default())
             .await
             .unwrap();
     };
@@ -146,10 +156,7 @@ async fn test_typed_signal() {
     let (_, worker_res) = tokio::join!(signaler, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 42);
 }
@@ -162,28 +169,44 @@ async fn test_typed_update() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             999, // Wait for counter == 999
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_update", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
 
     let updates = async {
         let old_value = handle
-            .update(InteractionWorkflow::set_counter, 2)
+            .execute_update(
+                InteractionWorkflow::set_counter,
+                2,
+                UpdateOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(old_value, 0);
         handle
-            .update(InteractionWorkflow::invalidate_vec, ())
+            .execute_update(
+                InteractionWorkflow::invalidate_vec,
+                (),
+                UpdateOptions::default(),
+            )
             .await
             .unwrap();
         handle
-            .update(InteractionWorkflow::change_and_wait, (997, 999))
+            .execute_update(
+                InteractionWorkflow::change_and_wait,
+                (997, 999),
+                UpdateOptions::default(),
+            )
             .await
             .unwrap();
     };
@@ -191,10 +214,7 @@ async fn test_typed_update() {
     let (_, workerres) = tokio::join!(updates, worker.run_until_done());
     workerres.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 999);
 }
@@ -207,34 +227,46 @@ async fn test_typed_query() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             100,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_query", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
 
     let querier = async {
         let counter = handle
-            .query(InteractionWorkflow::get_counter, ())
+            .query(
+                InteractionWorkflow::get_counter,
+                (),
+                QueryOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(counter, 0);
         handle
-            .signal(InteractionWorkflow::increment, 50)
+            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
             .await
             .unwrap();
 
         let counter = handle
-            .query(InteractionWorkflow::get_counter, ())
+            .query(
+                InteractionWorkflow::get_counter,
+                (),
+                QueryOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50)
+            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
             .await
             .unwrap();
     };
@@ -242,10 +274,7 @@ async fn test_typed_query() {
     let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 100);
 }
@@ -258,30 +287,48 @@ async fn test_update_validation() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             42,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_validation", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
 
     let updater = async {
         let old_value = handle
-            .update(InteractionWorkflow::validated_set, 10)
+            .execute_update(
+                InteractionWorkflow::validated_set,
+                10,
+                UpdateOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(old_value, 0);
 
-        let result = handle.update(InteractionWorkflow::validated_set, -5).await;
+        let result = handle
+            .execute_update(
+                InteractionWorkflow::validated_set,
+                -5,
+                UpdateOptions::default(),
+            )
+            .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("non-negative"));
 
         let old_value = handle
-            .update(InteractionWorkflow::validated_set, 42)
+            .execute_update(
+                InteractionWorkflow::validated_set,
+                42,
+                UpdateOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(old_value, 10);
@@ -290,10 +337,7 @@ async fn test_update_validation() {
     let (_, worker_res) = tokio::join!(updater, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 42);
 }
@@ -306,12 +350,16 @@ async fn test_async_signal() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             100,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_async_signal", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
@@ -319,19 +367,23 @@ async fn test_async_signal() {
     let signaler = async {
         // Send async signal that adds 20 and waits for counter >= 50
         handle
-            .signal(InteractionWorkflow::increment_and_wait, (20, 50))
+            .signal(
+                InteractionWorkflow::increment_and_wait,
+                (20, 50),
+                SignalOptions::default(),
+            )
             .await
             .unwrap();
 
         // Send another signal to reach the target (20 + 30 = 50)
         handle
-            .signal(InteractionWorkflow::increment, 30)
+            .signal(InteractionWorkflow::increment, 30, SignalOptions::default())
             .await
             .unwrap();
 
         // Now send final signal to complete the workflow (50 + 50 = 100)
         handle
-            .signal(InteractionWorkflow::increment, 50)
+            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
             .await
             .unwrap();
     };
@@ -339,10 +391,7 @@ async fn test_async_signal() {
     let (_, worker_res) = tokio::join!(signaler, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 100);
     assert!(result.log.contains(&"async signal done".to_owned()));
@@ -356,34 +405,46 @@ async fn test_fallible_query() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             InteractionWorkflow::run,
-            starter.get_task_queue().to_owned(),
             100,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_fallible_query", starter.get_task_queue()),
+            )
+            .build(),
         )
         .await
         .unwrap();
 
     let querier = async {
         let result = handle
-            .query(InteractionWorkflow::get_counter_checked, 10)
+            .query(
+                InteractionWorkflow::get_counter_checked,
+                10,
+                QueryOptions::default(),
+            )
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("below minimum"));
         handle
-            .signal(InteractionWorkflow::increment, 50)
+            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
             .await
             .unwrap();
         let counter = handle
-            .query(InteractionWorkflow::get_counter_checked, 10)
+            .query(
+                InteractionWorkflow::get_counter_checked,
+                10,
+                QueryOptions::default(),
+            )
             .await
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50)
+            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
             .await
             .unwrap();
     };
@@ -391,10 +452,81 @@ async fn test_fallible_query() {
     let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle
-        .get_workflow_result(Default::default())
+    let res = handle.get_result(Default::default()).await.unwrap();
+    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    assert_eq!(result.counter, 100);
+}
+
+#[tokio::test]
+async fn test_untyped_signal_query_update() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            100,
+            WorkflowOptions::new(
+                task_queue.clone(),
+                format!("{}_untyped", starter.get_task_queue()),
+            )
+            .build(),
+        )
         .await
         .unwrap();
+
+    let pc = PayloadConverter::serde_json();
+
+    let interactions = async {
+        handle
+            .signal(
+                UntypedSignal::new("increment"),
+                RawValue::from_value(&25i32, &pc),
+                SignalOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let counter_raw = handle
+            .query(
+                UntypedQuery::new("get_counter"),
+                RawValue::from_value(&(), &pc),
+                QueryOptions::default(),
+            )
+            .await
+            .unwrap();
+        let counter: i32 = counter_raw.to_value(&pc);
+        assert_eq!(counter, 25);
+
+        let old_raw = handle
+            .execute_update(
+                UntypedUpdate::new("set_counter"),
+                RawValue::from_value(&50i32, &pc),
+                UpdateOptions::default(),
+            )
+            .await
+            .unwrap();
+        let old_value: i32 = old_raw.to_value(&pc);
+        assert_eq!(old_value, 25);
+
+        handle
+            .signal(
+                UntypedSignal::new("increment"),
+                RawValue::from_value(&50i32, &pc),
+                SignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(interactions, worker.run_until_done());
+    worker_res.unwrap();
+
+    let res = handle.get_result(Default::default()).await.unwrap();
     let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(result.counter, 100);
 }

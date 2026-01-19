@@ -14,9 +14,10 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, Connection, ConnectionOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+    Client, Connection, ConnectionOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
 };
 use temporalio_common::{
+    data_converters::RawValue,
     prost_dur,
     protos::{
         coresdk::{
@@ -167,27 +168,25 @@ async fn switching_worker_client_changes_poll() {
         // Start a workflow on both servers
         info!("Starting workflows");
         let wf1 = client1
-            .start_workflow_old(
-                vec![],
-                "my-task-queue".to_owned(),
-                "my-workflow-1".to_owned(),
-                "my-workflow-type".to_owned(),
-                None,
-                WorkflowOptions::default(),
+            .start_workflow(
+                UntypedWorkflow::new("my-workflow-type"),
+                RawValue::default(),
+                WorkflowOptions::new("my-task-queue".to_owned(), "my-workflow-1".to_owned())
+                    .build(),
             )
             .await
             .unwrap();
+        let wf1_run_id = wf1.run_id().unwrap().to_string();
         let wf2 = client2
-            .start_workflow_old(
-                vec![],
-                "my-task-queue".to_owned(),
-                "my-workflow-2".to_owned(),
-                "my-workflow-type".to_owned(),
-                None,
-                WorkflowOptions::default(),
+            .start_workflow(
+                UntypedWorkflow::new("my-workflow-type"),
+                RawValue::default(),
+                WorkflowOptions::new("my-task-queue".to_owned(), "my-workflow-2".to_owned())
+                    .build(),
             )
             .await
             .unwrap();
+        let wf2_run_id = wf2.run_id().unwrap().to_string();
 
         // Create a worker only on the first server
         let mut config = integ_worker_config("my-task-queue");
@@ -203,13 +202,13 @@ async fn switching_worker_client_changes_poll() {
         // Poll for first task, confirm it's first wf, complete, and wait for complete
         info!("Doing initial poll");
         let act1 = worker.poll_workflow_activation().await.unwrap();
-        assert_eq!(wf1.run_id, act1.run_id);
+        assert_eq!(wf1_run_id, act1.run_id);
         worker.complete_execution(&act1.run_id).await;
         worker.handle_eviction().await;
         info!("Waiting on first workflow complete");
         client1
-            .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
-            .get_workflow_result(Default::default())
+            .get_workflow_handle::<UntypedWorkflow>("my-workflow-1", wf1_run_id.clone())
+            .get_result(Default::default())
             .await
             .unwrap();
 
@@ -217,13 +216,13 @@ async fn switching_worker_client_changes_poll() {
         info!("Replacing client and polling again");
         worker.replace_client(client2.connection().clone()).unwrap();
         let act2 = worker.poll_workflow_activation().await.unwrap();
-        assert_eq!(wf2.run_id, act2.run_id);
+        assert_eq!(wf2_run_id, act2.run_id);
         worker.complete_execution(&act2.run_id).await;
         worker.handle_eviction().await;
         info!("Waiting on second workflow complete");
         client2
-            .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)
-            .get_workflow_result(Default::default())
+            .get_workflow_handle::<UntypedWorkflow>("my-workflow-2", wf2_run_id)
+            .get_result(Default::default())
             .await
             .unwrap();
 
@@ -286,12 +285,12 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<OnlyOneWorkflowSlotAndTwoPollers>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             OnlyOneWorkflowSlotAndTwoPollers::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), task_queue.clone()).build(),
         )
         .await
         .unwrap();
@@ -299,9 +298,8 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     worker
         .submit_workflow(
             OnlyOneWorkflowSlotAndTwoPollers::run,
-            wf2id.clone(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), wf2id.clone()).build(),
         )
         .await
         .unwrap();
@@ -314,16 +312,15 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
         .iter()
         .any(|e| e.event_type() == EventType::WorkflowTaskTimedOut);
     assert!(!any_task_timeouts);
-    let history = starter
+    let events = starter
         .get_client()
         .await
-        .get_workflow_execution_history(wf2id, None, vec![])
+        .get_workflow_handle::<UntypedWorkflow>(&wf2id, "")
+        .fetch_history(Default::default())
         .await
         .unwrap()
-        .history
-        .unwrap();
-    let any_task_timeouts = history
-        .events
+        .into_events();
+    let any_task_timeouts = events
         .iter()
         .any(|e| e.event_type() == EventType::WorkflowTaskTimedOut);
     assert!(!any_task_timeouts);
@@ -413,22 +410,20 @@ async fn replace_client_works_after_polling_failure() {
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server
-                .start_workflow_old(
-                    vec![],
-                    task_queue.clone(),
-                    wf_name.into(),
-                    wf_name.into(),
-                    None,
-                    WorkflowOptions::default(),
+                .start_workflow(
+                    UntypedWorkflow::new(wf_name),
+                    RawValue::default(),
+                    WorkflowOptions::new(task_queue.clone(), wf_name.to_string()).build(),
                 )
                 .await
                 .unwrap();
+            let wf_1_run_id = wf_1.run_id().unwrap().to_string();
             let act_1 =
                 tokio::time::timeout(Duration::from_secs(60), worker.poll_workflow_activation())
                     .await
                     .unwrap()
                     .unwrap();
-            assert_eq!(act_1.run_id, wf_1.run_id);
+            assert_eq!(act_1.run_id, wf_1_run_id);
 
             // Initial server is shut down.
             let mut server = initial_server.lock().unwrap().take().unwrap();
@@ -457,19 +452,16 @@ async fn replace_client_works_after_polling_failure() {
             )
             .await;
             let wf_2 = client_for_integ_server
-                .start_workflow_old(
-                    vec![],
-                    task_queue,
-                    wf_name.into(),
-                    wf_name.into(),
-                    None,
-                    WorkflowOptions {
-                        execution_timeout: Some(Duration::from_secs(60)),
-                        ..Default::default()
-                    },
+                .start_workflow(
+                    UntypedWorkflow::new(wf_name),
+                    RawValue::default(),
+                    WorkflowOptions::new(task_queue, wf_name)
+                        .execution_timeout(Duration::from_secs(60))
+                        .build(),
                 )
                 .await
                 .unwrap();
+            let wf_2_run_id = wf_2.run_id().unwrap().to_string();
 
             // Switch worker over to the main integration server.
             // The polling started on the initial server should complete with a task from the new server.
@@ -481,7 +473,7 @@ async fn replace_client_works_after_polling_failure() {
                 .unwrap()
                 .unwrap()
                 .unwrap();
-            assert_eq!(act_2.run_id, wf_2.run_id);
+            assert_eq!(act_2.run_id, wf_2_run_id);
         })
     }
     .catch_unwind()

@@ -33,9 +33,11 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+    NamespacedClient, QueryOptions, SignalOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions, WorkflowService,
 };
 use temporalio_common::{
+    data_converters::RawValue,
     prost_dur,
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
@@ -50,11 +52,12 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
+            common::v1::WorkflowExecution,
             enums::v1::{CommandType, EventType},
             failure::v1::Failure,
             history::v1::history_event,
-            query::v1::WorkflowQuery,
             sdk::v1::UserMetadata,
+            workflowservice::v1::ResetStickyTaskQueueRequest,
         },
         test_utils::schedule_activity_cmd,
     },
@@ -71,6 +74,7 @@ use temporalio_sdk_core::{
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{join, sync::Notify, time::sleep};
+use tonic::IntoRequest;
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
 
@@ -95,12 +99,12 @@ async fn parallel_workflows_same_queue() {
     let mut core = starter.worker().await;
 
     core.register_workflow::<ParallelWorkflowsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..25 {
         core.submit_workflow(
             ParallelWorkflowsWf::run,
-            format!("{wf_name}-{i}"),
             (),
-            starter.workflow_options.clone(),
+            WorkflowOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
         )
         .await
         .unwrap();
@@ -233,23 +237,20 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    client
-        .signal_workflow_execution(
-            workflow_id.to_string(),
-            res.run_id.to_string(),
-            signal_id_1.to_string(),
-            None,
-            None,
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id);
+    handle
+        .signal(
+            UntypedSignal::new(signal_id_1),
+            RawValue::empty(),
+            SignalOptions::default(),
         )
         .await
         .unwrap();
-    client
-        .signal_workflow_execution(
-            workflow_id.to_string(),
-            res.run_id.to_string(),
-            signal_id_2.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_id_2),
+            RawValue::empty(),
+            SignalOptions::default(),
         )
         .await
         .unwrap();
@@ -333,12 +334,11 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             starter
                 .get_client()
                 .await
-                .signal_workflow_execution(
-                    workflow_id.clone(),
-                    res.run_id.to_string(),
-                    signal_id_1.to_string(),
-                    None,
-                    None,
+                .get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id)
+                .signal(
+                    UntypedSignal::new(signal_id_1),
+                    RawValue::empty(),
+                    SignalOptions::default(),
                 )
                 .await
                 .unwrap();
@@ -409,16 +409,14 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Before polling for a task again, we start and complete the activity and send the
     // corresponding signals.
     let ac_task = core.poll_activity_task().await.unwrap();
-    let rid = wf_task.run_id.clone();
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id, &wf_task.run_id);
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
-    client
-        .signal_workflow_execution(
-            wf_id.to_string(),
-            rid,
-            signal_at_start.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_at_start),
+            RawValue::empty(),
+            SignalOptions::default(),
         )
         .await
         .unwrap();
@@ -429,14 +427,11 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     })
     .await
     .unwrap();
-    let rid = wf_task.run_id.clone();
-    client
-        .signal_workflow_execution(
-            wf_id.to_string(),
-            rid,
-            signal_at_complete.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_at_complete),
+            RawValue::empty(),
+            SignalOptions::default(),
         )
         .await
         .unwrap();
@@ -515,13 +510,13 @@ async fn slow_completes_with_small_cache() {
     worker.register_activities(StdActivities);
 
     worker.register_workflow::<SlowCompletesWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
             .submit_workflow(
                 SlowCompletesWf::run,
-                format!("{wf_name}_{i}"),
                 (),
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -596,15 +591,13 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     .unwrap();
 
     // Ensure a query on first wft also sees the correct id
+    let query_handle = client.get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id);
     let query_fut = async {
-        client
-            .query_workflow_execution(
-                workflow_id.clone(),
-                res.run_id.to_string(),
-                WorkflowQuery {
-                    query_type: "q1".to_string(),
-                    ..Default::default()
-                },
+        query_handle
+            .query(
+                UntypedQuery::new("q1"),
+                RawValue::empty(),
+                QueryOptions::default(),
             )
             .await
             .unwrap()
@@ -650,10 +643,19 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     };
     join!(query_fut, complete_fut);
     starter.shutdown().await;
-    client
-        .reset_sticky_task_queue(workflow_id.clone(), "".to_string())
-        .await
-        .unwrap();
+    WorkflowService::reset_sticky_task_queue(
+        &mut client.clone(),
+        ResetStickyTaskQueueRequest {
+            namespace: client.namespace(),
+            execution: Some(WorkflowExecution {
+                workflow_id: workflow_id.clone(),
+                run_id: "".to_string(),
+            }),
+        }
+        .into_request(),
+    )
+    .await
+    .unwrap();
 
     let mut starter = starter.clone_no_worker();
     starter.sdk_config.deployment_options = if use_only_build_id {
@@ -679,14 +681,11 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     let core = starter.get_worker().await;
 
     let query_fut = async {
-        client
-            .query_workflow_execution(
-                workflow_id.clone(),
-                res.run_id.to_string(),
-                WorkflowQuery {
-                    query_type: "q2".to_string(),
-                    ..Default::default()
-                },
+        query_handle
+            .query(
+                UntypedQuery::new("q2"),
+                RawValue::empty(),
+                QueryOptions::default(),
             )
             .await
             .unwrap()
@@ -755,12 +754,11 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     join!(query_fut, complete_fut);
 
     client
-        .signal_workflow_execution(
-            workflow_id.clone(),
-            "".to_string(),
-            "whatever".to_string(),
-            None,
-            None,
+        .get_workflow_handle::<UntypedWorkflow>(&workflow_id, "")
+        .signal(
+            UntypedSignal::new("whatever"),
+            RawValue::empty(),
+            SignalOptions::default(),
         )
         .await
         .unwrap();
@@ -873,12 +871,26 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 
     worker.register_workflow::<NondeterminismActivityWf>();
     // We need to generate a task so that we'll encounter the error (first avoid WFT timeout)
+    WorkflowService::reset_sticky_task_queue(
+        &mut client.clone(),
+        ResetStickyTaskQueueRequest {
+            namespace: client.namespace(),
+            execution: Some(WorkflowExecution {
+                workflow_id: wf_id.clone(),
+                run_id: "".to_string(),
+            }),
+        }
+        .into_request(),
+    )
+    .await
+    .unwrap();
     client
-        .reset_sticky_task_queue(wf_id.clone(), "".to_string())
-        .await
-        .unwrap();
-    client
-        .signal_workflow_execution(wf_id.clone(), "".to_string(), "hi".to_string(), None, None)
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id, "")
+        .signal(
+            UntypedSignal::new("hi"),
+            RawValue::empty(),
+            SignalOptions::default(),
+        )
         .await
         .unwrap();
     worker.expect_workflow_completion(&wf_id, None);
@@ -981,15 +993,14 @@ async fn history_out_of_order_on_restart() {
         hit_sleep: hit_sleep_clone1.clone(),
     });
     worker2.register_workflow::<HistoryOutOfOrderWf2>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             HistoryOutOfOrderWf1::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions {
-                execution_timeout: Some(Duration::from_secs(20)),
-                ..Default::default()
-            },
+            WorkflowOptions::new(task_queue, wf_name.to_owned())
+                .execution_timeout(Duration::from_secs(20))
+                .build(),
         )
         .await
         .unwrap();
@@ -1010,11 +1021,8 @@ async fn history_out_of_order_on_restart() {
     let handle = starter
         .get_client()
         .await
-        .get_untyped_workflow_handle(wf_name, "");
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+        .get_workflow_handle::<UntypedWorkflow>(wf_name, "");
+    let res = handle.get_result(Default::default()).await.unwrap();
     assert_matches!(res, WorkflowExecutionResult::Failed(_));
 }
 
@@ -1064,10 +1072,9 @@ async fn pass_timer_summary_to_metadata() {
     worker.register_workflow::<PassTimerSummaryWf>();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             DEFAULT_WORKFLOW_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

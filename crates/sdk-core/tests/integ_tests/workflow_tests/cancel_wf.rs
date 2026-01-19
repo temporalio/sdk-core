@@ -1,6 +1,9 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
-use temporalio_client::{WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{
+    CancelWorkflowOptions, DescribeWorkflowOptions, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowOptions,
+};
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
@@ -48,13 +51,13 @@ async fn cancel_during_timer() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_workflow::<CancelledWf>();
-    let wf_id = starter.get_task_queue().to_string();
-    worker
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = task_queue.clone();
+    let wf_handle = worker
         .submit_workflow(
             CancelledWf::run,
-            wf_id.clone(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.clone()).build(),
         )
         .await
         .unwrap();
@@ -62,8 +65,8 @@ async fn cancel_during_timer() {
     let canceller = async {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
-        client
-            .cancel_workflow_execution(wf_id.clone(), None, "Dieee".to_string(), None)
+        wf_handle
+            .cancel(CancelWorkflowOptions::builder().reason("Dieee").build())
             .await
             .unwrap();
     };
@@ -71,12 +74,13 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = client
-        .describe_workflow_execution(wf_id, None)
+        .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
+        .describe(DescribeWorkflowOptions::default())
         .await
         .unwrap();
 
     assert_eq!(
-        desc.workflow_execution_info.unwrap().status,
+        desc.raw_description.workflow_execution_info.unwrap().status,
         WorkflowExecutionStatus::Canceled as i32
     );
 }

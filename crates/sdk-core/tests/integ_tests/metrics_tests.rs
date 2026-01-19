@@ -16,10 +16,11 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions,
-    WorkflowService,
+    Connection, QueryOptions, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
 use temporalio_common::{
+    data_converters::RawValue,
     prost_dur,
     protos::{
         coresdk::{
@@ -43,7 +44,6 @@ use temporalio_common::{
                 HandlerError, StartOperationResponse, UnsuccessfulOperationError, request::Variant,
                 start_operation_response,
             },
-            query::v1::WorkflowQuery,
             workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
         },
     },
@@ -268,17 +268,13 @@ async fn one_slot_worker_reports_available_slot() {
 
         // Start a workflow so that a task will get delivered
         client
-            .start_workflow_old(
-                vec![],
-                tq.to_owned(),
-                "one_slot_metric_test".to_owned(),
-                "whatever".to_string(),
-                None,
-                WorkflowOptions {
-                    id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
-                    execution_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+            .start_workflow(
+                UntypedWorkflow::new("whatever"),
+                RawValue::default(),
+                WorkflowOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
+                    .id_reuse_policy(WorkflowIdReusePolicy::TerminateIfRunning)
+                    .execution_timeout(Duration::from_secs(5))
+                    .build(),
             )
             .await
             .unwrap();
@@ -461,14 +457,11 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let client = starter.get_client().await;
     let queryer = async {
         client
-            .query_workflow_execution(
-                starter.get_wf_id().to_string(),
-                run_id,
-                WorkflowQuery {
-                    query_type: "fake_query".to_string(),
-                    query_args: None,
-                    header: None,
-                },
+            .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), run_id)
+            .query(
+                UntypedQuery::new("fake_query"),
+                RawValue::empty(),
+                QueryOptions::default(),
             )
             .await
             .unwrap();
@@ -732,7 +725,12 @@ async fn docker_metrics_with_prometheus(
         .unwrap();
 
     let client = starter.get_client().await;
-    client.list_namespaces().await.unwrap();
+    WorkflowService::list_namespaces(
+        &mut client.clone(),
+        ListNamespacesRequest::default().into_request(),
+    )
+    .await
+    .unwrap();
 
     // Give Prometheus time to scrape metrics
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -791,7 +789,6 @@ async fn activity_metrics() {
     }
 
     starter.sdk_config.register_activities(PassFailActivities);
-    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     #[workflow]
@@ -863,12 +860,13 @@ async fn activity_metrics() {
     }
 
     worker.register_workflow::<ActivityMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
         .submit_workflow(
             ActivityMetricsWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), workflow_id).build(),
         )
         .await
         .unwrap();
@@ -940,7 +938,6 @@ async fn nexus_metrics() {
         enable_remote_activities: false,
         enable_nexus: true,
     };
-    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;
@@ -998,12 +995,13 @@ async fn nexus_metrics() {
     }
 
     worker.register_workflow::<NexusMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
         .submit_workflow(
             NexusMetricsWf::run,
-            wf_name.to_owned(),
             endpoint,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1147,12 +1145,13 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     }
 
     worker.register_workflow::<EvictOnCompleteWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
         .submit_workflow(
             EvictOnCompleteWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1244,12 +1243,12 @@ async fn metrics_available_from_custom_slot_supplier() {
     }
 
     worker.register_workflow::<CustomSlotSupplierWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             CustomSlotSupplierWf::run,
-            "s_wf".to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "s_wf".to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1392,7 +1391,6 @@ async fn sticky_queue_label_strategy(
     // Enable sticky queues by setting a reasonable cache size
     starter.sdk_config.max_cached_workflows = 10_usize;
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
-    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
 
     #[workflow]
@@ -1409,15 +1407,14 @@ async fn sticky_queue_label_strategy(
     }
 
     worker.register_workflow::<StickyQueueLabelStrategyWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             StickyQueueLabelStrategyWf::run,
-            wf_name.clone(),
             (),
-            WorkflowOptions {
-                enable_eager_workflow_start: false,
-                ..Default::default()
-            },
+            WorkflowOptions::new(task_queue.clone(), wf_name.clone())
+                .enable_eager_workflow_start(false)
+                .build(),
         )
         .await
         .unwrap();
@@ -1498,12 +1495,13 @@ async fn resource_based_tuner_metrics() {
     }
 
     worker.register_workflow::<ResourceBasedTunerMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
         .submit_workflow(
             ResourceBasedTunerMetricsWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();

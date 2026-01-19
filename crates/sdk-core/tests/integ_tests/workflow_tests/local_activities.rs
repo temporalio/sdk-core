@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{WfClientExt, WorkflowOptions};
+use temporalio_client::{UntypedWorkflow, UpdateOptions, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_ACTIVITY_TYPE, canned_histories,
     coresdk::{
@@ -86,12 +86,12 @@ async fn one_local_activity() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<OneLocalActivityWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             OneLocalActivityWf::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -129,12 +129,12 @@ async fn local_act_concurrent_with_timer() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActConcurrentWithTimerWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             LocalActConcurrentWithTimerWf::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -169,12 +169,12 @@ async fn local_act_then_timer_then_wait_result() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActThenTimerThenWaitResult>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             LocalActThenTimerThenWaitResult::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -210,12 +210,12 @@ async fn long_running_local_act_with_timer() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActThenTimerThenWait>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             LocalActThenTimerThenWait::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -251,12 +251,12 @@ async fn local_act_fanout() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActFanoutWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             LocalActFanoutWf::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -302,12 +302,12 @@ async fn local_act_retry_timer_backoff() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActRetryTimerBackoff>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             LocalActRetryTimerBackoff::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -392,12 +392,12 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let mut worker = starter.worker().await;
     worker.register_workflow::<CancelImmediate>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             CancelImmediate::run,
-            wf_name,
             cancel_type,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -545,12 +545,12 @@ async fn cancel_after_act_starts(
     let bo_dur = cancel_on_backoff.unwrap_or_else(|| Duration::from_secs(1));
     worker.register_workflow::<CancelAfterActStartsWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             CancelAfterActStartsWf::run,
-            &wf_name,
             (bo_dur, cancel_type),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -646,12 +646,12 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
     };
     worker.register_workflow::<XToCloseTimeoutWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             XToCloseTimeoutWf::run,
-            &wf_name,
             (sched, start, timeout_type as i32),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -724,12 +724,12 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         counter: num_attempts.clone(),
     });
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             ScheduleToCloseTimeoutAcrossTimerBackoff::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -749,16 +749,16 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActThenTimerThenWait>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let opts = if short_wft_timeout {
-        WorkflowOptions {
-            task_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        }
+        WorkflowOptions::new(task_queue, wf_name.clone())
+            .task_timeout(Duration::from_secs(1))
+            .build()
     } else {
-        Default::default()
+        WorkflowOptions::new(task_queue, wf_name.clone()).build()
     };
     worker
-        .submit_workflow(LocalActThenTimerThenWait::run, wf_name, (), opts)
+        .submit_workflow(LocalActThenTimerThenWait::run, (), opts)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -818,12 +818,12 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<TimerBackoffConcurrentWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             TimerBackoffConcurrentWf::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -875,18 +875,18 @@ async fn repro_nondeterminism_with_timer_bug() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<ReproNondeterminismWithTimerBugWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             ReproNondeterminismWithTimerBugWf::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let handle = client.get_untyped_workflow_handle(wf_name, handle.run_id().unwrap());
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, handle.run_id().unwrap());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await
@@ -1031,18 +1031,18 @@ async fn la_resolve_same_time_as_other_cancel() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LaResolveSameTimeAsOtherCancelWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             LaResolveSameTimeAsOtherCancelWf::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let handle = client.get_untyped_workflow_handle(wf_name, handle.run_id().unwrap());
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, handle.run_id().unwrap());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await
@@ -1106,12 +1106,12 @@ async fn long_local_activity_with_update(
     let mut worker = starter.worker().await;
     worker.register_workflow::<LongLocalActivityWithUpdateWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             LongLocalActivityWithUpdateWf::run,
-            &wf_name,
             update_inner_timer,
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1120,7 +1120,11 @@ async fn long_local_activity_with_update(
         loop {
             tokio::time::sleep(Duration::from_millis(update_interval_ms)).await;
             let _ = handle
-                .update(LongLocalActivityWithUpdateWf::do_update, ())
+                .execute_update(
+                    LongLocalActivityWithUpdateWf::do_update,
+                    (),
+                    UpdateOptions::default(),
+                )
                 .await;
         }
     };
@@ -1128,10 +1132,7 @@ async fn long_local_activity_with_update(
         worker.run_until_done().await.unwrap();
     };
     tokio::select!(_ = update => {}, _ = runner => {});
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let replay_res = handle
         .fetch_history_and_replay(worker.inner_mut())
         .await
@@ -1202,20 +1203,17 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<LocalActivityWithHeartbeatOnlyCausesOneWakeupWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             LocalActivityWithHeartbeatOnlyCausesOneWakeupWf::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let r = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let r = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(r.unwrap_success(), 2);
     handle
         .fetch_history_and_replay(worker.inner_mut())

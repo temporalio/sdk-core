@@ -13,7 +13,10 @@ use std::{
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use temporalio_client::{Client, NamespacedClient, WfClientExt, WorkflowOptions, WorkflowService};
+use temporalio_client::{
+    Client, NamespacedClient, SignalOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowService,
+};
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -649,24 +652,26 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let wf2_id = format!("{wf_name}_wf2");
 
     let orchestrator = async move {
+        let mut opts = wf_opts.clone();
+        opts.workflow_id = wf1_id.clone();
         let wf1_run = submitter
             .submit_wf(
-                wf1_id.clone(),
                 StickyCacheMissWf::name(),
                 vec!["wf1".to_string().as_json_payload().unwrap()],
-                wf_opts.clone(),
+                opts,
             )
             .await
             .unwrap();
 
         HISTORY_WF1_ACTIVITY_STARTED.notified().await;
 
+        let mut opts = wf_opts.clone();
+        opts.workflow_id = wf2_id.clone();
         let wf2_run = submitter
             .submit_wf(
-                wf2_id.clone(),
                 StickyCacheMissWf::name(),
                 vec!["wf2".to_string().as_json_payload().unwrap()],
-                wf_opts,
+                opts,
             )
             .await
             .unwrap();
@@ -674,16 +679,18 @@ async fn worker_heartbeat_sticky_cache_miss() {
         HISTORY_WF2_ACTIVITY_STARTED.notified().await;
 
         HISTORY_WF1_ACTIVITY_FINISH.notify_one();
-        let handle1 = client_for_orchestrator.get_untyped_workflow_handle(wf1_id, wf1_run);
+        let handle1 =
+            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf1_id, wf1_run);
         handle1
-            .get_workflow_result(Default::default())
+            .get_result(Default::default())
             .await
             .expect("wf1 result");
 
         HISTORY_WF2_ACTIVITY_FINISH.notify_one();
-        let handle2 = client_for_orchestrator.get_untyped_workflow_handle(wf2_id, wf2_run);
+        let handle2 =
+            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf2_id, wf2_run);
         handle2
-            .get_workflow_result(Default::default())
+            .get_result(Default::default())
             .await
             .expect("wf2 result");
 
@@ -889,17 +896,18 @@ async fn worker_heartbeat_failure_metrics() {
     worker.register_workflow::<FailureMetricsWf>();
 
     let worker_key = worker_instance_key.to_string();
-    starter.workflow_options.retry_policy = Some(RetryPolicy {
-        maximum_attempts: 2,
-        ..Default::default()
-    });
-
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = starter.get_wf_id();
     let handle = worker
         .submit_workflow(
             FailureMetricsWf::run,
-            starter.get_wf_id(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, workflow_id)
+                .retry_policy(RetryPolicy {
+                    maximum_attempts: 2,
+                    ..Default::default()
+                })
+                .build(),
         )
         .await
         .unwrap();
@@ -993,7 +1001,11 @@ async fn worker_heartbeat_failure_metrics() {
         .await
         .unwrap();
         handle
-            .signal(FailureMetricsWf::handle_continue_signal, ())
+            .signal(
+                FailureMetricsWf::handle_continue_signal,
+                (),
+                SignalOptions::default(),
+            )
             .await
             .unwrap();
     };

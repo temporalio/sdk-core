@@ -99,7 +99,7 @@ pub(crate) fn generate_const_definition(
     let allow_attrs = extract_allow_attrs(&method.attrs);
 
     quote_spanned! { span=>
-        #[allow(non_upper_case_globals)]
+        #[allow(non_upper_case_globals, dead_code)]
         #(#allow_attrs)*
         #visibility const #method_ident: #module_ident::#struct_ident = #module_ident::#struct_ident;
     }

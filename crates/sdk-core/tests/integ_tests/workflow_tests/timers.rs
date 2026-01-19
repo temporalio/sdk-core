@@ -42,12 +42,13 @@ async fn timer_workflow_workflow_driver() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<TimerWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             TimerWf::run,
-            starter.get_task_queue().to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();

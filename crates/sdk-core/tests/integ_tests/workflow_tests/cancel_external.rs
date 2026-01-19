@@ -1,5 +1,7 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use temporalio_client::{GetWorkflowResultOptions, WfClientExt, WorkflowOptions};
+use temporalio_client::{
+    GetWorkflowResultOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
@@ -58,21 +60,20 @@ async fn sends_cancel_to_other_wf() {
     worker.register_workflow::<CancelSender>();
     worker.register_workflow::<CancelReceiver>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let receiver_run_id = worker
         .submit_wf(
-            RECEIVER_WFID,
             "CancelReceiver",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
         )
         .await
         .unwrap();
     worker
         .submit_wf(
-            "sends-cancel-sender",
             "CancelSender",
             vec![receiver_run_id.clone().as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "sends-cancel-sender").build(),
         )
         .await
         .unwrap();
@@ -80,13 +81,15 @@ async fn sends_cancel_to_other_wf() {
     let h = starter
         .get_client()
         .await
-        .get_untyped_workflow_handle(RECEIVER_WFID, receiver_run_id);
+        .get_workflow_handle::<UntypedWorkflow>(RECEIVER_WFID, receiver_run_id);
     let res = String::from_json_payload(
-        &h.get_workflow_result(GetWorkflowResultOptions::default())
+        h.get_result(GetWorkflowResultOptions::default())
             .await
             .unwrap()
             .unwrap_success()
-            .payload,
+            .payloads
+            .first()
+            .unwrap(),
     )
     .unwrap();
     assert!(res.contains("Cancel requested by workflow"));

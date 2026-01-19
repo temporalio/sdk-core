@@ -1,5 +1,7 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use temporalio_client::WorkflowClientTrait;
+use temporalio_client::{
+    DescribeWorkflowOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+};
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
@@ -45,8 +47,13 @@ async fn sends_modify_wf_props() {
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<MemoUpserter>();
+    let task_queue = starter.get_task_queue().to_owned();
     let run_id = worker
-        .submit_wf(wf_id.to_string(), wf_name, vec![], Default::default())
+        .submit_wf(
+            wf_name,
+            vec![],
+            WorkflowOptions::new(task_queue, wf_id.to_string()).build(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -54,9 +61,11 @@ async fn sends_modify_wf_props() {
     let memo = starter
         .get_client()
         .await
-        .describe_workflow_execution(wf_id.to_string(), Some(run_id))
+        .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), run_id)
+        .describe(DescribeWorkflowOptions::default())
         .await
         .unwrap()
+        .raw_description
         .workflow_execution_info
         .unwrap()
         .memo

@@ -22,12 +22,13 @@ async fn timer_workflow_not_sticky() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<TimerWf>();
 
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             TimerWf::run,
-            starter.get_task_queue().to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();
@@ -74,12 +75,7 @@ async fn timer_workflow_timeout_on_sticky() {
     });
 
     worker
-        .submit_workflow(
-            TimerTimeoutWf::run,
-            starter.get_task_queue().to_owned(),
-            (),
-            std::mem::take(&mut starter.workflow_options),
-        )
+        .submit_workflow(TimerTimeoutWf::run, (), starter.workflow_options.clone())
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -118,12 +114,12 @@ async fn cache_miss_ok() {
         barr: barr_clone.clone(),
     });
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             CacheMissWf::run,
-            wf_name.to_owned(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();

@@ -1,4 +1,8 @@
-use crate::{WorkflowClientTrait, WorkflowService};
+use crate::{
+    CancelWorkflowOptions, DescribeWorkflowOptions, FetchHistoryOptions, GetWorkflowResultOptions,
+    NamespacedClient, QueryOptions, SignalOptions, StartUpdateOptions, TerminateWorkflowOptions,
+    UpdateOptions, WorkflowClientTrait, WorkflowService, WorkflowUpdateWaitStage,
+};
 use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
@@ -7,17 +11,27 @@ use temporalio_common::{
     protos::{
         coresdk::FromPayloadsExt,
         temporal::api::{
-            common::v1::{Payload, Payloads, WorkflowExecution},
+            common::v1::{Payload, Payloads, WorkflowExecution as ProtoWorkflowExecution},
             enums::v1::{HistoryEventFilterType, UpdateWorkflowExecutionLifecycleStage},
             failure::v1::Failure,
-            history::v1::history_event::Attributes,
+            history::{
+                self,
+                v1::{HistoryEvent, history_event::Attributes},
+            },
             query::v1::WorkflowQuery,
-            update::v1::WaitPolicy,
-            workflowservice::v1::GetWorkflowExecutionHistoryRequest,
+            update::{self, v1::WaitPolicy},
+            workflowservice::v1::{
+                DescribeWorkflowExecutionRequest, DescribeWorkflowExecutionResponse,
+                GetWorkflowExecutionHistoryRequest, PollWorkflowExecutionUpdateRequest,
+                QueryWorkflowRequest, RequestCancelWorkflowExecutionRequest,
+                SignalWorkflowExecutionRequest, TerminateWorkflowExecutionRequest,
+                UpdateWorkflowExecutionRequest,
+            },
         },
     },
 };
 use tonic::IntoRequest;
+use uuid::Uuid;
 
 /// Enumerates terminal states for a particular workflow execution
 // TODO: Add non-proto failure types, flesh out details, etc.
@@ -51,16 +65,44 @@ where
     }
 }
 
-/// Options for fetching workflow results
-#[derive(Debug, Clone, Copy)]
-pub struct GetWorkflowResultOptions {
-    /// If true (the default), follows to the next workflow run in the execution chain while
-    /// retrieving results.
-    pub follow_runs: bool,
+/// Description of a workflow execution returned by `WorkflowHandle::describe`.
+#[derive(Debug, Clone)]
+pub struct WorkflowExecutionDescription {
+    /// The raw proto response from the server.
+    pub raw_description: DescribeWorkflowExecutionResponse,
 }
-impl Default for GetWorkflowResultOptions {
-    fn default() -> Self {
-        Self { follow_runs: true }
+
+impl WorkflowExecutionDescription {
+    fn new(raw_description: DescribeWorkflowExecutionResponse) -> Self {
+        Self { raw_description }
+    }
+}
+
+// TODO [rust-sdk-branch]: Could implment stream a-la ListWorkflowsStream
+/// Workflow execution history returned by `WorkflowHandle::fetch_history`.
+#[derive(Debug, Clone)]
+pub struct WorkflowHistory {
+    events: Vec<HistoryEvent>,
+}
+impl From<WorkflowHistory> for history::v1::History {
+    fn from(h: WorkflowHistory) -> Self {
+        Self { events: h.events }
+    }
+}
+
+impl WorkflowHistory {
+    fn new(events: Vec<HistoryEvent>) -> Self {
+        Self { events }
+    }
+
+    /// The history events.
+    pub fn events(&self) -> &[HistoryEvent] {
+        &self.events
+    }
+
+    /// Consume the history and return the events.
+    pub fn into_events(self) -> Vec<HistoryEvent> {
+        self.events
     }
 }
 
@@ -81,14 +123,18 @@ impl<CT, W> WorkflowHandle<CT, W> {
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkflowExecutionInfo {
-    /// Namespace the workflow lives in
+    /// Namespace the workflow lives in.
     pub namespace: String,
-    /// The workflow's id
+    /// The workflow's id.
     pub workflow_id: String,
-    /// If set, target this specific run of the workflow
+    /// If set, target this specific run of the workflow.
     pub run_id: Option<String>,
+    /// Run ID used for cancellation and termination to ensure they happen on a workflow starting
+    /// with this run ID. This can be set when getting a workflow handle. When starting a workflow,
+    /// this is set as the resulting run ID if no start signal was provided.
+    pub first_execution_run_id: Option<String>,
 }
 
 impl WorkflowExecutionInfo {
@@ -105,13 +151,104 @@ impl WorkflowExecutionInfo {
 /// and output.
 pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, UntypedWorkflow>;
 
-/// Marker type for untyped workflow handles
-pub struct UntypedWorkflow;
+/// Marker type for untyped workflow handles. Stores the workflow type name.
+pub struct UntypedWorkflow {
+    name: String,
+}
+impl UntypedWorkflow {
+    /// Create a new `UntypedWorkflow` with the given workflow type name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
 impl WorkflowDefinition for UntypedWorkflow {
     type Input = RawValue;
     type Output = RawValue;
-    fn name() -> &'static str {
-        ""
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Marker type for sending untyped signals. Stores the signal name for runtime lookup.
+///
+/// Use with `handle.signal(UntypedSignal::new("signal_name"), raw_payload)`.
+pub struct UntypedSignal<W> {
+    name: String,
+    _wf: PhantomData<W>,
+}
+
+impl<W> UntypedSignal<W> {
+    /// Create a new `UntypedSignal` with the given signal name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _wf: PhantomData,
+        }
+    }
+}
+
+impl<W: WorkflowDefinition> SignalDefinition for UntypedSignal<W> {
+    type Workflow = W;
+    type Input = RawValue;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Marker type for sending untyped queries. Stores the query name for runtime lookup.
+///
+/// Use with `handle.query(UntypedQuery::new("query_name"), raw_payload)`.
+pub struct UntypedQuery<W> {
+    name: String,
+    _wf: PhantomData<W>,
+}
+
+impl<W> UntypedQuery<W> {
+    /// Create a new `UntypedQuery` with the given query name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _wf: PhantomData,
+        }
+    }
+}
+
+impl<W: WorkflowDefinition> QueryDefinition for UntypedQuery<W> {
+    type Workflow = W;
+    type Input = RawValue;
+    type Output = RawValue;
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Marker type for sending untyped updates. Stores the update name for runtime lookup.
+///
+/// Use with `handle.update(UntypedUpdate::new("update_name"), raw_payload)`.
+pub struct UntypedUpdate<W> {
+    name: String,
+    _wf: PhantomData<W>,
+}
+
+impl<W> UntypedUpdate<W> {
+    /// Create a new `UntypedUpdate` with the given update name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _wf: PhantomData,
+        }
+    }
+}
+
+impl<W: WorkflowDefinition> UpdateDefinition for UntypedUpdate<W> {
+    type Workflow = W;
+    type Input = RawValue;
+    type Output = RawValue;
+
+    fn name(&self) -> &str {
+        &self.name
     }
 }
 
@@ -120,7 +257,8 @@ where
     CT: WorkflowService + Clone,
     W: WorkflowDefinition,
 {
-    pub(crate) fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
+    /// Create a workflow handle from a client and identifying information.
+    pub fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
         Self {
             client,
             info,
@@ -139,47 +277,29 @@ where
     }
 
     /// Await the result of the workflow execution
-    pub async fn get_workflow_result(
+    pub async fn get_result(
         &self,
         opts: GetWorkflowResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error>
     where
         CT: WorkflowClientTrait,
     {
-        let mut next_page_tok = vec![];
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
+        let fetch_opts = FetchHistoryOptions::builder()
+            .skip_archival(true)
+            .wait_new_event(true)
+            .event_filter_type(HistoryEventFilterType::CloseEvent)
+            .build();
+
         loop {
-            let server_res = WorkflowService::get_workflow_execution_history(
-                &mut self.client.clone(),
-                GetWorkflowExecutionHistoryRequest {
-                    namespace: self.info.namespace.to_string(),
-                    execution: Some(WorkflowExecution {
-                        workflow_id: self.info.workflow_id.clone(),
-                        run_id: run_id.clone(),
-                    }),
-                    skip_archival: true,
-                    wait_new_event: true,
-                    history_event_filter_type: HistoryEventFilterType::CloseEvent as i32,
-                    next_page_token: next_page_tok.clone(),
-                    ..Default::default()
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner();
+            let history = self.fetch_history_for_run(&run_id, &fetch_opts).await?;
+            let mut events = history.into_events();
 
-            let mut history = server_res
-                .history
-                .ok_or_else(|| anyhow!("Server returned an empty history!"))?;
-
-            if history.events.is_empty() {
-                next_page_tok = server_res.next_page_token;
+            if events.is_empty() {
                 continue;
             }
-            // If page token was previously set, clear it.
-            next_page_tok = vec![];
 
-            let event_attrs = history.events.pop().and_then(|ev| ev.attributes);
+            let event_attrs = events.pop().and_then(|ev| ev.attributes);
 
             macro_rules! follow {
                 ($attrs:ident) => {
@@ -242,9 +362,14 @@ where
     }
 
     /// Send a signal to the workflow
-    pub async fn signal<S>(&self, _signal: S, input: S::Input) -> Result<(), anyhow::Error>
+    pub async fn signal<S>(
+        &self,
+        signal: S,
+        input: S::Input,
+        opts: SignalOptions,
+    ) -> Result<(), anyhow::Error>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         S: SignalDefinition<Workflow = W>,
         S::Input: Send,
     {
@@ -253,22 +378,38 @@ where
             .data_converter()
             .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
-        self.client
-            .signal_workflow_execution(
-                self.info.workflow_id.clone(),
-                self.info.run_id.clone().unwrap_or_default(),
-                S::name().to_string(),
-                Some(Payloads { payloads }),
-                None,
-            )
-            .await?;
+        WorkflowService::signal_workflow_execution(
+            &mut self.client.clone(),
+            SignalWorkflowExecutionRequest {
+                namespace: self.client.namespace(),
+                workflow_execution: Some(ProtoWorkflowExecution {
+                    workflow_id: self.info.workflow_id.clone(),
+                    run_id: self.info.run_id.clone().unwrap_or_default(),
+                }),
+                signal_name: signal.name().to_string(),
+                input: Some(Payloads { payloads }),
+                identity: self.client.identity(),
+                request_id: opts
+                    .request_id
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                header: opts.header,
+                ..Default::default()
+            }
+            .into_request(),
+        )
+        .await?;
         Ok(())
     }
 
     /// Query the workflow
-    pub async fn query<Q>(&self, _query: Q, input: Q::Input) -> Result<Q::Output, anyhow::Error>
+    pub async fn query<Q>(
+        &self,
+        query: Q,
+        input: Q::Input,
+        opts: QueryOptions,
+    ) -> Result<Q::Output, anyhow::Error>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         Q: QueryDefinition<Workflow = W>,
         Q::Input: Send,
     {
@@ -278,16 +419,26 @@ where
             .await?;
         let response = self
             .client
-            .query_workflow_execution(
-                self.info.workflow_id.clone(),
-                self.info.run_id.clone().unwrap_or_default(),
-                WorkflowQuery {
-                    query_type: Q::name().to_string(),
-                    query_args: Some(Payloads { payloads }),
-                    header: None,
-                },
+            .clone()
+            .query_workflow(
+                QueryWorkflowRequest {
+                    namespace: self.client.namespace(),
+                    execution: Some(ProtoWorkflowExecution {
+                        workflow_id: self.info.workflow_id.clone(),
+                        run_id: self.info.run_id.clone().unwrap_or_default(),
+                    }),
+                    query: Some(WorkflowQuery {
+                        query_type: query.name().to_string(),
+                        query_args: Some(Payloads { payloads }),
+                        header: opts.header,
+                    }),
+                    // Default to None (1) which means don't reject
+                    query_reject_condition: opts.reject_condition.map(|c| c as i32).unwrap_or(1),
+                }
+                .into_request(),
             )
-            .await?;
+            .await?
+            .into_inner();
 
         let result_payloads = response
             .query_result
@@ -299,8 +450,41 @@ where
             .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
     }
 
-    /// Send an update to the workflow
-    pub async fn update<U>(&self, _update: U, input: U::Input) -> Result<U::Output, anyhow::Error>
+    /// Send an update to the workflow and wait for it to complete, returning the result.
+    pub async fn execute_update<U>(
+        &self,
+        update: U,
+        input: U::Input,
+        options: UpdateOptions,
+    ) -> Result<U::Output, anyhow::Error>
+    where
+        CT: WorkflowClientTrait,
+        U: UpdateDefinition<Workflow = W>,
+        U::Input: Send,
+        U::Output: 'static,
+    {
+        let handle = self
+            .start_update(
+                update,
+                input,
+                StartUpdateOptions::builder()
+                    .maybe_update_id(options.update_id)
+                    .maybe_header(options.header)
+                    .wait_for_stage(WorkflowUpdateWaitStage::Completed)
+                    .build(),
+            )
+            .await?;
+        handle.get_result().await
+    }
+
+    /// Start an update and return a handle without waiting for completion.
+    /// Use `execute_update()` if you want to wait for the result immediately.
+    pub async fn start_update<U>(
+        &self,
+        update: U,
+        input: U::Input,
+        options: StartUpdateOptions,
+    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, anyhow::Error>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -310,37 +494,284 @@ where
         let payloads = dc
             .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
-        let response = self
-            .client
-            .update_workflow_execution(
-                self.info.workflow_id.clone(),
-                self.info.run_id.clone().unwrap_or_default(),
-                U::name().to_string(),
-                WaitPolicy {
-                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed.into(),
-                },
-                Some(Payloads { payloads }),
-            )
-            .await?;
 
-        let outcome = response
-            .outcome
-            .ok_or_else(|| anyhow!("Update returned no outcome"))?;
+        let lifecycle_stage = match options.wait_for_stage {
+            WorkflowUpdateWaitStage::Admitted => UpdateWorkflowExecutionLifecycleStage::Admitted,
+            WorkflowUpdateWaitStage::Accepted => UpdateWorkflowExecutionLifecycleStage::Accepted,
+            WorkflowUpdateWaitStage::Completed => UpdateWorkflowExecutionLifecycleStage::Completed,
+        };
+
+        let update_id = options
+            .update_id
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        let response = WorkflowService::update_workflow_execution(
+            &mut self.client.clone(),
+            UpdateWorkflowExecutionRequest {
+                namespace: self.client.namespace(),
+                workflow_execution: Some(ProtoWorkflowExecution {
+                    workflow_id: self.info().workflow_id.clone(),
+                    run_id: self.info().run_id.clone().unwrap_or_default(),
+                }),
+                wait_policy: Some(WaitPolicy {
+                    lifecycle_stage: lifecycle_stage.into(),
+                }),
+                request: Some(update::v1::Request {
+                    meta: Some(update::v1::Meta {
+                        update_id: update_id.clone(),
+                        identity: self.client.identity(),
+                    }),
+                    input: Some(update::v1::Input {
+                        header: options.header,
+                        name: update.name().to_string(),
+                        args: Some(Payloads { payloads }),
+                    }),
+                }),
+                ..Default::default()
+            }
+            .into_request(),
+        )
+        .await?
+        .into_inner();
+
+        // Extract run_id from response if available
+        let run_id = response
+            .update_ref
+            .as_ref()
+            .and_then(|r| r.workflow_execution.as_ref())
+            .map(|e| e.run_id.clone())
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.info().run_id.clone());
+
+        Ok(WorkflowUpdateHandle {
+            client: self.client.clone(),
+            update_id,
+            workflow_id: self.info().workflow_id.clone(),
+            run_id,
+            known_outcome: response.outcome,
+            _output: PhantomData,
+        })
+    }
+
+    /// Request cancellation of this workflow.
+    pub async fn cancel(&self, opts: CancelWorkflowOptions) -> Result<(), anyhow::Error>
+    where
+        CT: NamespacedClient,
+    {
+        WorkflowService::request_cancel_workflow_execution(
+            &mut self.client.clone(),
+            RequestCancelWorkflowExecutionRequest {
+                namespace: self.client.namespace(),
+                workflow_execution: Some(ProtoWorkflowExecution {
+                    workflow_id: self.info.workflow_id.clone(),
+                    run_id: self.info.run_id.clone().unwrap_or_default(),
+                }),
+                identity: self.client.identity(),
+                request_id: opts
+                    .request_id
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                first_execution_run_id: self
+                    .info
+                    .first_execution_run_id
+                    .clone()
+                    .unwrap_or_default(),
+                reason: opts.reason,
+                links: vec![],
+            }
+            .into_request(),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Terminate this workflow.
+    pub async fn terminate(&self, opts: TerminateWorkflowOptions) -> Result<(), anyhow::Error>
+    where
+        CT: NamespacedClient,
+    {
+        WorkflowService::terminate_workflow_execution(
+            &mut self.client.clone(),
+            TerminateWorkflowExecutionRequest {
+                namespace: self.client.namespace(),
+                workflow_execution: Some(ProtoWorkflowExecution {
+                    workflow_id: self.info.workflow_id.clone(),
+                    run_id: self.info.run_id.clone().unwrap_or_default(),
+                }),
+                reason: opts.reason,
+                details: opts.details,
+                identity: self.client.identity(),
+                first_execution_run_id: self
+                    .info
+                    .first_execution_run_id
+                    .clone()
+                    .unwrap_or_default(),
+                links: vec![],
+            }
+            .into_request(),
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Get workflow execution description/metadata.
+    pub async fn describe(
+        &self,
+        _opts: DescribeWorkflowOptions,
+    ) -> Result<WorkflowExecutionDescription, anyhow::Error>
+    where
+        CT: NamespacedClient,
+    {
+        let response = WorkflowService::describe_workflow_execution(
+            &mut self.client.clone(),
+            DescribeWorkflowExecutionRequest {
+                namespace: self.client.namespace(),
+                execution: Some(ProtoWorkflowExecution {
+                    workflow_id: self.info.workflow_id.clone(),
+                    run_id: self.info.run_id.clone().unwrap_or_default(),
+                }),
+            }
+            .into_request(),
+        )
+        .await?
+        .into_inner();
+        Ok(WorkflowExecutionDescription::new(response))
+    }
+    /// Fetch workflow execution history.
+    pub async fn fetch_history(
+        &self,
+        opts: FetchHistoryOptions,
+    ) -> Result<WorkflowHistory, anyhow::Error>
+    where
+        CT: NamespacedClient,
+    {
+        let run_id = self.info.run_id.clone().unwrap_or_default();
+        self.fetch_history_for_run(&run_id, &opts).await
+    }
+
+    /// Fetch history for a specific run_id, handling pagination.
+    async fn fetch_history_for_run(
+        &self,
+        run_id: &str,
+        opts: &FetchHistoryOptions,
+    ) -> Result<WorkflowHistory, anyhow::Error>
+    where
+        CT: NamespacedClient,
+    {
+        let mut all_events = Vec::new();
+        let mut next_page_token = vec![];
+
+        loop {
+            let response = WorkflowService::get_workflow_execution_history(
+                &mut self.client.clone(),
+                GetWorkflowExecutionHistoryRequest {
+                    namespace: self.client.namespace(),
+                    execution: Some(ProtoWorkflowExecution {
+                        workflow_id: self.info.workflow_id.clone(),
+                        run_id: run_id.to_string(),
+                    }),
+                    next_page_token: next_page_token.clone(),
+                    skip_archival: opts.skip_archival,
+                    wait_new_event: opts.wait_new_event,
+                    history_event_filter_type: opts.event_filter_type as i32,
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
+
+            if let Some(history) = response.history {
+                all_events.extend(history.events);
+            }
+
+            if response.next_page_token.is_empty() {
+                break;
+            }
+            next_page_token = response.next_page_token;
+        }
+
+        Ok(WorkflowHistory::new(all_events))
+    }
+}
+
+/// Handle to a workflow update that has been started but may not be complete.
+///
+/// Use `get_result()` to wait for the update to complete and retrieve its result.
+pub struct WorkflowUpdateHandle<CT, T> {
+    client: CT,
+    update_id: String,
+    workflow_id: String,
+    run_id: Option<String>,
+    /// If the update was started with `Completed` wait stage, the outcome is already available.
+    known_outcome: Option<update::v1::Outcome>,
+    _output: PhantomData<T>,
+}
+
+impl<CT, T> WorkflowUpdateHandle<CT, T> {
+    /// Get the update ID.
+    pub fn id(&self) -> &str {
+        &self.update_id
+    }
+
+    /// Get the workflow ID.
+    pub fn workflow_id(&self) -> &str {
+        &self.workflow_id
+    }
+
+    /// Get the workflow run ID, if available.
+    pub fn workflow_run_id(&self) -> Option<&str> {
+        self.run_id.as_deref()
+    }
+}
+
+impl<CT, T: 'static> WorkflowUpdateHandle<CT, T>
+where
+    CT: WorkflowService + NamespacedClient + Clone,
+{
+    /// Wait for the update to complete and return the result.
+    pub async fn get_result(&self) -> Result<T, anyhow::Error>
+    where
+        T: temporalio_common::data_converters::TemporalDeserializable,
+    {
+        let outcome = if let Some(known) = &self.known_outcome {
+            known.clone()
+        } else {
+            let response = WorkflowService::poll_workflow_execution_update(
+                &mut self.client.clone(),
+                PollWorkflowExecutionUpdateRequest {
+                    namespace: self.client.namespace(),
+                    update_ref: Some(update::v1::UpdateRef {
+                        workflow_execution: Some(ProtoWorkflowExecution {
+                            workflow_id: self.workflow_id.clone(),
+                            run_id: self.run_id.clone().unwrap_or_default(),
+                        }),
+                        update_id: self.update_id.clone(),
+                    }),
+                    identity: self.client.identity(),
+                    wait_policy: Some(WaitPolicy {
+                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed.into(),
+                    }),
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
+
+            response
+                .outcome
+                .ok_or_else(|| anyhow!("Update poll returned no outcome"))?
+        };
 
         match outcome.value {
-            Some(
-                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Success(
-                    success,
-                ),
-            ) => dc
+            Some(update::v1::outcome::Value::Success(success)) => self
+                .client
+                .data_converter()
                 .from_payloads(&SerializationContextData::Workflow, success.payloads)
                 .await
                 .map_err(|e| anyhow!("Failed to deserialize update result: {}", e)),
-            Some(
-                temporalio_common::protos::temporal::api::update::v1::outcome::Value::Failure(
-                    failure,
-                ),
-            ) => Err(anyhow!("Update failed: {:?}", failure)),
+            Some(update::v1::outcome::Value::Failure(failure)) => {
+                Err(anyhow!("Update failed: {:?}", failure))
+            }
             None => Err(anyhow!("Update returned no outcome value")),
         }
     }

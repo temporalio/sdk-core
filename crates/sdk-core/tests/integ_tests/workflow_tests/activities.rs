@@ -13,15 +13,17 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
+use temporalio_client::{
+    ActivityIdentifier, DescribeWorkflowOptions, TerminateWorkflowOptions, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+};
 use temporalio_common::{
     prost_dur,
     protos::{
-        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TaskToken, TestHistoryBuilder,
-        canned_histories,
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-            IntoCompletion, IntoPayloadsExt,
+            ActivityHeartbeat, ActivityTaskCompletion, FromJsonPayloadExt, IntoCompletion,
+            IntoPayloadsExt,
             activity_result::{
                 self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
             },
@@ -91,20 +93,17 @@ async fn one_activity_only() {
     let mut worker = starter.worker().await;
 
     let input = "hello from input!".to_string();
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             OneActivityWorkflow::run,
-            wf_name.to_owned(),
             input.clone(),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
     assert_eq!(r, input);
 }
@@ -729,12 +728,10 @@ async fn async_activity_completion_workflow() {
     starter
         .get_client()
         .await
-        .complete_activity_task(
-            task.task_token.into(),
-            Some(Payloads {
-                payloads: vec![response_payload.clone()],
-            }),
-        )
+        .get_async_activity_handle(ActivityIdentifier::TaskToken(task.task_token.into()))
+        .complete(Some(Payloads {
+            payloads: vec![response_payload.clone()],
+        }))
         .await
         .unwrap();
 
@@ -815,7 +812,8 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     starter
         .get_client()
         .await
-        .terminate_workflow_execution(task_q, None)
+        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .terminate(TerminateWorkflowOptions::default())
         .await
         .unwrap();
 }
@@ -875,10 +873,12 @@ async fn activity_heartbeat_not_flushed_on_success() {
         || async {
             // Verify pending details has the flushed heartbeat
             let details = client
-                .describe_workflow_execution(starter.get_wf_id().to_string(), None)
+                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), "")
+                .describe(DescribeWorkflowOptions::default())
                 .await
                 .unwrap();
             let last_deets = details
+                .raw_description
                 .pending_activities
                 .into_iter()
                 .find(|i| i.activity_id == activity_id)
@@ -894,7 +894,8 @@ async fn activity_heartbeat_not_flushed_on_success() {
     .await
     .unwrap();
     client
-        .terminate_workflow_execution(task_q, None)
+        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .terminate(TerminateWorkflowOptions::default())
         .await
         .unwrap();
     drain_pollers_and_shutdown(&core).await;
@@ -935,20 +936,17 @@ async fn one_activity_abandon_cancelled_before_started() {
         .register_workflow::<OneActivityAbandonCancelledBeforeStarted>();
     let mut worker = starter.worker().await;
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             OneActivityAbandonCancelledBeforeStarted::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
@@ -989,122 +987,18 @@ async fn one_activity_abandon_cancelled_after_complete() {
         .register_workflow::<OneActivityAbandonCancelledAfterComplete>();
     let mut worker = starter.worker().await;
 
+    let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
         .submit_workflow(
             OneActivityAbandonCancelledAfterComplete::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
-}
-
-#[tokio::test]
-async fn it_can_complete_async() {
-    let wf_name = "it_can_complete_async".to_owned();
-    let mut starter = CoreWfStarter::new(&wf_name);
-    let async_response = "agence";
-    let shared_token = Arc::new(tokio::sync::Mutex::new(None));
-
-    struct AsyncActivities {
-        shared_token: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
-    }
-    #[activities]
-    impl AsyncActivities {
-        #[activity]
-        async fn complete_async_activity(
-            self: Arc<Self>,
-            ctx: ActivityContext,
-            _: String,
-        ) -> Result<(), ActivityError> {
-            // set the `activity_task_token`
-            let activity_info = ctx.get_info();
-            let task_token = &activity_info.task_token;
-            let mut shared = self.shared_token.lock().await;
-            *shared = Some(task_token.clone());
-            Err(ActivityError::WillCompleteAsync)
-        }
-    }
-
-    starter.sdk_config.register_activities(AsyncActivities {
-        shared_token: shared_token.clone(),
-    });
-
-    let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-
-    #[workflow]
-    #[derive(Default)]
-    struct AsyncCompletionWorkflow;
-
-    #[workflow_methods]
-    impl AsyncCompletionWorkflow {
-        #[run]
-        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let async_response = "agence";
-            let activity_resolution = ctx
-                .start_activity(
-                    AsyncActivities::complete_async_activity,
-                    "hi".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(30)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-
-            let res = match activity_resolution.status {
-                Some(act_res::Status::Completed(activity_result::Success { result })) => result
-                    .map(|p| String::from_json_payload(&p).unwrap())
-                    .unwrap(),
-                _ => panic!("activity task failed {activity_resolution:?}"),
-            };
-
-            assert_eq!(&res, async_response);
-            Ok(().into())
-        }
-    }
-
-    worker.register_workflow::<AsyncCompletionWorkflow>();
-
-    let shared_token_ref2 = shared_token.clone();
-    tokio::spawn(async move {
-        loop {
-            let mut shared = shared_token_ref2.lock().await;
-            let maybe_token = shared.take();
-
-            if let Some(task_token) = maybe_token {
-                client
-                    .complete_activity_task(
-                        TaskToken(task_token),
-                        Some(async_response.as_json_payload().unwrap().into()),
-                    )
-                    .await
-                    .unwrap();
-                return;
-            }
-        }
-    });
-
-    worker
-        .submit_workflow(
-            AsyncCompletionWorkflow::run,
-            wf_name,
-            (),
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-
-    worker.run_until_done().await.unwrap();
 }
 
 #[tokio::test]
@@ -1174,12 +1068,12 @@ async fn graceful_shutdown() {
 
     worker.register_workflow::<GracefulShutdownWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             GracefulShutdownWorkflow::run,
-            wf_name,
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -1193,7 +1087,8 @@ async fn graceful_shutdown() {
         // cancels, otherwise run_until_done will hang since the workflow won't complete.
         let _ = acts_done.acquire_many(10).await;
         client
-            .terminate_workflow_execution(wf_name.to_owned(), None)
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .terminate(TerminateWorkflowOptions::default())
             .await
             .unwrap();
     };
@@ -1267,12 +1162,12 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 
     worker.register_workflow::<ActivityLocalTimeoutWorkflow>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             ActivityLocalTimeoutWorkflow::run,
-            starter.get_task_queue(),
             (),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), task_queue).build(),
         )
         .await
         .unwrap();
@@ -1396,12 +1291,12 @@ async fn pass_activity_summary_to_metadata() {
     }
 
     worker.register_workflow::<ActivitySummaryWorkflow>();
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1462,8 +1357,13 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     }
 
     worker.register_workflow::<AbandonedActivitiesWorkflow>();
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
-        .submit_wf(wfid, wf_type, vec![], Default::default())
+        .submit_wf(
+            wf_type,
+            vec![],
+            WorkflowOptions::new(task_queue, wfid).build(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

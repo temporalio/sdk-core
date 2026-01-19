@@ -1,6 +1,6 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::collections::HashMap;
-use temporalio_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{StartSignal, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
@@ -64,12 +64,12 @@ async fn sends_signal_to_missing_wf() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalSender>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_workflow(
             SignalSender::run,
-            wf_name,
             (Uuid::new_v4().to_string(), true),
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -110,7 +110,7 @@ struct SignalWithCreateWfReceiver {
 
 #[workflow_methods]
 impl SignalWithCreateWfReceiver {
-    #[run(name = "receiver_signal")]
+    #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.wait_condition(|s| s.received).await;
         Ok(().into())
@@ -136,21 +136,20 @@ async fn sends_signal_to_other_wf() {
     worker.register_workflow::<SignalSender>();
     worker.register_workflow::<SignalReceiver>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let receiver_run_id = worker
         .submit_wf(
-            RECEIVER_WFID,
             "receiver",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
         )
         .await
         .unwrap();
     worker
         .submit_wf(
-            "sends-signal-sender",
             "sender",
             vec![(receiver_run_id, false).as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "sends-signal-sender").build(),
         )
         .await
         .unwrap();
@@ -167,21 +166,23 @@ async fn sends_signal_with_create_wf() {
     let client = starter.get_client().await;
     let mut header: HashMap<String, Payload> = HashMap::new();
     header.insert("tupac".into(), "shakur".into());
-    let options = SignalWithStartOptions::builder()
-        .task_queue(worker.inner_mut().task_queue())
-        .workflow_id("sends_signal_with_create_wf")
-        .workflow_type("receiver_signal")
-        .signal_name(SIGNAME)
-        .maybe_input(vec![().as_json_payload().unwrap()].into_payloads())
-        .maybe_signal_input(vec!["tada".to_string().as_json_payload().unwrap()].into_payloads())
-        .maybe_signal_header(Some(header.into()))
+    let task_queue = worker.inner_mut().task_queue().to_string();
+    let start_signal = StartSignal::new(SIGNAME)
+        .maybe_input(vec!["tada".to_string().as_json_payload().unwrap()].into_payloads())
+        .maybe_header(Some(header.into()))
         .build();
-    let res = client
-        .signal_with_start_workflow_execution(options, WorkflowOptions::default())
+    let options = WorkflowOptions::new(task_queue, "sends_signal_with_create_wf")
+        .start_signal(start_signal)
+        .build();
+    let handle = client
+        .start_workflow(SignalWithCreateWfReceiver::run, (), options)
         .await
         .expect("request succeeds.qed");
 
-    worker.expect_workflow_completion("sends_signal_with_create_wf", Some(res.run_id));
+    worker.expect_workflow_completion(
+        "sends_signal_with_create_wf",
+        Some(handle.run_id().unwrap().to_string()),
+    );
     worker.run_until_done().await.unwrap();
 }
 
@@ -220,12 +221,12 @@ async fn sends_signal_to_child() {
     worker.register_workflow::<SignalsChild>();
     worker.register_workflow::<SignalReceiver>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     worker
         .submit_wf(
-            "sends-signal-to-child",
             "child_signaler",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, "sends-signal-to-child").build(),
         )
         .await
         .unwrap();

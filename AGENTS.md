@@ -5,8 +5,8 @@ document as your quick reference when submitting pull requests.
 
 ## Requirements for coding agents
 
-- Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly.
-  Unit tests may be run with `cargo test`. If you are about to run a test, you do not need to run
+- Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly. If you have added `dbg!` or println statements, you must add `-- --nocapture` to see them.
+- Unit tests may be run with `cargo test`. If you are about to run a test, you do not need to run
   `cargo build` separately first. Just run the test, and it will build. Running `cargo build --test`
   DOES NOT build integration tests. Use `cargo lint` for checking if integration tests compile
   without running them.
@@ -20,6 +20,8 @@ document as your quick reference when submitting pull requests.
 - Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
   than 5 minutes. When making changes that may break integration tests, after compiling, run
   integration tests with `timeout 180`, as it is possible to introduce test hangs.
+- DO NOT put use statements in function scope. Always put them at the top of the file, unless doing
+  so helps prevent ambiguous method resolution because of traits. Putting them at the top of a tests module is also acceptable.
 
 
 ## Repo Specific Utilities
