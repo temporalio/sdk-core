@@ -77,6 +77,8 @@ use temporalio_common::{
             ActivityTaskCompletion,
             activity_result::activity_execution_result,
             activity_task::ActivityTask,
+            namespace_info,
+            NamespaceInfo,
             nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
             workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
             workflow_completion::WorkflowActivationCompletion,
@@ -165,8 +167,37 @@ pub(crate) struct WorkerTelemetry {
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn validate(&self) -> Result<(), WorkerValidationError> {
-        self.verify_namespace_exists().await?;
-        Ok(())
+        self.validate_namespace().await?;
+        return Ok(())
+    }
+
+    async fn validate_namespace(&self) -> Result<NamespaceInfo, WorkerValidationError> {
+        match self.client.describe_namespace().await {
+            Ok(info) => {
+                let limits = info.namespace_info.and_then(|ns_info| {
+                    ns_info.limits.map(|api_limits| {
+                        namespace_info::Limits {
+                            blob_size_limit_error: api_limits.blob_size_limit_error,
+                            memo_size_limit_error: api_limits.memo_size_limit_error,
+                        }
+                    })
+                });
+                return Ok(NamespaceInfo { limits });
+            },
+            Err(e) => {
+                if e.code() == tonic::Code::Unimplemented {
+                    // Ignore if unimplemented since we wouldn't want to fail against an old server, for
+                    // example.
+                    return Ok(NamespaceInfo {
+                        ..Default::default()
+                    });
+                }
+                return Err(WorkerValidationError::NamespaceDescribeError {
+                    source: e,
+                    namespace: self.config.namespace.clone(),
+                });
+            }
+        }
     }
 
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
@@ -1085,20 +1116,6 @@ impl Worker {
         } else {
             dbg_panic!("trying to notify local result when workflows not enabled for this worker");
         }
-    }
-
-    async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
-        if let Err(e) = self.client.describe_namespace().await {
-            // Ignore if unimplemented since we wouldn't want to fail against an old server, for
-            // example.
-            if e.code() != tonic::Code::Unimplemented {
-                return Err(WorkerValidationError::NamespaceDescribeError {
-                    source: e,
-                    namespace: self.config.namespace.clone(),
-                });
-            }
-        }
-        Ok(())
     }
 }
 
