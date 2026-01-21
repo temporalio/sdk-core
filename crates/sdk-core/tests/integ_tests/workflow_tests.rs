@@ -11,6 +11,7 @@ mod modify_wf_properties;
 mod nexus;
 mod patches;
 mod priority;
+mod queries;
 mod replay;
 mod resets;
 mod signals;

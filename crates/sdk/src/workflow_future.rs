@@ -192,15 +192,18 @@ impl WorkflowFuture {
 
     /// Handle a particular workflow activation job.
     ///
-    /// Returns Ok(true) if the workflow should be evicted. Returns an error in the event that
-    /// the workflow task should be failed.
+    /// Returns `Ok(should_poll_wf)` where `should_poll_wf` indicates whether the workflow future
+    /// should be polled after this job. Query jobs return false since an activation containing
+    /// _only_ queries must not advance the workflow.
+    ///
+    /// Returns an error in the event that the workflow task should be failed.
     ///
     /// Panics if internal assumptions are violated
     fn handle_job(
         &mut self,
         variant: Option<Variant>,
         outgoing_cmds: &mut Vec<WorkflowCommand>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         if let Some(v) = variant {
             match v {
                 Variant::InitializeWorkflow(_) => {
@@ -277,6 +280,7 @@ impl WorkflowFuture {
                         })
                         .into(),
                     );
+                    return Ok(false);
                 }
                 Variant::CancelWorkflow(c) => {
                     // TODO: Cancel pending futures, etc
@@ -409,7 +413,7 @@ impl WorkflowFuture {
             bail!("Empty activation job variant");
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -453,10 +457,14 @@ impl Future for WorkflowFuture {
                 return Ok(WfExitValue::Evicted).into();
             }
 
+            let mut should_poll_wf = false;
             for WorkflowActivationJob { variant } in activation.jobs {
-                if let Err(e) = self.handle_job(variant, &mut activation_cmds) {
-                    self.fail_wft(run_id, e);
-                    continue 'activations;
+                match self.handle_job(variant, &mut activation_cmds) {
+                    Ok(should_poll) => should_poll_wf |= should_poll,
+                    Err(e) => {
+                        self.fail_wft(run_id, e);
+                        continue 'activations;
+                    }
                 }
             }
 
@@ -503,7 +511,7 @@ impl Future for WorkflowFuture {
                 )
                 .collect();
 
-            if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
+            if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                 continue;
             }
 
