@@ -975,6 +975,18 @@ message NexusOperationScheduledEventAttributes {
     // This is stored on the event and used internally by the server in case the endpoint is renamed from the time the
     // event was originally scheduled.
     string endpoint_id = 9;
+
+    // Schedule-to-start timeout for this operation.
+    // See ScheduleNexusOperationCommandAttributes.schedule_to_start_timeout for details.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_start_timeout = 10;
+
+    // Start-to-close timeout for this operation.
+    // See ScheduleNexusOperationCommandAttributes.start_to_close_timeout for details.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 11;
 }
 
 // Event marking an asynchronous operation was started by the responding Nexus handler.

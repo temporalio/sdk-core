@@ -81,6 +81,8 @@ enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED = 35;
     // A workflow task failed because a grpc message was too large.
     WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE = 36;
+    // A workflow task failed because payloads were too large.
+    WORKFLOW_TASK_FAILED_CAUSE_PAYLOADS_TOO_LARGE = 37;
 }
 
 enum StartChildWorkflowExecutionFailedCause {
