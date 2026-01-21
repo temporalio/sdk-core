@@ -30,10 +30,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
-    let hist = HistoryForReplay::new(
-        t.get_full_history_info().unwrap().into(),
-        "whatever".to_string(),
-    );
+    let hist = HistoryForReplay::new(t.get_full_history_info().unwrap(), "whatever".to_string());
 
     c.bench_function("Small history replay", |b| {
         b.to_async(&tokio_runtime).iter_batched(
@@ -48,10 +45,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let num_tasks = 50;
     let t = canned_histories::lots_of_big_signals(num_tasks);
-    let hist = HistoryForReplay::new(
-        t.get_full_history_info().unwrap().into(),
-        "whatever".to_string(),
-    );
+    let hist = HistoryForReplay::new(t.get_full_history_info().unwrap(), "whatever".to_string());
 
     c.bench_function("Large payloads history replay", |b| {
         b.to_async(&tokio_runtime).iter_batched(

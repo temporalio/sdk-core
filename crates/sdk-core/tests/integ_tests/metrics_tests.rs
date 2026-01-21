@@ -1,12 +1,12 @@
 use crate::{
     common::{
-        ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
+        ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API, eventually,
         get_integ_client, get_integ_connection, get_integ_runtime_options,
         get_integ_server_options, get_integ_telem_options, prom_metrics,
     },
     integ_tests::mk_nexus_endpoint,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use assert_matches::assert_matches;
 use std::{
     collections::HashMap,
@@ -732,36 +732,41 @@ async fn docker_metrics_with_prometheus(
     .await
     .unwrap();
 
-    // Give Prometheus time to scrape metrics
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    eventually(
+        || async {
+            // Query Prometheus API for metrics
+            let client = reqwest::Client::new();
+            let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
+            let response = client
+                .get(PROMETHEUS_QUERY_API)
+                .query(&[("query", query.clone())])
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await?;
 
-    // Query Prometheus API for metrics
-    let client = reqwest::Client::new();
-    let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
-    let response = client
-        .get(PROMETHEUS_QUERY_API)
-        .query(&[("query", query)])
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-
-    // Validate the Prometheus response
-    if let Some(data) = response["data"]["result"].as_array() {
-        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
-        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
-        assert_eq!(data[0]["metric"]["job"], "otel-collector");
-        assert!(
-            data[0]["metric"]["task_queue"]
-                .as_str()
-                .unwrap()
-                .starts_with(test_name)
-        );
-    } else {
-        panic!("Invalid Prometheus response: {response:?}");
-    }
+            // Validate the Prometheus response
+            if let Some(data) = response["data"]["result"].as_array() {
+                if data.is_empty() {
+                    bail!("No metrics found for query: {query}");
+                }
+                assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+                assert_eq!(data[0]["metric"]["job"], "otel-collector");
+                assert!(
+                    data[0]["metric"]["task_queue"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with(test_name)
+                );
+            } else {
+                bail!("Invalid Prometheus response: {response:?}");
+            }
+            Ok(())
+        },
+        Duration::from_secs(45),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
