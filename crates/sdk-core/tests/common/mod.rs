@@ -6,7 +6,7 @@ pub(crate) mod fake_grpc_server;
 pub(crate) mod http_proxy;
 pub(crate) mod workflows;
 
-use anyhow::{Error, bail};
+use anyhow::bail;
 use futures_util::{
     Future, StreamExt, future, stream,
     stream::{Stream, TryStreamExt},
@@ -32,7 +32,8 @@ use temporalio_client::{
     Client, ClientTlsOptions, Connection, ConnectionOptions, GetWorkflowResultOptions,
     NamespacedClient, TlsOptions, UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait,
     WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle, WorkflowOptions,
-    WorkflowService, errors::StartWorkflowError,
+    WorkflowService,
+    errors::{StartWorkflowError, WorkflowInteractionError},
 };
 use temporalio_common::{
     WorkflowDefinition,
@@ -444,7 +445,7 @@ impl CoreWfStarter {
 
     pub(crate) async fn wait_for_default_wf_finish(
         &self,
-    ) -> Result<WorkflowExecutionResult<RawValue>, Error> {
+    ) -> Result<WorkflowExecutionResult<RawValue>, WorkflowInteractionError> {
         self.initted_worker
             .get()
             .unwrap()

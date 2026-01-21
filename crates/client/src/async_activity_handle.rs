@@ -1,6 +1,6 @@
 //! Handle for completing activities asynchronously via a client.
 
-use crate::{NamespacedClient, WorkflowService};
+use crate::{NamespacedClient, WorkflowService, errors::AsyncActivityError};
 use temporalio_common::protos::{
     TaskToken,
     temporal::api::{
@@ -15,29 +15,7 @@ use temporalio_common::protos::{
         },
     },
 };
-use tonic::{Code, IntoRequest};
-
-/// Errors that can occur when completing an activity asynchronously.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum AsyncActivityError {
-    /// The activity was not found (e.g., already completed, cancelled, or never existed).
-    #[error("Activity not found")]
-    NotFound(#[source] tonic::Status),
-    /// An uncategorized error from the server.
-    #[error("Server error: {0}")]
-    Uncategorized(#[from] tonic::Status),
-}
-
-impl AsyncActivityError {
-    fn from_status(status: tonic::Status) -> Self {
-        if status.code() == Code::NotFound {
-            Self::NotFound(status)
-        } else {
-            Self::Uncategorized(status)
-        }
-    }
-}
+use tonic::IntoRequest;
 
 /// Identifies an async activity for completion outside a worker.
 #[derive(Debug, Clone)]

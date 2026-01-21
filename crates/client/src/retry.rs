@@ -1,5 +1,5 @@
 use crate::{
-    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, Result,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY,
     raw::IsUserLongPoll,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
@@ -157,7 +157,7 @@ pub(crate) fn make_future_retry<R, F, Fut>(
 ) -> FutureRetry<F, TonicErrorHandler<SystemClock>>
 where
     F: FnMut() -> Fut + Unpin,
-    Fut: Future<Output = Result<R>>,
+    Fut: Future<Output = Result<R, tonic::Status>>,
 {
     FutureRetry::new(
         factory,

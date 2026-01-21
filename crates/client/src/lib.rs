@@ -26,9 +26,7 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RETRYABLE_ERROR_CODES},
 };
-pub use async_activity_handle::{
-    ActivityIdentifier, AsyncActivityError, AsyncActivityHandle, HeartbeatResponse,
-};
+pub use async_activity_handle::{ActivityIdentifier, AsyncActivityHandle, HeartbeatResponse};
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
@@ -110,8 +108,6 @@ pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// A connection to the Temporal service.
 ///
@@ -682,7 +678,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         &self,
         query: impl Into<String>,
         opts: CountWorkflowsOptions,
-    ) -> impl Future<Output = Result<WorkflowExecutionCount>>;
+    ) -> impl Future<Output = Result<WorkflowExecutionCount, ClientError>>;
 
     /// Get a handle to complete an activity asynchronously.
     ///
@@ -834,19 +830,19 @@ impl From<workflow::WorkflowExecutionInfo> for WorkflowExecution {
 /// A stream of workflow executions from a list query.
 /// Internally paginates through results from the server.
 pub struct ListWorkflowsStream {
-    inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, tonic::Status>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
 }
 
 impl ListWorkflowsStream {
     fn new(
-        inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, tonic::Status>> + Send>>,
+        inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
     ) -> Self {
         Self { inner }
     }
 }
 
 impl Stream for ListWorkflowsStream {
-    type Item = Result<WorkflowExecution, tonic::Status>;
+    type Item = Result<WorkflowExecution, ClientError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.inner.as_mut().poll_next(cx)
@@ -1111,7 +1107,7 @@ where
                                 None
                             }
                         }
-                        Err(e) => Some((Err(e), (next_page_token, buffer, yielded, true))),
+                        Err(e) => Some((Err(e.into()), (next_page_token, buffer, yielded, true))),
                     }
                 }
             },
@@ -1124,7 +1120,7 @@ where
         &self,
         query: impl Into<String>,
         _opts: CountWorkflowsOptions,
-    ) -> Result<WorkflowExecutionCount> {
+    ) -> Result<WorkflowExecutionCount, ClientError> {
         let resp = WorkflowService::count_workflow_executions(
             &mut self.clone(),
             CountWorkflowExecutionsRequest {

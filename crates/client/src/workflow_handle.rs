@@ -2,8 +2,8 @@ use crate::{
     CancelWorkflowOptions, DescribeWorkflowOptions, FetchHistoryOptions, GetWorkflowResultOptions,
     NamespacedClient, QueryOptions, SignalOptions, StartUpdateOptions, TerminateWorkflowOptions,
     UpdateOptions, WorkflowClientTrait, WorkflowService, WorkflowUpdateWaitStage,
+    errors::{QueryError, UpdateError, WorkflowInteractionError},
 };
-use anyhow::{anyhow, bail};
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
@@ -280,7 +280,7 @@ where
     pub async fn get_result(
         &self,
         opts: GetWorkflowResultOptions,
-    ) -> Result<WorkflowExecutionResult<W::Output>, anyhow::Error>
+    ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>
     where
         CT: WorkflowClientTrait,
     {
@@ -346,16 +346,21 @@ where
                             run_id = attrs.new_execution_run_id;
                             continue;
                         } else {
-                            bail!("New execution run id was empty in continue as new event!");
+                            return Err(WorkflowInteractionError::Other(
+                                "New execution run id was empty in continue as new event!".into(),
+                            ));
                         }
                     } else {
                         Ok(WorkflowExecutionResult::ContinuedAsNew)
                     }
                 }
-                o => Err(anyhow!(
-                    "Server returned an event that didn't match the CloseEvent filter. \
-                     This is either a server bug or a new event the SDK does not understand. \
-                     Event details: {o:?}"
+                o => Err(WorkflowInteractionError::Other(
+                    format!(
+                        "Server returned an event that didn't match the CloseEvent filter. \
+                         This is either a server bug or a new event the SDK does not understand. \
+                         Event details: {o:?}"
+                    )
+                    .into(),
                 )),
             };
         }
@@ -367,7 +372,7 @@ where
         signal: S,
         input: S::Input,
         opts: SignalOptions,
-    ) -> Result<(), anyhow::Error>
+    ) -> Result<(), WorkflowInteractionError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
         S: SignalDefinition<Workflow = W>,
@@ -397,7 +402,8 @@ where
             }
             .into_request(),
         )
-        .await?;
+        .await
+        .map_err(WorkflowInteractionError::from_status)?;
         Ok(())
     }
 
@@ -407,7 +413,7 @@ where
         query: Q,
         input: Q::Input,
         opts: QueryOptions,
-    ) -> Result<Q::Output, anyhow::Error>
+    ) -> Result<Q::Output, QueryError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
         Q: QueryDefinition<Workflow = W>,
@@ -437,8 +443,13 @@ where
                 }
                 .into_request(),
             )
-            .await?
+            .await
+            .map_err(QueryError::from_status)?
             .into_inner();
+
+        if let Some(rejected) = response.query_rejected {
+            return Err(QueryError::Rejected(rejected));
+        }
 
         let result_payloads = response
             .query_result
@@ -447,7 +458,7 @@ where
 
         dc.from_payloads(&SerializationContextData::Workflow, result_payloads)
             .await
-            .map_err(|e| anyhow!("Failed to deserialize query result: {}", e))
+            .map_err(QueryError::from)
     }
 
     /// Send an update to the workflow and wait for it to complete, returning the result.
@@ -456,7 +467,7 @@ where
         update: U,
         input: U::Input,
         options: UpdateOptions,
-    ) -> Result<U::Output, anyhow::Error>
+    ) -> Result<U::Output, UpdateError>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -484,7 +495,7 @@ where
         update: U,
         input: U::Input,
         options: StartUpdateOptions,
-    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, anyhow::Error>
+    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, UpdateError>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -531,7 +542,8 @@ where
             }
             .into_request(),
         )
-        .await?
+        .await
+        .map_err(UpdateError::from_status)?
         .into_inner();
 
         // Extract run_id from response if available
@@ -554,7 +566,7 @@ where
     }
 
     /// Request cancellation of this workflow.
-    pub async fn cancel(&self, opts: CancelWorkflowOptions) -> Result<(), anyhow::Error>
+    pub async fn cancel(&self, opts: CancelWorkflowOptions) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -580,12 +592,16 @@ where
             }
             .into_request(),
         )
-        .await?;
+        .await
+        .map_err(WorkflowInteractionError::from_status)?;
         Ok(())
     }
 
     /// Terminate this workflow.
-    pub async fn terminate(&self, opts: TerminateWorkflowOptions) -> Result<(), anyhow::Error>
+    pub async fn terminate(
+        &self,
+        opts: TerminateWorkflowOptions,
+    ) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -609,7 +625,8 @@ where
             }
             .into_request(),
         )
-        .await?;
+        .await
+        .map_err(WorkflowInteractionError::from_status)?;
         Ok(())
     }
 
@@ -617,7 +634,7 @@ where
     pub async fn describe(
         &self,
         _opts: DescribeWorkflowOptions,
-    ) -> Result<WorkflowExecutionDescription, anyhow::Error>
+    ) -> Result<WorkflowExecutionDescription, WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -632,7 +649,8 @@ where
             }
             .into_request(),
         )
-        .await?
+        .await
+        .map_err(WorkflowInteractionError::from_status)?
         .into_inner();
         Ok(WorkflowExecutionDescription::new(response))
     }
@@ -640,7 +658,7 @@ where
     pub async fn fetch_history(
         &self,
         opts: FetchHistoryOptions,
-    ) -> Result<WorkflowHistory, anyhow::Error>
+    ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -653,7 +671,7 @@ where
         &self,
         run_id: &str,
         opts: &FetchHistoryOptions,
-    ) -> Result<WorkflowHistory, anyhow::Error>
+    ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -677,7 +695,8 @@ where
                 }
                 .into_request(),
             )
-            .await?
+            .await
+            .map_err(WorkflowInteractionError::from_status)?
             .into_inner();
 
             if let Some(history) = response.history {
@@ -729,7 +748,7 @@ where
     CT: WorkflowService + NamespacedClient + Clone,
 {
     /// Wait for the update to complete and return the result.
-    pub async fn get_result(&self) -> Result<T, anyhow::Error>
+    pub async fn get_result(&self) -> Result<T, UpdateError>
     where
         T: temporalio_common::data_converters::TemporalDeserializable,
     {
@@ -754,12 +773,13 @@ where
                 }
                 .into_request(),
             )
-            .await?
+            .await
+            .map_err(UpdateError::from_status)?
             .into_inner();
 
             response
                 .outcome
-                .ok_or_else(|| anyhow!("Update poll returned no outcome"))?
+                .ok_or_else(|| UpdateError::Other("Update poll returned no outcome".into()))?
         };
 
         match outcome.value {
@@ -768,11 +788,13 @@ where
                 .data_converter()
                 .from_payloads(&SerializationContextData::Workflow, success.payloads)
                 .await
-                .map_err(|e| anyhow!("Failed to deserialize update result: {}", e)),
+                .map_err(UpdateError::from),
             Some(update::v1::outcome::Value::Failure(failure)) => {
-                Err(anyhow!("Update failed: {:?}", failure))
+                Err(UpdateError::Failed(Box::new(failure)))
             }
-            None => Err(anyhow!("Update returned no outcome value")),
+            None => Err(UpdateError::Other(
+                "Update returned no outcome value".into(),
+            )),
         }
     }
 }
