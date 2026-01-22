@@ -26,8 +26,7 @@ use temporalio_common::protos::{
         },
         deployment,
         enums::v1::{
-            TaskQueueKind, VersioningBehavior,  WorkerVersioningMode,
-            WorkflowTaskFailedCause,
+            TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
         },
         failure::v1::Failure,
         nexus,
