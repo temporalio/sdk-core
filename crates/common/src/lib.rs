@@ -16,9 +16,8 @@ use crate::{
         WorkerValidationError,
     },
     protos::coresdk::{
-        ActivityHeartbeat, ActivityTaskCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, NamespaceInfo,
         activity_task::ActivityTask,
-        NamespaceInfo,
         nexus::{NexusTask, NexusTaskCompletion},
         workflow_activation::WorkflowActivation,
         workflow_completion::WorkflowActivationCompletion,

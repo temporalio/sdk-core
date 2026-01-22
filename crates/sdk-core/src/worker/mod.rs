@@ -74,11 +74,10 @@ use temporalio_common::{
     protos::{
         TaskToken,
         coresdk::{
-            ActivityTaskCompletion,
+            ActivityTaskCompletion, NamespaceInfo,
             activity_result::activity_execution_result,
             activity_task::ActivityTask,
             namespace_info,
-            NamespaceInfo,
             nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
             workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
             workflow_completion::WorkflowActivationCompletion,
@@ -168,22 +167,20 @@ pub(crate) struct WorkerTelemetry {
 impl WorkerTrait for Worker {
     async fn validate(&self) -> Result<(), WorkerValidationError> {
         self.validate_namespace().await?;
-        return Ok(())
+        return Ok(());
     }
 
     async fn validate_namespace(&self) -> Result<NamespaceInfo, WorkerValidationError> {
         match self.client.describe_namespace().await {
             Ok(info) => {
                 let limits = info.namespace_info.and_then(|ns_info| {
-                    ns_info.limits.map(|api_limits| {
-                        namespace_info::Limits {
-                            blob_size_limit_error: api_limits.blob_size_limit_error,
-                            memo_size_limit_error: api_limits.memo_size_limit_error,
-                        }
+                    ns_info.limits.map(|api_limits| namespace_info::Limits {
+                        blob_size_limit_error: api_limits.blob_size_limit_error,
+                        memo_size_limit_error: api_limits.memo_size_limit_error,
                     })
                 });
                 return Ok(NamespaceInfo { limits });
-            },
+            }
             Err(e) => {
                 if e.code() == tonic::Code::Unimplemented {
                     // Ignore if unimplemented since we wouldn't want to fail against an old server, for
