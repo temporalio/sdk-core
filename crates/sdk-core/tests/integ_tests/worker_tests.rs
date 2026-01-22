@@ -97,7 +97,7 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
     )
     .unwrap();
 
-    let res = worker.validate_namespace().await;
+    let res = worker.validate().await;
     assert_matches!(
         res,
         Err(WorkerValidationError::NamespaceDescribeError { .. })

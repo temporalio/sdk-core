@@ -165,12 +165,7 @@ pub(crate) struct WorkerTelemetry {
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
-    async fn validate(&self) -> Result<(), WorkerValidationError> {
-        self.validate_namespace().await?;
-        return Ok(());
-    }
-
-    async fn validate_namespace(&self) -> Result<NamespaceInfo, WorkerValidationError> {
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
         match self.client.describe_namespace().await {
             Ok(info) => {
                 let limits = info.namespace_info.and_then(|ns_info| {

@@ -35,13 +35,7 @@ pub trait Worker: Send + Sync {
     /// Validate that the worker can properly connect to server, plus any other validation that
     /// needs to be done asynchronously. Lang SDKs should call this function once before calling
     /// any others.
-    /// TODO: Move all SDKs over to validate_namespace and then remove
-    async fn validate(&self) -> Result<(), WorkerValidationError>;
-
-    /// Validate that the worker can properly connect to server, plus any other validation that
-    /// needs to be done asynchronously. Lang SDKs should call this function once before calling
-    /// any others.
-    async fn validate_namespace(&self) -> Result<NamespaceInfo, WorkerValidationError>;
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError>;
 
     /// Ask the worker for some work, returning a [WorkflowActivation]. It is then the language
     /// SDK's responsibility to call the appropriate workflow code with the provided inputs. Blocks
@@ -162,12 +156,8 @@ impl<W> Worker for Arc<W>
 where
     W: Worker + ?Sized,
 {
-    async fn validate(&self) -> Result<(), WorkerValidationError> {
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
         (**self).validate().await
-    }
-
-    async fn validate_namespace(&self) -> Result<NamespaceInfo, WorkerValidationError> {
-        (**self).validate_namespace().await
     }
 
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {

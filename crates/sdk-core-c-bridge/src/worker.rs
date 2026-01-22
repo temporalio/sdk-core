@@ -628,7 +628,7 @@ pub extern "C" fn temporal_core_worker_validate(
     let user_data = UserDataHandle(user_data);
     let core_worker = worker.worker.as_ref().unwrap().clone();
     worker.runtime.core.tokio_handle().spawn(async move {
-        let fail = match core_worker.validate_namespace().await {
+        let fail = match core_worker.validate().await {
             Ok(_) => std::ptr::null(),
             Err(err) => worker
                 .runtime
