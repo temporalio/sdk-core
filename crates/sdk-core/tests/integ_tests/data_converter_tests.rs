@@ -59,6 +59,7 @@ impl TemporalSerializable for TrackedWrapper {
                 hm
             },
             data: json,
+            external_payloads: vec![],
         })
     }
 }

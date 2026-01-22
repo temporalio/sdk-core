@@ -1316,12 +1316,12 @@ impl Worker {
         {
             *self.status.write() = WorkerStatus::ShuttingDown;
         }
-        // First, unregister worker from the client
+        // First, disable Eager Workflow Start
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
                 .workers()
-                .unregister_worker(self.worker_instance_key);
+                .unregister_slot_provider(self.worker_instance_key);
         }
 
         // Push a BumpStream message to the workflow activation queue. This ensures that

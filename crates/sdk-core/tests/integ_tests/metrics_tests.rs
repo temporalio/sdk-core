@@ -37,12 +37,16 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::RetryPolicy,
-            enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowIdReusePolicy},
+            enums::v1::{
+                NexusHandlerErrorRetryBehavior, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
+            },
             failure::v1::Failure,
-            nexus,
-            nexus::v1::{
-                HandlerError, StartOperationResponse, UnsuccessfulOperationError, request::Variant,
-                start_operation_response,
+            nexus::{
+                self,
+                v1::{
+                    HandlerError, StartOperationResponse, UnsuccessfulOperationError,
+                    request::Variant, start_operation_response,
+                },
             },
             workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
         },
@@ -272,7 +276,8 @@ async fn one_slot_worker_reports_available_slot() {
                 UntypedWorkflow::new("whatever"),
                 RawValue::default(),
                 WorkflowOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
-                    .id_reuse_policy(WorkflowIdReusePolicy::TerminateIfRunning)
+                    .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
+                    .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
                     .execution_timeout(Duration::from_secs(5))
                     .build(),
             )

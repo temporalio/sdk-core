@@ -500,6 +500,7 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
                 hm
             },
             data: as_json,
+            external_payloads: vec![],
         })
     }
 
@@ -547,6 +548,7 @@ where
                 hm
             },
             data: as_proto,
+            external_payloads: vec![],
         })
     }
 }

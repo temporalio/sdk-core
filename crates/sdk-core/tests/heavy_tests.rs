@@ -26,7 +26,9 @@ use temporalio_client::{
     GetWorkflowResultOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
     WorkflowOptions,
 };
-use temporalio_common::data_converters::RawValue;
+use temporalio_common::{
+    data_converters::RawValue, protos::temporal::api::enums::v1::WorkflowIdConflictPolicy,
+};
 use temporalio_macros::{activities, workflow, workflow_methods};
 
 use temporalio_common::{
@@ -195,7 +197,8 @@ async fn chunky_activities_resource_based() {
                     ChunkyActivityWf::run,
                     (),
                     WorkflowOptions::new(tq, wf_id)
-                        .id_reuse_policy(WorkflowIdReusePolicy::TerminateIfRunning)
+                        .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
+                        .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
                         .build(),
                 )
                 .await

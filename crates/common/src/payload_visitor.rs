@@ -280,6 +280,7 @@ mod tests {
         Payload {
             metadata: HashMap::new(),
             data: data.as_bytes().to_vec(),
+            external_payloads: vec![],
         }
     }
 
