@@ -1,25 +1,28 @@
 use crate::common::{CoreWfStarter, NAMESPACE, eventually, get_integ_client};
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{Namespace, RegisterNamespaceOptions, WorkflowClientTrait};
+use temporalio_client::{Namespace, NamespacedClient, RegisterNamespaceOptions, WorkflowService};
 use temporalio_common::protos::{
     coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     temporal::api::{
         filter::v1::{StartTimeFilter, WorkflowExecutionFilter},
         workflowservice::v1::{
-            list_closed_workflow_executions_request, list_open_workflow_executions_request,
+            ListClosedWorkflowExecutionsRequest, ListOpenWorkflowExecutionsRequest,
+            RegisterNamespaceRequest, list_closed_workflow_executions_request,
+            list_open_workflow_executions_request,
         },
     },
 };
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
+use tonic::IntoRequest;
 
 #[tokio::test]
 async fn client_list_open_closed_workflow_executions() {
     let wf_name = "client_list_open_closed_workflow_executions".to_owned();
     let mut starter = CoreWfStarter::new(&wf_name);
     let core = starter.get_worker().await;
-    let client = starter.get_client().await;
+    let mut client = starter.get_client().await;
 
     let earliest = std::time::SystemTime::now();
     let latest = earliest + Duration::from_secs(60);
@@ -39,29 +42,38 @@ async fn client_list_open_closed_workflow_executions() {
         earliest_time: Some(earliest).map(|t| t.into()),
         latest_time: Some(latest).map(|t| t.into()),
     };
-    let filter =
-        list_open_workflow_executions_request::Filters::ExecutionFilter(WorkflowExecutionFilter {
-            workflow_id: wf_name.clone(),
-            run_id: "".to_owned(),
-        });
     let open_workflows = eventually(
-        || async {
-            let open_workflows = client
-                .list_open_workflow_executions(
-                    1,
-                    Default::default(),
-                    Some(start_time_filter),
-                    Some(filter.clone()),
-                )
-                .await
-                .unwrap();
-            if open_workflows.executions.len() == 1 {
-                Ok(open_workflows)
-            } else {
-                Err(format!(
-                    "Expected 1 open workflow, got {}",
-                    open_workflows.executions.len()
-                ))
+        || {
+            let mut cc = client.clone();
+            let filter = list_open_workflow_executions_request::Filters::ExecutionFilter(
+                WorkflowExecutionFilter {
+                    workflow_id: wf_name.clone(),
+                    run_id: "".to_owned(),
+                },
+            );
+            async move {
+                let open_workflows = cc
+                    .list_open_workflow_executions(
+                        ListOpenWorkflowExecutionsRequest {
+                            namespace: cc.namespace(),
+                            maximum_page_size: 1,
+                            start_time_filter: Some(start_time_filter),
+                            filters: Some(filter.clone()),
+                            ..Default::default()
+                        }
+                        .into_request(),
+                    )
+                    .await
+                    .unwrap()
+                    .into_inner();
+                if open_workflows.executions.len() == 1 {
+                    Ok(open_workflows)
+                } else {
+                    Err(format!(
+                        "Expected 1 open workflow, got {}",
+                        open_workflows.executions.len()
+                    ))
+                }
             }
         },
         Duration::from_secs(5),
@@ -82,23 +94,28 @@ async fn client_list_open_closed_workflow_executions() {
     for _ in 1..=5 {
         let closed_workflows = client
             .list_closed_workflow_executions(
-                1,
-                Default::default(),
-                Some(StartTimeFilter {
-                    earliest_time: Some(earliest).map(|t| t.into()),
-                    latest_time: Some(latest).map(|t| t.into()),
-                }),
-                Some(
-                    list_closed_workflow_executions_request::Filters::ExecutionFilter(
-                        WorkflowExecutionFilter {
-                            workflow_id: wf_name.clone(),
-                            run_id: run_id.clone(),
-                        },
+                ListClosedWorkflowExecutionsRequest {
+                    namespace: client.namespace(),
+                    maximum_page_size: 1,
+                    start_time_filter: Some(StartTimeFilter {
+                        earliest_time: Some(earliest).map(|t| t.into()),
+                        latest_time: Some(latest).map(|t| t.into()),
+                    }),
+                    filters: Some(
+                        list_closed_workflow_executions_request::Filters::ExecutionFilter(
+                            WorkflowExecutionFilter {
+                                workflow_id: wf_name.clone(),
+                                run_id: run_id.clone(),
+                            },
+                        ),
                     ),
-                ),
+                    ..Default::default()
+                }
+                .into_request(),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .into_inner();
         if closed_workflows.executions.len() == 1 {
             let workflow = &closed_workflows.executions[0];
             if workflow.execution.as_ref().unwrap().workflow_id == wf_name {
@@ -120,8 +137,8 @@ async fn client_create_namespace() {
         .description("it's alive")
         .build();
 
-    client
-        .register_namespace(register_options.clone())
+    let req: RegisterNamespaceRequest = register_options.clone().into();
+    WorkflowService::register_namespace(&mut client.as_ref().clone(), req.into_request())
         .await
         .unwrap();
 
@@ -131,13 +148,17 @@ async fn client_create_namespace() {
     let wait_time = Duration::from_secs(1);
     loop {
         attempts += 1;
-        let resp = client
-            .describe_namespace(Namespace::Name(register_options.namespace.clone()))
-            .await;
+        let resp = WorkflowService::describe_namespace(
+            &mut client.as_ref().clone(),
+            Namespace::Name(register_options.namespace.clone())
+                .into_describe_namespace_request()
+                .into_request(),
+        )
+        .await;
 
         match resp {
             Ok(n) => {
-                let namespace_info = n.namespace_info.unwrap();
+                let namespace_info = n.into_inner().namespace_info.unwrap();
                 assert_eq!(namespace_info.name, register_options.namespace);
                 assert_eq!(namespace_info.description, register_options.description);
                 return;
@@ -156,9 +177,14 @@ async fn client_create_namespace() {
 async fn client_describe_namespace() {
     let client = Arc::new(get_integ_client(NAMESPACE.to_string(), None).await);
 
-    let namespace_result = client
-        .describe_namespace(Namespace::Name(NAMESPACE.to_owned()))
-        .await
-        .unwrap();
+    let namespace_result = WorkflowService::describe_namespace(
+        &mut client.as_ref().clone(),
+        Namespace::Name(NAMESPACE.to_owned())
+            .into_describe_namespace_request()
+            .into_request(),
+    )
+    .await
+    .unwrap()
+    .into_inner();
     assert_eq!(namespace_result.namespace_info.unwrap().name, NAMESPACE);
 }

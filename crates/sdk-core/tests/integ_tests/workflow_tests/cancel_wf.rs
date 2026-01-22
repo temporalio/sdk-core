@@ -1,6 +1,9 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
-use temporalio_client::WorkflowClientTrait;
+use temporalio_client::{
+    CancelWorkflowOptions, DescribeWorkflowOptions, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowOptions,
+};
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
@@ -9,25 +12,34 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
-async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
-    let mut reason = "".to_string();
-    let cancelled = tokio::select! {
-        _ = ctx.timer(Duration::from_secs(500)) => false,
-        r = ctx.cancelled() => {
-            reason = r;
-            true
+#[workflow]
+#[derive(Default)]
+struct CancelledWf;
+
+#[workflow_methods]
+impl CancelledWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let mut reason = "".to_string();
+        let cancelled = tokio::select! {
+            _ = ctx.timer(Duration::from_secs(500)) => false,
+            r = ctx.cancelled() => {
+                reason = r;
+                true
+            }
+        };
+
+        assert_eq!(reason, "Dieee");
+
+        if cancelled {
+            Ok(WfExitValue::Cancelled)
+        } else {
+            panic!("Should have been cancelled")
         }
-    };
-
-    assert_eq!(reason, "Dieee");
-
-    if cancelled {
-        Ok(WfExitValue::Cancelled)
-    } else {
-        panic!("Should have been cancelled")
     }
 }
 
@@ -38,15 +50,23 @@ async fn cancel_during_timer() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_string(), cancelled_wf);
-    starter.start_with_worker(wf_name, &mut worker).await;
-    let wf_id = starter.get_task_queue().to_string();
+    worker.register_workflow::<CancelledWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = task_queue.clone();
+    let wf_handle = worker
+        .submit_workflow(
+            CancelledWf::run,
+            (),
+            WorkflowOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
 
     let canceller = async {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
-        client
-            .cancel_workflow_execution(wf_id.clone(), None, "Dieee".to_string(), None)
+        wf_handle
+            .cancel(CancelWorkflowOptions::builder().reason("Dieee").build())
             .await
             .unwrap();
     };
@@ -54,19 +74,28 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = client
-        .describe_workflow_execution(wf_id, None)
+        .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
+        .describe(DescribeWorkflowOptions::default())
         .await
         .unwrap();
 
     assert_eq!(
-        desc.workflow_execution_info.unwrap().status,
+        desc.raw_description.workflow_execution_info.unwrap().status,
         WorkflowExecutionStatus::Canceled as i32
     );
 }
 
-async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.timer(Duration::from_millis(500)).await;
-    Ok(WfExitValue::Cancelled)
+#[workflow]
+#[derive(Default)]
+struct WfWithTimer;
+
+#[workflow_methods]
+impl WfWithTimer {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.timer(Duration::from_millis(500)).await;
+        Ok(WfExitValue::Cancelled)
+    }
 }
 
 #[tokio::test]
@@ -113,7 +142,7 @@ async fn wf_completing_with_cancelled() {
     });
 
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, wf_with_timer);
+    worker.register_workflow::<WfWithTimer>();
     worker.set_worker_interceptor(aai);
     worker.run().await.unwrap();
 }

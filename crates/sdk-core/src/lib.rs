@@ -35,9 +35,7 @@ pub mod test_help;
 pub use crate::worker::client::{
     PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient, WorkflowTaskCompletion,
 };
-pub use pollers::{
-    Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions, WorkflowClientTrait,
-};
+pub use pollers::{Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions};
 pub use temporalio_common::protos::TaskToken;
 pub use url::Url;
 pub use worker::{

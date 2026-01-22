@@ -1,12 +1,14 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities};
-use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
+use futures_util::{StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
-use std::{future, sync::Arc, time::Duration};
-use temporalio_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporalio_common::protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
-use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use std::{sync::Arc, time::Duration};
+use temporalio_client::{
+    SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+};
+use temporalio_common::{data_converters::RawValue, protos::coresdk::AsJsonPayloadExt};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::TunerHolder;
-use tokio_util::sync::CancellationToken;
 
 const FUZZY_SIG: &str = "fuzzy_sig";
 
@@ -29,48 +31,52 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
-    let sigchan = ctx
-        .make_signal_channel(FUZZY_SIG)
-        .map(|sd| FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal"));
-    let done = CancellationToken::new();
-    let done_setter = done.clone();
+#[workflow]
+#[derive(Default)]
+struct FuzzyWf {
+    done: bool,
+}
 
-    sigchan
-        .take_until(done.cancelled())
-        .for_each_concurrent(None, |action| match action {
-            FuzzyWfAction::DoAct => ctx
-                .start_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .map(|_| ())
-                .boxed(),
-            FuzzyWfAction::DoLocalAct => ctx
-                .start_local_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    LocalActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .map(|_| ())
-                .boxed(),
-            FuzzyWfAction::Shutdown => {
-                done_setter.cancel();
-                future::ready(()).boxed()
+#[workflow_methods]
+impl FuzzyWf {
+    #[run(name = "fuzzy_wf")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.wait_condition(|s| s.done).await;
+        Ok(().into())
+    }
+
+    #[signal(name = "fuzzy_sig")]
+    async fn fuzzy_signal(ctx: &mut WorkflowContext<Self>, action: FuzzyWfAction) {
+        match action {
+            FuzzyWfAction::Shutdown => ctx.state_mut(|s| s.done = true),
+            FuzzyWfAction::DoAct => {
+                let _ = ctx
+                    .start_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(5)),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                    .await;
             }
-        })
-        .await;
-
-    Ok(().into())
+            FuzzyWfAction::DoLocalAct => {
+                let _ = ctx
+                    .start_local_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        LocalActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(5)),
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap()
+                    .await;
+            }
+        }
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -81,24 +87,22 @@ async fn fuzzy_workflow() {
     starter.sdk_config.max_cached_workflows = 25;
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(25, 25, 100, 100));
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
+    worker.register_workflow::<FuzzyWf>();
     worker.register_activities(StdActivities);
 
     let client = starter.get_client().await;
+    let task_queue = starter.get_task_queue().to_owned();
 
-    let mut workflow_handles = vec![];
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}");
-        let rid = worker
-            .submit_wf(
-                wfid.clone(),
-                wf_name.to_owned(),
-                vec![],
-                WorkflowOptions::default(),
+        worker
+            .submit_workflow(
+                FuzzyWf::run,
+                (),
+                WorkflowOptions::new(task_queue.clone(), wfid).build(),
             )
             .await
             .unwrap();
-        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
     }
 
     let rng = SmallRng::seed_from_u64(523189);
@@ -109,13 +113,19 @@ async fn fuzzy_workflow() {
         for action in actions {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
-                    client.signal_workflow_execution(
-                        format!("{wf_name}_{i}"),
-                        "".to_string(),
-                        FUZZY_SIG.to_string(),
-                        [action.as_json_payload().expect("Serializes ok")].into_payloads(),
-                        None,
-                    )
+                    let handle =
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                    async move {
+                        handle
+                            .signal(
+                                UntypedSignal::new(FUZZY_SIG),
+                                RawValue::new(vec![
+                                    action.as_json_payload().expect("Serializes ok"),
+                                ]),
+                                SignalOptions::default(),
+                            )
+                            .await
+                    }
                 })
                 .collect();
             sends

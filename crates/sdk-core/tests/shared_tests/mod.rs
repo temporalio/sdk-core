@@ -1,7 +1,10 @@
 //! Shared tests that are meant to be run against both local dev server and cloud
 
 use crate::common::CoreWfStarter;
-use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::Relaxed},
+};
 use temporalio_common::{
     protos::temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause::GrpcMessageTooLarge},
@@ -11,30 +14,54 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::WfContext;
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 
 pub(crate) mod priority;
 
+#[workflow]
+struct OversizeGrpcMessageWf {
+    run_flag: Arc<AtomicBool>,
+}
+
+#[workflow_methods(factory_only)]
+impl OversizeGrpcMessageWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
+        if ctx.state(|wf| wf.run_flag.load(Relaxed)) {
+            Ok(vec![].into())
+        } else {
+            ctx.state(|wf| wf.run_flag.store(true, Relaxed));
+            let result: Vec<u8> = vec![0; 5000000];
+            Ok(result.into())
+        }
+    }
+}
+
 pub(crate) async fn grpc_message_too_large() {
+    let run_flag = Arc::new(AtomicBool::new(false));
+    let run_flag_clone = run_flag.clone();
+
     let wf_name = "oversize_grpc_message";
     let mut starter = CoreWfStarter::new_cloud_or_local(wf_name, "")
         .await
         .unwrap();
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
-    let mut core = starter.worker().await;
+    starter
+        .sdk_config
+        .register_workflow_with_factory(move || OversizeGrpcMessageWf {
+            run_flag: run_flag_clone.clone(),
+        });
 
-    static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
-    core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
-        if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
-            Ok(vec![].into())
-        } else {
-            OVERSIZE_GRPC_MESSAGE_RUN.store(true, Relaxed);
-            let result: Vec<u8> = vec![0; 5000000];
-            Ok(result.into())
-        }
-    });
-    starter.start_with_worker(wf_name, &mut core).await;
-    core.run_until_done().await.unwrap();
+    let mut sdk = starter.worker().await;
+    sdk.submit_workflow(
+        OversizeGrpcMessageWf::run,
+        (),
+        starter.workflow_options.clone(),
+    )
+    .await
+    .unwrap();
+    sdk.run_until_done().await.unwrap();
 
     let events = starter.get_history().await.events;
     // Depending on the version of server, it may terminate the workflow, or simply be a task

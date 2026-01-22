@@ -3,7 +3,6 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use crossbeam_utils::atomic::AtomicCell;
-use futures_util::StreamExt;
 use prost_types::{Duration as PbDuration, Timestamp};
 use std::{
     collections::HashSet,
@@ -15,12 +14,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, WfClientExt, WorkflowClientTrait, WorkflowService,
+    Client, NamespacedClient, SignalOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowService,
 };
 use temporalio_common::{
     prost_dur,
     protos::{
-        coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+        coresdk::AsJsonPayloadExt,
         temporal::api::{
             common::v1::RetryPolicy,
             enums::v1::WorkerStatus,
@@ -33,9 +33,9 @@ use temporalio_common::{
         build_otlp_metric_exporter, start_prometheus_metric_exporter,
     },
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WfContext,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -178,22 +178,33 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.start_activity(
-            NotifyActivities::pass_fail_act,
-            "pass".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct HeartbeatBasicWf;
+
+    #[workflow_methods]
+    impl HeartbeatBasicWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                NotifyActivities::pass_fail_act,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<HeartbeatBasicWf>();
 
     starter
-        .start_with_worker(wf_name.clone(), &mut worker)
+        .start_with_worker(HeartbeatBasicWf::name(), &mut worker)
         .await;
 
     let start_time = AtomicCell::new(None);
@@ -318,22 +329,34 @@ async fn docker_worker_heartbeat_tuner() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    // Run a workflow
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.start_activity(
-            StdActivities::echo,
-            "pass".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(1)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct HeartbeatTunerWf;
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow_methods]
+    impl HeartbeatTunerWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StdActivities::echo,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<HeartbeatTunerWf>();
+
+    starter
+        .start_with_worker(HeartbeatTunerWf::name(), &mut worker)
+        .await;
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
@@ -599,49 +622,56 @@ async fn worker_heartbeat_sticky_cache_miss() {
     let client = starter.get_client().await;
     let client_for_orchestrator = client.clone();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        let wf_marker = ctx
-            .get_args()
-            .first()
-            .and_then(|p| String::from_json_payload(p).ok())
-            .unwrap_or_else(|| "wf1".to_string());
+    #[workflow]
+    #[derive(Default)]
+    struct StickyCacheMissWf;
 
-        ctx.start_activity(
-            StickyCacheActivities::sticky_cache_history_act,
-            wf_marker.clone(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
+    #[workflow_methods]
+    impl StickyCacheMissWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>, wf_marker: String) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StickyCacheActivities::sticky_cache_history_act,
+                wf_marker.clone(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
 
-        Ok(().into())
-    });
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<StickyCacheMissWf>();
 
     let wf1_id = format!("{wf_name}_wf1");
     let wf2_id = format!("{wf_name}_wf2");
 
     let orchestrator = async move {
+        let mut opts = wf_opts.clone();
+        opts.workflow_id = wf1_id.clone();
         let wf1_run = submitter
             .submit_wf(
-                wf1_id.clone(),
-                wf_name.to_string(),
+                StickyCacheMissWf::name(),
                 vec!["wf1".to_string().as_json_payload().unwrap()],
-                wf_opts.clone(),
+                opts,
             )
             .await
             .unwrap();
 
         HISTORY_WF1_ACTIVITY_STARTED.notified().await;
 
+        let mut opts = wf_opts.clone();
+        opts.workflow_id = wf2_id.clone();
         let wf2_run = submitter
             .submit_wf(
-                wf2_id.clone(),
-                wf_name.to_string(),
+                StickyCacheMissWf::name(),
                 vec!["wf2".to_string().as_json_payload().unwrap()],
-                wf_opts,
+                opts,
             )
             .await
             .unwrap();
@@ -649,16 +679,18 @@ async fn worker_heartbeat_sticky_cache_miss() {
         HISTORY_WF2_ACTIVITY_STARTED.notified().await;
 
         HISTORY_WF1_ACTIVITY_FINISH.notify_one();
-        let handle1 = client_for_orchestrator.get_untyped_workflow_handle(wf1_id, wf1_run);
+        let handle1 =
+            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf1_id, wf1_run);
         handle1
-            .get_workflow_result(Default::default())
+            .get_result(Default::default())
             .await
             .expect("wf1 result");
 
         HISTORY_WF2_ACTIVITY_FINISH.notify_one();
-        let handle2 = client_for_orchestrator.get_untyped_workflow_handle(wf2_id, wf2_run);
+        let handle2 =
+            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf2_id, wf2_run);
         handle2
-            .get_workflow_result(Default::default())
+            .get_result(Default::default())
             .await
             .expect("wf2 result");
 
@@ -693,23 +725,36 @@ async fn worker_heartbeat_multiple_workers() {
     let client = starter.get_client().await;
     let starting_hb_len = list_worker_heartbeats(&client, String::new()).await.len();
 
+    #[workflow]
+    #[derive(Default)]
+    struct MultiWorkersWf;
+
+    #[workflow_methods]
+    impl MultiWorkersWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            Ok(().into())
+        }
+    }
+
     let mut worker_a = starter.worker().await;
-    worker_a.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
-        Ok(().into())
-    });
+    worker_a.register_workflow::<MultiWorkersWf>();
 
     let mut starter_b = starter.clone_no_worker();
     let mut worker_b = starter_b.worker().await;
-    worker_b.register_wf(wf_name.to_string(), |_ctx: WfContext| async move {
-        Ok(().into())
-    });
+    worker_b.register_workflow::<MultiWorkersWf>();
 
     let worker_a_key = worker_a.worker_instance_key().to_string();
     let worker_b_key = worker_b.worker_instance_key().to_string();
-    let _ = starter.start_with_worker(wf_name, &mut worker_a).await;
+    let _ = starter
+        .start_with_worker(MultiWorkersWf::name(), &mut worker_a)
+        .await;
     worker_a.run_until_done().await.unwrap();
 
-    let _ = starter_b.start_with_worker(wf_name, &mut worker_b).await;
+    let _ = starter_b
+        .start_with_worker(MultiWorkersWf::name(), &mut worker_b)
+        .await;
     worker_b.run_until_done().await.unwrap();
 
     sleep(Duration::from_secs(2)).await;
@@ -785,8 +830,6 @@ static ACT_FAIL: Notify = Notify::const_new();
 static WF_FAIL: Notify = Notify::const_new();
 #[tokio::test]
 async fn worker_heartbeat_failure_metrics() {
-    const WORKFLOW_CONTINUE_SIGNAL: &str = "workflow-continue";
-
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
@@ -810,45 +853,68 @@ async fn worker_heartbeat_failure_metrics() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        let _ = ctx
-            .start_activity(
-                FailingActivities::failing_act,
-                "boom".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    retry_policy: Some(RetryPolicy {
-                        initial_interval: Some(prost_dur!(from_millis(10))),
-                        backoff_coefficient: 1.0,
-                        maximum_attempts: 4,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
+    #[workflow]
+    #[derive(Default)]
+    struct FailureMetricsWf {
+        signal_received: bool,
+    }
 
-        if WF_COUNT.load(Ordering::Relaxed) == 0 {
-            WF_COUNT.fetch_add(1, Ordering::Relaxed);
-            WF_FAIL.notify_one();
-            panic!("expected WF panic");
+    #[workflow_methods]
+    impl FailureMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let _ = ctx
+                .start_activity(
+                    FailingActivities::failing_act,
+                    "boom".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        retry_policy: Some(RetryPolicy {
+                            initial_interval: Some(prost_dur!(from_millis(10))),
+                            backoff_coefficient: 1.0,
+                            maximum_attempts: 4,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+
+            if WF_COUNT.load(Ordering::Relaxed) == 0 {
+                WF_COUNT.fetch_add(1, Ordering::Relaxed);
+                WF_FAIL.notify_one();
+                panic!("expected WF panic");
+            }
+
+            ctx.wait_condition(|s| s.signal_received).await;
+            Ok(().into())
         }
 
-        // Signal here to avoid workflow from completing and shutdown heartbeat from sending
-        // before we check workflow_slots.last_interval_failure_tasks
-        let mut proceed_signal = ctx.make_signal_channel(WORKFLOW_CONTINUE_SIGNAL);
-        proceed_signal.next().await.unwrap();
-        Ok(().into())
-    });
+        #[signal]
+        fn handle_continue_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+            self.signal_received = true;
+        }
+    }
+
+    worker.register_workflow::<FailureMetricsWf>();
 
     let worker_key = worker_instance_key.to_string();
-    starter.workflow_options.retry_policy = Some(RetryPolicy {
-        maximum_attempts: 2,
-        ..Default::default()
-    });
-
-    let _ = starter.start_with_worker(wf_name, &mut worker).await;
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = starter.get_wf_id();
+    let handle = worker
+        .submit_workflow(
+            FailureMetricsWf::run,
+            (),
+            WorkflowOptions::new(task_queue, workflow_id)
+                .retry_policy(RetryPolicy {
+                    maximum_attempts: 2,
+                    ..Default::default()
+                })
+                .build(),
+        )
+        .await
+        .unwrap();
 
     let test_fut = async {
         ACT_FAIL.notified().await;
@@ -938,13 +1004,11 @@ async fn worker_heartbeat_failure_metrics() {
         )
         .await
         .unwrap();
-        client
-            .signal_workflow_execution(
-                starter.get_wf_id().to_string(),
-                String::new(),
-                WORKFLOW_CONTINUE_SIGNAL.to_string(),
-                None,
-                None,
+        handle
+            .signal(
+                FailureMetricsWf::handle_continue_signal,
+                (),
+                SignalOptions::default(),
             )
             .await
             .unwrap();
@@ -982,22 +1046,33 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.start_activity(
-            StdActivities::echo,
-            "pass".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(1)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct NoRuntimeHeartbeatWf;
+
+    #[workflow_methods]
+    impl NoRuntimeHeartbeatWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StdActivities::echo,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<NoRuntimeHeartbeatWf>();
 
     starter
-        .start_with_worker(wf_name.to_owned(), &mut worker)
+        .start_with_worker(NoRuntimeHeartbeatWf::name(), &mut worker)
         .await;
 
     worker.run_until_done().await.unwrap();
@@ -1043,22 +1118,33 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     let mut worker = starter.worker().await;
     let worker_instance_key = worker.worker_instance_key();
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.start_activity(
-            StdActivities::echo,
-            "pass".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(1)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct SkipClientWorkerSetCheckWf;
+
+    #[workflow_methods]
+    impl SkipClientWorkerSetCheckWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StdActivities::echo,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<SkipClientWorkerSetCheckWf>();
 
     starter
-        .start_with_worker(wf_name.to_owned(), &mut worker)
+        .start_with_worker(SkipClientWorkerSetCheckWf::name(), &mut worker)
         .await;
 
     worker.run_until_done().await.unwrap();

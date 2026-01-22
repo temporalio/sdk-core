@@ -17,7 +17,8 @@ use temporalio_common::{
     },
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::WorkerTestHelpers;
 use tokio::join;
 use tonic::IntoRequest;
@@ -156,19 +157,7 @@ async fn activity_has_deployment_stamp() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.start_activity(
-            StdActivities::echo,
-            "hi!".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        Ok(().into())
-    });
+    worker.register_workflow::<ActivityHasDeploymentStampWf>();
     let submitter = worker.get_submitter_handle();
     let shutdown_handle = worker.inner_mut().shutdown_handle();
 
@@ -210,12 +199,13 @@ async fn activity_has_deployment_stamp() {
             .await
             .unwrap();
 
+        let task_queue = starter.get_task_queue().to_owned();
+        let workflow_id = starter.get_wf_id();
         submitter
             .submit_wf(
-                starter.get_wf_id(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::default(),
+                WorkflowOptions::new(task_queue, workflow_id).build(),
             )
             .await
             .unwrap();
@@ -242,4 +232,26 @@ async fn activity_has_deployment_stamp() {
         .unwrap();
     // TODO: Can't actually verify this at the moment as the deployment options are not transferred
     //   to the event.
+}
+
+#[workflow]
+#[derive(Default)]
+struct ActivityHasDeploymentStampWf;
+
+#[workflow_methods]
+impl ActivityHasDeploymentStampWf {
+    #[run(name = "activity_has_deployment_stamp")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.start_activity(
+            StdActivities::echo,
+            "hi!".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .await;
+        Ok(().into())
+    }
 }

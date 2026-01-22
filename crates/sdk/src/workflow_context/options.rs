@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use temporalio_client::{Priority, WorkflowOptions};
+use temporalio_client::Priority;
 use temporalio_common::protos::{
     coresdk::{
         AsJsonPayloadExt,
@@ -12,8 +12,8 @@ use temporalio_common::protos::{
         },
     },
     temporal::api::{
-        common::v1::{Payload, RetryPolicy},
-        enums::v1::ParentClosePolicy,
+        common::v1::{Payload, RetryPolicy, SearchAttributes},
+        enums::v1::{ParentClosePolicy, WorkflowIdReusePolicy},
         sdk::v1::UserMetadata,
     },
 };
@@ -225,14 +225,26 @@ pub struct ChildWorkflowOptions {
     pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
     pub cancel_type: ChildWorkflowCancellationType,
-    /// Common options
-    pub options: WorkflowOptions,
     /// How to respond to parent workflow ending
     pub parent_close_policy: ParentClosePolicy,
     /// Static summary of the child workflow
     pub static_summary: Option<String>,
     /// Static details of the child workflow
     pub static_details: Option<String>,
+    /// Set the policy for reusing the workflow id
+    pub id_reuse_policy: WorkflowIdReusePolicy,
+    /// Optionally set the execution timeout for the workflow
+    pub execution_timeout: Option<Duration>,
+    /// Optionally indicates the default run timeout for a workflow run
+    pub run_timeout: Option<Duration>,
+    /// Optionally indicates the default task timeout for a workflow run
+    pub task_timeout: Option<Duration>,
+    /// Optionally set a cron schedule for the workflow
+    pub cron_schedule: Option<String>,
+    /// Optionally associate extra search attributes with a workflow
+    pub search_attributes: Option<HashMap<String, Payload>>,
+    /// Priority for the workflow
+    pub priority: Option<Priority>,
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
@@ -254,23 +266,18 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                     task_queue: self.task_queue.unwrap_or_default(),
                     input: self.input,
                     cancellation_type: self.cancel_type as i32,
-                    workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
+                    workflow_id_reuse_policy: self.id_reuse_policy as i32,
                     workflow_execution_timeout: self
-                        .options
                         .execution_timeout
                         .and_then(|d| d.try_into().ok()),
-                    workflow_run_timeout: self
-                        .options
-                        .execution_timeout
-                        .and_then(|d| d.try_into().ok()),
-                    workflow_task_timeout: self
-                        .options
-                        .task_timeout
-                        .and_then(|d| d.try_into().ok()),
-                    search_attributes: self.options.search_attributes.unwrap_or_default(),
-                    cron_schedule: self.options.cron_schedule.unwrap_or_default(),
+                    workflow_run_timeout: self.execution_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: self.task_timeout.and_then(|d| d.try_into().ok()),
+                    search_attributes: self
+                        .search_attributes
+                        .map(|sa| SearchAttributes { indexed_fields: sa }),
+                    cron_schedule: self.cron_schedule.unwrap_or_default(),
                     parent_close_policy: self.parent_close_policy as i32,
-                    priority: self.options.priority.map(Into::into),
+                    priority: self.priority.map(Into::into),
                     ..Default::default()
                 }
                 .into(),

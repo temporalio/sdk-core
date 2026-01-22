@@ -7,8 +7,11 @@
 #[macro_use]
 extern crate tracing;
 
+mod async_activity_handle;
 pub mod callback_based;
+pub mod errors;
 mod metrics;
+mod options_structs;
 /// Visible only for tests
 #[doc(hidden)]
 pub mod proxy;
@@ -23,57 +26,59 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RETRYABLE_ERROR_CODES},
 };
+pub use async_activity_handle::{ActivityIdentifier, AsyncActivityHandle, HeartbeatResponse};
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
+pub use options_structs::*;
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
-    GetWorkflowResultOptions, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    UntypedQuery, UntypedSignal, UntypedUpdate, UntypedWorkflow, UntypedWorkflowHandle,
+    WorkflowExecutionDescription, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+    WorkflowHistory, WorkflowUpdateHandle,
 };
 
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     raw::AttachMetricLabels,
     request_extensions::RequestExt,
-    sealed::WfHandleClient,
     worker::ClientWorkerSet,
-    workflow_handle::UntypedWorkflowHandle,
 };
-use http::{Uri, uri::InvalidUri};
+use errors::*;
+use futures_util::{stream, stream::Stream};
+use http::Uri;
 use parking_lot::RwLock;
 use std::{
-    collections::HashMap,
-    fmt::{Debug, Formatter},
+    collections::{HashMap, VecDeque},
+    fmt::Debug,
+    pin::Pin,
     str::FromStr,
     sync::{Arc, OnceLock},
-    time::Duration,
+    task::{Context, Poll},
+    time::{Duration, SystemTime},
 };
 use temporalio_common::{
+    WorkflowDefinition,
+    data_converters::{DataConverter, SerializationContextData},
     protos::{
-        TaskToken,
         coresdk::IntoPayloadsExt,
         grpc::health::v1::health_client::HealthClient,
+        proto_ts_to_system_time,
         temporal::api::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
-            common::{
-                self,
-                v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-            },
-            enums::v1::{
-                ArchivalState, TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
-            },
-            filter::v1::StartTimeFilter,
+            common::v1::{Memo, Payload, SearchAttributes, WorkflowType},
+            enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
             operatorservice::v1::operator_service_client::OperatorServiceClient,
-            query::v1::WorkflowQuery,
-            replication::v1::ClusterReplicationConfig,
             taskqueue::v1::TaskQueue,
             testservice::v1::test_service_client::TestServiceClient,
-            update,
-            workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+            workflow::v1 as workflow,
+            workflowservice::v1::{
+                count_workflow_executions_response, workflow_service_client::WorkflowServiceClient,
+                *,
+            },
         },
     },
-    telemetry::metrics::TemporalMeter,
 };
 use tonic::{
     Code, IntoRequest,
@@ -88,7 +93,6 @@ use tonic::{
     transport::{Certificate, Channel, Endpoint, Identity},
 };
 use tower::ServiceBuilder;
-use url::Url;
 use uuid::Uuid;
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
@@ -104,101 +108,6 @@ pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-type Result<T, E = tonic::Status> = std::result::Result<T, E>;
-
-/// Options for [Connection::connect].
-#[derive(bon::Builder, Clone, Debug)]
-#[non_exhaustive]
-#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
-pub struct ConnectionOptions {
-    /// The server to connect to.
-    #[builder(start_fn, into)]
-    pub target: Url,
-    /// A human-readable string that can identify this process. Defaults to empty string.
-    #[builder(default)]
-    pub identity: String,
-    /// When set, this client will record metrics using the provided meter. The meter can be
-    /// obtained from [temporalio_common::telemetry::TelemetryInstance::get_temporal_metric_meter].
-    pub metrics_meter: Option<TemporalMeter>,
-    /// If specified, use TLS as configured by the [TlsOptions] struct. If this is set core will
-    /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
-    /// certs or keys as bytes, loading them from disk itself if needed.
-    pub tls_options: Option<TlsOptions>,
-    /// If set, override the origin used when connecting. May be useful in rare situations where tls
-    /// verification needs to use a different name from what should be set as the `:authority`
-    /// header. If [TlsOptions::domain] is set, and this is not, this will be set to
-    /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
-    /// override.
-    pub override_origin: Option<Uri>,
-    /// An API key to use for auth. If set, TLS will be enabled by default, but without any mTLS
-    /// specific settings.
-    pub api_key: Option<String>,
-    /// Retry configuration for the server client. Default is [RetryOptions::default]
-    #[builder(default)]
-    pub retry_options: RetryOptions,
-    /// If set, HTTP2 gRPC keep alive will be enabled.
-    /// To enable with default settings, use `.keep_alive(Some(ClientKeepAliveConfig::default()))`.
-    #[builder(required, default = Some(ClientKeepAliveOptions::default()))]
-    pub keep_alive: Option<ClientKeepAliveOptions>,
-    /// HTTP headers to include on every RPC call.
-    ///
-    /// These must be valid gRPC metadata keys, and must not be binary metadata keys (ending in
-    /// `-bin). To set binary headers, use [ConnectionOptions::binary_headers]. Invalid header keys
-    /// or values will cause an error to be returned when connecting.
-    pub headers: Option<HashMap<String, String>>,
-    /// HTTP headers to include on every RPC call as binary gRPC metadata (encoded as base64).
-    ///
-    /// These must be valid binary gRPC metadata keys (and end with a `-bin` suffix). Invalid
-    /// header keys will cause an error to be returned when connecting.
-    pub binary_headers: Option<HashMap<String, Vec<u8>>>,
-    /// HTTP CONNECT proxy to use for this client.
-    pub http_connect_proxy: Option<HttpConnectProxyOptions>,
-    /// If set true, error code labels will not be included on request failure metrics.
-    #[builder(default)]
-    pub disable_error_code_metric_tags: bool,
-    /// If set, all gRPC calls will be routed through the provided service.
-    pub service_override: Option<callback_based::CallbackBasedGrpcService>,
-
-    // Internal / Core-based SDK only options below =============================================
-    /// If set true, get_system_info will not be called upon connection.
-    #[builder(default)]
-    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
-    skip_get_system_info: bool,
-    /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
-    /// all RPC calls
-    #[builder(default = "temporal-rust".to_owned())]
-    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
-    client_name: String,
-    // TODO [rust-sdk-branch]: SDK should set this to its version. Doing that probably easiest
-    // after adding proper client interceptors.
-    /// The version of the SDK being implemented on top of core. Is set as `client-version` header
-    /// in all RPC calls. The server decides if the client is supported based on this.
-    #[builder(default = VERSION.to_owned())]
-    #[cfg_attr(feature = "core-based-sdk", builder(setters(vis = "pub")))]
-    client_version: String,
-}
-
-// Setters/getters for fields that should only be touched by SDK implementers.
-#[cfg(feature = "core-based-sdk")]
-impl ConnectionOptions {
-    /// Set whether or not get_system_info will be called upon connection.
-    pub fn set_skip_get_system_info(&mut self, skip: bool) {
-        self.skip_get_system_info = skip;
-    }
-    /// Get whether or not get_system_info will be called upon connection.
-    pub fn get_skip_get_system_info(&self) -> bool {
-        self.skip_get_system_info
-    }
-    /// Get the name of the SDK being implemented on top of core.
-    pub fn get_client_name(&self) -> &str {
-        &self.client_name
-    }
-    /// Get the version of the SDK being implemented on top of core.
-    pub fn get_client_version(&self) -> &str {
-        &self.client_version
-    }
-}
 
 /// A connection to the Temporal service.
 ///
@@ -392,114 +301,6 @@ impl Connection {
     }
 }
 
-/// Options for [Client::new].
-#[derive(Clone, Debug, bon::Builder)]
-#[non_exhaustive]
-#[builder(start_fn = new, on(String, into), state_mod(vis = "pub"))]
-pub struct ClientOptions {
-    /// The namespace this client will be bound to.
-    #[builder(start_fn)]
-    pub namespace: String,
-}
-
-/// Configuration options for TLS
-#[derive(Clone, Debug, Default)]
-pub struct TlsOptions {
-    /// Bytes representing the root CA certificate used by the server. If not set, and the server's
-    /// cert is issued by someone the operating system trusts, verification will still work (ex:
-    /// Cloud offering).
-    pub server_root_ca_cert: Option<Vec<u8>>,
-    /// Sets the domain name against which to verify the server's TLS certificate. If not provided,
-    /// the domain name will be extracted from the URL used to connect.
-    pub domain: Option<String>,
-    /// TLS info for the client. If specified, core will attempt to use mTLS.
-    pub client_tls_options: Option<ClientTlsOptions>,
-}
-
-/// If using mTLS, both the client cert and private key must be specified, this contains them.
-#[derive(Clone)]
-pub struct ClientTlsOptions {
-    /// The certificate for this client, encoded as PEM
-    pub client_cert: Vec<u8>,
-    /// The private key for this client, encoded as PEM
-    pub client_private_key: Vec<u8>,
-}
-
-/// Client keep alive configuration.
-#[derive(Clone, Debug)]
-pub struct ClientKeepAliveOptions {
-    /// Interval to send HTTP2 keep alive pings.
-    pub interval: Duration,
-    /// Timeout that the keep alive must be responded to within or the connection will be closed.
-    pub timeout: Duration,
-}
-
-impl Default for ClientKeepAliveOptions {
-    fn default() -> Self {
-        Self {
-            interval: Duration::from_secs(30),
-            timeout: Duration::from_secs(15),
-        }
-    }
-}
-
-impl Debug for ClientTlsOptions {
-    // Intentionally omit details here since they could leak a key if ever printed
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ClientTlsOptions(..)")
-    }
-}
-
-/// Errors thrown while attempting to establish a connection to the server
-#[derive(thiserror::Error, Debug)]
-pub enum ClientInitError {
-    /// Invalid URI. Configuration error, fatal.
-    #[error("Invalid URI: {0:?}")]
-    InvalidUri(#[from] InvalidUri),
-    /// Invalid gRPC metadata headers. Configuration error.
-    #[error("Invalid headers: {0}")]
-    InvalidHeaders(#[from] InvalidHeaderError),
-    /// Server connection error. Crashing and restarting the worker is likely best.
-    #[error("Server connection error: {0:?}")]
-    TonicTransportError(#[from] tonic::transport::Error),
-    /// We couldn't successfully make the `get_system_info` call at connection time to establish
-    /// server capabilities / verify server is responding.
-    #[error("`get_system_info` call error after connection: {0:?}")]
-    SystemInfoCallError(tonic::Status),
-}
-
-/// Errors thrown when a gRPC metadata header is invalid.
-#[derive(thiserror::Error, Debug)]
-pub enum InvalidHeaderError {
-    /// A binary header key was invalid
-    #[error("Invalid binary header key '{key}': {source}")]
-    InvalidBinaryHeaderKey {
-        /// The invalid key
-        key: String,
-        /// The source error from tonic
-        source: tonic::metadata::errors::InvalidMetadataKey,
-    },
-    /// An ASCII header key was invalid
-    #[error("Invalid ASCII header key '{key}': {source}")]
-    InvalidAsciiHeaderKey {
-        /// The invalid key
-        key: String,
-        /// The source error from tonic
-        source: tonic::metadata::errors::InvalidMetadataKey,
-    },
-    /// An ASCII header value was invalid
-    #[error("Invalid ASCII header value for key '{key}': {source}")]
-    InvalidAsciiHeaderValue {
-        /// The key
-        key: String,
-        /// The invalid value
-        value: String,
-        /// The source error from tonic
-        source: tonic::metadata::errors::InvalidMetadataValue,
-    },
-}
-
-/// A client with [ClientOptions] attached, which can be passed to initialize workers,
 #[derive(Debug)]
 struct ClientHeaders {
     user_headers: HashMap<AsciiMetadataKey, AsciiMetadataValue>,
@@ -808,6 +609,10 @@ impl NamespacedClient for Client {
     fn identity(&self) -> String {
         self.connection.identity().to_owned()
     }
+
+    fn data_converter(&self) -> &DataConverter {
+        &self.options.data_converter
+    }
 }
 
 /// Enum to help reference a namespace by either the namespace name or the namespace id
@@ -830,267 +635,60 @@ impl Namespace {
     }
 }
 
-/// Default workflow execution retention for a Namespace is 3 days
-const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration = Duration::from_secs(60 * 60 * 24 * 3);
-
-/// Helper struct for `register_namespace`.
-#[derive(Clone, bon::Builder)]
-#[builder(on(String, into))]
-pub struct RegisterNamespaceOptions {
-    /// Name (required)
-    pub namespace: String,
-    /// Description (required)
-    pub description: String,
-    /// Owner's email
-    #[builder(default)]
-    pub owner_email: String,
-    /// Workflow execution retention period
-    #[builder(default = DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD)]
-    pub workflow_execution_retention_period: Duration,
-    /// Cluster settings
-    #[builder(default)]
-    pub clusters: Vec<ClusterReplicationConfig>,
-    /// Active cluster name
-    #[builder(default)]
-    pub active_cluster_name: String,
-    /// Custom Data
-    #[builder(default)]
-    pub data: HashMap<String, String>,
-    /// Security Token
-    #[builder(default)]
-    pub security_token: String,
-    /// Global namespace
-    #[builder(default)]
-    pub is_global_namespace: bool,
-    /// History Archival setting
-    #[builder(default = ArchivalState::Unspecified)]
-    pub history_archival_state: ArchivalState,
-    /// History Archival uri
-    #[builder(default)]
-    pub history_archival_uri: String,
-    /// Visibility Archival setting
-    #[builder(default = ArchivalState::Unspecified)]
-    pub visibility_archival_state: ArchivalState,
-    /// Visibility Archival uri
-    #[builder(default)]
-    pub visibility_archival_uri: String,
-}
-
-impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
-    fn from(val: RegisterNamespaceOptions) -> Self {
-        RegisterNamespaceRequest {
-            namespace: val.namespace,
-            description: val.description,
-            owner_email: val.owner_email,
-            workflow_execution_retention_period: val
-                .workflow_execution_retention_period
-                .try_into()
-                .ok(),
-            clusters: val.clusters,
-            active_cluster_name: val.active_cluster_name,
-            data: val.data,
-            security_token: val.security_token,
-            is_global_namespace: val.is_global_namespace,
-            history_archival_state: val.history_archival_state as i32,
-            history_archival_uri: val.history_archival_uri,
-            visibility_archival_state: val.visibility_archival_state as i32,
-            visibility_archival_uri: val.visibility_archival_uri,
-        }
-    }
-}
-
-// Note: The cluster_names custom setter from derive_builder is not supported in bon.
-// Users should manually construct the clusters vector if needed.
-
-/// Helper struct for `signal_with_start_workflow_execution`.
-#[derive(Clone, bon::Builder)]
-#[builder(on(String, into))]
-pub struct SignalWithStartOptions {
-    /// Input payload for the workflow run
-    pub input: Option<Payloads>,
-    /// Task Queue to target (required)
-    pub task_queue: String,
-    /// Workflow id for the workflow run
-    pub workflow_id: String,
-    /// Workflow type for the workflow run
-    pub workflow_type: String,
-    /// Request id for idempotency/deduplication
-    pub request_id: Option<String>,
-    /// The signal name to send (required)
-    pub signal_name: String,
-    /// Payloads for the signal
-    pub signal_input: Option<Payloads>,
-    /// Headers for the signal
-    pub signal_header: Option<Header>,
-}
-
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
-#[async_trait::async_trait]
 pub trait WorkflowClientTrait: NamespacedClient {
-    /// Starts workflow execution.
-    async fn start_workflow(
+    /// Start a workflow execution.
+    fn start_workflow<W>(
         &self,
-        input: Vec<Payload>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
+        workflow: W,
+        input: W::Input,
         options: WorkflowOptions,
-    ) -> Result<StartWorkflowExecutionResponse>;
+    ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, StartWorkflowError>>
+    where
+        Self: Sized,
+        W: WorkflowDefinition,
+        W::Input: Send;
 
-    /// Notifies the server that workflow tasks for a given workflow should be sent to the normal
-    /// non-sticky task queue. This normally happens when workflow has been evicted from the cache.
-    async fn reset_sticky_task_queue(
+    /// Get a handle to an existing workflow. `run_id` may be left blank to specify the most recent
+    /// execution having the provided `workflow_id`.
+    ///
+    /// For untyped access, use `get_workflow_handle::<UntypedWorkflow>(...)`.
+    ///
+    /// See also [WorkflowHandle::new], for specifying namespace or first_execution_run_id.
+    fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
-        workflow_id: String,
-        run_id: String,
-    ) -> Result<ResetStickyTaskQueueResponse>;
+        workflow_id: impl Into<String>,
+        run_id: impl Into<String>,
+    ) -> WorkflowHandle<Self, W>
+    where
+        Self: Sized;
 
-    /// Complete activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `result` is a blob
-    /// that contains activity response.
-    async fn complete_activity_task(
+    /// List workflows matching a query.
+    /// Returns a stream that lazily paginates through results.
+    /// Use `limit` in options to cap the number of results returned.
+    fn list_workflows(
         &self,
-        task_token: TaskToken,
-        result: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCompletedResponse>;
+        query: impl Into<String>,
+        opts: ListWorkflowsOptions,
+    ) -> ListWorkflowsStream;
 
-    /// Report activity task heartbeat by sending details to the server. `task_token` contains
-    /// activity identifier that would've been received from polling for an activity task. `result`
-    /// contains `cancel_requested` flag, which if set to true indicates that activity has been
-    /// cancelled.
-    async fn record_activity_heartbeat(
+    /// Count workflows matching a query.
+    fn count_workflows(
         &self,
-        task_token: TaskToken,
-        details: Option<Payloads>,
-    ) -> Result<RecordActivityTaskHeartbeatResponse>;
+        query: impl Into<String>,
+        opts: CountWorkflowsOptions,
+    ) -> impl Future<Output = Result<WorkflowExecutionCount, ClientError>>;
 
-    /// Cancel activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `details` is a
-    /// blob that provides arbitrary user defined cancellation info.
-    async fn cancel_activity_task(
+    /// Get a handle to complete an activity asynchronously.
+    ///
+    /// An activity returning `ActivityError::WillCompleteAsync` can be completed with this handle.
+    fn get_async_activity_handle(
         &self,
-        task_token: TaskToken,
-        details: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCanceledResponse>;
-
-    /// Send a signal to a certain workflow instance
-    async fn signal_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        signal_name: String,
-        payloads: Option<Payloads>,
-        request_id: Option<String>,
-    ) -> Result<SignalWorkflowExecutionResponse>;
-
-    /// Send signal and start workflow transcationally
-    //#TODO maybe lift the Signal type from sdk::workflow_context::options
-    #[allow(clippy::too_many_arguments)]
-    async fn signal_with_start_workflow_execution(
-        &self,
-        options: SignalWithStartOptions,
-        workflow_options: WorkflowOptions,
-    ) -> Result<SignalWithStartWorkflowExecutionResponse>;
-
-    /// Request a query of a certain workflow instance
-    async fn query_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        query: WorkflowQuery,
-    ) -> Result<QueryWorkflowResponse>;
-
-    /// Get information about a workflow run
-    async fn describe_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-    ) -> Result<DescribeWorkflowExecutionResponse>;
-
-    /// Get history for a particular workflow run
-    async fn get_workflow_execution_history(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-        page_token: Vec<u8>,
-    ) -> Result<GetWorkflowExecutionHistoryResponse>;
-
-    /// Cancel a currently executing workflow
-    async fn cancel_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-        reason: String,
-        request_id: Option<String>,
-    ) -> Result<RequestCancelWorkflowExecutionResponse>;
-
-    /// Terminate a currently executing workflow
-    async fn terminate_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-    ) -> Result<TerminateWorkflowExecutionResponse>;
-
-    /// Register a new namespace
-    async fn register_namespace(
-        &self,
-        options: RegisterNamespaceOptions,
-    ) -> Result<RegisterNamespaceResponse>;
-
-    /// Lists all available namespaces
-    async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
-
-    /// Query namespace details
-    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
-
-    /// List open workflow executions with Standard Visibility filtering
-    async fn list_open_workflow_executions(
-        &self,
-        max_page_size: i32,
-        next_page_token: Vec<u8>,
-        start_time_filter: Option<StartTimeFilter>,
-        filters: Option<list_open_workflow_executions_request::Filters>,
-    ) -> Result<ListOpenWorkflowExecutionsResponse>;
-
-    /// List closed workflow executions Standard Visibility filtering
-    async fn list_closed_workflow_executions(
-        &self,
-        max_page_size: i32,
-        next_page_token: Vec<u8>,
-        start_time_filter: Option<StartTimeFilter>,
-        filters: Option<list_closed_workflow_executions_request::Filters>,
-    ) -> Result<ListClosedWorkflowExecutionsResponse>;
-
-    /// List workflow executions with Advanced Visibility filtering
-    async fn list_workflow_executions(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListWorkflowExecutionsResponse>;
-
-    /// List archived workflow executions
-    async fn list_archived_workflow_executions(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListArchivedWorkflowExecutionsResponse>;
-
-    /// Get Cluster Search Attributes
-    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
-
-    /// Send an Update to a workflow execution
-    async fn update_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        name: String,
-        wait_policy: update::v1::WaitPolicy,
-        args: Option<Payloads>,
-    ) -> Result<UpdateWorkflowExecutionResponse>;
+        identifier: ActivityIdentifier,
+    ) -> AsyncActivityHandle<Self>
+    where
+        Self: Sized;
 }
 
 /// A client that is bound to a namespace
@@ -1099,172 +697,260 @@ pub trait NamespacedClient {
     fn namespace(&self) -> String;
     /// Returns the client identity
     fn identity(&self) -> String;
-}
-
-/// Optional fields supplied at the start of workflow execution
-#[derive(Debug, Clone, Default)]
-pub struct WorkflowOptions {
-    /// Set the policy for reusing the workflow id
-    pub id_reuse_policy: WorkflowIdReusePolicy,
-
-    /// Set the policy for how to resolve conflicts with running policies.
-    /// NOTE: This is ignored for child workflows.
-    pub id_conflict_policy: WorkflowIdConflictPolicy,
-
-    /// Optionally set the execution timeout for the workflow
-    /// <https://docs.temporal.io/workflows/#workflow-execution-timeout>
-    pub execution_timeout: Option<Duration>,
-
-    /// Optionally indicates the default run timeout for a workflow run
-    pub run_timeout: Option<Duration>,
-
-    /// Optionally indicates the default task timeout for a workflow run
-    pub task_timeout: Option<Duration>,
-
-    /// Optionally set a cron schedule for the workflow
-    pub cron_schedule: Option<String>,
-
-    /// Optionally associate extra search attributes with a workflow
-    pub search_attributes: Option<HashMap<String, Payload>>,
-
-    /// Optionally enable Eager Workflow Start, a latency optimization using local workers
-    /// NOTE: Experimental
-    pub enable_eager_workflow_start: bool,
-
-    /// Optionally set a retry policy for the workflow
-    pub retry_policy: Option<RetryPolicy>,
-
-    /// Links to associate with the workflow. Ex: References to a nexus operation.
-    pub links: Vec<common::v1::Link>,
-
-    /// Callbacks that will be invoked upon workflow completion. For, ex, completing nexus
-    /// operations.
-    pub completion_callbacks: Vec<common::v1::Callback>,
-
-    /// Priority for the workflow
-    pub priority: Option<Priority>,
-}
-
-/// Priority contains metadata that controls relative ordering of task processing
-/// when tasks are backlogged in a queue. Initially, Priority will be used in
-/// activity and workflow task queues, which are typically where backlogs exist.
-/// Other queues in the server (such as transfer and timer queues) and rate
-/// limiting decisions do not use Priority, but may in the future.
-///
-/// Priority is attached to workflows and activities. Activities and child
-/// workflows inherit Priority from the workflow that created them, but may
-/// override fields when they are started or modified. For each field of a
-/// Priority on an activity/workflow, not present or equal to zero/empty string
-/// means to inherit the value from the calling workflow, or if there is no
-/// calling workflow, then use the default (documented below).
-///
-/// Despite being named "Priority", this message will also contains fields that
-/// control "fairness" mechanisms.
-///
-/// The overall semantics of Priority are:
-/// (more will be added here later)
-/// 1. First, consider "priority_key": lower number goes first.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Priority {
-    /// Priority key is a positive integer from 1 to n, where smaller integers
-    /// correspond to higher priorities (tasks run sooner). In general, tasks in
-    /// a queue should be processed in close to priority order, although small
-    /// deviations are possible.
-    ///
-    /// The maximum priority value (minimum priority) is determined by server
-    /// configuration, and defaults to 5.
-    ///
-    /// The default priority is (min+max)/2. With the default max of 5 and min of
-    /// 1, that comes out to 3.
-    pub priority_key: u32,
-
-    /// Fairness key is a short string that's used as a key for a fairness
-    /// balancing mechanism. It may correspond to a tenant id, or to a fixed
-    /// string like "high" or "low". The default is the empty string.
-    ///
-    /// The fairness mechanism attempts to dispatch tasks for a given key in
-    /// proportion to its weight. For example, using a thousand distinct tenant
-    /// ids, each with a weight of 1.0 (the default) will result in each tenant
-    /// getting a roughly equal share of task dispatch throughput.
-    ///
-    /// (Note: this does not imply equal share of worker capacity! Fairness
-    /// decisions are made based on queue statistics, not
-    /// current worker load.)
-    ///
-    /// As another example, using keys "high" and "low" with weight 9.0 and 1.0
-    /// respectively will prefer dispatching "high" tasks over "low" tasks at a
-    /// 9:1 ratio, while allowing either key to use all worker capacity if the
-    /// other is not present.
-    ///
-    /// All fairness mechanisms, including rate limits, are best-effort and
-    /// probabilistic. The results may not match what a "perfect" algorithm with
-    /// infinite resources would produce. The more unique keys are used, the less
-    /// accurate the results will be.
-    ///
-    /// Fairness keys are limited to 64 bytes.
-    pub fairness_key: String,
-
-    /// Fairness weight for a task can come from multiple sources for
-    /// flexibility. From highest to lowest precedence:
-    /// 1. Weights for a small set of keys can be overridden in task queue
-    ///    configuration with an API.
-    /// 2. It can be attached to the workflow/activity in this field.
-    /// 3. The default weight of 1.0 will be used.
-    ///
-    /// Weight values are clamped by the server to the range [0.001, 1000].
-    pub fairness_weight: f32,
-}
-
-impl From<Priority> for common::v1::Priority {
-    fn from(priority: Priority) -> Self {
-        common::v1::Priority {
-            priority_key: priority.priority_key as i32,
-            fairness_key: priority.fairness_key,
-            fairness_weight: priority.fairness_weight,
-        }
+    /// Returns the data converter for serializing/deserializing payloads.
+    /// Default implementation returns a static default converter.
+    fn data_converter(&self) -> &DataConverter {
+        static DEFAULT: OnceLock<DataConverter> = OnceLock::new();
+        DEFAULT.get_or_init(DataConverter::default)
     }
 }
 
-impl From<common::v1::Priority> for Priority {
-    fn from(priority: common::v1::Priority) -> Self {
+/// A workflow execution returned from list operations.
+/// This represents information about a workflow present in visibility.
+#[derive(Debug, Clone)]
+pub struct WorkflowExecution {
+    raw: workflow::WorkflowExecutionInfo,
+}
+
+impl WorkflowExecution {
+    /// Create a new WorkflowExecution from the raw proto.
+    pub fn new(raw: workflow::WorkflowExecutionInfo) -> Self {
+        Self { raw }
+    }
+
+    /// The workflow ID.
+    pub fn id(&self) -> &str {
+        self.raw
+            .execution
+            .as_ref()
+            .map(|e| e.workflow_id.as_str())
+            .unwrap_or("")
+    }
+
+    /// The run ID.
+    pub fn run_id(&self) -> &str {
+        self.raw
+            .execution
+            .as_ref()
+            .map(|e| e.run_id.as_str())
+            .unwrap_or("")
+    }
+
+    /// The workflow type name.
+    pub fn workflow_type(&self) -> &str {
+        self.raw
+            .r#type
+            .as_ref()
+            .map(|t| t.name.as_str())
+            .unwrap_or("")
+    }
+
+    /// The current status of the workflow execution.
+    pub fn status(&self) -> WorkflowExecutionStatus {
+        self.raw.status()
+    }
+
+    /// When the workflow was created.
+    pub fn start_time(&self) -> Option<SystemTime> {
+        self.raw
+            .start_time
+            .as_ref()
+            .and_then(proto_ts_to_system_time)
+    }
+
+    /// When the workflow run started or should start.
+    pub fn execution_time(&self) -> Option<SystemTime> {
+        self.raw
+            .execution_time
+            .as_ref()
+            .and_then(proto_ts_to_system_time)
+    }
+
+    /// When the workflow was closed, if closed.
+    pub fn close_time(&self) -> Option<SystemTime> {
+        self.raw
+            .close_time
+            .as_ref()
+            .and_then(proto_ts_to_system_time)
+    }
+
+    /// The task queue the workflow runs on.
+    pub fn task_queue(&self) -> &str {
+        &self.raw.task_queue
+    }
+
+    /// Number of events in history.
+    pub fn history_length(&self) -> i64 {
+        self.raw.history_length
+    }
+
+    /// Workflow memo.
+    pub fn memo(&self) -> Option<&Memo> {
+        self.raw.memo.as_ref()
+    }
+
+    /// Parent workflow ID, if this is a child workflow.
+    pub fn parent_id(&self) -> Option<&str> {
+        self.raw
+            .parent_execution
+            .as_ref()
+            .map(|e| e.workflow_id.as_str())
+    }
+
+    /// Parent run ID, if this is a child workflow.
+    pub fn parent_run_id(&self) -> Option<&str> {
+        self.raw
+            .parent_execution
+            .as_ref()
+            .map(|e| e.run_id.as_str())
+    }
+
+    /// Search attributes on the workflow.
+    pub fn search_attributes(&self) -> Option<&SearchAttributes> {
+        self.raw.search_attributes.as_ref()
+    }
+
+    /// Access the raw proto for additional fields not exposed via accessors.
+    pub fn raw(&self) -> &workflow::WorkflowExecutionInfo {
+        &self.raw
+    }
+
+    /// Consume the wrapper and return the raw proto.
+    pub fn into_raw(self) -> workflow::WorkflowExecutionInfo {
+        self.raw
+    }
+}
+
+impl From<workflow::WorkflowExecutionInfo> for WorkflowExecution {
+    fn from(raw: workflow::WorkflowExecutionInfo) -> Self {
+        Self::new(raw)
+    }
+}
+
+/// A stream of workflow executions from a list query.
+/// Internally paginates through results from the server.
+pub struct ListWorkflowsStream {
+    inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
+}
+
+impl ListWorkflowsStream {
+    fn new(
+        inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
+    ) -> Self {
+        Self { inner }
+    }
+}
+
+impl Stream for ListWorkflowsStream {
+    type Item = Result<WorkflowExecution, ClientError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+/// Result of a workflow count operation.
+///
+/// If the query includes a group-by clause, `groups` will contain the aggregated
+/// counts and `count` will be the sum of all group counts.
+#[derive(Debug, Clone)]
+pub struct WorkflowExecutionCount {
+    count: usize,
+    groups: Vec<WorkflowCountAggregationGroup>,
+}
+
+impl WorkflowExecutionCount {
+    pub(crate) fn from_response(resp: CountWorkflowExecutionsResponse) -> Self {
         Self {
-            priority_key: priority.priority_key as u32,
-            fairness_key: priority.fairness_key,
-            fairness_weight: priority.fairness_weight,
+            count: resp.count as usize,
+            groups: resp
+                .groups
+                .into_iter()
+                .map(WorkflowCountAggregationGroup::from_proto)
+                .collect(),
         }
+    }
+
+    /// The approximate number of workflows matching the query.
+    /// If grouping was applied, this is the sum of all group counts.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+
+    /// The groups if the query had a group-by clause, or empty if not.
+    pub fn groups(&self) -> &[WorkflowCountAggregationGroup] {
+        &self.groups
     }
 }
 
-#[async_trait::async_trait]
+/// Aggregation group from a workflow count query with a group-by clause.
+#[derive(Debug, Clone)]
+pub struct WorkflowCountAggregationGroup {
+    group_values: Vec<Payload>,
+    count: usize,
+}
+
+impl WorkflowCountAggregationGroup {
+    fn from_proto(proto: count_workflow_executions_response::AggregationGroup) -> Self {
+        Self {
+            group_values: proto.group_values,
+            count: proto.count as usize,
+        }
+    }
+
+    /// The search attribute values for this group.
+    pub fn group_values(&self) -> &[Payload] {
+        &self.group_values
+    }
+
+    /// The approximate number of workflows matching for this group.
+    pub fn count(&self) -> usize {
+        self.count
+    }
+}
+
 impl<T> WorkflowClientTrait for T
 where
     T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
 {
-    async fn start_workflow(
+    async fn start_workflow<W>(
         &self,
-        input: Vec<Payload>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
+        workflow: W,
+        input: W::Input,
         options: WorkflowOptions,
-    ) -> Result<StartWorkflowExecutionResponse> {
-        Ok(self
-            .clone()
-            .start_workflow_execution(
-                StartWorkflowExecutionRequest {
-                    namespace: self.namespace(),
-                    input: input.into_payloads(),
-                    workflow_id,
+    ) -> Result<WorkflowHandle<Self, W>, StartWorkflowError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        let payloads = self
+            .data_converter()
+            .to_payloads(&SerializationContextData::Workflow, &input)
+            .await?;
+        let namespace = self.namespace();
+        let workflow_id = options.workflow_id.clone();
+        let task_queue_name = options.task_queue.clone();
+
+        let run_id = if let Some(start_signal) = options.start_signal {
+            // Use signal-with-start when a start_signal is provided
+            let res = WorkflowService::signal_with_start_workflow_execution(
+                &mut self.clone(),
+                SignalWithStartWorkflowExecutionRequest {
+                    namespace: namespace.clone(),
+                    workflow_id: workflow_id.clone(),
                     workflow_type: Some(WorkflowType {
-                        name: workflow_type,
+                        name: workflow.name().to_string(),
                     }),
                     task_queue: Some(TaskQueue {
-                        name: task_queue,
-                        kind: TaskQueueKind::Unspecified as i32,
+                        name: task_queue_name,
+                        kind: TaskQueueKind::Normal as i32,
                         normal_name: "".to_string(),
                     }),
-                    request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                    input: payloads.into_payloads(),
+                    signal_name: start_signal.signal_name,
+                    signal_input: start_signal.input,
+                    identity: self.identity(),
+                    request_id: Uuid::new_v4().to_string(),
                     workflow_id_reuse_policy: options.id_reuse_policy as i32,
                     workflow_id_conflict_policy: options.id_conflict_policy as i32,
                     workflow_execution_timeout: options
@@ -1274,481 +960,188 @@ where
                     workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                     search_attributes: options.search_attributes.map(|d| d.into()),
                     cron_schedule: options.cron_schedule.unwrap_or_default(),
-                    request_eager_execution: options.enable_eager_workflow_start,
-                    retry_policy: options.retry_policy,
-                    links: options.links,
-                    completion_callbacks: options.completion_callbacks,
-                    priority: options.priority.map(Into::into),
+                    header: start_signal.header,
                     ..Default::default()
                 }
                 .into_request(),
             )
             .await?
-            .into_inner())
-    }
-
-    async fn reset_sticky_task_queue(
-        &self,
-        workflow_id: String,
-        run_id: String,
-    ) -> Result<ResetStickyTaskQueueResponse> {
-        let request = ResetStickyTaskQueueRequest {
-            namespace: self.namespace(),
-            execution: Some(WorkflowExecution {
-                workflow_id,
-                run_id,
-            }),
+            .into_inner();
+            res.run_id
+        } else {
+            // Normal start workflow
+            let res = self
+                .clone()
+                .start_workflow_execution(
+                    StartWorkflowExecutionRequest {
+                        namespace: namespace.clone(),
+                        input: payloads.into_payloads(),
+                        workflow_id: workflow_id.clone(),
+                        workflow_type: Some(WorkflowType {
+                            name: workflow.name().to_string(),
+                        }),
+                        task_queue: Some(TaskQueue {
+                            name: task_queue_name,
+                            kind: TaskQueueKind::Unspecified as i32,
+                            normal_name: "".to_string(),
+                        }),
+                        request_id: Uuid::new_v4().to_string(),
+                        workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                        workflow_id_conflict_policy: options.id_conflict_policy as i32,
+                        workflow_execution_timeout: options
+                            .execution_timeout
+                            .and_then(|d| d.try_into().ok()),
+                        workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
+                        workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                        search_attributes: options.search_attributes.map(|d| d.into()),
+                        cron_schedule: options.cron_schedule.unwrap_or_default(),
+                        request_eager_execution: options.enable_eager_workflow_start,
+                        retry_policy: options.retry_policy,
+                        links: options.links,
+                        completion_callbacks: options.completion_callbacks,
+                        priority: options.priority.map(Into::into),
+                        ..Default::default()
+                    }
+                    .into_request(),
+                )
+                .await?
+                .into_inner();
+            res.run_id
         };
-        Ok(
-            WorkflowService::reset_sticky_task_queue(&mut self.clone(), request.into_request())
-                .await?
-                .into_inner(),
-        )
+
+        Ok(WorkflowHandle::new(
+            self.clone(),
+            WorkflowExecutionInfo {
+                namespace,
+                workflow_id,
+                run_id: Some(run_id.clone()),
+                first_execution_run_id: Some(run_id),
+            },
+        ))
     }
 
-    async fn complete_activity_task(
-        &self,
-        task_token: TaskToken,
-        result: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCompletedResponse> {
-        Ok(self
-            .clone()
-            .respond_activity_task_completed(
-                RespondActivityTaskCompletedRequest {
-                    task_token: task_token.0,
-                    result,
-                    identity: self.identity(),
-                    namespace: self.namespace(),
-                    ..Default::default()
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner())
-    }
-
-    async fn record_activity_heartbeat(
-        &self,
-        task_token: TaskToken,
-        details: Option<Payloads>,
-    ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        Ok(self
-            .clone()
-            .record_activity_task_heartbeat(
-                RecordActivityTaskHeartbeatRequest {
-                    task_token: task_token.0,
-                    details,
-                    identity: self.identity(),
-                    namespace: self.namespace(),
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner())
-    }
-
-    async fn cancel_activity_task(
-        &self,
-        task_token: TaskToken,
-        details: Option<Payloads>,
-    ) -> Result<RespondActivityTaskCanceledResponse> {
-        Ok(self
-            .clone()
-            .respond_activity_task_canceled(
-                RespondActivityTaskCanceledRequest {
-                    task_token: task_token.0,
-                    details,
-                    identity: self.identity(),
-                    namespace: self.namespace(),
-                    ..Default::default()
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner())
-    }
-
-    async fn signal_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        signal_name: String,
-        payloads: Option<Payloads>,
-        request_id: Option<String>,
-    ) -> Result<SignalWorkflowExecutionResponse> {
-        Ok(WorkflowService::signal_workflow_execution(
-            &mut self.clone(),
-            SignalWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id,
-                }),
-                signal_name,
-                input: payloads,
-                identity: self.identity(),
-                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                ..Default::default()
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn signal_with_start_workflow_execution(
-        &self,
-        options: SignalWithStartOptions,
-        workflow_options: WorkflowOptions,
-    ) -> Result<SignalWithStartWorkflowExecutionResponse> {
-        Ok(WorkflowService::signal_with_start_workflow_execution(
-            &mut self.clone(),
-            SignalWithStartWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                workflow_id: options.workflow_id,
-                workflow_type: Some(WorkflowType {
-                    name: options.workflow_type,
-                }),
-                task_queue: Some(TaskQueue {
-                    name: options.task_queue,
-                    kind: TaskQueueKind::Normal as i32,
-                    normal_name: "".to_string(),
-                }),
-                input: options.input,
-                signal_name: options.signal_name,
-                signal_input: options.signal_input,
-                identity: self.identity(),
-                request_id: options
-                    .request_id
-                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: workflow_options.id_reuse_policy as i32,
-                workflow_id_conflict_policy: workflow_options.id_conflict_policy as i32,
-                workflow_execution_timeout: workflow_options
-                    .execution_timeout
-                    .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: workflow_options.run_timeout.and_then(|d| d.try_into().ok()),
-                workflow_task_timeout: workflow_options
-                    .task_timeout
-                    .and_then(|d| d.try_into().ok()),
-                search_attributes: workflow_options.search_attributes.map(|d| d.into()),
-                cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
-                header: options.signal_header,
-                ..Default::default()
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn query_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        query: WorkflowQuery,
-    ) -> Result<QueryWorkflowResponse> {
-        Ok(self
-            .clone()
-            .query_workflow(
-                QueryWorkflowRequest {
-                    namespace: self.namespace(),
-                    execution: Some(WorkflowExecution {
-                        workflow_id,
-                        run_id,
-                    }),
-                    query: Some(query),
-                    query_reject_condition: 1,
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner())
-    }
-
-    async fn describe_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-    ) -> Result<DescribeWorkflowExecutionResponse> {
-        Ok(WorkflowService::describe_workflow_execution(
-            &mut self.clone(),
-            DescribeWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id: run_id.unwrap_or_default(),
-                }),
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn get_workflow_execution_history(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-        page_token: Vec<u8>,
-    ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        Ok(WorkflowService::get_workflow_execution_history(
-            &mut self.clone(),
-            GetWorkflowExecutionHistoryRequest {
-                namespace: self.namespace(),
-                execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id: run_id.unwrap_or_default(),
-                }),
-                next_page_token: page_token,
-                ..Default::default()
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn cancel_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-        reason: String,
-        request_id: Option<String>,
-    ) -> Result<RequestCancelWorkflowExecutionResponse> {
-        Ok(self
-            .clone()
-            .request_cancel_workflow_execution(
-                RequestCancelWorkflowExecutionRequest {
-                    namespace: self.namespace(),
-                    workflow_execution: Some(WorkflowExecution {
-                        workflow_id,
-                        run_id: run_id.unwrap_or_default(),
-                    }),
-                    identity: self.identity(),
-                    request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                    first_execution_run_id: "".to_string(),
-                    reason,
-                    links: vec![],
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner())
-    }
-
-    async fn terminate_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: Option<String>,
-    ) -> Result<TerminateWorkflowExecutionResponse> {
-        Ok(WorkflowService::terminate_workflow_execution(
-            &mut self.clone(),
-            TerminateWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id: run_id.unwrap_or_default(),
-                }),
-                reason: "".to_string(),
-                details: None,
-                identity: self.identity(),
-                first_execution_run_id: "".to_string(),
-                links: vec![],
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn register_namespace(
-        &self,
-        options: RegisterNamespaceOptions,
-    ) -> Result<RegisterNamespaceResponse> {
-        let req = Into::<RegisterNamespaceRequest>::into(options);
-        Ok(
-            WorkflowService::register_namespace(&mut self.clone(), req.into_request())
-                .await?
-                .into_inner(),
-        )
-    }
-
-    async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        Ok(WorkflowService::list_namespaces(
-            &mut self.clone(),
-            ListNamespacesRequest::default().into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
-        Ok(WorkflowService::describe_namespace(
-            &mut self.clone(),
-            namespace.into_describe_namespace_request().into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn list_open_workflow_executions(
-        &self,
-        maximum_page_size: i32,
-        next_page_token: Vec<u8>,
-        start_time_filter: Option<StartTimeFilter>,
-        filters: Option<list_open_workflow_executions_request::Filters>,
-    ) -> Result<ListOpenWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_open_workflow_executions(
-            &mut self.clone(),
-            ListOpenWorkflowExecutionsRequest {
-                namespace: self.namespace(),
-                maximum_page_size,
-                next_page_token,
-                start_time_filter,
-                filters,
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn list_closed_workflow_executions(
-        &self,
-        maximum_page_size: i32,
-        next_page_token: Vec<u8>,
-        start_time_filter: Option<StartTimeFilter>,
-        filters: Option<list_closed_workflow_executions_request::Filters>,
-    ) -> Result<ListClosedWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_closed_workflow_executions(
-            &mut self.clone(),
-            ListClosedWorkflowExecutionsRequest {
-                namespace: self.namespace(),
-                maximum_page_size,
-                next_page_token,
-                start_time_filter,
-                filters,
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn list_workflow_executions(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_workflow_executions(
-            &mut self.clone(),
-            ListWorkflowExecutionsRequest {
-                namespace: self.namespace(),
-                page_size,
-                next_page_token,
-                query,
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn list_archived_workflow_executions(
-        &self,
-        page_size: i32,
-        next_page_token: Vec<u8>,
-        query: String,
-    ) -> Result<ListArchivedWorkflowExecutionsResponse> {
-        Ok(WorkflowService::list_archived_workflow_executions(
-            &mut self.clone(),
-            ListArchivedWorkflowExecutionsRequest {
-                namespace: self.namespace(),
-                page_size,
-                next_page_token,
-                query,
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
-        Ok(WorkflowService::get_search_attributes(
-            &mut self.clone(),
-            GetSearchAttributesRequest {}.into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn update_workflow_execution(
-        &self,
-        workflow_id: String,
-        run_id: String,
-        name: String,
-        wait_policy: update::v1::WaitPolicy,
-        args: Option<Payloads>,
-    ) -> Result<UpdateWorkflowExecutionResponse> {
-        Ok(WorkflowService::update_workflow_execution(
-            &mut self.clone(),
-            UpdateWorkflowExecutionRequest {
-                namespace: self.namespace(),
-                workflow_execution: Some(WorkflowExecution {
-                    workflow_id,
-                    run_id,
-                }),
-                wait_policy: Some(wait_policy),
-                request: Some(update::v1::Request {
-                    meta: Some(update::v1::Meta {
-                        update_id: "".into(),
-                        identity: self.identity(),
-                    }),
-                    input: Some(update::v1::Input {
-                        header: None,
-                        name,
-                        args,
-                    }),
-                }),
-                ..Default::default()
-            }
-            .into_request(),
-        )
-        .await?
-        .into_inner())
-    }
-}
-
-mod sealed {
-    use crate::{WorkflowClientTrait, WorkflowService};
-    pub trait WfHandleClient: WorkflowClientTrait + WorkflowService {}
-    impl<T> WfHandleClient for T where T: WorkflowClientTrait + WorkflowService {}
-}
-
-/// Additional methods for workflow clients
-pub trait WfClientExt: WfHandleClient + Sized + Clone {
-    /// Create an untyped handle for a workflow execution, which can be used to do things like
-    /// wait for that workflow's result. `run_id` may be left blank to target the latest run.
-    fn get_untyped_workflow_handle(
+    fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
         run_id: impl Into<String>,
-    ) -> UntypedWorkflowHandle<Self> {
+    ) -> WorkflowHandle<Self, W>
+    where
+        Self: Sized,
+    {
         let rid = run_id.into();
-        UntypedWorkflowHandle::new(
+        WorkflowHandle::new(
             self.clone(),
             WorkflowExecutionInfo {
                 namespace: self.namespace(),
                 workflow_id: workflow_id.into(),
                 run_id: if rid.is_empty() { None } else { Some(rid) },
+                first_execution_run_id: None,
             },
         )
     }
-}
 
-impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+    fn list_workflows(
+        &self,
+        query: impl Into<String>,
+        opts: ListWorkflowsOptions,
+    ) -> ListWorkflowsStream {
+        let client = self.clone();
+        let namespace = self.namespace();
+        let query = query.into();
+        let limit = opts.limit;
+
+        // State: (next_page_token, buffer, yielded_count, exhausted)
+        let initial_state = (Vec::new(), VecDeque::new(), 0, false);
+
+        let stream = stream::unfold(
+            initial_state,
+            move |(next_page_token, mut buffer, mut yielded, exhausted)| {
+                let mut client = client.clone();
+                let namespace = namespace.clone();
+                let query = query.clone();
+
+                async move {
+                    if let Some(l) = limit
+                        && yielded >= l
+                    {
+                        return None;
+                    }
+
+                    if let Some(exec) = buffer.pop_front() {
+                        yielded += 1;
+                        return Some((Ok(exec), (next_page_token, buffer, yielded, exhausted)));
+                    }
+
+                    if exhausted {
+                        return None;
+                    }
+
+                    let response = WorkflowService::list_workflow_executions(
+                        &mut client,
+                        ListWorkflowExecutionsRequest {
+                            namespace,
+                            page_size: 0, // Use server default
+                            next_page_token: next_page_token.clone(),
+                            query,
+                        }
+                        .into_request(),
+                    )
+                    .await;
+
+                    match response {
+                        Ok(resp) => {
+                            let resp = resp.into_inner();
+                            let new_exhausted = resp.next_page_token.is_empty();
+                            let new_token = resp.next_page_token;
+
+                            buffer = resp
+                                .executions
+                                .into_iter()
+                                .map(WorkflowExecution::from)
+                                .collect();
+
+                            if let Some(exec) = buffer.pop_front() {
+                                yielded += 1;
+                                Some((Ok(exec), (new_token, buffer, yielded, new_exhausted)))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => Some((Err(e.into()), (next_page_token, buffer, yielded, true))),
+                    }
+                }
+            },
+        );
+
+        ListWorkflowsStream::new(Box::pin(stream))
+    }
+
+    async fn count_workflows(
+        &self,
+        query: impl Into<String>,
+        _opts: CountWorkflowsOptions,
+    ) -> Result<WorkflowExecutionCount, ClientError> {
+        let resp = WorkflowService::count_workflow_executions(
+            &mut self.clone(),
+            CountWorkflowExecutionsRequest {
+                namespace: self.namespace(),
+                query: query.into(),
+            }
+            .into_request(),
+        )
+        .await?
+        .into_inner();
+
+        Ok(WorkflowExecutionCount::from_response(resp))
+    }
+
+    fn get_async_activity_handle(&self, identifier: ActivityIdentifier) -> AsyncActivityHandle<Self>
+    where
+        Self: Sized,
+    {
+        AsyncActivityHandle::new(self.clone(), identifier)
+    }
+}
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
@@ -1763,6 +1156,7 @@ pub(crate) use dbg_panic;
 mod tests {
     use super::*;
     use tonic::metadata::Ascii;
+    use url::Url;
 
     #[test]
     fn applies_headers() {
@@ -1917,5 +1311,164 @@ mod tests {
             .build();
         dbg!(&opts.keep_alive);
         assert!(opts.keep_alive.is_none());
+    }
+
+    mod list_workflows_tests {
+        use super::*;
+        use futures_util::{FutureExt, StreamExt};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use temporalio_common::protos::temporal::api::common::v1::WorkflowExecution as ProtoWorkflowExecution;
+        use tonic::{Request, Response};
+
+        #[derive(Clone)]
+        struct MockListWorkflowsClient {
+            call_count: Arc<AtomicUsize>,
+            // Returns this many workflows per page
+            page_size: usize,
+            // Total workflows available
+            total_workflows: usize,
+        }
+
+        impl NamespacedClient for MockListWorkflowsClient {
+            fn namespace(&self) -> String {
+                "test-namespace".to_string()
+            }
+            fn identity(&self) -> String {
+                "test-identity".to_string()
+            }
+        }
+
+        impl WorkflowService for MockListWorkflowsClient {
+            fn list_workflow_executions(
+                &mut self,
+                request: Request<ListWorkflowExecutionsRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<ListWorkflowExecutionsResponse>, tonic::Status>,
+            > {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                let req = request.into_inner();
+
+                // Determine offset from page token
+                let offset: usize = if req.next_page_token.is_empty() {
+                    0
+                } else {
+                    String::from_utf8(req.next_page_token)
+                        .unwrap()
+                        .parse()
+                        .unwrap()
+                };
+
+                let remaining = self.total_workflows.saturating_sub(offset);
+                let count = remaining.min(self.page_size);
+                let new_offset = offset + count;
+
+                let executions: Vec<_> = (offset..offset + count)
+                    .map(|i| workflow::WorkflowExecutionInfo {
+                        execution: Some(ProtoWorkflowExecution {
+                            workflow_id: format!("wf-{i}"),
+                            run_id: format!("run-{i}"),
+                        }),
+                        r#type: Some(WorkflowType {
+                            name: "TestWorkflow".to_string(),
+                        }),
+                        task_queue: "test-queue".to_string(),
+                        ..Default::default()
+                    })
+                    .collect();
+
+                let next_page_token = if new_offset < self.total_workflows {
+                    new_offset.to_string().into_bytes()
+                } else {
+                    vec![]
+                };
+
+                async move {
+                    Ok(Response::new(ListWorkflowExecutionsResponse {
+                        executions,
+                        next_page_token,
+                    }))
+                }
+                .boxed()
+            }
+        }
+
+        #[tokio::test]
+        async fn list_workflows_paginates_through_all_results() {
+            let call_count = Arc::new(AtomicUsize::new(0));
+            let client = MockListWorkflowsClient {
+                call_count: call_count.clone(),
+                page_size: 3,
+                total_workflows: 10,
+            };
+
+            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let results: Vec<_> = stream.collect().await;
+
+            assert_eq!(results.len(), 10);
+            for (i, result) in results.iter().enumerate() {
+                let wf = result.as_ref().unwrap();
+                assert_eq!(wf.id(), format!("wf-{i}"));
+                assert_eq!(wf.run_id(), format!("run-{i}"));
+            }
+            // Should have made 4 calls: pages of 3, 3, 3, 1
+            assert_eq!(call_count.load(Ordering::SeqCst), 4);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_respects_limit() {
+            let call_count = Arc::new(AtomicUsize::new(0));
+            let client = MockListWorkflowsClient {
+                call_count: call_count.clone(),
+                page_size: 3,
+                total_workflows: 10,
+            };
+
+            let opts = ListWorkflowsOptions::builder().limit(5).build();
+            let stream = client.list_workflows("", opts);
+            let results: Vec<_> = stream.collect().await;
+
+            assert_eq!(results.len(), 5);
+            for (i, result) in results.iter().enumerate() {
+                let wf = result.as_ref().unwrap();
+                assert_eq!(wf.id(), format!("wf-{i}"));
+            }
+            // Should have made 2 calls: 1 page of 3, then 2 more from next page
+            assert_eq!(call_count.load(Ordering::SeqCst), 2);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_limit_less_than_page_size() {
+            let call_count = Arc::new(AtomicUsize::new(0));
+            let client = MockListWorkflowsClient {
+                call_count: call_count.clone(),
+                page_size: 10,
+                total_workflows: 100,
+            };
+
+            let opts = ListWorkflowsOptions::builder().limit(3).build();
+            let stream = client.list_workflows("", opts);
+            let results: Vec<_> = stream.collect().await;
+
+            assert_eq!(results.len(), 3);
+            // Only 1 call needed since limit < page_size
+            assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn list_workflows_empty_results() {
+            let call_count = Arc::new(AtomicUsize::new(0));
+            let client = MockListWorkflowsClient {
+                call_count: call_count.clone(),
+                page_size: 10,
+                total_workflows: 0,
+            };
+
+            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let results: Vec<_> = stream.collect().await;
+
+            assert_eq!(results.len(), 0);
+            assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
     }
 }

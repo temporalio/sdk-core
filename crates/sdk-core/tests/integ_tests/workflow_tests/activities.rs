@@ -14,16 +14,16 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+    ActivityIdentifier, DescribeWorkflowOptions, TerminateWorkflowOptions, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
 };
 use temporalio_common::{
     prost_dur,
     protos::{
-        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TaskToken, TestHistoryBuilder,
-        canned_histories,
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-            IntoCompletion, IntoPayloadsExt,
+            ActivityHeartbeat, ActivityTaskCompletion, FromJsonPayloadExt, IntoCompletion,
+            IntoPayloadsExt,
             activity_result::{
                 self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
             },
@@ -45,9 +45,9 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    ActivityOptions, CancellableFuture, WfExitValue, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -59,49 +59,53 @@ use temporalio_sdk_core::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
-    // TODO [rust-sdk-branch]: activities need to return deserialzied results
-    let r = ctx
-        .start_activity(
-            StdActivities::echo,
-            "hi!".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )?
-        .await
-        .unwrap_ok_payload();
-    Ok(r.into())
+#[workflow]
+#[derive(Default)]
+struct OneActivityWorkflow;
+
+#[workflow_methods]
+impl OneActivityWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, input: String) -> WorkflowResult<String> {
+        let r = ctx
+            .start_activity(
+                StdActivities::echo,
+                input,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )?
+            .await
+            .unwrap_ok_payload();
+        Ok(WfExitValue::Normal(String::from_json_payload(&r)?))
+    }
 }
 
 #[tokio::test]
 async fn one_activity_only() {
-    let wf_name = "one_activity";
+    let wf_name = OneActivityWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.register_activities(StdActivities);
+    starter
+        .sdk_config
+        .register_workflow::<OneActivityWorkflow>();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), one_activity_wf);
 
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+    let input = "hello from input!".to_string();
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            OneActivityWorkflow::run,
+            input.clone(),
+            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
-    let p = Payload::from_json_payload(&r[0]).unwrap();
-    assert_eq!(String::from_json_payload(&p).unwrap(), "hi!");
+    assert_eq!(r, input);
 }
 
 #[tokio::test]
@@ -727,12 +731,10 @@ async fn async_activity_completion_workflow() {
     starter
         .get_client()
         .await
-        .complete_activity_task(
-            task.task_token.into(),
-            Some(Payloads {
-                payloads: vec![response_payload.clone()],
-            }),
-        )
+        .get_async_activity_handle(ActivityIdentifier::TaskToken(task.task_token.into()))
+        .complete(Some(Payloads {
+            payloads: vec![response_payload.clone()],
+        }))
         .await
         .unwrap();
 
@@ -813,7 +815,8 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     starter
         .get_client()
         .await
-        .terminate_workflow_execution(task_q, None)
+        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .terminate(TerminateWorkflowOptions::default())
         .await
         .unwrap();
 }
@@ -873,10 +876,12 @@ async fn activity_heartbeat_not_flushed_on_success() {
         || async {
             // Verify pending details has the flushed heartbeat
             let details = client
-                .describe_workflow_execution(starter.get_wf_id().to_string(), None)
+                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), "")
+                .describe(DescribeWorkflowOptions::default())
                 .await
                 .unwrap();
             let last_deets = details
+                .raw_description
                 .pending_activities
                 .into_iter()
                 .find(|i| i.activity_id == activity_id)
@@ -892,20 +897,21 @@ async fn activity_heartbeat_not_flushed_on_success() {
     .await
     .unwrap();
     client
-        .terminate_workflow_execution(task_q, None)
+        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .terminate(TerminateWorkflowOptions::default())
         .await
         .unwrap();
     drain_pollers_and_shutdown(&core).await;
 }
 
-#[tokio::test]
-async fn one_activity_abandon_cancelled_before_started() {
-    let wf_name = "one_activity_abandon_cancelled_before_started";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.register_activities(StdActivities);
-    let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+#[workflow]
+#[derive(Default)]
+struct OneActivityAbandonCancelledBeforeStarted;
+
+#[workflow_methods]
+impl OneActivityAbandonCancelledBeforeStarted {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -917,37 +923,44 @@ async fn one_activity_abandon_cancelled_before_started() {
                 },
             )
             .unwrap();
-        act_fut.cancel(&ctx);
+        act_fut.cancel();
         act_fut.await;
         Ok(().into())
-    });
+    }
+}
 
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+#[tokio::test]
+async fn one_activity_abandon_cancelled_before_started() {
+    let wf_name = "one_activity_abandon_cancelled_before_started";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
+    starter
+        .sdk_config
+        .register_workflow::<OneActivityAbandonCancelledBeforeStarted>();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            OneActivityAbandonCancelledBeforeStarted::run,
+            (),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
-#[tokio::test]
-async fn one_activity_abandon_cancelled_after_complete() {
-    let wf_name = "one_activity_abandon_cancelled_after_complete";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.register_activities(StdActivities);
-    let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+#[workflow]
+#[derive(Default)]
+struct OneActivityAbandonCancelledAfterComplete;
+
+#[workflow_methods]
+impl OneActivityAbandonCancelledAfterComplete {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let act_fut = ctx
             .start_activity(
                 StdActivities::delay,
@@ -960,171 +973,110 @@ async fn one_activity_abandon_cancelled_after_complete() {
             )
             .unwrap();
         ctx.timer(Duration::from_secs(1)).await;
-        act_fut.cancel(&ctx);
+        act_fut.cancel();
         ctx.timer(Duration::from_secs(3)).await;
         act_fut.await;
         Ok(().into())
-    });
-
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    }
 }
 
 #[tokio::test]
-async fn it_can_complete_async() {
-    let wf_name = "it_can_complete_async".to_owned();
-    let mut starter = CoreWfStarter::new(&wf_name);
-    let async_response = "agence";
-    let shared_token = Arc::new(tokio::sync::Mutex::new(None));
-
-    struct AsyncActivities {
-        shared_token: Arc<tokio::sync::Mutex<Option<Vec<u8>>>>,
-    }
-    #[activities]
-    impl AsyncActivities {
-        #[activity]
-        async fn complete_async_activity(
-            self: Arc<Self>,
-            ctx: ActivityContext,
-            _: String,
-        ) -> Result<(), ActivityError> {
-            // set the `activity_task_token`
-            let activity_info = ctx.get_info();
-            let task_token = &activity_info.task_token;
-            let mut shared = self.shared_token.lock().await;
-            *shared = Some(task_token.clone());
-            Err(ActivityError::WillCompleteAsync)
-        }
-    }
-
-    starter.sdk_config.register_activities(AsyncActivities {
-        shared_token: shared_token.clone(),
-    });
-
+async fn one_activity_abandon_cancelled_after_complete() {
+    let wf_name = "one_activity_abandon_cancelled_after_complete";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
+    starter
+        .sdk_config
+        .register_workflow::<OneActivityAbandonCancelledAfterComplete>();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
 
-    worker.register_wf(wf_name.clone(), move |ctx: WfContext| async move {
-        let activity_resolution = ctx
-            .start_activity(
-                AsyncActivities::complete_async_activity,
-                "hi".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(30)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
-
-        let res = match activity_resolution.status {
-            Some(act_res::Status::Completed(activity_result::Success { result })) => result
-                .map(|p| String::from_json_payload(&p).unwrap())
-                .unwrap(),
-            _ => panic!("activity task failed {activity_resolution:?}"),
-        };
-
-        assert_eq!(&res, async_response);
-        Ok(().into())
-    });
-
-    let shared_token_ref2 = shared_token.clone();
-    tokio::spawn(async move {
-        loop {
-            let mut shared = shared_token_ref2.lock().await;
-            let maybe_token = shared.take();
-
-            if let Some(task_token) = maybe_token {
-                client
-                    .complete_activity_task(
-                        TaskToken(task_token),
-                        Some(async_response.as_json_payload().unwrap().into()),
-                    )
-                    .await
-                    .unwrap();
-                return;
-            }
-        }
-    });
-
-    let _run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            OneActivityAbandonCancelledAfterComplete::run,
+            (),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
-
     worker.run_until_done().await.unwrap();
+    let res = handle.get_result(Default::default()).await.unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
-static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
-static ACTS_DONE: Semaphore = Semaphore::const_new(0);
 #[tokio::test]
 async fn graceful_shutdown() {
     let wf_name = "graceful_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.graceful_shutdown_period = Some(Duration::from_millis(500));
 
-    struct SleeperActivities;
+    let acts_started = Arc::new(Semaphore::const_new(0));
+    let acts_done = Arc::new(Semaphore::const_new(0));
+
+    struct SleeperActivities {
+        acts_started: Arc<Semaphore>,
+        acts_done: Arc<Semaphore>,
+    }
     #[activities]
     impl SleeperActivities {
         #[activity]
-        async fn sleeper(ctx: ActivityContext, _: String) -> Result<(), ActivityError> {
-            ACTS_STARTED.add_permits(1);
+        async fn sleeper(
+            self: Arc<Self>,
+            ctx: ActivityContext,
+            _: String,
+        ) -> Result<(), ActivityError> {
+            self.acts_started.add_permits(1);
             // just wait to be cancelled
             ctx.cancelled().await;
-            ACTS_DONE.add_permits(1);
+            self.acts_done.add_permits(1);
             Err(ActivityError::cancelled())
         }
     }
 
-    starter.sdk_config.register_activities(SleeperActivities);
+    starter.sdk_config.register_activities(SleeperActivities {
+        acts_started: acts_started.clone(),
+        acts_done: acts_done.clone(),
+    });
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let act_futs = (1..=10).map(|_| {
-            ctx.start_activity(
-                SleeperActivities::sleeper,
-                "hi".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    retry_policy: Some(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    }),
-                    cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-        });
-        join_all(act_futs).await;
-        Ok(().into())
-    });
 
+    #[workflow]
+    #[derive(Default)]
+    struct GracefulShutdownWorkflow;
+
+    #[workflow_methods]
+    impl GracefulShutdownWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let act_futs = (1..=10).map(|_| {
+                ctx.start_activity(
+                    SleeperActivities::sleeper,
+                    "hi".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        retry_policy: Some(RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        }),
+                        cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+            });
+            join_all(act_futs).await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<GracefulShutdownWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+        .submit_workflow(
+            GracefulShutdownWorkflow::run,
+            (),
+            WorkflowOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -1132,13 +1084,14 @@ async fn graceful_shutdown() {
     let handle = worker.inner_mut().shutdown_handle();
     let shutdowner = async {
         // Wait for all acts to be started before initiating shutdown
-        let _ = ACTS_STARTED.acquire_many(10).await;
+        let _ = acts_started.acquire_many(10).await;
         handle();
         // Kill workflow once all acts are cancelled. This also ensures we actually see all the
         // cancels, otherwise run_until_done will hang since the workflow won't complete.
-        let _ = ACTS_DONE.acquire_many(10).await;
+        let _ = acts_done.acquire_many(10).await;
         client
-            .terminate_workflow_execution(wf_name.to_owned(), None)
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .terminate(TerminateWorkflowOptions::default())
             .await
             .unwrap();
     };
@@ -1148,7 +1101,6 @@ async fn graceful_shutdown() {
     join!(shutdowner, runner);
 }
 
-static WAS_CANCELLED: AtomicBool = AtomicBool::new(false);
 #[tokio::test]
 async fn activity_can_be_cancelled_by_local_timeout() {
     let wf_name = "activity_can_be_cancelled_by_local_timeout";
@@ -1156,48 +1108,74 @@ async fn activity_can_be_cancelled_by_local_timeout() {
     starter
         .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
 
-    struct CancellableEchoActivities;
+    let was_cancelled = Arc::new(AtomicBool::new(false));
+
+    struct CancellableEchoActivities {
+        was_cancelled: Arc<AtomicBool>,
+    }
     #[activities]
     impl CancellableEchoActivities {
         #[activity]
         async fn cancellable_echo(
+            self: Arc<Self>,
             ctx: ActivityContext,
             echo_me: String,
         ) -> Result<String, ActivityError> {
             // Doesn't heartbeat
             ctx.cancelled().await;
-            WAS_CANCELLED.store(true, Ordering::Relaxed);
+            self.was_cancelled.store(true, Ordering::Relaxed);
             Ok(echo_me)
         }
     }
 
     starter
         .sdk_config
-        .register_activities(CancellableEchoActivities);
+        .register_activities(CancellableEchoActivities {
+            was_cancelled: was_cancelled.clone(),
+        });
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let res = ctx
-            .start_activity(
-                CancellableEchoActivities::cancellable_echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    retry_policy: Some(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
-        assert!(res.timed_out().is_some());
-        Ok(().into())
-    });
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    #[workflow]
+    #[derive(Default)]
+    struct ActivityLocalTimeoutWorkflow;
+
+    #[workflow_methods]
+    impl ActivityLocalTimeoutWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let res = ctx
+                .start_activity(
+                    CancellableEchoActivities::cancellable_echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(1)),
+                        retry_policy: Some(RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+                .await;
+            assert!(res.timed_out().is_some());
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<ActivityLocalTimeoutWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            ActivityLocalTimeoutWorkflow::run,
+            (),
+            WorkflowOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
     worker.run_until_done().await.unwrap();
-    assert!(WAS_CANCELLED.load(Ordering::Relaxed));
+    assert!(was_cancelled.load(Ordering::Relaxed));
 }
 
 #[tokio::test]
@@ -1221,32 +1199,43 @@ async fn long_activity_timeout_repro() {
         .set_core_cfg_mutator(|m| m.local_timeout_buffer_for_activities = Duration::from_secs(0));
     starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let mut iter = 1;
-        loop {
-            let res = ctx
-                .start_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        retry_policy: Some(RetryPolicy {
-                            maximum_attempts: 1,
+
+    #[workflow]
+    #[derive(Default)]
+    struct LongActivityTimeoutReproWorkflow;
+
+    #[workflow_methods]
+    impl LongActivityTimeoutReproWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let mut iter = 1;
+            loop {
+                let res = ctx
+                    .start_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(1)),
+                            retry_policy: Some(RetryPolicy {
+                                maximum_attempts: 1,
+                                ..Default::default()
+                            }),
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            assert!(res.completed_ok());
-            ctx.timer(Duration::from_secs(60 * 3)).await;
-            iter += 1;
-            if iter > 5000 {
-                return Ok(WfExitValue::<()>::continue_as_new(Default::default()));
+                        },
+                    )
+                    .unwrap()
+                    .await;
+                assert!(res.completed_ok());
+                ctx.timer(Duration::from_secs(60 * 3)).await;
+                iter += 1;
+                if iter > 5000 {
+                    return Ok(WfExitValue::<()>::continue_as_new(Default::default()));
+                }
             }
         }
-    });
+    }
+
+    worker.register_workflow::<LongActivityTimeoutReproWorkflow>();
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
@@ -1282,24 +1271,35 @@ async fn pass_activity_summary_to_metadata() {
     });
 
     let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
-        ctx.start_activity(
-            StdActivities::default,
-            (),
-            ActivityOptions {
-                summary: Some("activity summary".to_string()),
-                ..Default::default()
-            },
-        )?
-        .await;
-        Ok(().into())
-    });
+
+    #[workflow]
+    #[derive(Default)]
+    struct ActivitySummaryWorkflow;
+
+    #[workflow_methods]
+    impl ActivitySummaryWorkflow {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StdActivities::default,
+                (),
+                ActivityOptions {
+                    summary: Some("activity summary".to_string()),
+                    ..Default::default()
+                },
+            )?
+            .await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<ActivitySummaryWorkflow>();
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
         .submit_wf(
-            wf_id.to_owned(),
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1334,46 +1334,68 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     let mock = mock_worker_client();
     let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
 
-    worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
-        let act_fut = ctx.start_activity(
-            StdActivities::default,
-            (),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                cancellation_type: ActivityCancellationType::Abandon,
-                ..Default::default()
-            },
-        )?;
-        ctx.timer(Duration::from_secs(1)).await;
-        act_fut.cancel(&ctx);
-        ctx.timer(Duration::from_secs(3)).await;
-        act_fut.await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct AbandonedActivitiesWorkflow;
+
+    #[workflow_methods]
+    impl AbandonedActivitiesWorkflow {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let act_fut = ctx.start_activity(
+                StdActivities::default,
+                (),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    cancellation_type: ActivityCancellationType::Abandon,
+                    ..Default::default()
+                },
+            )?;
+            ctx.timer(Duration::from_secs(1)).await;
+            act_fut.cancel();
+            ctx.timer(Duration::from_secs(3)).await;
+            act_fut.await;
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<AbandonedActivitiesWorkflow>();
+    let task_queue = worker.inner_mut().task_queue().to_owned();
     worker
-        .submit_wf(wfid, wf_type, vec![], Default::default())
+        .submit_wf(
+            wf_type,
+            vec![],
+            WorkflowOptions::new(task_queue, wfid).build(),
+        )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
 
-#[tokio::test]
-async fn immediate_activity_cancelation() {
-    let func = WorkflowFunction::new(|ctx: WfContext| async move {
+#[workflow]
+#[derive(Default)]
+struct ImmediateActivityCancelationWorkflow;
+
+#[workflow_methods]
+impl ImmediateActivityCancelationWorkflow {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let cancel_activity_future =
             ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?;
-        // Immediately cancel the activity
-        cancel_activity_future.cancel(&ctx);
+        cancel_activity_future.cancel();
         cancel_activity_future.await;
         Ok(().into())
-    });
+    }
+}
 
+#[tokio::test]
+async fn immediate_activity_cancelation() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
     let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<ImmediateActivityCancelationWorkflow>();
 
     let mut aai = ActivationAssertionsInterceptor::default();
     aai.then(|a| {

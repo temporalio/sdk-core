@@ -1,8 +1,10 @@
 use proc_macro::TokenStream;
 use syn::parse_macro_input;
 
-mod definitions;
+mod activities_definitions;
 mod fsm_impl;
+mod macro_utils;
+mod workflow_definitions;
 
 /// Can be used to define Activities for invocation and execution. Using this macro requires that
 /// you also depend on the `temporalio_sdk` crate.
@@ -10,8 +12,8 @@ mod fsm_impl;
 /// For a usage example, see that crate's documentation.
 #[proc_macro_attribute]
 pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let def: definitions::ActivitiesDefinition =
-        parse_macro_input!(item as definitions::ActivitiesDefinition);
+    let def: activities_definitions::ActivitiesDefinition =
+        parse_macro_input!(item as activities_definitions::ActivitiesDefinition);
     def.codegen()
 }
 
@@ -19,6 +21,111 @@ pub fn activities(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// This attribute is processed by the `#[activities]` macro and should not be used standalone.
 #[proc_macro_attribute]
 pub fn activity(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a struct as a workflow definition.
+///
+/// This attribute can optionally specify a custom workflow name:
+/// `#[workflow(name = "my-custom-workflow")]`
+///
+/// If no name is specified, the struct name is used as the workflow type name.
+///
+/// This attribute must be used in conjunction with `#[workflow_methods]` on an impl block.
+#[proc_macro_attribute]
+pub fn workflow(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Pass through - the struct is not modified, just marked for workflow_methods
+    item
+}
+
+/// Defines workflow methods for a workflow struct. Using this macro requires that
+/// you also depend on the `temporalio_sdk` crate.
+///
+/// This macro processes an impl block and generates:
+/// - Marker structs for each workflow method
+/// - Trait implementations for workflow definition and execution
+/// - Registration code for workers
+///
+/// ## Macro Attributes
+///
+/// - `factory_only` - When set, the workflow must be registered using
+///   `register_workflow_with_factory` and does not need to implement `Default` or define an `#[init]`
+///   method. Ex: `#[workflow_methods(factory_only)]`
+///
+/// ## Method Attributes
+///
+/// - `#[init]` - Optional initialization method. Signature: `fn new(input: T, ctx: &WorkflowContext) -> Self`
+/// - `#[run]` - Required main workflow function. Signature: `async fn run(&mut self, ctx: &mut WorkflowContext) -> WorkflowResult<T>`
+/// - `#[signal]` - Signal handler. Signature: `fn signal(&mut self, ctx: &mut WorkflowContext, input: T)` (may be async)
+/// - `#[query]` - Query handler. Signature: `fn query(&self, ctx: &WorkflowContext, input: T) -> R` (must NOT be async)
+/// - `#[update]` - Update handler. Signature: `fn update(&mut self, ctx: &mut WorkflowContext, input: T) -> R` (may be async)
+///
+/// For a usage example, see the `temporalio_sdk` crate's documentation.
+#[proc_macro_attribute]
+pub fn workflow_methods(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let factory_only = !attr.is_empty() && attr.to_string().contains("factory_only");
+    let def: workflow_definitions::WorkflowMethodsDefinition =
+        parse_macro_input!(item as workflow_definitions::WorkflowMethodsDefinition);
+    def.codegen_with_options(factory_only)
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as the initialization method.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+#[proc_macro_attribute]
+pub fn init(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as the main run method.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+#[proc_macro_attribute]
+pub fn run(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as a signal handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the signal name:
+/// `#[signal(name = "my_signal")]`
+#[proc_macro_attribute]
+pub fn signal(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as a query handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the query name:
+/// `#[query(name = "my_query")]`
+#[proc_macro_attribute]
+pub fn query(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as an update handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// Supports an optional `name` parameter to override the update name:
+/// `#[update(name = "my_update")]`
+#[proc_macro_attribute]
+pub fn update(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    item
+}
+
+/// Marks a method within a `#[workflow_methods]` impl block as a validator for an update handler.
+/// This attribute is processed by the `#[workflow_methods]` macro and should not be used standalone.
+///
+/// The parameter specifies which update this validator applies to:
+/// `#[update_validator(my_update)]`
+///
+/// The validator method must:
+/// - Take `&self` (not `&mut self`)
+/// - Take `&WorkflowContextView` as the first parameter
+/// - Take a reference to the update's input type as the second parameter
+/// - Return `Result<(), Box<dyn std::error::Error + Send + Sync>>`
+#[proc_macro_attribute]
+pub fn update_validator(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 

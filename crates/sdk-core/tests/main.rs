@@ -12,7 +12,9 @@ mod shared_tests;
 
 #[cfg(test)]
 mod integ_tests {
+    mod async_activity_client_tests;
     mod client_tests;
+    mod data_converter_tests;
     mod ephemeral_server_tests;
     mod heartbeat_tests;
     mod metrics_tests;
@@ -24,6 +26,7 @@ mod integ_tests {
     mod worker_heartbeat_tests;
     mod worker_tests;
     mod worker_versioning_tests;
+    mod workflow_client_tests;
     mod workflow_tests;
 
     use crate::common::{

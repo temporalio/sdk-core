@@ -3,49 +3,46 @@
 This repository provides a Rust workspace for the Temporal Core SDK and related crates. Use this
 document as your quick reference when submitting pull requests.
 
-## Where Things Are
+## Requirements for coding agents
 
-- `crates` - All crates in the workspace.
-  - `crates/core/` – implementation of the core SDK
-  - `crates/client/` – clients for communicating with Temporal clusters
-  - `crates/common/` – protobuf definitions shared across crates
-  - `crates/core-api/` – API definitions exposed by core
-  - `crates/core-c-bridge/` – C interface for core
-  - `crates/sdk/` – pre-alpha Rust SDK built on top of core (used mainly for tests)
-  - `crates/fsm/` – state machine implementation and macros
-  - `crates/core/tests/` – integration, heavy, and manual tests
-- `arch_docs/` – architectural design documents
-- Contributor guide: `README.md`
-- `target/` - This contains compiled files. You never need to look in here.
+- Always use `cargo integ-test <test_name>` for running integration tests. Do not run them directly. If you have added `dbg!` or println statements, you must add `-- --nocapture` to see them.
+- Unit tests may be run with `cargo test`. If you are about to run a test, you do not need to run
+  `cargo build` separately first. Just run the test, and it will build. Running `cargo build --test`
+  DOES NOT build integration tests. Use `cargo lint` for checking if integration tests compile
+  without running them.
+- Always use `cargo lint` for checking lints / clippy. Do not use clippy directly.
+- It is EXTREMELY IMPORTANT that any added comments should explain why something needs to be done,
+  rather than what it is. Comments that simply state a fact easily understood from type signatures
+  or other context should NEVER be added. Always prefer to avoid a comment unless it truly is 
+  clarifying something nonobvious.
+- Always make every attempt to avoid explicit sleeps in test code. Instead rely on synchronization
+  techniques like channels, Notify, etc.
+- Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
+  than 5 minutes. When making changes that may break integration tests, after compiling, run
+  integration tests with `timeout 180`, as it is possible to introduce test hangs.
+- DO NOT put use statements in function scope. Always put them at the top of the file, unless doing
+  so helps prevent ambiguous method resolution because of traits. Putting them at the top of a tests module is also acceptable.
+
 
 ## Repo Specific Utilities
 
 - `.cargo/config.toml` defines useful cargo aliases:
-  - `cargo lint` – run clippy on workspace crates
-  - `cargo test-lint` – run clippy on tests
+  - `cargo lint` – run clippy on workspace crates and integration tests
+  - `cargo test-lint` – run clippy on unit tests
   - `cargo integ-test` – run the integration test runner
-- `etc` - Various helper scripts and configuration
-  - `etc/docker` - Docker compose files to help with CI or more complex local testing
 
 ## Building and Testing
 
 The following commands are enforced for each pull request (see `README.md`):
 
 ```bash
-cargo build            # build all crates
-cargo test             # run unit tests
-cargo integ-test       # integration tests (starts ephemeral server by default)
+cargo fmt --all --check # ensure code is formatted
+cargo build             # build all crates
+cargo lint              # run lints
+cargo test-lint         # run lints on tests
+cargo test              # run unit tests
+cargo integ-test        # integration tests (starts ephemeral server by default)
 cargo test --test heavy_tests  # load tests -- agents do not need to run this and should not
-```
-
-Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
-than 10 minutes.
-
-Additional checks:
-
-```bash
-cargo fmt --all        # format code
-cargo clippy --all -- -D warnings  # lint
 ```
 
 Documentation can be generated with `cargo doc`.
@@ -69,6 +66,20 @@ Reviewers will look for:
 - New tests covering behavior changes
 - Clear and concise code following existing style (see `README.md` for error handling guidance)
 - Documentation updates for any public API changes
+
+## Where Things Are
+
+- `crates` - All crates in the workspace.
+  - `crates/client/` – clients for communicating with Temporal clusters
+  - `crates/common/` – Common functionality & protobuf definitions
+  - `crates/macros/` – procedural macro implementations
+  - `crates/sdk/` – Rust SDK built on top of core
+  - `crates/sdk-core/` – implementation of the core SDK
+      - `crates/sdk-core/tests/` – integration, heavy, and manual tests
+  - `crates/sdk-core-c-bridge/` – C interface for core
+- `arch_docs/` – architectural design documents
+- Contributor guide: `README.md`
+- `target/` - This contains compiled files. You never need to look in here.
 
 ## Notes
 

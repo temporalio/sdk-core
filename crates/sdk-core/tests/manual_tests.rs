@@ -21,12 +21,15 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    GetWorkflowResultOptions, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+    GetWorkflowResultOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowOptions,
 };
-use temporalio_common::{telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes};
-use temporalio_macros::activities;
+use temporalio_common::{
+    data_converters::RawValue, telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes,
+};
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WfContext,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
@@ -42,6 +45,84 @@ impl JitteryEchoActivities {
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;
         Ok(echo)
     }
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSpikyWf;
+
+#[workflow_methods]
+impl PollerLoadSpikyWf {
+    #[run(name = "poller_load")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for _ in 0..5 {
+            ctx.start_activity(
+                JitteryEchoActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+        }
+
+        Ok(().into())
+    }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSustainedWf;
+
+#[workflow_methods]
+impl PollerLoadSustainedWf {
+    #[run(name = "poller_load")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let rs = ctx.random_seed();
+        let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
+        for _ in 0..100 {
+            let jitterms = rand.random_range(1000..3000);
+            ctx.timer(Duration::from_millis(jitterms)).await;
+        }
+
+        Ok(().into())
+    }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+}
+
+#[workflow]
+#[derive(Default)]
+struct PollerLoadSpikeThenSustainedWf;
+
+#[workflow_methods]
+impl PollerLoadSpikeThenSustainedWf {
+    #[run(name = "poller_load")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for _ in 0..5 {
+            ctx.start_activity(
+                JitteryEchoActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .await;
+        }
+
+        Ok(().into())
+    }
+
+    #[signal(name = "signame")]
+    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test]
@@ -77,32 +158,9 @@ async fn poller_load_spiky() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSpikyWf>();
     let client = starter.get_client().await;
+    let tq = starter.get_task_queue().to_owned();
 
     info!("Prom bound to {:?}", addr);
 
@@ -112,17 +170,15 @@ async fn poller_load_spiky() {
         let wfid = format!("{wf_name}_{i}-{}", rand_6_chars());
         let rid = worker
             .submit_wf(
-                wfid.clone(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions {
-                    execution_timeout: Some(Duration::from_secs(120)),
-                    ..Default::default()
-                },
+                WorkflowOptions::new(tq.clone(), wfid.clone())
+                    .execution_timeout(Duration::from_secs(120))
+                    .build(),
             )
             .await
             .unwrap();
-        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+        workflow_handles.push(client.get_workflow_handle::<UntypedWorkflow>(wfid, rid));
     }
     info!("Done starting workflows");
     let start_processing = Instant::now();
@@ -131,9 +187,7 @@ async fn poller_load_spiky() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -146,23 +200,19 @@ async fn poller_load_spiky() {
             let wfid = format!("{wf_name}_2_{i}-{}", rand_6_chars());
             let rid = submitter
                 .submit_wf(
-                    wfid.clone(),
                     wf_name.to_owned(),
                     vec![],
-                    WorkflowOptions {
-                        execution_timeout: Some(Duration::from_secs(120)),
-                        ..Default::default()
-                    },
+                    WorkflowOptions::new(tq.clone(), wfid.clone())
+                        .execution_timeout(Duration::from_secs(120))
+                        .build(),
                 )
                 .await
                 .unwrap();
-            workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+            workflow_handles.push(client.get_workflow_handle::<UntypedWorkflow>(wfid, rid));
         }
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         info!("Second load ran for {:?}", start_processing.elapsed());
@@ -175,13 +225,17 @@ async fn poller_load_spiky() {
             loop {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
-                        client.signal_workflow_execution(
-                            format!("{wf_name}_{i}"),
-                            "".to_string(),
-                            SIGNAME.to_string(),
-                            None,
-                            None,
-                        )
+                        let handle = client
+                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        async move {
+                            handle
+                                .signal(
+                                    UntypedSignal::new(SIGNAME),
+                                    RawValue::empty(),
+                                    SignalOptions::default(),
+                                )
+                                .await
+                        }
                     })
                     .collect();
                 sends
@@ -200,7 +254,6 @@ async fn poller_load_spiky() {
 
 #[tokio::test]
 async fn poller_load_sustained() {
-    const SIGNAME: &str = "signame";
     let num_workflows = 150;
     let wf_name = "poller_load";
     let (telemopts, addr, _aborter) =
@@ -224,26 +277,9 @@ async fn poller_load_sustained() {
     };
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            let rs = ctx.random_seed();
-            let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
-            for _ in 0..100 {
-                let jitterms = rand.random_range(1000..3000);
-                ctx.timer(Duration::from_millis(jitterms)).await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSustainedWf>();
     let client = starter.get_client().await;
+    let tq = starter.get_task_queue().to_owned();
 
     info!("Prom bound to {:?}", addr);
 
@@ -253,17 +289,15 @@ async fn poller_load_sustained() {
         let wfid = format!("{wf_name}_{i}-{}", rand_6_chars());
         let rid = worker
             .submit_wf(
-                wfid.clone(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions {
-                    execution_timeout: Some(Duration::from_secs(800)),
-                    ..Default::default()
-                },
+                WorkflowOptions::new(tq.clone(), wfid.clone())
+                    .execution_timeout(Duration::from_secs(800))
+                    .build(),
             )
             .await
             .unwrap();
-        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+        workflow_handles.push(client.get_workflow_handle::<UntypedWorkflow>(wfid, rid));
     }
     info!("Done starting workflows");
     let start_processing = Instant::now();
@@ -271,9 +305,7 @@ async fn poller_load_sustained() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -319,32 +351,9 @@ async fn poller_load_spike_then_sustained() {
     let submitter = worker.get_submitter_handle();
 
     worker.register_activities(JitteryEchoActivities);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
-        let drained_fut = sigchan.forward(sink::drain());
-
-        let real_stuff = async move {
-            for _ in 0..5 {
-                ctx.start_activity(
-                    JitteryEchoActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
-            }
-        };
-        tokio::select! {
-            _ = drained_fut => {}
-            _ = real_stuff => {}
-        }
-
-        Ok(().into())
-    });
+    worker.register_workflow::<PollerLoadSpikeThenSustainedWf>();
     let client = starter.get_client().await;
+    let tq = starter.get_task_queue().to_owned();
 
     info!("Prom bound to {:?}", addr);
 
@@ -354,17 +363,15 @@ async fn poller_load_spike_then_sustained() {
         let wfid = format!("{wf_name}_{i}-{}", rand_6_chars());
         let rid = worker
             .submit_wf(
-                wfid.clone(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions {
-                    execution_timeout: Some(Duration::from_secs(100)),
-                    ..Default::default()
-                },
+                WorkflowOptions::new(tq.clone(), wfid.clone())
+                    .execution_timeout(Duration::from_secs(100))
+                    .build(),
             )
             .await
             .unwrap();
-        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+        workflow_handles.push(client.get_workflow_handle::<UntypedWorkflow>(wfid, rid));
     }
     info!("Done starting workflows");
     let start_processing = Instant::now();
@@ -373,9 +380,7 @@ async fn poller_load_spike_then_sustained() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -387,24 +392,20 @@ async fn poller_load_spike_then_sustained() {
             let wfid = format!("{wf_name}_2_{i}-{}", rand_6_chars());
             let rid = submitter
                 .submit_wf(
-                    wfid.clone(),
                     wf_name.to_owned(),
                     vec![],
-                    WorkflowOptions {
-                        execution_timeout: Some(Duration::from_secs(100)),
-                        ..Default::default()
-                    },
+                    WorkflowOptions::new(tq.clone(), wfid.clone())
+                        .execution_timeout(Duration::from_secs(100))
+                        .build(),
                 )
                 .await
                 .unwrap();
-            workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+            workflow_handles.push(client.get_workflow_handle::<UntypedWorkflow>(wfid, rid));
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle
-                    .get_workflow_result(GetWorkflowResultOptions::default())
-                    .await;
+                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
             })
             .await;
         info!("Second load ran for {:?}", start_processing.elapsed());
@@ -417,13 +418,17 @@ async fn poller_load_spike_then_sustained() {
             loop {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
-                        client.signal_workflow_execution(
-                            format!("{wf_name}_{i}"),
-                            "".to_string(),
-                            SIGNAME.to_string(),
-                            None,
-                            None,
-                        )
+                        let handle = client
+                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        async move {
+                            handle
+                                .signal(
+                                    UntypedSignal::new(SIGNAME),
+                                    RawValue::empty(),
+                                    SignalOptions::default(),
+                                )
+                                .await
+                        }
                     })
                     .collect();
                 sends

@@ -47,7 +47,6 @@
 #[doc(inline)]
 pub use temporalio_macros::activities;
 
-use crate::app_data::AppData;
 use futures_util::{FutureExt, future::BoxFuture};
 use prost_types::{Duration, Timestamp};
 use std::{
@@ -60,7 +59,7 @@ use temporalio_client::Priority;
 use temporalio_common::{
     ActivityDefinition,
     data_converters::{
-        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+        DataConverter, GenericPayloadConverter, SerializationContext, SerializationContextData,
     },
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
@@ -75,25 +74,21 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct ActivityContext {
     worker: Arc<CoreWorker>,
-    app_data: Arc<AppData>,
     cancellation_token: CancellationToken,
-    input: Vec<Payload>,
     heartbeat_details: Vec<Payload>,
     header_fields: HashMap<String, Payload>,
     info: ActivityInfo,
 }
 
 impl ActivityContext {
-    /// Construct new Activity Context, returning the context and the first argument to the activity
-    /// (which may be a default [Payload]).
+    /// Construct new Activity Context, returning the context and all arguments to the activity.
     pub fn new(
         worker: Arc<CoreWorker>,
-        app_data: Arc<AppData>,
         cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
         task: activity_task::Start,
-    ) -> (Self, Payload) {
+    ) -> (Self, Vec<Payload>) {
         let activity_task::Start {
             workflow_namespace,
             workflow_type,
@@ -101,7 +96,7 @@ impl ActivityContext {
             activity_id,
             activity_type,
             header_fields,
-            mut input,
+            input,
             heartbeat_details,
             scheduled_time,
             current_attempt_scheduled_time,
@@ -120,14 +115,11 @@ impl ActivityContext {
             start_to_close_timeout.as_ref(),
             schedule_to_close_timeout.as_ref(),
         );
-        let first_arg = input.pop().unwrap_or_default();
 
         (
             ActivityContext {
                 worker,
-                app_data,
                 cancellation_token,
-                input,
                 heartbeat_details,
                 header_fields,
                 info: ActivityInfo {
@@ -150,7 +142,7 @@ impl ActivityContext {
                     priority: priority.map(Into::into).unwrap_or_default(),
                 },
             },
-            first_arg,
+            input,
         )
     }
 
@@ -165,14 +157,8 @@ impl ActivityContext {
         self.cancellation_token.is_cancelled()
     }
 
-    /// Retrieve extra parameters to the Activity. The first input is always popped and passed to
-    /// the Activity function for the currently executing activity. However, if more parameters are
-    /// passed, perhaps from another language's SDK, explicit access is available from extra_inputs
-    pub fn extra_inputs(&mut self) -> &mut [Payload] {
-        &mut self.input
-    }
-
-    /// Extract heartbeat details from last failed attempt. This is used in combination with retry policy.
+    /// Extract heartbeat details from last failed attempt. This is used in combination with retry
+    /// policy.
     pub fn get_heartbeat_details(&self) -> &[Payload] {
         &self.heartbeat_details
     }
@@ -195,11 +181,6 @@ impl ActivityContext {
     /// Get headers attached to this activity
     pub fn headers(&self) -> &HashMap<String, Payload> {
         &self.header_fields
-    }
-
-    /// Get custom Application Data
-    pub fn app_data<T: Send + Sync + 'static>(&self) -> Option<&T> {
-        self.app_data.get::<T>()
     }
 }
 
@@ -348,11 +329,10 @@ fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
 
 pub(crate) type ActivityInvocation = Arc<
     dyn Fn(
-            Payload,
-            PayloadConverter,
+            Vec<Payload>,
+            DataConverter,
             ActivityContext,
-        )
-            -> Result<BoxFuture<'static, Result<Payload, ActivityError>>, PayloadConversionError>
+        ) -> BoxFuture<'static, Result<Payload, ActivityError>>
         + Send
         + Sync,
 >;
@@ -389,23 +369,31 @@ impl ActivityDefinitions {
         self
     }
     /// Registers a specific activitiy.
-    pub fn register_activity<AD: ActivityDefinition + ExecutableActivity>(
-        &mut self,
-        instance: Arc<AD::Implementer>,
-    ) -> &mut Self {
+    pub fn register_activity<AD>(&mut self, instance: Arc<AD::Implementer>) -> &mut Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
         self.activities.insert(
             AD::name(),
-            Arc::new(move |p, pc, c| {
-                let deserialized = pc.from_payload(&SerializationContext::Activity, p)?;
-                let pc2 = pc.clone();
-                Ok(AD::execute(Some(instance.clone()), c, deserialized)
-                    .map(move |v| match v {
-                        Ok(okv) => pc2
-                            .to_payload(&SerializationContext::Activity, &okv)
-                            .map_err(|e| e.into()),
-                        Err(e) => Err(e),
-                    })
-                    .boxed())
+            Arc::new(move |payloads, dc, c| {
+                let instance = instance.clone();
+                let dc = dc.clone();
+                async move {
+                    // Use PayloadConverter (not DataConverter) since the codec is applied
+                    // at the SDK/Core boundary by the visitor, not here.
+                    let pc = dc.payload_converter();
+                    let ctx = SerializationContext {
+                        data: &SerializationContextData::Activity,
+                        converter: pc,
+                    };
+                    let deserialized: AD::Input = pc
+                        .from_payloads(&ctx, payloads)
+                        .map_err(ActivityError::from)?;
+                    let result = AD::execute(Some(instance), c, deserialized).await?;
+                    pc.to_payload(&ctx, &result).map_err(ActivityError::from)
+                }
+                .boxed()
             }),
         );
         self

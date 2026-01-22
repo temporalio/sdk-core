@@ -1,3 +1,7 @@
+use crate::macro_utils::{
+    extract_allow_attrs, generate_marker_struct, method_name_to_pascal_case, type_name_string,
+    type_to_snake_case,
+};
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
@@ -210,19 +214,7 @@ impl ActivitiesDefinition {
         let activity_structs: Vec<_> = self
             .activities
             .iter()
-            .map(|act| {
-                let visibility = match &act.method.vis {
-                    syn::Visibility::Inherited => &syn::parse_quote!(pub(super)),
-                    o => o,
-                };
-
-                let struct_name = method_name_to_pascal_case(&act.method.sig.ident);
-                let struct_ident = format_ident!("{}", struct_name);
-                let span = act.method.span();
-                quote_spanned! { span=>
-                    #visibility struct #struct_ident;
-                }
-            })
+            .map(|act| generate_marker_struct(&act.method))
             .collect();
 
         // Generate consts in impl block pointing to marker structs
@@ -235,13 +227,7 @@ impl ActivitiesDefinition {
                 let struct_name = method_name_to_pascal_case(&act.method.sig.ident);
                 let struct_ident = format_ident!("{}", struct_name);
                 let span = act.method.span();
-                // Copy #[allow(...)] attributes from the method to the const
-                let allow_attrs: Vec<_> = act
-                    .method
-                    .attrs
-                    .iter()
-                    .filter(|attr| attr.path().is_ident("allow"))
-                    .collect();
+                let allow_attrs = extract_allow_attrs(&act.method.attrs);
                 quote_spanned! { span=>
                     #[allow(non_upper_case_globals)]
                     #(#allow_attrs)*
@@ -539,55 +525,4 @@ impl ActivitiesDefinition {
             }
         }
     }
-}
-
-fn type_to_snake_case(ty: &Type) -> String {
-    if let Type::Path(type_path) = ty
-        && let Some(segment) = type_path.path.segments.last()
-    {
-        return ident_to_snake_case(&segment.ident.to_string());
-    }
-    "unknown".to_string()
-}
-
-fn ident_to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, ch) in s.chars().enumerate() {
-        if ch.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(ch.to_lowercase().next().unwrap());
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
-fn method_name_to_pascal_case(ident: &syn::Ident) -> String {
-    let s = ident.to_string();
-    let mut result = String::new();
-    let mut capitalize_next = true;
-
-    for ch in s.chars() {
-        if ch == '_' {
-            capitalize_next = true;
-        } else if capitalize_next {
-            result.push(ch.to_uppercase().next().unwrap());
-            capitalize_next = false;
-        } else {
-            result.push(ch);
-        }
-    }
-    result
-}
-
-fn type_name_string(ty: &Type) -> String {
-    if let Type::Path(type_path) = ty
-        && let Some(segment) = type_path.path.segments.last()
-    {
-        return segment.ident.to_string();
-    }
-    panic!("Cannot extract type name from impl block - expected a simple type path");
 }

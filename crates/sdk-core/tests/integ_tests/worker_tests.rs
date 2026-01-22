@@ -20,6 +20,7 @@ use std::{
 };
 use temporalio_client::{Connection, WorkflowOptions};
 use temporalio_common::{
+    data_converters::DataConverter,
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
@@ -52,9 +53,9 @@ use temporalio_common::{
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_macros::activities;
+use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, WorkerOptions,
+    ActivityOptions, LocalActivityOptions, WorkerOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
     interceptors::WorkerInterceptor,
 };
@@ -109,12 +110,13 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
     let mut starter = CoreWfStarter::new(wf_type);
     let mut worker = starter.worker().await;
 
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = format!("wce-{}", Uuid::new_v4());
     let run_id = worker
         .submit_wf(
-            format!("wce-{}", Uuid::new_v4()),
             "unregistered".to_string(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions::new(task_queue, wf_id).build(),
         )
         .await
         .unwrap();
@@ -171,6 +173,18 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
     });
 }
 
+#[workflow]
+#[derive(Default)]
+struct ResourceBasedNonStickyWf;
+
+#[workflow_methods]
+impl ResourceBasedNonStickyWf {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Ok(().into())
+    }
+}
+
 #[tokio::test]
 async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     let wf_name = "resource_based_few_pollers_guarantees_non_sticky_poll";
@@ -186,17 +200,14 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
 
     // Workflow doesn't actually need to do anything. We just need to see that we don't get stuck
     // by assigning all slots to sticky pollers.
-    worker.register_wf(
-        wf_name.to_owned(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    worker.register_workflow::<ResourceBasedNonStickyWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
-            .submit_wf(
-                format!("{wf_name}_{i}"),
-                wf_name.to_owned(),
-                vec![],
-                WorkflowOptions::default(),
+            .submit_workflow(
+                ResourceBasedNonStickyWf::run,
+                (),
+                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -215,17 +226,35 @@ async fn oversize_grpc_message() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
-    static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
-    core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
-        if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
-            Ok(vec![].into())
-        } else {
-            OVERSIZE_GRPC_MESSAGE_RUN.store(true, Relaxed);
-            let result: Vec<u8> = vec![0; 5000000];
-            Ok(result.into())
+    let has_run = Arc::new(AtomicBool::new(false));
+    let has_run_clone = has_run.clone();
+
+    #[workflow]
+    struct OversizeGrpcMessageWf {
+        has_run: Arc<AtomicBool>,
+    }
+
+    #[workflow_methods(factory_only)]
+    impl OversizeGrpcMessageWf {
+        #[run]
+        #[allow(dead_code)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
+            if ctx.state(|wf| wf.has_run.load(Relaxed)) {
+                Ok(vec![].into())
+            } else {
+                ctx.state(|wf| wf.has_run.store(true, Relaxed));
+                let result: Vec<u8> = vec![0; 5000000];
+                Ok(result.into())
+            }
         }
+    }
+
+    core.register_workflow_with_factory(move || OversizeGrpcMessageWf {
+        has_run: has_run_clone.clone(),
     });
-    starter.start_with_worker(wf_name, &mut core).await;
+    starter
+        .start_with_worker(OversizeGrpcMessageWf::name(), &mut core)
+        .await;
     core.run_until_done().await.unwrap();
 
     assert!(starter.get_history().await.events.iter().any(|e| {
@@ -352,8 +381,10 @@ async fn activity_tasks_from_completion_reserve_slots() {
         cfg.max_outstanding_activities = Some(2);
     });
     let core = Arc::new(mock_worker(mock));
-    let mut worker =
-        crate::common::TestWorker::new(temporalio_sdk::Worker::new_from_core(core.clone()));
+    let mut worker = crate::common::TestWorker::new(temporalio_sdk::Worker::new_from_core(
+        core.clone(),
+        DataConverter::default(),
+    ));
 
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();
@@ -375,27 +406,29 @@ async fn activity_tasks_from_completion_reserve_slots() {
         }
     }
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
-        let complete_token = workflow_complete_token.clone();
-        async move {
+    #[workflow]
+    struct ActivityTasksCompletionWf {
+        complete_token: CancellationToken,
+    }
+
+    #[workflow_methods(factory_only)]
+    impl ActivityTasksCompletionWf {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())?
                 .await;
             ctx.start_activity(FakeAct::act2, (), ActivityOptions::default())?
                 .await;
-            complete_token.cancel();
+            ctx.state(|wf| wf.complete_token.cancel());
             Ok(().into())
         }
+    }
+
+    let wf_token = workflow_complete_token.clone();
+    worker.register_workflow_with_factory(move || ActivityTasksCompletionWf {
+        complete_token: wf_token.clone(),
     });
 
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            DEFAULT_WORKFLOW_TYPE,
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
     let act_completer = async {
         barr.wait().await;
         core.complete_activity_task(ActivityTaskCompletion {
@@ -442,23 +475,27 @@ async fn max_wft_respected() {
         cfg.max_cached_workflows = total_wfs as usize;
         cfg.max_outstanding_workflow_tasks = Some(1);
     });
-    let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        drop(
-            active_count
-                .try_acquire()
-                .expect("No multiple concurrent workflow tasks!"),
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    static ACTIVE_COUNT: Semaphore = Semaphore::const_new(1);
 
-    for wf_id in wf_ids {
-        worker
-            .submit_wf(wf_id, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
-            .await
-            .unwrap();
+    #[workflow]
+    #[derive(Default)]
+    struct MaxWftWf;
+
+    #[workflow_methods]
+    impl MaxWftWf {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            drop(
+                ACTIVE_COUNT
+                    .try_acquire()
+                    .expect("No multiple concurrent workflow tasks!"),
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        }
     }
+
+    worker.register_workflow::<MaxWftWf>();
     worker.run_until_done().await.unwrap();
 }
 
@@ -531,23 +568,24 @@ async fn history_length_with_fail_and_timeout(
             wc.max_cached_workflows = 1;
         }
     });
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        assert_eq!(ctx.history_length(), 3);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 14);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 19);
-        Ok(().into())
-    });
-    worker
-        .submit_wf(
-            wfid.to_owned(),
-            DEFAULT_WORKFLOW_TYPE.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    #[workflow]
+    #[derive(Default)]
+    struct HistoryLengthWf;
+
+    #[workflow_methods]
+    impl HistoryLengthWf {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            assert_eq!(ctx.history_length(), 3);
+            ctx.timer(Duration::from_secs(1)).await;
+            assert_eq!(ctx.history_length(), 14);
+            ctx.timer(Duration::from_secs(1)).await;
+            assert_eq!(ctx.history_length(), 19);
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<HistoryLengthWf>();
     worker.run_until_done().await.unwrap();
 }
 
@@ -587,31 +625,37 @@ async fn sets_build_id_from_wft_complete() {
         },
     );
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        // First task, it should be empty, since replaying and nothing in first WFT completed
-        assert_eq!(ctx.current_deployment_version(), None);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "enchi-cat"
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        // Not replaying at this point, so we should see the worker's build id
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "fierce-predator"
-        );
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(
-            ctx.current_deployment_version().unwrap().build_id,
-            "fierce-predator"
-        );
-        Ok(().into())
-    });
-    worker
-        .submit_wf(wfid, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
-        .await
-        .unwrap();
+    #[workflow]
+    #[derive(Default)]
+    struct BuildIdWf;
+
+    #[workflow_methods]
+    impl BuildIdWf {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            // First task, it should be empty, since replaying and nothing in first WFT completed
+            assert_eq!(ctx.current_deployment_version(), None);
+            ctx.timer(Duration::from_secs(1)).await;
+            assert_eq!(
+                ctx.current_deployment_version().unwrap().build_id,
+                "enchi-cat"
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            // Not replaying at this point, so we should see the worker's build id
+            assert_eq!(
+                ctx.current_deployment_version().unwrap().build_id,
+                "fierce-predator"
+            );
+            ctx.timer(Duration::from_secs(1)).await;
+            assert_eq!(
+                ctx.current_deployment_version().unwrap().build_id,
+                "fierce-predator"
+            );
+            Ok(().into())
+        }
+    }
+
+    worker.register_workflow::<BuildIdWf>();
     worker.run_until_done().await.unwrap();
 }
 
@@ -725,9 +769,14 @@ async fn test_custom_slot_supplier_simple() {
 
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        "SlotSupplierWorkflow".to_owned(),
-        |ctx: WfContext| async move {
+    #[workflow]
+    #[derive(Default)]
+    struct SlotSupplierWorkflow;
+
+    #[workflow_methods]
+    impl SlotSupplierWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             let _result = ctx
                 .start_activity(
                     StdActivities::no_op,
@@ -749,15 +798,17 @@ async fn test_custom_slot_supplier_simple() {
                 )?
                 .await;
             Ok(().into())
-        },
-    );
+        }
+    }
 
+    worker.register_workflow::<SlotSupplierWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_wf(
-            "test-wf".to_owned(),
-            "SlotSupplierWorkflow".to_owned(),
-            vec![],
-            Default::default(),
+        .submit_workflow(
+            SlotSupplierWorkflow::run,
+            (),
+            WorkflowOptions::new(task_queue, "test-wf".to_owned()).build(),
         )
         .await
         .unwrap();

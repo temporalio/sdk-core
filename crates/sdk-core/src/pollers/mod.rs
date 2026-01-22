@@ -3,9 +3,7 @@ mod poll_buffer;
 pub(crate) use poll_buffer::{
     ActivityTaskOptions, LongPollBuffer, WorkflowTaskOptions, WorkflowTaskPoller,
 };
-pub use temporalio_client::{
-    Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions, WorkflowClientTrait,
-};
+pub use temporalio_client::{Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions};
 
 use crate::{
     abstractions::{OwnedMeteredSemPermit, TrackedOwnedMeteredSemPermit},
