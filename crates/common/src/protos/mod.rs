@@ -15,6 +15,8 @@ mod task_token;
 #[cfg(feature = "test-utilities")]
 pub mod test_utils;
 
+use std::time::Duration;
+
 #[cfg(feature = "history_builders")]
 pub use history_builder::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
@@ -70,7 +72,7 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
+        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::format_task_token};
         use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.activity_task");
 
@@ -119,7 +121,7 @@ pub mod coresdk {
                 write!(
                     f,
                     "ActivityTaskCompletion(token: {}",
-                    fmt_tt(&self.task_token),
+                    format_task_token(&self.task_token),
                 )?;
                 if let Some(r) = self.result.as_ref().and_then(|r| r.status.as_ref()) {
                     write!(f, ", {r}")?;
@@ -270,9 +272,7 @@ pub mod coresdk {
                 match self.status {
                     Some(activity_resolution::Status::Failed(Failure {
                         failure: Some(ref f),
-                    })) => f
-                        .is_timeout()
-                        .or_else(|| f.cause.as_ref().and_then(|c| c.is_timeout())),
+                    })) => f.is_timeout(),
                     _ => None,
                 }
             }
@@ -941,11 +941,12 @@ pub mod coresdk {
 
         impl Display for UpsertWorkflowSearchAttributes {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(
-                    f,
-                    "UpsertWorkflowSearchAttributes({:?})",
-                    self.search_attributes.keys()
-                )
+                let keys: Vec<_> = self
+                    .search_attributes
+                    .as_ref()
+                    .map(|sa| sa.indexed_fields.keys().collect())
+                    .unwrap_or_default();
+                write!(f, "UpsertWorkflowSearchAttributes({:?})", keys)
             }
         }
 
@@ -1313,7 +1314,13 @@ pub mod coresdk {
         pub fn is_timeout(&self) -> Option<crate::protos::temporal::api::enums::v1::TimeoutType> {
             match &self.failure_info {
                 Some(FailureInfo::TimeoutFailureInfo(ti)) => Some(ti.timeout_type()),
-                _ => None,
+                _ => {
+                    if let Some(c) = &self.cause {
+                        c.is_timeout()
+                    } else {
+                        None
+                    }
+                }
             }
         }
 
@@ -1779,7 +1786,7 @@ pub mod temporal {
                     fn from(s: workflow_commands::UpsertWorkflowSearchAttributes) -> Self {
                         Self::UpsertWorkflowSearchAttributesCommandAttributes(
                             UpsertWorkflowSearchAttributesCommandAttributes {
-                                search_attributes: Some(s.search_attributes.into()),
+                                search_attributes: s.search_attributes,
                             },
                         )
                     }
@@ -1844,7 +1851,7 @@ pub mod temporal {
                             task_queue: Some(s.task_queue.into()),
                             header: Some(s.headers.into()),
                             memo: Some(s.memo.into()),
-                            search_attributes: Some(s.search_attributes.into()),
+                            search_attributes: s.search_attributes,
                             input: s.input.into_payloads(),
                             workflow_id_reuse_policy: s.workflow_id_reuse_policy,
                             workflow_execution_timeout: s.workflow_execution_timeout,
@@ -1902,11 +1909,7 @@ pub mod temporal {
                                 Some(c.headers.into())
                             },
                             retry_policy: c.retry_policy,
-                            search_attributes: if c.search_attributes.is_empty() {
-                                None
-                            } else {
-                                Some(c.search_attributes.into())
-                            },
+                            search_attributes: c.search_attributes,
                             inherit_build_id,
                             ..Default::default()
                         },
@@ -2818,6 +2821,11 @@ pub fn camel_case_to_screaming_snake(val: &str) -> String {
         }
     }
     out
+}
+
+pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time::SystemTime> {
+    std::time::SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(ts.seconds as u64) + Duration::from_nanos(ts.nanos as u64))
 }
 
 #[cfg(test)]

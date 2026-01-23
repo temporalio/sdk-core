@@ -18,11 +18,10 @@ use std::{
 use temporalio_common::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
     OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions as CoreTelemetryOptions,
-    metrics::CoreMeter,
+    build_otlp_metric_exporter, metrics::CoreMeter, start_prometheus_metric_exporter,
 };
 use temporalio_sdk_core::{
     CoreRuntime, RuntimeOptions as CoreRuntimeOptions, TokioRuntimeBuilder as TokioRuntime,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;
 use url::Url;

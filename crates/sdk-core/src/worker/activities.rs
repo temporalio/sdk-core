@@ -7,7 +7,7 @@ pub(crate) use local_activities::{
 };
 
 use crate::{
-    PollError, TaskToken,
+    TaskToken,
     abstractions::{
         ClosableMeteredPermitDealer, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
         UsedMeteredSemPermit,
@@ -17,6 +17,7 @@ use crate::{
         MetricsContext, activity_type, eager, should_record_failure_metric, workflow_type,
     },
     worker::{
+        ActivitySlotKind, PollError,
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
 };
@@ -35,21 +36,16 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_common::{
-    protos::{
-        coresdk::{
-            ActivityHeartbeat, ActivitySlotInfo,
-            activity_result::{self as ar, activity_execution_result as aer},
-            activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
-        },
-        temporal::api::{
-            failure::v1::{
-                ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo,
-            },
-            workflowservice::v1::PollActivityTaskQueueResponse,
-        },
+use temporalio_common::protos::{
+    coresdk::{
+        ActivityHeartbeat, ActivitySlotInfo,
+        activity_result::{self as ar, activity_execution_result as aer},
+        activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
     },
-    worker::ActivitySlotKind,
+    temporal::api::{
+        failure::v1::{ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
+        workflowservice::v1::PollActivityTaskQueueResponse,
+    },
 };
 use tokio::{
     join,
@@ -737,12 +733,10 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer,
         pollers::{ActivityTaskOptions, LongPollBuffer},
         prost_dur,
-        worker::client::mocks::mock_worker_client,
+        worker::{PollerBehavior, client::mocks::mock_worker_client},
     };
     use crossbeam_utils::atomic::AtomicCell;
-    use temporalio_common::{
-        protos::coresdk::activity_result::ActivityExecutionResult, worker::PollerBehavior,
-    };
+    use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
     async fn per_worker_ratelimit() {

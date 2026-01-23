@@ -3,23 +3,18 @@ mod poll_buffer;
 pub(crate) use poll_buffer::{
     ActivityTaskOptions, LongPollBuffer, WorkflowTaskOptions, WorkflowTaskPoller,
 };
-pub use temporalio_client::{
-    Client, ClientOptions, ClientTlsOptions, RetryClient, RetryOptions, TlsOptions,
-    WorkflowClientTrait,
-};
+pub use temporalio_client::{Client, ClientOptions, ClientTlsOptions, RetryOptions, TlsOptions};
 
 use crate::{
     abstractions::{OwnedMeteredSemPermit, TrackedOwnedMeteredSemPermit},
     telemetry::metrics::MetricsContext,
+    worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind},
 };
 use anyhow::{anyhow, bail};
 use futures_util::{Stream, stream};
 use std::{fmt::Debug, marker::PhantomData};
-use temporalio_common::{
-    protos::temporal::api::workflowservice::v1::{
-        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
-    },
-    worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind},
+use temporalio_common::protos::temporal::api::workflowservice::v1::{
+    PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
 use tokio::select;
 use tokio_util::sync::CancellationToken;

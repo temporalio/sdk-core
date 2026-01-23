@@ -7,12 +7,10 @@ use common::CoreWfStarter;
 use parking_lot::Mutex;
 use std::{sync::Arc, time::Duration};
 use temporalio_common::telemetry::{
-    Logger, OtelCollectorOptions, TelemetryOptions, metrics::CoreMeter,
+    Logger, OtelCollectorOptions, TelemetryOptions, build_otlp_metric_exporter,
+    construct_filter_string, metrics::CoreMeter, telemetry_init_global,
 };
-use temporalio_sdk_core::{
-    CoreRuntime,
-    telemetry::{build_otlp_metric_exporter, construct_filter_string, telemetry_init_global},
-};
+use temporalio_sdk_core::CoreRuntime;
 use tracing::Level;
 use tracing_subscriber::fmt::MakeWriter;
 

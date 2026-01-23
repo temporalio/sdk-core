@@ -45,7 +45,7 @@ features = ["ephemeral-server"]
 
 [dependencies.temporalio-common]
 path = "../common"
-features = ["envconfig"]
+features = ["core-based-sdk"]
 
 [dev-dependencies]
 base64 = "0.21.0"

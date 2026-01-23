@@ -3,7 +3,7 @@ use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic},
     protosext::ValidScheduleLA,
     telemetry::metrics::{activity_type, should_record_failure_metric, workflow_type},
-    worker::workflow::HeartbeatTimeoutMsg,
+    worker::{LocalActivitySlotKind, workflow::HeartbeatTimeoutMsg},
 };
 use futures_util::{
     Stream, StreamExt, future, future::AbortRegistration, stream, stream::BoxStream,
@@ -17,20 +17,17 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_common::{
-    protos::{
-        coresdk::{
-            LocalActivitySlotInfo,
-            activity_result::{Cancellation, Failure as ActFail, Success},
-            activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
-        },
-        temporal::api::{
-            common::v1::WorkflowExecution,
-            enums::v1::TimeoutType,
-            failure::v1::{Failure as APIFailure, TimeoutFailureInfo, failure},
-        },
+use temporalio_common::protos::{
+    coresdk::{
+        LocalActivitySlotInfo,
+        activity_result::{Cancellation, Failure as ActFail, Success},
+        activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
     },
-    worker::LocalActivitySlotKind,
+    temporal::api::{
+        common::v1::WorkflowExecution,
+        enums::v1::TimeoutType,
+        failure::v1::{Failure as APIFailure, TimeoutFailureInfo, failure},
+    },
 };
 use tokio::{
     sync::{
