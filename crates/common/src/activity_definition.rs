@@ -11,7 +11,7 @@ pub trait ActivityDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
     /// Type of the output of the workflow
-    type Output: TemporalSerializable + 'static;
+    type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
     /// The name that will be used for the activity type.
     fn name() -> &'static str

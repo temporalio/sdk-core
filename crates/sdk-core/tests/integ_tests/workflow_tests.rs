@@ -492,8 +492,8 @@ impl SlowCompletesWf {
                     ..Default::default()
                 },
             )
-            .unwrap()
-            .await;
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.timer(Duration::from_secs(1)).await;
         }
         Ok(().into())
@@ -864,8 +864,9 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             Ok(().into())
         }
     }
@@ -938,8 +939,9 @@ async fn history_out_of_order_on_restart() {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_string(),
@@ -947,8 +949,9 @@ async fn history_out_of_order_on_restart() {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.state(|wf| wf.hit_sleep.notify_one());
             ctx.timer(Duration::from_secs(5)).await;
             Ok(().into())
@@ -970,8 +973,9 @@ async fn history_out_of_order_on_restart() {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             // Timer is added after restarting workflow
             ctx.timer(Duration::from_secs(1)).await;
             ctx.start_activity(
@@ -981,8 +985,9 @@ async fn history_out_of_order_on_restart() {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.timer(Duration::from_secs(2)).await;
             Ok(().into())
         }

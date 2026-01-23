@@ -26,8 +26,9 @@ impl LaProblemWorkflow {
                 timer_backoff_threshold: Some(Duration::from_secs(1)),
                 ..Default::default()
             },
-        )?
-        .await;
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         ctx.start_activity(
             StdActivities::delay,
             Duration::from_secs(15),
@@ -35,8 +36,9 @@ impl LaProblemWorkflow {
                 start_to_close_timeout: Some(Duration::from_secs(20)),
                 ..Default::default()
             },
-        )?
-        .await;
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
         Ok(().into())
     }
 }

@@ -6,15 +6,9 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{
-    SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
-    WorkflowService,
-};
-use temporalio_common::{
-    data_converters::RawValue,
-    protos::temporal::api::{
-        common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
-    },
+use temporalio_client::{SignalOptions, WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporalio_common::protos::temporal::api::{
+    common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
 };
 
 use temporalio_common::worker::WorkerTaskTypes;
@@ -23,6 +17,7 @@ use temporalio_sdk::{LocalActivityOptions, WorkflowContext, WorkflowResult};
 use tokio::sync::Notify;
 use tonic::IntoRequest;
 
+const POST_FAIL_SIG: &str = "post-fail";
 const POST_RESET_SIG: &str = "post-reset";
 
 #[workflow]
@@ -42,8 +37,8 @@ impl ResetMeWf {
         Ok(().into())
     }
 
-    #[signal(name = "post-reset")]
-    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    #[signal(name = POST_RESET_SIG)]
+    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>) {
         self.post_reset_received = true;
     }
 }
@@ -97,31 +92,21 @@ async fn reset_workflow() {
             .unwrap();
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
-        // we use empty run id
-        client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
-            .signal(
-                UntypedSignal::new(POST_RESET_SIG),
-                RawValue::empty(),
-                SignalOptions::default(),
-            )
+        // we re-obtain handle.
+        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned(), "");
+        handle
+            .signal(ResetMeWf::post_reset, (), SignalOptions::default())
             .await
             .unwrap();
 
         // Wait for the now-reset workflow to finish
-        client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
-            .get_result(Default::default())
-            .await
-            .unwrap();
+        handle.get_result(Default::default()).await.unwrap();
         starter.shutdown().await;
     };
     let run_fut = worker.run_until_done();
     let (_, rr) = tokio::join!(resetter_fut, run_fut);
     rr.unwrap();
 }
-
-const POST_FAIL_SIG: &str = "post-fail";
 
 #[workflow]
 struct ResetRandomseedWf {
@@ -163,8 +148,9 @@ impl ResetRandomseedWf {
                 StdActivities::echo,
                 "hi!".to_string(),
                 LocalActivityOptions::default(),
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         ctx.wait_condition(|s| s.post_fail_received).await;
         ctx.state(|wf| wf.notify.notify_one());
@@ -172,13 +158,13 @@ impl ResetRandomseedWf {
         Ok(().into())
     }
 
-    #[signal(name = "post-fail")]
-    fn post_fail(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    #[signal(name = POST_FAIL_SIG)]
+    fn post_fail(&mut self, _ctx: &mut WorkflowContext<Self>) {
         self.post_fail_received = true;
     }
 
-    #[signal(name = "post-reset")]
-    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    #[signal(name = POST_RESET_SIG)]
+    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>) {
         self.post_reset_received = true;
     }
 }
@@ -223,13 +209,8 @@ async fn reset_randomseed() {
     let mut client = starter.get_client().await;
     let client_fur = async {
         notify.notified().await;
-        client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), run_id.clone())
-            .signal(
-                UntypedSignal::new(POST_FAIL_SIG),
-                RawValue::empty(),
-                SignalOptions::default(),
-            )
+        handle
+            .signal(ResetRandomseedWf::post_fail, (), SignalOptions::default())
             .await
             .unwrap();
         notify.notified().await;
@@ -252,23 +233,15 @@ async fn reset_randomseed() {
             .unwrap();
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
-        // we use empty run id
+        // we re-obtain the handle.
         client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
-            .signal(
-                UntypedSignal::new(POST_RESET_SIG),
-                RawValue::empty(),
-                SignalOptions::default(),
-            )
+            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned(), "")
+            .signal(ResetRandomseedWf::post_reset, (), SignalOptions::default())
             .await
             .unwrap();
 
         // Wait for the now-reset workflow to finish
-        client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
-            .get_result(Default::default())
-            .await
-            .unwrap();
+        handle.get_result(Default::default()).await.unwrap();
         starter.shutdown().await;
     };
     let run_fut = worker.run_until_done();

@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporalio_common::protos::DEFAULT_ACTIVITY_TYPE;
+use temporalio_common::{data_converters::RawValue, protos::DEFAULT_ACTIVITY_TYPE};
 use temporalio_macros::activities;
 use temporalio_sdk::activities::{ActivityContext, ActivityError};
 use tokio::time::sleep;
@@ -20,10 +20,11 @@ impl StdActivities {
     }
 
     /// Also a no-op, but uses the default name from history construction to work with
-    /// canned histories
+    /// canned histories. Returns RawValue so anything in the canned history will "deserialize"
+    /// properly.
     #[activity(name = DEFAULT_ACTIVITY_TYPE)]
-    pub(crate) async fn default(_ctx: ActivityContext, _: ()) -> Result<(), ActivityError> {
-        Ok(())
+    pub(crate) async fn default(_ctx: ActivityContext, _: ()) -> Result<RawValue, ActivityError> {
+        Ok(RawValue::empty())
     }
 
     /// Activity that sleeps for provided duration. Name is overriden to provide compatibility with

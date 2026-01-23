@@ -3,11 +3,7 @@ use rstest::rstest;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{ActivityIdentifier, WorkflowClientTrait, WorkflowOptions};
 use temporalio_common::protos::{
-    coresdk::{
-        AsJsonPayloadExt, FromJsonPayloadExt,
-        activity_result::{self, activity_resolution},
-        workflow_commands::ActivityCancellationType,
-    },
+    coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::{
         common::v1::RetryPolicy,
         failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
@@ -15,7 +11,7 @@ use temporalio_common::protos::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
+    ActivityExecutionError, ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use tokio::sync::mpsc;
@@ -65,7 +61,7 @@ async fn async_activity_completions(
             self: Arc<Self>,
             ctx: ActivityContext,
             expected_outcome: Outcome,
-        ) -> Result<(), ActivityError> {
+        ) -> Result<String, ActivityError> {
             // For cancellation, wait until the workflow has requested cancellation
             if expected_outcome == Outcome::Cancellation {
                 tokio::select! {
@@ -111,21 +107,19 @@ async fn async_activity_completions(
             expected_outcome: Outcome,
         ) -> WorkflowResult<()> {
             let async_response = "agence";
-            let activity_future = ctx
-                .start_activity(
-                    AsyncActivities::complete_async_activity,
-                    expected_outcome,
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(30)),
-                        retry_policy: Some(RetryPolicy {
-                            maximum_attempts: 1,
-                            ..Default::default()
-                        }),
-                        cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
+            let activity_future = ctx.start_activity(
+                AsyncActivities::complete_async_activity,
+                expected_outcome,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(30)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
                         ..Default::default()
-                    },
-                )
-                .unwrap();
+                    }),
+                    cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
+                    ..Default::default()
+                },
+            );
 
             // For cancellation, wait a bit to let the activity start, then request cancel
             if expected_outcome == Outcome::Cancellation {
@@ -133,37 +127,29 @@ async fn async_activity_completions(
                 activity_future.cancel();
             }
 
-            let activity_resolution = activity_future.await;
+            let activity_result = activity_future.await;
 
             match expected_outcome {
                 Outcome::Success => {
-                    let res = match activity_resolution.status {
-                        Some(activity_resolution::Status::Completed(
-                            activity_result::Success { result },
-                        )) => result
-                            .map(|p| String::from_json_payload(&p).unwrap())
-                            .unwrap(),
-                        _ => panic!("expected completion, got {activity_resolution:?}"),
-                    };
-                    assert_eq!(&res, async_response);
+                    assert_eq!(activity_result.expect("expected success"), async_response);
                 }
                 Outcome::Failure => {
-                    match activity_resolution.status {
-                        Some(activity_resolution::Status::Failed(activity_result::Failure {
-                            failure,
-                        })) => {
-                            let failure = failure.expect("failure should be present");
-                            // The failure we sent is wrapped as the cause
-                            let cause = failure.cause.expect("cause should be present");
-                            assert_eq!(cause.message, "async failure reason");
-                        }
-                        _ => panic!("expected failure, got {activity_resolution:?}"),
+                    let err = activity_result.expect_err("expected failure");
+                    if let ActivityExecutionError::Failed(failure) = err {
+                        // The failure we sent is wrapped as the cause
+                        let cause = failure.cause.expect("cause should be present");
+                        assert_eq!(cause.message, "async failure reason");
+                    } else {
+                        panic!("expected Failed, got {err:?}");
                     }
                 }
-                Outcome::Cancellation => match activity_resolution.status {
-                    Some(activity_resolution::Status::Cancelled(_)) => {}
-                    _ => panic!("expected cancellation, got {activity_resolution:?}"),
-                },
+                Outcome::Cancellation => {
+                    let err = activity_result.expect_err("expected cancellation");
+                    assert!(
+                        matches!(err, ActivityExecutionError::Cancelled(_)),
+                        "expected Cancelled, got {err:?}"
+                    );
+                }
             }
             Ok(().into())
         }

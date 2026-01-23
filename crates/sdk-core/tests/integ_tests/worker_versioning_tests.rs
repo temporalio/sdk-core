@@ -242,16 +242,16 @@ struct ActivityHasDeploymentStampWf;
 impl ActivityHasDeploymentStampWf {
     #[run(name = "activity_has_deployment_stamp")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        ctx.start_activity(
-            StdActivities::echo,
-            "hi!".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
+        let _ = ctx
+            .start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await;
         Ok(().into())
     }
 }

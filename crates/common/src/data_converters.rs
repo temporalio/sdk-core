@@ -282,10 +282,11 @@ pub struct RawValue {
     pub payloads: Vec<Payload>,
 }
 impl RawValue {
-    /// An empty (payload-less) RawValue.
+    /// A RawValue representing no meaningful data, containing a single default payload.
+    /// This ensures the value can still be serialized as a single payload.
     pub fn empty() -> Self {
         Self {
-            payloads: Vec::new(),
+            payloads: vec![Payload::default()],
         }
     }
 
@@ -492,7 +493,8 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
         _: &SerializationContextData,
         value: &dyn erased_serde::Serialize,
     ) -> Result<Payload, PayloadConversionError> {
-        let as_json = serde_json::to_vec(value).map_err(|_| todo!())?;
+        let as_json = serde_json::to_vec(value)
+            .map_err(|e| PayloadConversionError::EncodingError(e.into()))?;
         Ok(Payload {
             metadata: {
                 let mut hm = HashMap::new();

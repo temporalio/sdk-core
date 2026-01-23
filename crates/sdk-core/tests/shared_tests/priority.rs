@@ -67,24 +67,22 @@ pub(crate) async fn priority_values_sent_to_server() {
                 .await
                 .into_started()
                 .expect("Child should start OK");
-            let activity = ctx
-                .start_activity(
-                    PriorityActivities::echo,
-                    "hello".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        priority: Some(Priority {
-                            priority_key: 5,
-                            fairness_key: "fair-act".to_string(),
-                            fairness_weight: 1.1,
-                        }),
-                        do_not_eagerly_execute: true,
-                        ..Default::default()
-                    },
-                )
-                .unwrap();
+            let activity = ctx.start_activity(
+                PriorityActivities::echo,
+                "hello".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    priority: Some(Priority {
+                        priority_key: 5,
+                        fairness_key: "fair-act".to_string(),
+                        fairness_weight: 1.1,
+                    }),
+                    do_not_eagerly_execute: true,
+                    ..Default::default()
+                },
+            );
             started.result().await;
-            activity.await.unwrap_ok_payload();
+            let _ = activity.await;
             Ok(().into())
         }
     }

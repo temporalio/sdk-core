@@ -100,7 +100,7 @@ impl DataConverterTestWorkflow {
         ctx: &mut WorkflowContext<Self>,
         input: TrackedWrapper,
     ) -> WorkflowResult<TrackedWrapper> {
-        let result = ctx
+        let output = ctx
             .start_activity(
                 TestActivities::process_tracked,
                 input,
@@ -108,17 +108,9 @@ impl DataConverterTestWorkflow {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     ..Default::default()
                 },
-            )?
-            .await;
-
-        // TODO [rust-sdk-branch] Will go away after activity starts return deserialized result
-        let payload = result.unwrap_ok_payload();
-        let converter = PayloadConverter::default();
-        let ctx = SerializationContext {
-            data: &SerializationContextData::Workflow,
-            converter: &converter,
-        };
-        let output = TrackedWrapper::from_payload(&ctx, payload)?;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         Ok(WfExitValue::Normal(output))
     }

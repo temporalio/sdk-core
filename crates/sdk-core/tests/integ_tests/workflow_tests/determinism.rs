@@ -48,8 +48,9 @@ impl TimerWfNondeterministic {
                 }
             }
             2 => {
-                ctx.start_activity(StdActivities::default, (), ActivityOptions::default())?
-                    .await;
+                ctx.start_activity(StdActivities::default, (), ActivityOptions::default())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
             _ => panic!("Ran too many times"),
         }
@@ -94,16 +95,16 @@ impl TaskFailReplayWf {
         if ctx.state(|wf| wf.did_fail.load(Ordering::Relaxed)) {
             assert!(ctx.is_replaying());
         }
-        ctx.start_activity(
-            StdActivities::echo,
-            "hi!".to_string(),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(2)),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
+        let _ = ctx
+            .start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(2)),
+                    ..Default::default()
+                },
+            )
+            .await;
         if !ctx.state(|wf| wf.did_fail.load(Ordering::Relaxed)) {
             ctx.state(|wf| wf.did_fail.store(true, Ordering::Relaxed));
             panic!("Die on purpose");
@@ -283,11 +284,13 @@ impl ActivityIdOrTypeChangeWf {
                         activity_id: Some("I'm bad and wrong!".to_string()),
                         ..Default::default()
                     },
-                )?
-                .await;
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             } else {
-                ctx.start_local_activity(StdActivities::no_op, (), Default::default())?
-                    .await;
+                ctx.start_local_activity(StdActivities::no_op, (), Default::default())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
         } else if id_change {
             ctx.start_activity(
@@ -297,11 +300,13 @@ impl ActivityIdOrTypeChangeWf {
                     activity_id: Some("I'm bad and wrong!".to_string()),
                     ..Default::default()
                 },
-            )?
-            .await;
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         } else {
-            ctx.start_activity(StdActivities::no_op, (), ActivityOptions::default())?
-                .await;
+            ctx.start_activity(StdActivities::no_op, (), ActivityOptions::default())
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         Ok(().into())
     }

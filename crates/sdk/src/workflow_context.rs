@@ -31,7 +31,7 @@ use temporalio_common::{
     ActivityDefinition,
     data_converters::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-        SerializationContextData,
+        SerializationContextData, TemporalDeserializable,
     },
     protos::{
         coresdk::{
@@ -52,6 +52,7 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::{Memo, Payload, SearchAttributes},
+            failure::v1::Failure,
             sdk::v1::UserMetadata,
         },
     },
@@ -119,6 +120,31 @@ impl WorkflowContextView {
     /// Create a new empty view.
     pub(crate) fn new() -> Self {
         Self {}
+    }
+}
+
+/// Error type for activity execution outcomes.
+#[derive(Debug, thiserror::Error)]
+pub enum ActivityExecutionError {
+    /// The activity failed with the given failure details.
+    #[error("Activity failed: {}", .0.message)]
+    Failed(Box<Failure>),
+    /// The activity was cancelled.
+    #[error("Activity cancelled: {}", .0.message)]
+    Cancelled(Box<Failure>),
+    // TODO: Timed out variant
+    /// Failed to serialize input or deserialize result payload.
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
+}
+
+impl ActivityExecutionError {
+    /// Returns true if this error represents a timeout.
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            ActivityExecutionError::Failed(f) => f.is_timeout().is_some(),
+            _ => false,
+        }
     }
 }
 
@@ -210,19 +236,26 @@ impl BaseWorkflowContext {
         cmd
     }
 
-    // TODO [rust-sdk-branch] Deserialize result
     /// Request to run an activity
     pub fn start_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
         input: AD::Input,
         mut opts: ActivityOptions,
-    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: &self.inner.payload_converter,
         };
-        let payload = self.inner.payload_converter.to_payload(&ctx, &input)?;
+        let payload = match self.inner.payload_converter.to_payload(&ctx, &input) {
+            Ok(p) => p,
+            Err(e) => {
+                return ActivityFut::eager(e.into());
+            }
+        };
         let seq = self.inner.seq_nums.borrow_mut().next_activity_seq();
         let (cmd, unblocker) =
             CancellableWFCommandFut::new(CancellableID::Activity(seq), self.clone());
@@ -236,28 +269,33 @@ impl BaseWorkflowContext {
             }
             .into(),
         );
-        Ok(cmd)
+        ActivityFut::running(cmd, self.inner.payload_converter.clone())
     }
 
-    // TODO [rust-sdk-branch] Deserialize result
     /// Request to run a local activity
     pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
         input: AD::Input,
         opts: LocalActivityOptions,
-    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: &self.inner.payload_converter,
         };
-        let payload = self.inner.payload_converter.to_payload(&ctx, &input)?;
-        Ok(LATimerBackoffFut::new(
-            AD::name().to_string(),
-            payload,
-            opts,
-            self.clone(),
-        ))
+        let payload = match self.inner.payload_converter.to_payload(&ctx, &input) {
+            Ok(p) => p,
+            Err(e) => {
+                return ActivityFut::eager(e.into());
+            }
+        };
+        ActivityFut::running(
+            LATimerBackoffFut::new(AD::name().to_string(), payload, opts, self.clone()),
+            self.inner.payload_converter.clone(),
+        )
     }
 
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
@@ -456,7 +494,10 @@ impl<W> WorkflowContext<W> {
         activity: AD,
         input: AD::Input,
         opts: ActivityOptions,
-    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
         self.base.start_activity(activity, input, opts)
     }
 
@@ -466,7 +507,10 @@ impl<W> WorkflowContext<W> {
         activity: AD,
         input: AD::Input,
         opts: LocalActivityOptions,
-    ) -> Result<impl CancellableFuture<ActivityResolution>, PayloadConversionError> {
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
         self.base.start_local_activity(activity, input, opts)
     }
 
@@ -917,6 +961,108 @@ impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
             tf.cancel();
         }
         self.current_fut.cancel();
+    }
+}
+
+/// Future for activity results. Either an immediate error or a running activity.
+enum ActivityFut<F, Output> {
+    /// Immediate error (e.g., input serialization failure). Resolves on first poll.
+    Errored {
+        error: Option<ActivityExecutionError>,
+        _phantom: PhantomData<Output>,
+    },
+    /// Running activity that will deserialize output on completion.
+    Running {
+        inner: F,
+        payload_converter: PayloadConverter,
+        _phantom: PhantomData<Output>,
+    },
+}
+
+impl<F, Output> ActivityFut<F, Output> {
+    fn eager(err: ActivityExecutionError) -> Self {
+        Self::Errored {
+            error: Some(err),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn running(inner: F, payload_converter: PayloadConverter) -> Self {
+        Self::Running {
+            inner,
+            payload_converter,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<F, Output> Unpin for ActivityFut<F, Output> where F: Unpin {}
+
+impl<F, Output> Future for ActivityFut<F, Output>
+where
+    F: Future<Output = ActivityResolution> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    type Output = Result<Output, ActivityExecutionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut() {
+            ActivityFut::Errored { error, .. } => {
+                Poll::Ready(Err(error.take().expect("polled after completion")))
+            }
+            ActivityFut::Running {
+                inner,
+                payload_converter,
+                ..
+            } => match Pin::new(inner).poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(resolution) => Poll::Ready({
+                    let status = resolution.status.ok_or_else(|| {
+                        ActivityExecutionError::Failed(Box::new(Failure {
+                            message: "Activity completed without a status".to_string(),
+                            ..Default::default()
+                        }))
+                    })?;
+
+                    match status {
+                        activity_resolution::Status::Completed(success) => {
+                            let payload = success.result.unwrap_or_default();
+                            let ctx = SerializationContext {
+                                data: &SerializationContextData::Workflow,
+                                converter: payload_converter,
+                            };
+                            payload_converter
+                                .from_payload::<Output>(&ctx, payload)
+                                .map_err(ActivityExecutionError::Serialization)
+                        }
+                        activity_resolution::Status::Failed(f) => Err(
+                            ActivityExecutionError::Failed(Box::new(f.failure.unwrap_or_default())),
+                        ),
+                        activity_resolution::Status::Cancelled(c) => {
+                            Err(ActivityExecutionError::Cancelled(Box::new(
+                                c.failure.unwrap_or_default(),
+                            )))
+                        }
+                        activity_resolution::Status::Backoff(_) => {
+                            panic!("DoBackoff should be handled by LATimerBackoffFut")
+                        }
+                    }
+                }),
+            },
+        }
+    }
+}
+
+impl<F, Output> CancellableFuture<Result<Output, ActivityExecutionError>> for ActivityFut<F, Output>
+where
+    F: CancellableFuture<ActivityResolution> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    fn cancel(&self) {
+        match self {
+            ActivityFut::Errored { .. } => {}
+            ActivityFut::Running { inner, .. } => inner.cancel(),
+        }
     }
 }
 

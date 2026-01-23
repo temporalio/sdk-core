@@ -7,7 +7,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait};
+use temporalio_client::{SignalOptions, WorkflowOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
@@ -264,8 +264,8 @@ impl DeprecatedPatchRemovalWf {
         Ok(().into())
     }
 
-    #[signal(name = "sig")]
-    fn handle_sig(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    #[signal]
+    fn handle_sig(&mut self, _ctx: &mut WorkflowContext<Self>) {
         self.signal_received = true;
     }
 }
@@ -276,7 +276,6 @@ async fn deprecated_patch_removal() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     let wf_id = starter.get_task_queue().to_string();
     let did_die = Arc::new(AtomicBool::new(false));
     let send_sig = Arc::new(Notify::new());
@@ -287,14 +286,20 @@ async fn deprecated_patch_removal() {
         signal_received: false,
     });
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = worker
+        .submit_workflow(
+            DeprecatedPatchRemovalWf::run,
+            (),
+            WorkflowOptions::new(wf_id.clone(), wf_id).build(),
+        )
+        .await
+        .unwrap();
     let sig_fut = async {
         send_sig.notified().await;
-        client
-            .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
+        handle
             .signal(
-                UntypedSignal::new("sig"),
-                RawValue::empty(),
+                DeprecatedPatchRemovalWf::handle_sig,
+                (),
                 SignalOptions::default(),
             )
             .await
@@ -395,39 +400,14 @@ struct FakeAct;
 #[activities]
 impl FakeAct {
     #[activity(name = "")]
-    fn nameless(_: ActivityContext) -> Result<(), ActivityError> {
+    fn nameless(_: ActivityContext) -> Result<RawValue, ActivityError> {
         unimplemented!()
     }
 }
 
 async fn v1(ctx: &mut WorkflowContext<PatchWf>) {
-    ctx.start_activity(
-        FakeAct::nameless,
-        (),
-        ActivityOptions {
-            activity_id: Some("no_change".to_owned()),
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .await;
-}
-
-async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
-    if ctx.patched(MY_PATCH_ID) {
-        ctx.start_activity(
-            FakeAct::nameless,
-            (),
-            ActivityOptions {
-                activity_id: Some("had_change".to_owned()),
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .await;
-        true
-    } else {
-        ctx.start_activity(
+    let _ = ctx
+        .start_activity(
             FakeAct::nameless,
             (),
             ActivityOptions {
@@ -435,37 +415,62 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
                 ..Default::default()
             },
         )
-        .unwrap()
         .await;
+}
+
+async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
+    if ctx.patched(MY_PATCH_ID) {
+        let _ = ctx
+            .start_activity(
+                FakeAct::nameless,
+                (),
+                ActivityOptions {
+                    activity_id: Some("had_change".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await;
+        true
+    } else {
+        let _ = ctx
+            .start_activity(
+                FakeAct::nameless,
+                (),
+                ActivityOptions {
+                    activity_id: Some("no_change".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await;
         false
     }
 }
 
 async fn v3(ctx: &mut WorkflowContext<PatchWf>) {
     ctx.deprecate_patch(MY_PATCH_ID);
-    ctx.start_activity(
-        FakeAct::nameless,
-        (),
-        ActivityOptions {
-            activity_id: Some("had_change".to_owned()),
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .await;
+    let _ = ctx
+        .start_activity(
+            FakeAct::nameless,
+            (),
+            ActivityOptions {
+                activity_id: Some("had_change".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
 }
 
 async fn v4(ctx: &mut WorkflowContext<PatchWf>) {
-    ctx.start_activity(
-        FakeAct::nameless,
-        (),
-        ActivityOptions {
-            activity_id: Some("had_change".to_owned()),
-            ..Default::default()
-        },
-    )
-    .unwrap()
-    .await;
+    let _ = ctx
+        .start_activity(
+            FakeAct::nameless,
+            (),
+            ActivityOptions {
+                activity_id: Some("had_change".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await;
 }
 
 fn patch_setup(replaying: bool, marker_type: MarkerType, workflow_version: usize) -> MockPollCfg {
@@ -680,14 +685,16 @@ impl SameChangeMultipleSpotsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
-            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+            let _ = ctx
+                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;
         }
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
-            ctx.start_activity(FakeAct::nameless, (), ActivityOptions::default())?
+            let _ = ctx
+                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;

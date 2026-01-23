@@ -662,8 +662,8 @@ async fn update_with_local_acts() {
                 StdActivities::delay,
                 Duration::from_secs(3),
                 LocalActivityOptions::default(),
-            )?
-            .await;
+            )
+            .await?;
             Ok("hi".to_string())
         }
     }
@@ -1090,8 +1090,7 @@ async fn worker_restarted_in_middle_of_update() {
                     ..Default::default()
                 },
             )
-            .unwrap()
-            .await;
+            .await?;
             Ok(())
         }
     }
@@ -1187,16 +1186,16 @@ async fn update_after_empty_wft() {
             let sig_handle = async {
                 ctx.wait_condition(|s| s.signal_received).await;
                 ACT_STARTED.store(true, Ordering::Release);
-                ctx.start_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
+                let _ = ctx
+                    .start_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(2)),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 ACT_STARTED.store(false, Ordering::Release);
             };
             join!(sig_handle, async {
@@ -1215,16 +1214,16 @@ async fn update_after_empty_wft() {
             if ACT_STARTED.load(Ordering::Acquire) {
                 return;
             }
-            ctx.start_activity(
-                StdActivities::echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
+            let _ = ctx
+                .start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..Default::default()
+                    },
+                )
+                .await;
         }
     }
 
@@ -1288,16 +1287,16 @@ async fn update_lost_on_activity_mismatch() {
             ctx.state_mut(|s| s.can_run = 1);
             for _ in 1..=3 {
                 ctx.wait_condition(|s| s.can_run > 0).await;
-                ctx.start_activity(
-                    StdActivities::echo,
-                    "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    },
-                )
-                .unwrap()
-                .await;
+                let _ = ctx
+                    .start_activity(
+                        StdActivities::echo,
+                        "hi!".to_string(),
+                        ActivityOptions {
+                            start_to_close_timeout: Some(Duration::from_secs(2)),
+                            ..Default::default()
+                        },
+                    )
+                    .await;
                 ctx.state_mut(|s| s.can_run -= 1);
             }
             Ok(().into())

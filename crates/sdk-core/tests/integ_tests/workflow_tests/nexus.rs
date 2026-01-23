@@ -782,7 +782,7 @@ impl AsyncCompleterWf {
     }
 
     #[signal(name = "proceed-to-exit")]
-    fn handle_proceed_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    fn handle_proceed_signal(&mut self, _ctx: &mut WorkflowContext<Self>) {
         self.proceed_signal_received = true;
     }
 }
@@ -992,10 +992,10 @@ async fn nexus_cancellation_types(
             .try_recv()
             .expect("Should have received handler workflow ID");
         client
-            .get_workflow_handle::<UntypedWorkflow>(handler_wf_id, "")
+            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id, "")
             .signal(
-                UntypedSignal::new("proceed-to-exit"),
-                RawValue::empty(),
+                AsyncCompleterWf::handle_proceed_signal,
+                (),
                 SignalOptions::default(),
             )
             .await

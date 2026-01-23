@@ -59,7 +59,6 @@ impl FuzzyWf {
                             ..Default::default()
                         },
                     )
-                    .unwrap()
                     .await;
             }
             FuzzyWfAction::DoLocalAct => {
@@ -72,7 +71,6 @@ impl FuzzyWf {
                             ..Default::default()
                         },
                     )
-                    .unwrap()
                     .await;
             }
         }

@@ -809,36 +809,32 @@ async fn activity_metrics() {
     impl ActivityMetricsWf {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let normal_act_pass = ctx
-                .start_activity(
-                    PassFailActivities::pass_fail_act,
-                    "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
+            let normal_act_pass = ctx.start_activity(
+                PassFailActivities::pass_fail_act,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            );
+            let normal_act_fail = ctx.start_activity(
+                PassFailActivities::pass_fail_act,
+                "fail".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
                         ..Default::default()
-                    },
-                )
-                .unwrap();
-            let normal_act_fail = ctx
-                .start_activity(
-                    PassFailActivities::pass_fail_act,
-                    "fail".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        retry_policy: Some(RetryPolicy {
-                            maximum_attempts: 1,
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
-                )
-                .unwrap();
-            join!(normal_act_pass, normal_act_fail);
+                    }),
+                    ..Default::default()
+                },
+            );
+            let _ = join!(normal_act_pass, normal_act_fail);
             let local_act_pass = ctx.start_local_activity(
                 PassFailActivities::pass_fail_act,
                 "pass".to_string(),
                 LocalActivityOptions::default(),
-            )?;
+            );
             let local_act_fail = ctx.start_local_activity(
                 PassFailActivities::pass_fail_act,
                 "fail".to_string(),
@@ -849,7 +845,7 @@ async fn activity_metrics() {
                     },
                     ..Default::default()
                 },
-            )?;
+            );
             let local_act_cancel = ctx.start_local_activity(
                 PassFailActivities::pass_fail_act,
                 "cancel".to_string(),
@@ -860,11 +856,11 @@ async fn activity_metrics() {
                     },
                     ..Default::default()
                 },
-            )?;
-            join!(local_act_pass, local_act_fail);
+            );
+            let _ = join!(local_act_pass, local_act_fail);
             // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
             local_act_cancel.cancel();
-            local_act_cancel.await;
+            let _ = local_act_cancel.await;
             Ok(().into())
         }
     }

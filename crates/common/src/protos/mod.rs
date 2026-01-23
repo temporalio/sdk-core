@@ -272,9 +272,7 @@ pub mod coresdk {
                 match self.status {
                     Some(activity_resolution::Status::Failed(Failure {
                         failure: Some(ref f),
-                    })) => f
-                        .is_timeout()
-                        .or_else(|| f.cause.as_ref().and_then(|c| c.is_timeout())),
+                    })) => f.is_timeout(),
                     _ => None,
                 }
             }
@@ -1316,7 +1314,13 @@ pub mod coresdk {
         pub fn is_timeout(&self) -> Option<crate::protos::temporal::api::enums::v1::TimeoutType> {
             match &self.failure_info {
                 Some(FailureInfo::TimeoutFailureInfo(ti)) => Some(ti.timeout_type()),
-                _ => None,
+                _ => {
+                    if let Some(c) = &self.cause {
+                        c.is_timeout()
+                    } else {
+                        None
+                    }
+                }
             }
         }
 

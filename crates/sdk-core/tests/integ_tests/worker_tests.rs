@@ -20,7 +20,7 @@ use std::{
 };
 use temporalio_client::{Connection, WorkflowOptions};
 use temporalio_common::{
-    data_converters::DataConverter,
+    data_converters::{DataConverter, RawValue},
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
@@ -396,13 +396,13 @@ async fn activity_tasks_from_completion_reserve_slots() {
     #[activities]
     impl FakeAct {
         #[activity(name = "act1")]
-        fn act1(_: ActivityContext) -> Result<(), ActivityError> {
-            unimplemented!()
+        fn act1(_: ActivityContext) -> Result<RawValue, ActivityError> {
+            unreachable!("doesn't actually run")
         }
 
         #[activity(name = "act2")]
-        fn act2(_: ActivityContext) -> Result<(), ActivityError> {
-            unimplemented!()
+        fn act2(_: ActivityContext) -> Result<RawValue, ActivityError> {
+            unreachable!("doesn't actually run")
         }
     }
 
@@ -415,10 +415,10 @@ async fn activity_tasks_from_completion_reserve_slots() {
     impl ActivityTasksCompletionWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())?
-                .await;
-            ctx.start_activity(FakeAct::act2, (), ActivityOptions::default())?
-                .await;
+            ctx.start_activity(FakeAct::act1, (), ActivityOptions::default())
+                .await?;
+            ctx.start_activity(FakeAct::act2, (), ActivityOptions::default())
+                .await?;
             ctx.state(|wf| wf.complete_token.cancel());
             Ok(().into())
         }
@@ -444,8 +444,8 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .await
         .unwrap();
         barr.wait().await;
-        // Wait for workflow to complete in order for all eager activities to be requested before shutting down.
-        // After shutdown, no eager activities slots can be allocated.
+        // Wait for workflow to complete in order for all eager activities to be requested before
+        // shutting down. After shutdown, no eager activities slots can be allocated.
         workflow_complete_token_clone.cancelled().await;
         core.initiate_shutdown();
         // Even though this test requests eager activity tasks, none are returned in poll responses.
@@ -785,7 +785,7 @@ async fn test_custom_slot_supplier_simple() {
                         start_to_close_timeout: Some(Duration::from_secs(10)),
                         ..Default::default()
                     },
-                )?
+                )
                 .await;
             let _result = ctx
                 .start_local_activity(
@@ -795,7 +795,7 @@ async fn test_custom_slot_supplier_simple() {
                         start_to_close_timeout: Some(Duration::from_secs(10)),
                         ..Default::default()
                     },
-                )?
+                )
                 .await;
             Ok(().into())
         }

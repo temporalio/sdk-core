@@ -33,7 +33,7 @@ use temporalio_macros::{activities, workflow, workflow_methods};
 
 use temporalio_common::{
     protos::{
-        coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
+        coresdk::workflow_commands::ActivityCancellationType,
         temporal::api::enums::v1::WorkflowIdReusePolicy,
     },
     worker::WorkerTaskTypes,
@@ -70,11 +70,8 @@ impl ActivityLoadWf {
                     ..Default::default()
                 },
             )
-            .unwrap()
-            .await
-            .unwrap_ok_payload();
-        let payload = input_str.as_json_payload().unwrap();
-        assert_eq!(res.data, payload.data);
+            .await?;
+        assert_eq!(res, input_str);
         Ok(().into())
     }
 }
@@ -137,11 +134,8 @@ impl ChunkyActivityWf {
                     ..Default::default()
                 },
             )
-            .unwrap()
-            .await
-            .unwrap_ok_payload();
-        let payload = input_str.as_json_payload().unwrap();
-        assert_eq!(res.data, payload.data);
+            .await?;
+        assert_eq!(res, input_str);
         Ok(().into())
     }
 }
@@ -223,16 +217,16 @@ impl WorkflowLoadWf {
     #[run(name = "workflow_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..5 {
-            ctx.start_activity(
-                StdActivities::echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
+            let _ = ctx
+                .start_activity(
+                    StdActivities::echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .await;
             ctx.timer(Duration::from_secs(1)).await;
         }
 
@@ -434,16 +428,16 @@ impl PollerLoadWf {
     #[run(name = "poller_load")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         for _ in 0..5 {
-            ctx.start_activity(
-                JitteryActivities::jittery_echo,
-                "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-            .await;
+            let _ = ctx
+                .start_activity(
+                    JitteryActivities::jittery_echo,
+                    "hi!".to_string(),
+                    ActivityOptions {
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        ..Default::default()
+                    },
+                )
+                .await;
         }
 
         Ok(().into())

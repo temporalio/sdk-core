@@ -26,7 +26,7 @@ use temporalio_common::{
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
@@ -38,7 +38,7 @@ struct ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf;
 impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let res = ctx
+        let res: Result<(), ActivityExecutionError> = ctx
             .start_activity(
                 StdActivities::delay,
                 Duration::from_secs(4),
@@ -52,9 +52,13 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
                     ..Default::default()
                 },
             )
-            .unwrap()
             .await;
-        assert_eq!(res.timed_out(), Some(TimeoutType::Heartbeat));
+        let err = res.unwrap_err();
+        if let ActivityExecutionError::Failed(f) = &err {
+            assert_eq!(f.is_timeout(), Some(TimeoutType::Heartbeat));
+        } else {
+            panic!("expected Failed, got {err:?}");
+        }
         Ok(().into())
     }
 }

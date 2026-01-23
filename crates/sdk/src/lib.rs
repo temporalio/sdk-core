@@ -82,9 +82,9 @@ use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow, ChildWorkflowOptions,
-    LocalActivityOptions, NexusOperationOptions, PendingChildWorkflow, Signal, SignalData,
-    SignalWorkflowOptions, StartedChildWorkflow, TimerOptions, WorkflowContext,
+    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
+    ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, PendingChildWorkflow,
+    Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow, TimerOptions, WorkflowContext,
     WorkflowContextView,
 };
 
