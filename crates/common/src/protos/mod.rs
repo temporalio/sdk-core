@@ -520,6 +520,7 @@ pub mod coresdk {
                 continue_as_new_suggested: false,
                 deployment_version_for_current_task: None,
                 last_sdk_version: String::new(),
+                suggest_continue_as_new_reasons: vec![],
             }
         }
 
