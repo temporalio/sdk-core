@@ -1621,6 +1621,7 @@ async fn history_byte_size_and_can_suggestion_in_activation() {
             he.attributes
         {
             attrs.suggest_continue_as_new = true;
+            attrs.suggest_continue_as_new_reasons = vec![1, 2, 3, 4]
         }
     });
 
@@ -1645,6 +1646,7 @@ async fn history_byte_size_and_can_suggestion_in_activation() {
     let activation = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(activation.history_size_bytes, 70);
     assert!(activation.continue_as_new_suggested);
+    assert_eq!(activation.suggest_continue_as_new_reasons, vec![1, 2, 3, 4])
 }
 
 /// This test verifies that WFTs which come as replies to completing a WFT are properly delivered
