@@ -418,6 +418,19 @@ pub struct NexusOperationOptions {
     pub nexus_header: HashMap<String, String>,
     /// Cancellation type for the operation
     pub cancellation_type: Option<NexusOperationCancellationType>,
+    /// Schedule-to-start timeout for this operation.
+    /// Indicates how long the caller is willing to wait for the operation to be started (or completed if synchronous)
+    /// by the handler. If the operation is not started within this timeout, it will fail with
+    /// TIMEOUT_TYPE_SCHEDULE_TO_START.
+    /// If not set or zero, no schedule-to-start timeout is enforced.
+    pub schedule_to_start_timeout: Option<Duration>,
+    /// Start-to-close timeout for this operation.
+    /// Indicates how long the caller is willing to wait for an asynchronous operation to complete after it has been
+    /// started. If the operation does not complete within this timeout after starting, it will fail with
+    /// TIMEOUT_TYPE_START_TO_CLOSE.
+    /// Only applies to asynchronous operations. Synchronous operations ignore this timeout.
+    /// If not set or zero, no start-to-close timeout is enforced.
+    pub start_to_close_timeout: Option<Duration>,
 }
 
 impl IntoWorkflowCommand for NexusOperationOptions {
@@ -433,6 +446,12 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                     input: self.input,
                     schedule_to_close_timeout: self
                         .schedule_to_close_timeout
+                        .and_then(|t| t.try_into().ok()),
+                    schedule_to_start_timeout: self
+                        .schedule_to_start_timeout
+                        .and_then(|t| t.try_into().ok()),
+                    start_to_close_timeout: self
+                        .start_to_close_timeout
                         .and_then(|t| t.try_into().ok()),
                     nexus_header: self.nexus_header,
                     cancellation_type: self

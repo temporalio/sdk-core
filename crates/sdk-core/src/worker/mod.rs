@@ -10,8 +10,8 @@ use temporalio_client::Connection;
 use temporalio_common::{
     protos::{
         coresdk::{
-            ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo,
-            activity_result::ActivityExecutionResult,
+            ActivitySlotInfo, LocalActivitySlotInfo, NamespaceInfo, NexusSlotInfo,
+            WorkflowSlotInfo, activity_result::ActivityExecutionResult, namespace_info,
         },
         temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
     },
@@ -468,9 +468,27 @@ impl Worker {
     /// Validate that the worker can properly connect to server, plus any other validation that
     /// needs to be done asynchronously. Lang SDKs should call this function once before calling
     /// any others.
-    pub async fn validate(&self) -> Result<(), WorkerValidationError> {
-        self.verify_namespace_exists().await?;
-        Ok(())
+    pub async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
+        match self.client.describe_namespace().await {
+            Ok(info) => {
+                let limits = info.namespace_info.and_then(|ns_info| {
+                    ns_info.limits.map(|api_limits| namespace_info::Limits {
+                        blob_size_limit_error: api_limits.blob_size_limit_error,
+                        memo_size_limit_error: api_limits.memo_size_limit_error,
+                    })
+                });
+                Ok(NamespaceInfo { limits })
+            }
+            Err(e) if e.code() == tonic::Code::Unimplemented => {
+                // Ignore if unimplemented since we wouldn't want to fail against an old server, for
+                // example.
+                Ok(NamespaceInfo::default())
+            }
+            Err(e) => Err(WorkerValidationError::NamespaceDescribeError {
+                source: e,
+                namespace: self.config.namespace.clone(),
+            }),
+        }
     }
 
     /// Replace client.
@@ -1393,20 +1411,6 @@ impl Worker {
         } else {
             dbg_panic!("trying to notify local result when workflows not enabled for this worker");
         }
-    }
-
-    async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
-        if let Err(e) = self.client.describe_namespace().await {
-            // Ignore if unimplemented since we wouldn't want to fail against an old server, for
-            // example.
-            if e.code() != tonic::Code::Unimplemented {
-                return Err(WorkerValidationError::NamespaceDescribeError {
-                    source: e,
-                    namespace: self.config.namespace.clone(),
-                });
-            }
-        }
-        Ok(())
     }
 }
 

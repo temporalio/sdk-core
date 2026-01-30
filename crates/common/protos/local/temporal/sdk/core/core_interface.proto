@@ -51,3 +51,18 @@ message NexusSlotInfo {
     string service = 1;
     string operation = 2;
 }
+
+// Info about a namespace
+message NamespaceInfo {
+    // Namespace configured limits
+    Limits limits = 1;
+
+    message Limits {
+        // Maximum size in bytes for payload fields in workflow history events
+        // (e.g., workflow/activity inputs and results, failure details, signal payloads).
+        // When exceeded, the server will reject the operation with an error.
+        int64 blob_size_limit_error = 1;
+        // Maximum total memo size in bytes per workflow execution.
+        int64 memo_size_limit_error = 2;
+    }
+}

@@ -494,6 +494,8 @@ message PollActivityTaskQueueResponse {
     temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 18;
     // Priority metadata
     temporal.api.common.v1.Priority priority = 19;
+    // The run ID of the activity execution, only set for standalone activities.
+    string activity_run_id = 20;
 }
 
 message RecordActivityTaskHeartbeatRequest {

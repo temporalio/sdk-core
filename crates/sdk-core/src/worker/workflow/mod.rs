@@ -1028,6 +1028,7 @@ pub(crate) enum ActivationAction {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum EvictionRequestResult {
     EvictionRequested(Option<u32>, RunUpdateAct),
     NotFound,

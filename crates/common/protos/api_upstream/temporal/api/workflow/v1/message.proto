@@ -526,6 +526,16 @@ message PendingNexusOperationInfo {
 
     // Operation token. Only set for asynchronous operations after a successful StartOperation call.
     string operation_token = 15;
+
+    // Schedule-to-start timeout for this operation.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_start_timeout = 16;
+
+    // Start-to-close timeout for this operation.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration start_to_close_timeout = 17;
 }
 
 // NexusOperationCancellationInfo contains the state of a nexus operation cancellation.

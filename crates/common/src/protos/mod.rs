@@ -520,6 +520,7 @@ pub mod coresdk {
                 continue_as_new_suggested: false,
                 deployment_version_for_current_task: None,
                 last_sdk_version: String::new(),
+                suggest_continue_as_new_reasons: vec![],
             }
         }
 
@@ -1933,6 +1934,8 @@ pub mod temporal {
                                 operation: c.operation,
                                 input: c.input,
                                 schedule_to_close_timeout: c.schedule_to_close_timeout,
+                                schedule_to_start_timeout: c.schedule_to_start_timeout,
+                                start_to_close_timeout: c.start_to_close_timeout,
                                 nexus_header: c.nexus_header,
                             },
                         )

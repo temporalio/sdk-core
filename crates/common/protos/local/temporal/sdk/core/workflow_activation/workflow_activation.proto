@@ -94,6 +94,10 @@ message WorkflowActivation {
     common.WorkerDeploymentVersion deployment_version_for_current_task = 9;
     // The last seen SDK version from the most recent WFT completed event
     string last_sdk_version = 10;
+    // Experimental. Optionally decide the versioning behavior that the first task of the new run should use.
+    // For example, choose to AutoUpgrade on continue-as-new instead of inheriting the pinned version
+    // of the previous run.
+    repeated temporal.api.enums.v1.SuggestContinueAsNewReason suggest_continue_as_new_reasons = 11;
 }
 
 message WorkflowActivationJob {
