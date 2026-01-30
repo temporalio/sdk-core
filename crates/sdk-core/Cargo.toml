@@ -14,11 +14,7 @@ categories = ["development-tools"]
 
 [features]
 default = ["otel"]
-otel = [
-    "dep:opentelemetry",
-    "dep:opentelemetry_sdk",
-    "dep:opentelemetry-otlp",
-]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
 test-utilities = ["dep:assert_matches", "dep:bimap"]
@@ -26,7 +22,9 @@ antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
 anyhow = "1.0"
-antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = ["full"] }
+antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = [
+  "full",
+] }
 assert_matches = { version = "1.5", optional = true }
 bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
@@ -49,16 +47,16 @@ lru = "0.16"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.31", features = [
-    "rt-tokio",
-    "metrics",
-    "spec_unstable_metrics_views",
+  "rt-tokio",
+  "metrics",
+  "spec_unstable_metrics_views",
 ], optional = true }
 opentelemetry-otlp = { version = "0.31", features = [
-    "tokio",
-    "metrics",
-    "tls",
-    "http-proto",
-    "grpc-tonic",
+  "tokio",
+  "metrics",
+  "tls",
+  "http-proto",
+  "grpc-tonic",
 ], optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
@@ -67,9 +65,9 @@ prost = { workspace = true }
 prost-types = { workspace = true }
 rand = "0.9"
 reqwest = { version = "0.12", features = [
-    "json",
-    "stream",
-    "rustls-tls-native-roots",
+  "json",
+  "stream",
+  "rustls-tls-native-roots",
 ], default-features = false, optional = true }
 serde = "1.0"
 serde_json = "1.0"
@@ -79,12 +77,12 @@ sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
 thiserror = { workspace = true }
 tokio = { version = "1.47", features = [
-    "rt",
-    "rt-multi-thread",
-    "parking_lot",
-    "time",
-    "fs",
-    "process",
+  "rt",
+  "rt-multi-thread",
+  "parking_lot",
+  "time",
+  "fs",
+  "process",
 ] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
@@ -93,19 +91,26 @@ tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 # Only need specific features to decompress zip files for ephemeral server download
-zip = { version = "4.6", optional = true, default-features = false, features = ["deflate", "bzip2", "zstd"] }
+zip = { version = "4.6", optional = true, default-features = false, features = [
+  "deflate",
+  "bzip2",
+  "zstd",
+] }
 
 # 1st party local deps
 [dependencies.temporalio-common]
 path = "../common"
+version = "0.1"
 features = ["core-based-sdk", "history_builders", "test-utilities"]
 
 [dependencies.temporalio-client]
 path = "../client"
+version = "0.1"
 features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
 path = "../macros"
+version = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.5"
@@ -115,18 +120,23 @@ clap = { version = "4.5", features = ["derive"] }
 criterion = { version = "0.7", features = ["async", "async_tokio"] }
 http-body-util = { version = "0.1" }
 hyper = { version = "1.7" }
-hyper-util = { version = "0.1", features = [ "server", "http1", "http2", "tokio" ]}
+hyper-util = { version = "0.1", features = [
+  "server",
+  "http1",
+  "http2",
+  "tokio",
+] }
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
 tokio = { version = "1.47", features = [
-    "rt",
-    "rt-multi-thread",
-    "parking_lot",
-    "time",
-    "fs",
-    "process",
-    "test-util",
+  "rt",
+  "rt-multi-thread",
+  "parking_lot",
+  "time",
+  "fs",
+  "process",
+  "test-util",
 ] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tracing-subscriber = { version = "0.3", default-features = false }
@@ -144,9 +154,9 @@ path = "tests/main.rs"
 # `cargo test --test integ_tests`
 test = false
 required-features = [
-    "temporalio-common/serde_serialize",
-    "test-utilities",
-    "ephemeral-server",
+  "temporalio-common/serde_serialize",
+  "test-utilities",
+  "ephemeral-server",
 ]
 
 [[test]]
@@ -194,9 +204,9 @@ path = "tests/runner.rs"
 harness = false
 test = false
 required-features = [
-    "temporalio-common/serde_serialize",
-    "test-utilities",
-    "ephemeral-server",
+  "temporalio-common/serde_serialize",
+  "test-utilities",
+  "ephemeral-server",
 ]
 
 

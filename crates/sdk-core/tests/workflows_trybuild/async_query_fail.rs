@@ -7,7 +7,7 @@ pub struct BadWorkflow;
 impl BadWorkflow {
     #[run]
     pub async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Ok(WfExitValue::Normal(()))
+        Ok(())
     }
 
     // This should fail - queries must not be async

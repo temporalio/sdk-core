@@ -6,7 +6,7 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
+//! use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
@@ -24,10 +24,7 @@
 //!     #[run]
 //!     pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
 //!         let counter = ctx.state(|s| s.counter);
-//!         Ok(WfExitValue::Normal(format!(
-//!             "Done with counter: {}",
-//!             counter
-//!         )))
+//!         Ok(format!("Done with counter: {}", counter))
 //!     }
 //!
 //!     // Sync signals use &mut self for direct mutations
@@ -44,7 +41,7 @@
 //! }
 //! ```
 
-use crate::{BaseWorkflowContext, WfExitValue, WorkflowContext, WorkflowContextView};
+use crate::{BaseWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowTermination};
 use futures_util::future::{Fuse, FutureExt, LocalBoxFuture};
 use std::{
     cell::RefCell,
@@ -123,7 +120,7 @@ pub trait WorkflowImplementation: Sized + 'static {
     fn run(
         ctx: WorkflowContext<Self>,
         input: Option<<Self::Run as WorkflowDefinition>::Input>,
-    ) -> LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>;
+    ) -> LocalBoxFuture<'static, Result<Payload, WorkflowTermination>>;
 
     /// Dispatch an update request by name. Returns `None` if no handler for that name.
     fn dispatch_update(
@@ -375,10 +372,7 @@ pub trait WorkflowImplementer: WorkflowImplementation {
 /// Type-erased trait for workflow execution instances.
 pub(crate) trait DynWorkflowExecution {
     /// Poll the run future.
-    fn poll_run(
-        &mut self,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>>;
+    fn poll_run(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<Payload, WorkflowTermination>>;
 
     /// Validate an update request. Returns `None` if no handler.
     fn validate_update(&self, name: &str, data: &DispatchData)
@@ -409,7 +403,7 @@ pub(crate) trait DynWorkflowExecution {
 /// Manages a workflow execution, holding the context and run future.
 pub(crate) struct WorkflowExecution<W: WorkflowImplementation> {
     ctx: WorkflowContext<W>,
-    run_future: Fuse<LocalBoxFuture<'static, Result<WfExitValue<Payload>, WorkflowError>>>,
+    run_future: Fuse<LocalBoxFuture<'static, Result<Payload, WorkflowTermination>>>,
 }
 
 impl<W: WorkflowImplementation> WorkflowExecution<W>
@@ -422,7 +416,7 @@ where
         init_input: Option<<W::Run as WorkflowDefinition>::Input>,
         run_input: Option<<W::Run as WorkflowDefinition>::Input>,
     ) -> Self {
-        let view = WorkflowContextView::new();
+        let view = base_ctx.view();
         let workflow = W::init(view, init_input);
         Self::new_with_workflow(workflow, base_ctx, run_input)
     }
@@ -442,10 +436,7 @@ where
 }
 
 impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
-    fn poll_run(
-        &mut self,
-        cx: &mut TaskContext<'_>,
-    ) -> Poll<Result<WfExitValue<Payload>, WorkflowError>> {
+    fn poll_run(&mut self, cx: &mut TaskContext<'_>) -> Poll<Result<Payload, WorkflowTermination>> {
         Pin::new(&mut self.run_future).poll(cx)
     }
 
@@ -454,7 +445,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         name: &str,
         data: &DispatchData,
     ) -> Option<Result<(), WorkflowError>> {
-        let view = WorkflowContextView::new();
+        let view = self.ctx.view();
         self.ctx
             .state(|wf| wf.validate_update(view, name, &data.payloads, data.converter))
     }
@@ -482,7 +473,7 @@ impl<W: WorkflowImplementation> DynWorkflowExecution for WorkflowExecution<W> {
         name: &str,
         data: DispatchData,
     ) -> Option<Result<Payload, WorkflowError>> {
-        let view = WorkflowContextView::new();
+        let view = self.ctx.view();
         self.ctx
             .state(|wf| wf.dispatch_query(view, name, &data.payloads, data.converter))
     }
@@ -638,18 +629,10 @@ pub fn wrap_handler_error(e: Box<dyn std::error::Error + Send + Sync>) -> Workfl
     WorkflowError::Execution(anyhow::anyhow!(e))
 }
 
-/// Serialize a workflow exit value to a payload.
-pub fn serialize_exit_value<T: TemporalSerializable + 'static>(
-    exit_value: WfExitValue<T>,
+/// Serialize a workflow result value to a payload.
+pub fn serialize_result<T: TemporalSerializable + 'static>(
+    result: T,
     converter: &PayloadConverter,
-) -> Result<WfExitValue<Payload>, WorkflowError> {
-    match exit_value {
-        WfExitValue::Normal(v) => {
-            let payload = serialize_output(&v, converter)?;
-            Ok(WfExitValue::Normal(payload))
-        }
-        WfExitValue::ContinueAsNew(cmd) => Ok(WfExitValue::ContinueAsNew(cmd)),
-        WfExitValue::Cancelled => Ok(WfExitValue::Cancelled),
-        WfExitValue::Evicted => Ok(WfExitValue::Evicted),
-    }
+) -> Result<Payload, WorkflowError> {
+    serialize_output(&result, converter)
 }

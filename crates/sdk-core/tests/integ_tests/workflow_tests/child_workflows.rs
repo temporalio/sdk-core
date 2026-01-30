@@ -38,7 +38,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, WfExitValue, WorkflowContext, WorkflowResult,
+    CancellableFuture, ChildWorkflowOptions, Signal, WorkflowContext, WorkflowResult,
+    WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -70,7 +71,7 @@ impl ChildWf {
                 .unwrap()
                 .workflow_id
         );
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -94,8 +95,8 @@ impl HappyParent {
             .into_started()
             .expect("Child chould start OK");
         match started.result().await.status {
-            Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(().into()),
-            _ => Err(anyhow!("Unexpected child WF status")),
+            Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(()),
+            _ => Err(anyhow!("Unexpected child WF status").into()),
         }
     }
 }
@@ -149,7 +150,7 @@ impl AbandonedChildBugReproParent {
         started.cancel("Die reason!".to_string());
         ctx.timer(Duration::from_secs(1)).await;
         started.result().await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -162,7 +163,7 @@ impl AbandonedChildBugReproChild {
     #[run(name = "child_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.cancelled().await;
-        Ok(WfExitValue::<()>::Cancelled)
+        Err(WorkflowTermination::Cancelled)
     }
 }
 
@@ -236,7 +237,7 @@ impl AbandonedChildResolvesPostCancelParent {
         started.cancel("Die reason".to_string());
         ctx.timer(Duration::from_secs(1)).await;
         started.result().await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -248,7 +249,7 @@ struct AbandonedChildResolvesPostCancelChild;
 impl AbandonedChildResolvesPostCancelChild {
     #[run(name = "child_wf")]
     async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-        Ok("I'm done".to_string().into())
+        Ok("I'm done".to_string())
     }
 }
 
@@ -315,7 +316,7 @@ impl CancelledChildGetsReasonParent {
         let out = assert_matches!(r.status,
         Some(child_workflow_result::Status::Completed(reason)) => reason);
         assert_eq!(out.result.unwrap(), "Die reason".as_json_payload().unwrap());
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -328,7 +329,7 @@ impl CancelledChildGetsReasonChild {
     #[run(name = "child_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         let r = ctx.cancelled().await;
-        Ok(r.into())
+        Ok(r)
     }
 }
 
@@ -386,7 +387,7 @@ impl SignalChildWorkflowWf {
         };
         sigres.expect("signal result is ok");
         res.status.expect("child wf result is ok");
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -446,7 +447,7 @@ impl ParentCancelsChildWf {
             .status
             .expect("child wf result is ok");
         assert_matches!(stat, child_workflow_result::Status::Cancelled(_));
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -593,7 +594,7 @@ impl PassChildWorkflowSummaryToMetadata {
         })
         .start()
         .await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -693,18 +694,16 @@ impl ParentWf {
         let start_res = child.start().await;
         match (expectation, &start_res.status) {
             (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
-            (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(().into()),
-            _ => return Err(anyhow!("Unexpected start status")),
+            (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(()),
+            _ => return Err(anyhow!("Unexpected start status").into()),
         };
         match (
             expectation,
             start_res.into_started().unwrap().result().await.status,
         ) {
-            (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
-                Ok(().into())
-            }
-            (Expectation::Failure, _) => Ok(().into()),
-            _ => Err(anyhow!("Unexpected child WF status")),
+            (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => Ok(()),
+            (Expectation::Failure, _) => Ok(()),
+            _ => Err(anyhow!("Unexpected child WF status").into()),
         }
     }
 }
@@ -804,8 +803,8 @@ impl CancelBeforeSendWf {
         let start = child.start();
         start.cancel();
         match start.await.status {
-            StartStatus::Cancelled(_) => Ok(().into()),
-            _ => Err(anyhow!("Unexpected start status")),
+            StartStatus::Cancelled(_) => Ok(()),
+            _ => Err(anyhow!("Unexpected start status").into()),
         }
     }
 }

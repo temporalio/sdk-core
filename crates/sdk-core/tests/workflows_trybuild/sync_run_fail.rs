@@ -8,7 +8,7 @@ impl BadWorkflow {
     // This should fail - run must be async
     #[run]
     pub fn run(&self, _ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Ok(WfExitValue::Normal(()))
+        Ok(())
     }
 }
 

@@ -115,7 +115,7 @@ impl CancelSenderCanned {
             )
             .await;
         if res.is_err() {
-            Err(anyhow::anyhow!("Cancel fail!"))
+            Err(anyhow::anyhow!("Cancel fail!").into())
         } else {
             Ok(().into())
         }

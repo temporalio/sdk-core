@@ -1,17 +1,21 @@
 //! Tests for SDK-level query handling
 
 use crate::common::build_fake_sdk;
-use std::{collections::HashMap, future::poll_fn, task::Poll};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, future::poll_fn, task::Poll, time::Duration};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::workflow_commands::query_result,
     temporal::api::{
+        common::v1::WorkflowType,
         enums::v1::{CommandType, EventType},
+        history::v1::WorkflowExecutionStartedEventAttributes,
         query::v1::WorkflowQuery,
+        taskqueue::v1::TaskQueue,
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 use temporalio_sdk_core::test_help::{
     MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
 };
@@ -38,7 +42,7 @@ impl CompleteOnSecondPollWf {
             }
         })
         .await;
-        Ok(WfExitValue::Normal(42))
+        Ok(42)
     }
 
     #[query]
@@ -184,7 +188,7 @@ impl CounterWf {
         ctx.state_mut(|s| s.counter += 1);
         ctx.wait_condition(|s| s.got_signal).await;
         ctx.state_mut(|s| s.counter += 1);
-        Ok(WfExitValue::Normal(()))
+        Ok(())
     }
 
     #[signal]
@@ -291,5 +295,121 @@ async fn non_legacy_query_should_see_state_after_workflow_advances() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<CounterWf>();
+    worker.run().await.unwrap();
+}
+
+/// Struct to capture WorkflowContextView information for testing.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+struct WorkflowInfo {
+    workflow_id: String,
+    workflow_type: String,
+    task_queue: String,
+    namespace: String,
+    attempt: u32,
+    first_execution_run_id: String,
+}
+
+impl<'a> From<&'a WorkflowContextView> for WorkflowInfo {
+    fn from(ctx: &'a WorkflowContextView) -> Self {
+        Self {
+            workflow_id: ctx.workflow_id.clone(),
+            workflow_type: ctx.workflow_type.clone(),
+            task_queue: ctx.task_queue.clone(),
+            namespace: ctx.namespace.clone(),
+            attempt: ctx.attempt,
+            first_execution_run_id: ctx.first_execution_run_id.clone(),
+        }
+    }
+}
+
+/// A workflow that captures context view information at initialization time.
+#[workflow]
+struct ContextViewWf;
+
+#[workflow_methods]
+impl ContextViewWf {
+    #[init]
+    fn new(_ctx: &WorkflowContextView) -> Self {
+        Self
+    }
+
+    #[run(name = "context_view_wf")]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Ok(())
+    }
+
+    #[query]
+    fn get_info(&self, ctx: &WorkflowContextView) -> WorkflowInfo {
+        ctx.into()
+    }
+}
+
+/// Test that WorkflowContextView contains the correct workflow information.
+#[tokio::test]
+async fn query_returns_workflow_context_view_info() {
+    const WFID: &str = "context_view_test_wf";
+    const FIRST_RUN_ID: &str = "first-run-id-12345";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add(WorkflowExecutionStartedEventAttributes {
+        workflow_type: Some(WorkflowType {
+            name: "context_view_wf".to_string(),
+        }),
+        task_queue: Some(TaskQueue {
+            name: "test-task-queue".to_string(),
+            ..Default::default()
+        }),
+        first_execution_run_id: FIRST_RUN_ID.to_string(),
+        attempt: 3,
+        workflow_task_timeout: Some(Duration::from_secs(5).try_into().unwrap()),
+        ..Default::default()
+    });
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let tasks = [{
+        let mut pr = hist_to_poll_resp(&t, WFID.to_owned(), ResponseType::ToTaskNum(1));
+        pr.queries = HashMap::from([(
+            "q1".to_string(),
+            WorkflowQuery {
+                query_type: "get_info".to_string(),
+                query_args: None,
+                header: None,
+            },
+        )]);
+        pr
+    }];
+
+    let mut mock_cfg = MockPollCfg::from_resp_batches(WFID, t, tasks, mock_worker_client());
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(|wft| {
+            assert_eq!(wft.query_responses.len(), 1);
+            let query_resp = &wft.query_responses[0];
+            assert_eq!(query_resp.query_id, "q1");
+
+            match &query_resp.variant {
+                Some(query_result::Variant::Succeeded(success)) => {
+                    let payload = success
+                        .response
+                        .as_ref()
+                        .expect("Expected response payload");
+                    let info: WorkflowInfo =
+                        serde_json::from_slice(&payload.data).expect("Expected WorkflowInfo");
+
+                    assert_eq!(info.workflow_id, WFID);
+                    assert_eq!(info.workflow_type, "context_view_wf");
+                    // task_queue comes from worker config, not workflow history
+                    assert_eq!(info.namespace, "default");
+                    assert_eq!(info.attempt, 3);
+                    assert_eq!(info.first_execution_run_id, FIRST_RUN_ID);
+                }
+                other => panic!("Expected successful query response, got {:?}", other),
+            }
+        });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<ContextViewWf>();
     worker.run().await.unwrap();
 }

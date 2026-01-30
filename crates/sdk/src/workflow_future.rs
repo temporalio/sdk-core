@@ -1,6 +1,6 @@
 use crate::{
-    BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WfExitValue,
-    WorkflowResult, panic_formatter,
+    BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
+    WorkflowTermination, panic_formatter,
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
@@ -62,6 +62,7 @@ impl WorkflowFunction {
         &self,
         namespace: String,
         task_queue: String,
+        run_id: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
         payload_converter: PayloadConverter,
@@ -83,6 +84,7 @@ impl WorkflowFunction {
         let (base_ctx, cmd_receiver) = BaseWorkflowContext::new(
             namespace,
             task_queue,
+            run_id,
             init_workflow_job,
             cancel_rx,
             payload_converter.clone(),
@@ -427,9 +429,9 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
-                        return Poll::Ready(Err(anyhow!(
+                        return Poll::Ready(Err(WorkflowTermination::failed(anyhow!(
                             "Workflow future's activation channel was lost!"
-                        )));
+                        ))));
                     }
                 },
                 Poll::Pending => return Poll::Pending,
@@ -454,7 +456,7 @@ impl Future for WorkflowFuture {
                 self.outgoing_completions
                     .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
                     .expect("Completion channel intact");
-                return Ok(WfExitValue::Evicted).into();
+                return Err(WorkflowTermination::Evicted).into();
             }
 
             let mut should_poll_wf = false;
@@ -544,8 +546,7 @@ impl WorkflowFuture {
         let mut res = {
             let _guard = self.span.enter();
             match panic::catch_unwind(AssertUnwindSafe(|| self.execution.poll_run(cx))) {
-                Ok(Poll::Ready(r)) => Poll::Ready(r.map_err(anyhow::Error::from)),
-                Ok(Poll::Pending) => Poll::Pending,
+                Ok(r) => r,
                 Err(e) => {
                     let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
                     warn!("{}", errmsg);
@@ -572,7 +573,7 @@ impl WorkflowFuture {
                         CancellableID::Timer(seq) => {
                             self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
                             // Re-poll wf future since a timer is now unblocked
-                            res = self.execution.poll_run(cx).map(|r| r.map_err(|e| e.into()));
+                            res = self.execution.poll_run(cx);
                             workflow_command::Variant::CancelTimer(CancelTimer { seq })
                         }
                         CancellableID::Activity(seq) => {
@@ -681,32 +682,33 @@ impl WorkflowFuture {
         }
 
         if let Poll::Ready(res) = res {
-            // TODO: Auto reply with cancel when cancelled (instead of normal exit value)
             let cmd = match res {
-                Ok(exit_val) => match exit_val {
-                    WfExitValue::Normal(result) => {
-                        workflow_command::Variant::CompleteWorkflowExecution(
-                            CompleteWorkflowExecution {
-                                result: Some(result),
-                            },
-                        )
-                    }
-                    WfExitValue::ContinueAsNew(cmd) => {
+                Ok(result) => workflow_command::Variant::CompleteWorkflowExecution(
+                    CompleteWorkflowExecution {
+                        result: Some(result),
+                    },
+                ),
+                Err(termination) => match termination {
+                    WorkflowTermination::ContinueAsNew(cmd) => {
                         workflow_command::Variant::ContinueAsNewWorkflowExecution(*cmd)
                     }
-                    WfExitValue::Cancelled => workflow_command::Variant::CancelWorkflowExecution(
-                        CancelWorkflowExecution {},
-                    ),
-                    WfExitValue::Evicted => {
-                        panic!("Don't explicitly return this")
+                    WorkflowTermination::Cancelled => {
+                        workflow_command::Variant::CancelWorkflowExecution(
+                            CancelWorkflowExecution {},
+                        )
+                    }
+                    WorkflowTermination::Evicted => {
+                        panic!("Don't explicitly return WorkflowTermination::Evicted")
+                    }
+                    WorkflowTermination::Failed(e) => {
+                        workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
+                            failure: Some(Failure {
+                                message: format!("Workflow execution error: {e}"),
+                                ..Default::default()
+                            }),
+                        })
                     }
                 },
-                Err(e) => workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                    failure: Some(Failure {
-                        message: e.to_string(),
-                        ..Default::default()
-                    }),
-                }),
             };
             activation_cmds.push(cmd.into())
         }

@@ -71,11 +71,22 @@ impl BaseWorkflowContext {
     pub(crate) fn shared_mut(&self) -> impl DerefMut<Target = WorkflowContextSharedData> {
         self.inner.shared.borrow_mut()
     }
+
+    /// Create a read-only view of this context.
+    pub(crate) fn view(&self) -> WorkflowContextView {
+        WorkflowContextView::new(
+            self.inner.namespace.clone(),
+            self.inner.task_queue.clone(),
+            self.inner.run_id.clone(),
+            &self.inner.inital_information,
+        )
+    }
 }
 
 struct WorkflowContextInner {
     namespace: String,
     task_queue: String,
+    run_id: String,
     inital_information: InitializeWorkflow,
     chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<Option<String>>,
@@ -111,15 +122,126 @@ impl<W> Clone for WorkflowContext<W> {
 /// Read-only view of workflow context for use in init and query handlers.
 ///
 /// This provides access to workflow information but cannot issue commands.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WorkflowContextView {
-    // TODO [rust-sdk-branch]: populate with read-only access to context information
+    /// The workflow's unique identifier
+    pub workflow_id: String,
+    /// The run id of this workflow execution
+    pub run_id: String,
+    /// The workflow type name
+    pub workflow_type: String,
+    /// The task queue this workflow is executing on
+    pub task_queue: String,
+    /// The namespace this workflow is executing in
+    pub namespace: String,
+
+    /// The current attempt number (starting from 1)
+    pub attempt: u32,
+    /// The run id of the very first execution in the chain
+    pub first_execution_run_id: String,
+    /// The run id of the previous execution if this is a continuation
+    pub continued_from_run_id: Option<String>,
+
+    /// When the workflow execution started
+    pub start_time: Option<SystemTime>,
+    /// Total workflow execution timeout including retries and continue as new
+    pub execution_timeout: Option<Duration>,
+    /// Timeout of a single workflow run
+    pub run_timeout: Option<Duration>,
+    /// Timeout of a single workflow task
+    pub task_timeout: Option<Duration>,
+
+    /// Information about the parent workflow, if this is a child workflow
+    pub parent: Option<ParentWorkflowInfo>,
+    /// Information about the root workflow in the execution chain
+    pub root: Option<RootWorkflowInfo>,
+
+    /// The workflow's retry policy
+    pub retry_policy: Option<temporalio_common::protos::temporal::api::common::v1::RetryPolicy>,
+    /// If this workflow runs on a cron schedule
+    pub cron_schedule: Option<String>,
+    /// User-defined memo
+    pub memo: Option<Memo>,
+    /// Initial search attributes
+    pub search_attributes: Option<SearchAttributes>,
+}
+
+/// Information about a parent workflow.
+#[derive(Clone, Debug)]
+pub struct ParentWorkflowInfo {
+    /// The parent workflow's unique identifier
+    pub workflow_id: String,
+    /// The parent workflow's run id
+    pub run_id: String,
+    /// The parent workflow's namespace
+    pub namespace: String,
+}
+
+/// Information about the root workflow in an execution chain.
+#[derive(Clone, Debug)]
+pub struct RootWorkflowInfo {
+    /// The root workflow's unique identifier
+    pub workflow_id: String,
+    /// The root workflow's run id
+    pub run_id: String,
 }
 
 impl WorkflowContextView {
-    /// Create a new empty view.
-    pub(crate) fn new() -> Self {
-        Self {}
+    /// Create a new view from workflow initialization data.
+    pub(crate) fn new(
+        namespace: String,
+        task_queue: String,
+        run_id: String,
+        init: &InitializeWorkflow,
+    ) -> Self {
+        let parent = init
+            .parent_workflow_info
+            .as_ref()
+            .map(|p| ParentWorkflowInfo {
+                workflow_id: p.workflow_id.clone(),
+                run_id: p.run_id.clone(),
+                namespace: p.namespace.clone(),
+            });
+
+        let root = init.root_workflow.as_ref().map(|r| RootWorkflowInfo {
+            workflow_id: r.workflow_id.clone(),
+            run_id: r.run_id.clone(),
+        });
+
+        let continued_from_run_id = if init.continued_from_execution_run_id.is_empty() {
+            None
+        } else {
+            Some(init.continued_from_execution_run_id.clone())
+        };
+
+        let cron_schedule = if init.cron_schedule.is_empty() {
+            None
+        } else {
+            Some(init.cron_schedule.clone())
+        };
+
+        Self {
+            workflow_id: init.workflow_id.clone(),
+            run_id,
+            workflow_type: init.workflow_type.clone(),
+            task_queue,
+            namespace,
+            attempt: init.attempt as u32,
+            first_execution_run_id: init.first_execution_run_id.clone(),
+            continued_from_run_id,
+            start_time: init.start_time.and_then(|t| t.try_into().ok()),
+            execution_timeout: init
+                .workflow_execution_timeout
+                .and_then(|d| d.try_into().ok()),
+            run_timeout: init.workflow_run_timeout.and_then(|d| d.try_into().ok()),
+            task_timeout: init.workflow_task_timeout.and_then(|d| d.try_into().ok()),
+            parent,
+            root,
+            retry_policy: init.retry_policy.clone(),
+            cron_schedule,
+            memo: init.memo.clone(),
+            search_attributes: init.search_attributes.clone(),
+        }
     }
 }
 
@@ -154,6 +276,7 @@ impl BaseWorkflowContext {
     pub(crate) fn new(
         namespace: String,
         task_queue: String,
+        run_id: String,
         init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
         payload_converter: PayloadConverter,
@@ -165,6 +288,7 @@ impl BaseWorkflowContext {
                 inner: Rc::new(WorkflowContextInner {
                     namespace,
                     task_queue,
+                    run_id,
                     shared: RefCell::new(WorkflowContextSharedData {
                         random_seed: init_workflow_job.randomness_seed,
                         search_attributes: init_workflow_job
@@ -364,6 +488,11 @@ impl<W> WorkflowContext<W> {
             workflow_state,
             headers: Rc::new(HashMap::new()),
         }
+    }
+
+    /// Create a read-only view of this context.
+    pub(crate) fn view(&self) -> WorkflowContextView {
+        self.base.view()
     }
 
     /// Access workflow state immutably via closure.

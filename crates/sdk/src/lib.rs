@@ -83,9 +83,9 @@ use workflow_future::WorkflowFunction;
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
-    ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, PendingChildWorkflow,
-    Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow, TimerOptions, WorkflowContext,
-    WorkflowContextView,
+    ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
+    PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
+    StartedChildWorkflow, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{
@@ -565,7 +565,14 @@ impl Worker {
                      }| {
                         let wf_half = &*wf_half;
                         async move {
-                            join_handle.await??;
+                            let result = join_handle.await?;
+                            // Eviction is normal workflow lifecycle - workflows loop waiting for
+                            // eviction after completion to manage cache cleanup
+                            if let Err(e) = result {
+                                if !matches!(e, WorkflowTermination::Evicted) {
+                                    return Err(e.into());
+                                }
+                            }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
                             wf_half.workflow_removed_from_map.notify_one();
@@ -751,6 +758,7 @@ impl WorkflowHalf {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
                         common.worker.get_config().namespace.clone(),
                         common.task_queue.clone(),
+                        run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
                         payload_converter,
@@ -790,7 +798,7 @@ impl WorkflowHalf {
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
                     //  complete to abort. Send synthetic remove activation
                     _ = shutdown_token.cancelled() => {
-                        Ok(WfExitValue::Evicted)
+                        Err(WorkflowTermination::Evicted)
                     }
                 }
             });
@@ -1193,29 +1201,50 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-/// The result of running a workflow
-pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
+/// The result of running a workflow.
+///
+/// Successful completion returns `Ok(T)` where `T` is the workflow's return type.
+/// Non-error terminations (cancel, eviction, continue-as-new) return `Err(WorkflowTermination)`.
+pub type WorkflowResult<T> = Result<T, WorkflowTermination>;
 
-/// Workflow functions may return these values when exiting
-#[derive(Debug, derive_more::From)]
-pub enum WfExitValue<T> {
-    /// Continue the workflow as a new execution
-    #[from(ignore)]
-    ContinueAsNew(Box<ContinueAsNewWorkflowExecution>),
-    /// Confirm the workflow was cancelled (can be automatic in a more advanced iteration)
-    #[from(ignore)]
+/// Represents ways a workflow can terminate without producing a normal result.
+///
+/// This is used as the error type in [`WorkflowResult<T>`] for non-error termination conditions
+/// like cancellation, eviction, continue-as-new, or actual failures.
+#[derive(Debug, thiserror::Error)]
+pub enum WorkflowTermination {
+    /// The workflow was cancelled.
+    #[error("Workflow cancelled")]
     Cancelled,
-    /// The run was evicted
-    #[from(ignore)]
+
+    /// The workflow was evicted from the cache.
+    #[error("Workflow evicted from cache")]
     Evicted,
-    /// Finish with a result
-    Normal(T),
+
+    /// The workflow should continue as a new execution.
+    #[error("Continue as new")]
+    ContinueAsNew(Box<ContinueAsNewWorkflowExecution>),
+
+    /// The workflow failed with an error.
+    #[error("Workflow failed: {0}")]
+    Failed(#[source] anyhow::Error),
 }
 
-impl<T> WfExitValue<T> {
-    /// Construct a [WfExitValue::ContinueAsNew] variant (handles boxing)
+impl WorkflowTermination {
+    /// Construct a [WorkflowTermination::ContinueAsNew]
     pub fn continue_as_new(can: ContinueAsNewWorkflowExecution) -> Self {
         Self::ContinueAsNew(Box::new(can))
+    }
+
+    /// Construct a [WorkflowTermination::Failed] variant from any error.
+    pub fn failed(err: impl Into<anyhow::Error>) -> Self {
+        Self::Failed(err.into())
+    }
+}
+
+impl From<anyhow::Error> for WorkflowTermination {
+    fn from(err: anyhow::Error) -> Self {
+        Self::Failed(err)
     }
 }
 
@@ -1333,10 +1362,7 @@ mod tests {
 
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-            Ok(WfExitValue::Normal(format!(
-                "Counter: {}",
-                ctx.state(|s| s.counter)
-            )))
+            Ok(format!("Counter: {}", ctx.state(|s| s.counter)))
         }
 
         #[signal(name = "increment")]

@@ -250,7 +250,7 @@ impl SignalSenderCanned {
         dat.with_header("tupac", b"shakur");
         let res = ctx.signal_workflow(dat).await;
         if res.is_err() {
-            Err(anyhow::anyhow!("Signal fail!"))
+            Err(anyhow::anyhow!("Signal fail!").into())
         } else {
             Ok(().into())
         }

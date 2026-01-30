@@ -13,7 +13,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
 #[workflow]
@@ -36,7 +36,7 @@ impl CancelledWf {
         assert_eq!(reason, "Dieee");
 
         if cancelled {
-            Ok(WfExitValue::Cancelled)
+            Err(WorkflowTermination::Cancelled)
         } else {
             panic!("Should have been cancelled")
         }
@@ -94,7 +94,7 @@ impl WfWithTimer {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
-        Ok(WfExitValue::Cancelled)
+        Err(WorkflowTermination::Cancelled)
     }
 }
 

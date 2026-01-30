@@ -10,7 +10,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
 use temporalio_sdk_core::{TunerHolder, test_help::MockPollCfg};
 
 #[workflow]
@@ -22,14 +22,16 @@ impl ContinueAsNewWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>, run_ct: u8) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
-        Ok(if run_ct < 5 {
-            WfExitValue::continue_as_new(ContinueAsNewWorkflowExecution {
-                arguments: vec![(run_ct + 1).as_json_payload().unwrap()],
-                ..Default::default()
-            })
+        if run_ct < 5 {
+            Err(WorkflowTermination::continue_as_new(
+                ContinueAsNewWorkflowExecution {
+                    arguments: vec![(run_ct + 1).as_json_payload().unwrap()],
+                    ..Default::default()
+                },
+            ))
         } else {
-            ().into()
-        })
+            Ok(())
+        }
     }
 }
 
@@ -87,7 +89,7 @@ impl WfWithTimer {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
-        Ok(WfExitValue::continue_as_new(
+        Err(WorkflowTermination::continue_as_new(
             ContinueAsNewWorkflowExecution {
                 arguments: vec![[1].into()],
                 ..Default::default()

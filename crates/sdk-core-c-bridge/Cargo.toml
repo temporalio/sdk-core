@@ -7,6 +7,8 @@ license-file = { workspace = true }
 description = "C bridge for Temporal Core SDK"
 homepage = "https://temporal.io/"
 repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
 
 [lib]
 name = "temporalio_sdk_core_c_bridge"
@@ -38,13 +40,16 @@ xz2 = { version = "0.1" }
 
 [dependencies.temporalio-client]
 path = "../client"
+version = "0.1"
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
+version = "0.1"
 features = ["ephemeral-server"]
 
 [dependencies.temporalio-common]
 path = "../common"
+version = "0.1"
 features = ["core-based-sdk"]
 
 [dev-dependencies]

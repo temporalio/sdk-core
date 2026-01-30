@@ -42,7 +42,7 @@ Workflows are defined using the `#[workflow]` and `#[workflow_methods]` macros:
 
 ```rust
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 use std::time::Duration;
 
 #[workflow]
@@ -71,7 +71,7 @@ impl GreetingWorkflow {
             }
         )?.await?;
 
-        Ok(WfExitValue::Normal(greeting))
+        Ok(greeting)
     }
 }
 ```
@@ -130,7 +130,7 @@ impl MyWorkflow {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u32>> {
         // Wait until we have at least 3 values
         ctx.wait_condition(|s| s.values.len() >= 3).await;
-        Ok(WfExitValue::Normal(ctx.state(|s| s.values.clone())))
+        Ok(ctx.state(|s| s.values.clone()))
     }
 
     #[signal(name = "add_value")]
@@ -186,11 +186,12 @@ let result = started.join().await?;
 ### Continue-As-New
 
 ```rust
-Ok(WfExitValue::ContinueAsNew(Box::new(ContinueAsNewWorkflowExecution {
+// To continue as new, return an error with WorkflowTermination::ContinueAsNew
+Err(WorkflowTermination::continue_as_new(ContinueAsNewWorkflowExecution {
     workflow_type: "MyWorkflow".to_string(),
     arguments: vec![new_input.into()],
     ..Default::default()
-})))
+}))
 ```
 
 ### Patching (Versioning)

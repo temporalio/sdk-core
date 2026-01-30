@@ -47,7 +47,7 @@ use temporalio_common::{
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityExecutionError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowContext, WorkflowContextView, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
@@ -77,7 +77,8 @@ impl OneLocalActivityWf {
             "hi!".to_string(),
             LocalActivityOptions::default(),
         )
-        .await?;
+        .await
+        .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         assert!(initial_workflow_time < ctx.workflow_time().unwrap());
         Ok(().into())
     }
@@ -642,7 +643,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                     Some(TimeoutType::try_from(timeout_type).unwrap())
                 );
             } else {
-                anyhow::bail!("expected Failed, got {err:?}");
+                return Err(anyhow!("expected Failed, got {err:?}").into());
             }
             Ok(().into())
         }
@@ -1107,7 +1108,8 @@ async fn long_local_activity_with_update(
                 Duration::from_secs(6),
                 LocalActivityOptions::default(),
             )
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             Ok(ctx.state(|wf| wf.update_counter).into())
         }
 
@@ -1214,7 +1216,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
                     ctx.state(|s| s.la_resolved)
                 })
             );
-            Ok(wakeup_counter.into())
+            Ok((wakeup_counter as usize).into())
         }
     }
 
@@ -1255,7 +1257,8 @@ impl LocalActivityWithSummaryWf {
                 ..Default::default()
             },
         )
-        .await?;
+        .await
+        .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         Ok(().into())
     }
 }
@@ -1421,7 +1424,8 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
                 "hi".to_string(),
                 LocalActivityOptions::default(),
             )
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             Ok(().into())
         }
     }
@@ -1642,7 +1646,8 @@ async fn local_act_null_result() {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-                .await?;
+                .await
+                .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             Ok(().into())
         }
     }
@@ -1678,7 +1683,8 @@ async fn local_act_command_immediately_follows_la_marker() {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-                .await?;
+                .await
+                .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             ctx.timer(Duration::from_secs(1)).await;
             Ok(().into())
         }
@@ -2288,7 +2294,8 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
                     ..Default::default()
                 },
             )
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             panic!()
         }
     }
@@ -2837,9 +2844,11 @@ impl TwoLaWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         Ok(().into())
     }
 }
@@ -2972,10 +2981,12 @@ impl LaTimerLaWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         ctx.timer(Duration::from_secs(5)).await;
         ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
-            .await?;
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
         Ok(().into())
     }
 }

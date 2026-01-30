@@ -23,7 +23,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WfExitValue, WorkflowContext, WorkflowResult,
+    ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -112,7 +112,7 @@ impl DataConverterTestWorkflow {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        Ok(WfExitValue::Normal(output))
+        Ok(output)
     }
 }
 
@@ -182,10 +182,7 @@ impl MultiArgs2Workflow {
         _ctx: &mut WorkflowContext<Self>,
         input: MultiArgs2<String, i32>,
     ) -> WorkflowResult<String> {
-        Ok(WfExitValue::Normal(format!(
-            "received: {} and {}",
-            input.0, input.1
-        )))
+        Ok(format!("received: {} and {}", input.0, input.1))
     }
 }
 

@@ -2,7 +2,7 @@ use crate::{
     common::{CoreWfStarter, WorkflowHandleExt, rand_6_chars},
     integ_tests::mk_nexus_endpoint,
 };
-use anyhow::bail;
+use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{
     sync::{
@@ -43,8 +43,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, NexusOperationOptions, WfExitValue, WorkflowContext, WorkflowContextView,
-    WorkflowResult,
+    CancellableFuture, NexusOperationOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowTermination,
 };
 use temporalio_sdk_core::PollError;
 use tokio::{
@@ -91,9 +91,9 @@ impl NexusBasicWf {
             Ok(started) => {
                 assert_eq!(started.operation_token, None);
                 let res = started.result().await;
-                Ok(Ok(res).into())
+                Ok(Ok(res))
             }
-            Err(failure) => Ok(Err(failure).into()),
+            Err(failure) => Ok(Err(failure)),
         }
     }
 }
@@ -273,7 +273,7 @@ impl NexusAsyncWf {
         }
         let res = result.await;
         started.cancel();
-        Ok(res.into())
+        Ok(res)
     }
 }
 
@@ -293,12 +293,12 @@ impl AsyncCompleter {
     #[run]
     pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         match ctx.state(|wf| wf.outcome) {
-            Outcome::Succeed => Ok("completed async".to_string().into()),
+            Outcome::Succeed => Ok("completed async".to_string()),
             Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
                 ctx.cancelled().await;
-                Ok(WfExitValue::Cancelled)
+                Err(WorkflowTermination::Cancelled)
             }
-            _ => bail!("broken"),
+            _ => Err(anyhow!("broken").into()),
         }
     }
 }
@@ -555,7 +555,7 @@ impl NexusCancelBeforeStartWf {
         } else {
             panic!("unexpected failure info");
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -617,7 +617,7 @@ impl NexusMustCompleteTaskWf {
         // to make sure the nexus task actually gets scheduled.
         ctx.timer(Duration::from_millis(1)).await;
         // started.await.unwrap();
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -740,7 +740,7 @@ impl NexusCancellationCallerWf {
         // cancellation is invoked. If it does, the caller workflow will close and the server
         // won't attempt to send the cancellation to the handler
         ctx.timer(Duration::from_millis(1)).await;
-        Ok(res.into())
+        Ok(res)
     }
 }
 
@@ -778,7 +778,7 @@ impl AsyncCompleterWf {
         }
 
         ctx.state(|wf| wf.handler_exited_tx.send(true).unwrap());
-        Ok(WfExitValue::<()>::Cancelled)
+        Err(WorkflowTermination::Cancelled)
     }
 
     #[signal(name = "proceed-to-exit")]

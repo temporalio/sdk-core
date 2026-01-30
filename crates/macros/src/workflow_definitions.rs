@@ -1001,8 +1001,9 @@ impl WorkflowMethodsDefinition {
             async move {
                 let result = #run_call;
                 match result {
-                    Ok(exit_value) => ::temporalio_sdk::workflows::serialize_exit_value(exit_value, &ctx.payload_converter()),
-                    Err(e) => Err(e.into()),
+                    Ok(value) => ::temporalio_sdk::workflows::serialize_result(value, &ctx.payload_converter())
+                        .map_err(|e| ::temporalio_sdk::WorkflowTermination::failed(e)),
+                    Err(e) => Err(e),
                 }
             }.boxed_local()
         };
@@ -1198,7 +1199,7 @@ impl WorkflowMethodsDefinition {
                 fn run(
                     mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
                     input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
-                ) -> ::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_sdk::WfExitValue<::temporalio_common::protos::temporal::api::common::v1::Payload>, ::temporalio_sdk::workflows::WorkflowError>> {
+                ) -> ::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::WorkflowTermination>> {
                     #run_impl_body
                 }
 

@@ -1,5 +1,5 @@
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WfExitValue, WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
 pub struct MyWorkflow {
@@ -16,7 +16,7 @@ impl MyWorkflow {
     // Async run uses &self
     #[run]
     pub async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
-        Ok(WfExitValue::Normal("hi".to_owned()))
+        Ok("hi".to_owned())
     }
 
     // Sync signal uses &mut self

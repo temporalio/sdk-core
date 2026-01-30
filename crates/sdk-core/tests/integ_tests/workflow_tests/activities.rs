@@ -46,7 +46,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WfExitValue, WorkflowContext, WorkflowResult,
+    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -77,7 +77,7 @@ impl OneActivityWorkflow {
             )
             .await
             .map_err(|e| anyhow!("{e}"))?;
-        Ok(WfExitValue::Normal(r))
+        Ok(r)
     }
 }
 
@@ -922,7 +922,7 @@ impl OneActivityAbandonCancelledBeforeStarted {
         );
         act_fut.cancel();
         let _ = act_fut.await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -971,7 +971,7 @@ impl OneActivityAbandonCancelledAfterComplete {
         act_fut.cancel();
         ctx.timer(Duration::from_secs(3)).await;
         let _ = act_fut.await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -1059,7 +1059,7 @@ async fn graceful_shutdown() {
                 )
             });
             join_all(act_futs).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1152,7 +1152,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                 )
                 .await;
             assert!(res.is_err_and(|e| e.is_timeout()));
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1221,7 +1221,7 @@ async fn long_activity_timeout_repro() {
                 ctx.timer(Duration::from_secs(60 * 3)).await;
                 iter += 1;
                 if iter > 5000 {
-                    return Ok(WfExitValue::<()>::continue_as_new(Default::default()));
+                    return Err(WorkflowTermination::continue_as_new(Default::default()));
                 }
             }
         }
@@ -1282,7 +1282,7 @@ async fn pass_activity_summary_to_metadata() {
             )
             .await
             .map_err(|e| anyhow!("{e}"))?;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1348,7 +1348,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
             act_fut.cancel();
             ctx.timer(Duration::from_secs(3)).await;
             let _ = act_fut.await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1377,7 +1377,7 @@ impl ImmediateActivityCancelationWorkflow {
             ctx.start_activity(StdActivities::default, (), ActivityOptions::default());
         cancel_activity_future.cancel();
         let _ = cancel_activity_future.await;
-        Ok(().into())
+        Ok(())
     }
 }
 
