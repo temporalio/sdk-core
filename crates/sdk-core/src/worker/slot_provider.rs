@@ -5,12 +5,12 @@
 use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
     protosext::ValidPollWFTQResponse,
-    worker::workflow::wft_poller::validate_wft,
+    worker::{WorkflowSlotKind, workflow::wft_poller::validate_wft},
 };
 use temporalio_client::worker::Slot as SlotTrait;
 use temporalio_common::{
     protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    worker::{WorkerDeploymentOptions, WorkflowSlotKind},
+    worker::WorkerDeploymentOptions,
 };
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;

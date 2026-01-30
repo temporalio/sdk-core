@@ -2,12 +2,9 @@
 
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use std::{collections::HashSet, future::Future};
-use temporalio_common::{
-    Worker as CoreWorker,
-    protos::coresdk::{
-        workflow_activation::workflow_activation_job,
-        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
-    },
+use temporalio_common::protos::coresdk::{
+    workflow_activation::workflow_activation_job,
+    workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
 };
 
 /// Given a desired number of concurrent executions and a provided function that produces a future,

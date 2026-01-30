@@ -9,7 +9,7 @@ use crate::{
         temporal_core_client_grpc_override_request_service,
     },
     tests::utils::{
-        OwnedRpcCallOptions, RpcCallError, default_client_options, default_server_config,
+        OwnedRpcCallOptions, RpcCallError, default_connection_options, default_server_config,
     },
 };
 use base64::{Engine, engine::general_purpose::STANDARD_NO_PAD};
@@ -38,7 +38,7 @@ fn test_get_system_info() {
             .start_dev_server(Box::new(default_server_config()))
             .unwrap();
         context
-            .client_connect(Box::new(default_client_options(
+            .client_connect(Box::new(default_connection_options(
                 &context.ephemeral_server_target().unwrap().unwrap(),
             )))
             .unwrap();
@@ -88,7 +88,7 @@ fn test_missing_rpc_call_has_expected_error_message() {
             .start_dev_server(Box::new(default_server_config()))
             .unwrap();
         context
-            .client_connect(Box::new(default_client_options(
+            .client_connect(Box::new(default_connection_options(
                 &context.ephemeral_server_target().unwrap().unwrap(),
             )))
             .unwrap();
@@ -152,7 +152,7 @@ fn test_all_rpc_calls_exist() {
             .start_dev_server(Box::new(default_server_config()))
             .unwrap();
         context
-            .client_connect(Box::new(default_client_options(
+            .client_connect(Box::new(default_connection_options(
                 &context.ephemeral_server_target().unwrap().unwrap(),
             )))
             .unwrap();
@@ -299,7 +299,7 @@ fn test_simple_callback_override() {
         // Create client which will invoke GetSystemInfo
         context
             .client_connect_with_override(
-                Box::new(default_client_options("127.0.0.1:4567")),
+                Box::new(default_connection_options("127.0.0.1:4567")),
                 Some(callback_override),
                 &mut user_data as *mut String as *mut libc::c_void,
             )
@@ -392,7 +392,7 @@ fn test_callback_override_with_headers() {
         context.runtime_new().unwrap();
 
         // Prepare client options with headers
-        let mut client_options = default_client_options("127.0.0.1:4567");
+        let mut client_options = default_connection_options("127.0.0.1:4567");
         client_options.headers = Some(HashMap::from([(
             "x-test".to_owned(),
             "client-ascii".to_owned(),

@@ -105,7 +105,8 @@ where
     ///
     /// While this method allows mutable access to the underlying client, any configuration changes
     /// will not be shared with other instances, and will be lost if the client gets replaced from
-    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client) instead.
+    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client)
+    /// instead.
     pub fn inner_mut_refreshed(&mut self) -> &mut C {
         if let Some((client, generation)) =
             self.shared_data.fetch_newer_than(self.cloned_generation)

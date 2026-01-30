@@ -26,7 +26,7 @@ StartedActivityCancelEventRecorded -[#blue]-> TimedOut: ActivityTaskTimedOut
 StartedActivityCancelEventRecorded -[#blue]-> Canceled: ActivityTaskCanceled
 Canceled -[#blue]-> Canceled: ActivityTaskStarted
 Canceled -[#blue]-> Canceled: ActivityTaskCompleted
-TimedOut --> [*]
-Failed --> [*]
 Completed --> [*]
+Failed --> [*]
+TimedOut --> [*]
 @enduml

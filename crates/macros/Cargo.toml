@@ -5,6 +5,10 @@ edition = "2024"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 license-file = { workspace = true }
 description = "Procmacros used in Temporal Core & Rust SDKs"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow", "macros"]
+categories = ["development-tools"]
 
 [lib]
 proc-macro = true

@@ -7,6 +7,10 @@ Core SDK that can be used as a base for other Temporal SDKs. It is currently use
 - [.NET SDK](https://github.com/temporalio/sdk-dotnet/)
 - [Ruby SDK](https://github.com/temporalio/sdk-ruby/)
 
+# Temporal Rust SDK
+
+Currently prerelease, see more in the [SDK README.md](crates/sdk/README.md)
+
 # Documentation
 
 Core SDK documentation can be generated with `cargo doc`, output will be placed in the
@@ -127,11 +131,3 @@ Any error which is returned from a public interface should be well-typed, and we
 
 Errors returned from things only used in testing are free to use
 [anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
-
-# The Rust "SDK"
-
-This repo contains a *prototype* Rust sdk in the `sdk/` directory. This SDK should be considered
-pre-alpha in terms of its API surface. Since it's still using Core underneath, it is generally
-functional. We do not currently have any firm plans to productionize this SDK. If you want to write
-workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
-time without warning and we do not provide any support guarantees.
