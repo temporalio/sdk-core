@@ -6,12 +6,9 @@ use temporalio_common::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
         temporal::api::{
-            enums::v1::{
-                CommandType,
-                ContinueAsNewVersioningBehavior
-            },
-            command::v1::command::Attributes
-        }
+            command::v1::command::Attributes,
+            enums::v1::{CommandType, ContinueAsNewVersioningBehavior},
+        },
     },
     worker::WorkerTaskTypes,
 };
