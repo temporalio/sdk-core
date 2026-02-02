@@ -5,7 +5,13 @@ use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
-        temporal::api::enums::v1::CommandType,
+        temporal::api::{
+            enums::v1::{
+                CommandType,
+                ContinueAsNewVersioningBehavior
+            },
+            command::v1::command::Attributes
+        }
     },
     worker::WorkerTaskTypes,
 };
@@ -75,6 +81,7 @@ async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
     Ok(WfExitValue::continue_as_new(
         ContinueAsNewWorkflowExecution {
             arguments: vec![[1].into()],
+            initial_versioning_behavior: ContinueAsNewVersioningBehavior::AutoUpgrade.into(),
             ..Default::default()
         },
     ))
@@ -95,6 +102,11 @@ async fn wf_completing_with_continue_as_new() {
                 assert_matches!(
                     wft.commands[0].command_type(),
                     CommandType::ContinueAsNewWorkflowExecution
+                );
+                assert_matches!(
+                    wft.commands[0].attributes.as_ref().unwrap(),
+                    Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(can_attrs)
+                        if can_attrs.initial_versioning_behavior == ContinueAsNewVersioningBehavior::AutoUpgrade as i32
                 );
             });
     });
