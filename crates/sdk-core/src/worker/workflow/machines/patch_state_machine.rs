@@ -46,7 +46,7 @@ use temporalio_common::protos::{
             RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
         },
         common::v1::SearchAttributes,
-        enums::v1::{CommandType, IndexedValueType},
+        enums::v1::CommandType,
     },
 };
 
@@ -143,10 +143,7 @@ pub(super) fn has_change<'a>(
         } else {
             serialized.metadata.insert(
                 "type".to_string(),
-                IndexedValueType::KeywordList
-                    .as_str_name()
-                    .as_bytes()
-                    .to_vec(),
+                "KeywordList".as_bytes().to_vec(),
             );
             let indexed_fields = {
                 let mut m = HashMap::new();

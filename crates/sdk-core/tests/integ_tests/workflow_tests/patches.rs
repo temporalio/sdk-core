@@ -22,7 +22,7 @@ use temporalio_common::protos::{
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
         common::v1::ActivityType,
-        enums::v1::{CommandType, EventType, IndexedValueType},
+        enums::v1::{CommandType, EventType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
             ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
@@ -510,10 +510,7 @@ async fn v2_and_v3_changes(
                     let mut as_payload = [MY_PATCH_ID].as_json_payload().unwrap();
                     as_payload.metadata.insert(
                         "type".to_string(),
-                        IndexedValueType::KeywordList
-                            .as_str_name()
-                            .as_bytes()
-                            .to_vec(),
+                        "KeywordList".as_bytes().to_vec(),
                     );
                     assert_matches!(
                         commands.pop_front().unwrap().attributes.as_ref().unwrap(),
