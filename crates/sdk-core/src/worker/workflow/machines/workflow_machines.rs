@@ -13,6 +13,7 @@ use super::{
     workflow_task_state_machine::WorkflowTaskMachine,
 };
 use crate::{
+    WorkerConfig,
     abstractions::dbg_panic,
     internal_flags::{CoreInternalFlags, InternalFlags},
     protosext::{
@@ -66,13 +67,14 @@ use temporalio_common::{
             command::v1::{
                 Command as ProtoCommand, CommandAttributesExt, command::Attributes as ProtoCmdAttrs,
             },
+            common::v1::SearchAttributes,
             enums::v1::EventType,
             history::v1::{HistoryEvent, history_event},
             protocol::v1::{Message as ProtocolMessage, message::SequencingId},
             sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
         },
     },
-    worker::{WorkerConfig, WorkerDeploymentVersion},
+    worker::WorkerDeploymentVersion,
 };
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
@@ -1648,8 +1650,13 @@ impl WorkflowMachines {
                 attrs.retry_policy.clone_from(&started_info.retry_policy);
             }
         }
-        if attrs.search_attributes.is_empty() {
-            attrs.search_attributes = self.drive_me.get_current_search_attributes();
+        if attrs.search_attributes.is_none() {
+            let current = self.drive_me.get_current_search_attributes();
+            if !current.is_empty() {
+                attrs.search_attributes = Some(SearchAttributes {
+                    indexed_fields: current,
+                });
+            }
         }
         attrs
     }

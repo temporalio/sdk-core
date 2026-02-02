@@ -1,11 +1,11 @@
 use crate::{
-    MetricsContext,
+    MetricsContext, WorkerConfig,
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
     protosext::{WorkflowActivationExt, protocol_messages::IncomingProtocolMessage},
     telemetry::metrics,
     worker::{
-        LEGACY_QUERY_ID, LocalActRequest,
+        LEGACY_QUERY_ID, LocalActRequest, WorkflowErrorType,
         workflow::{
             ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
             ActivationOrAuto, BufferedTasks, DrivenWorkflow, EvictionRequestResult,
@@ -28,25 +28,21 @@ use std::{
     sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
 };
-use temporalio_common::{
-    errors::WorkflowErrorType,
-    protos::{
-        TaskToken,
-        coresdk::{
-            workflow_activation::{
-                WorkflowActivation, create_evict_activation, query_to_job,
-                remove_from_cache::EvictionReason, workflow_activation_job,
-            },
-            workflow_commands::{FailWorkflowExecution, QueryResult},
-            workflow_completion,
+use temporalio_common::protos::{
+    TaskToken,
+    coresdk::{
+        workflow_activation::{
+            WorkflowActivation, create_evict_activation, query_to_job,
+            remove_from_cache::EvictionReason, workflow_activation_job,
         },
-        temporal::api::{
-            command::v1::command::Attributes as CmdAttribs,
-            enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
-            failure::v1::Failure,
-        },
+        workflow_commands::{FailWorkflowExecution, QueryResult},
+        workflow_completion,
     },
-    worker::WorkerConfig,
+    temporal::api::{
+        command::v1::command::Attributes as CmdAttribs,
+        enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+    },
 };
 use tokio::sync::oneshot;
 use tracing::Span;

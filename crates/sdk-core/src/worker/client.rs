@@ -1,7 +1,7 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use crate::protosext::legacy_query_failure;
+use crate::{protosext::legacy_query_failure, worker::WorkerVersioningStrategy};
 use parking_lot::Mutex;
 use prost_types::Duration as PbDuration;
 use std::{
@@ -10,36 +10,33 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_client::{
-    Client, Namespace, NamespacedClient, RetryClient, RetryOptions, SharedReplaceableClient,
+    Connection, Namespace, NamespacedClient, RetryOptions, SharedReplaceableClient,
     WorkflowService,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
     worker::ClientWorkerSet,
 };
-use temporalio_common::{
-    protos::{
-        TaskToken,
-        coresdk::{workflow_commands::QueryResult, workflow_completion},
-        temporal::api::{
-            command::v1::Command,
-            common::v1::{
-                MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
-                WorkflowExecution,
-            },
-            deployment,
-            enums::v1::{
-                TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
-            },
-            failure::v1::Failure,
-            nexus,
-            protocol::v1::Message as ProtocolMessage,
-            query::v1::WorkflowQueryResult,
-            sdk::v1::WorkflowTaskCompletedMetadata,
-            taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-            worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
-            workflowservice::v1::{get_system_info_response::Capabilities, *},
+use temporalio_common::protos::{
+    TaskToken,
+    coresdk::{workflow_commands::QueryResult, workflow_completion},
+    temporal::api::{
+        command::v1::Command,
+        common::v1::{
+            MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
+            WorkflowExecution,
         },
+        deployment,
+        enums::v1::{
+            TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
+        },
+        failure::v1::Failure,
+        nexus,
+        protocol::v1::Message as ProtocolMessage,
+        query::v1::WorkflowQueryResult,
+        sdk::v1::WorkflowTaskCompletedMetadata,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        worker::v1::{WorkerHeartbeat, WorkerSlotsInfo},
+        workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
-    worker::WorkerVersioningStrategy,
 };
 use tonic::IntoRequest;
 use uuid::Uuid;
@@ -53,27 +50,28 @@ pub enum LegacyQueryResult {
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
-    client: RetryClient<SharedReplaceableClient<Client>>,
+    connection: SharedReplaceableClient<Connection>,
     namespace: String,
-    identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
     worker_heartbeat_map: Arc<Mutex<HashMap<String, ClientHeartbeatData>>>,
 }
 
 impl WorkerClientBag {
     pub(crate) fn new(
-        client: RetryClient<SharedReplaceableClient<Client>>,
+        connection: SharedReplaceableClient<Connection>,
         namespace: String,
-        identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
     ) -> Self {
         Self {
-            client,
+            connection,
             namespace,
-            identity,
             worker_versioning_strategy,
             worker_heartbeat_map: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn identity(&self) -> String {
+        self.connection.inner_cow().identity().to_owned()
     }
 
     fn default_capabilities(&self) -> Capabilities {
@@ -230,8 +228,8 @@ pub trait WorkerClient: Sync + Send {
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse>;
 
-    /// Replace the underlying client
-    fn replace_client(&self, new_client: Client);
+    /// Replace the underlying connection
+    fn replace_connection(&self, new_client: Connection);
     /// Return server capabilities
     fn capabilities(&self) -> Option<Capabilities>;
     /// Return workers using this client
@@ -296,7 +294,7 @@ impl WorkerClient for WorkerClientBag {
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
@@ -311,7 +309,7 @@ impl WorkerClient for WorkerClientBag {
         }
 
         Ok(self
-            .client
+            .connection
             .clone()
             .poll_workflow_task_queue(request)
             .await?
@@ -331,7 +329,7 @@ impl WorkerClient for WorkerClientBag {
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             task_queue_metadata: act_options.max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
@@ -348,7 +346,7 @@ impl WorkerClient for WorkerClientBag {
         }
 
         Ok(self
-            .client
+            .connection
             .clone()
             .poll_activity_task_queue(request)
             .await?
@@ -368,7 +366,7 @@ impl WorkerClient for WorkerClientBag {
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_heartbeat: Vec::new(),
@@ -383,7 +381,7 @@ impl WorkerClient for WorkerClientBag {
         }
 
         Ok(self
-            .client
+            .connection
             .clone()
             .poll_nexus_task_queue(request)
             .await?
@@ -399,7 +397,7 @@ impl WorkerClient for WorkerClientBag {
             task_token: request.task_token.into(),
             commands: request.commands,
             messages: request.messages,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
@@ -434,7 +432,7 @@ impl WorkerClient for WorkerClientBag {
             deployment_options: self.deployment_options(),
         };
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_workflow_task_completed(request.into_request())
             .await?
@@ -447,14 +445,14 @@ impl WorkerClient for WorkerClientBag {
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_activity_task_completed(
                 #[allow(deprecated)] // want to list all fields explicitly
                 RespondActivityTaskCompletedRequest {
                     task_token: task_token.0,
                     result,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
                     // Will never be set, deprecated.
@@ -473,12 +471,12 @@ impl WorkerClient for WorkerClientBag {
         response: nexus::v1::Response,
     ) -> Result<RespondNexusTaskCompletedResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_nexus_task_completed(
                 RespondNexusTaskCompletedRequest {
                     namespace: self.namespace.clone(),
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     task_token: task_token.0,
                     response: Some(response),
                 }
@@ -494,13 +492,13 @@ impl WorkerClient for WorkerClientBag {
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .record_activity_task_heartbeat(
                 RecordActivityTaskHeartbeatRequest {
                     task_token: task_token.0,
                     details,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                 }
                 .into_request(),
@@ -515,14 +513,14 @@ impl WorkerClient for WorkerClientBag {
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_activity_task_canceled(
                 #[allow(deprecated)] // want to list all fields explicitly
                 RespondActivityTaskCanceledRequest {
                     task_token: task_token.0,
                     details,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
                     // Will never be set, deprecated.
@@ -541,14 +539,14 @@ impl WorkerClient for WorkerClientBag {
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_activity_task_failed(
                 #[allow(deprecated)] // want to list all fields explicitly
                 RespondActivityTaskFailedRequest {
                     task_token: task_token.0,
                     failure,
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     namespace: self.namespace.clone(),
                     // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                     last_heartbeat_details: None,
@@ -574,7 +572,7 @@ impl WorkerClient for WorkerClientBag {
             task_token: task_token.0,
             cause: cause as i32,
             failure,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             binary_checksum: self.binary_checksum(),
             namespace: self.namespace.clone(),
             messages: vec![],
@@ -584,7 +582,7 @@ impl WorkerClient for WorkerClientBag {
             deployment_options: self.deployment_options(),
         };
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_workflow_task_failed(request.into_request())
             .await?
@@ -597,12 +595,12 @@ impl WorkerClient for WorkerClientBag {
         error: nexus::v1::HandlerError,
     ) -> Result<RespondNexusTaskFailedResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_nexus_task_failed(
                 RespondNexusTaskFailedRequest {
                     namespace: self.namespace.clone(),
-                    identity: self.identity.clone(),
+                    identity: self.identity(),
                     task_token: task_token.0,
                     error: Some(error),
                 }
@@ -619,7 +617,7 @@ impl WorkerClient for WorkerClientBag {
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .get_workflow_execution_history(
                 GetWorkflowExecutionHistoryRequest {
@@ -655,7 +653,7 @@ impl WorkerClient for WorkerClientBag {
         let (_, completed_type, query_result, error_message) = query_result.into_components();
 
         Ok(self
-            .client
+            .connection
             .clone()
             .respond_query_task_completed(
                 RespondQueryTaskCompletedRequest {
@@ -675,7 +673,7 @@ impl WorkerClient for WorkerClientBag {
 
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse> {
         Ok(self
-            .client
+            .connection
             .clone()
             .describe_namespace(
                 Namespace::Name(self.namespace.clone())
@@ -697,7 +695,7 @@ impl WorkerClient for WorkerClientBag {
         }
         let mut request = ShutdownWorkerRequest {
             namespace: self.namespace.clone(),
-            identity: self.identity.clone(),
+            identity: self.identity(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
             worker_heartbeat: final_heartbeat,
@@ -708,7 +706,7 @@ impl WorkerClient for WorkerClientBag {
             .insert(RetryConfigForCall(RetryOptions::no_retries()));
 
         Ok(
-            WorkflowService::shutdown_worker(&mut self.client.clone(), request)
+            WorkflowService::shutdown_worker(&mut self.connection.clone(), request)
                 .await?
                 .into_inner(),
         )
@@ -721,32 +719,27 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RecordWorkerHeartbeatResponse> {
         let request = RecordWorkerHeartbeatRequest {
             namespace,
-            identity: self.identity.clone(),
+            identity: self.identity(),
             worker_heartbeat,
         };
         Ok(self
-            .client
+            .connection
             .clone()
             .record_worker_heartbeat(request.into_request())
             .await?
             .into_inner())
     }
 
-    fn replace_client(&self, new_client: Client) {
-        self.client.get_client().replace_client(new_client);
+    fn replace_connection(&self, new_connection: Connection) {
+        self.connection.replace_client(new_connection);
     }
 
     fn capabilities(&self) -> Option<Capabilities> {
-        self.client
-            .get_client()
-            .inner_cow()
-            .inner()
-            .capabilities()
-            .cloned()
+        self.connection.inner_cow().capabilities().cloned()
     }
 
     fn workers(&self) -> Arc<ClientWorkerSet> {
-        self.client.get_client().inner_cow().inner().workers()
+        self.connection.inner_cow().workers()
     }
 
     fn is_mock(&self) -> bool {
@@ -754,17 +747,19 @@ impl WorkerClient for WorkerClientBag {
     }
 
     fn sdk_name_and_version(&self) -> (String, String) {
-        let inner = self.client.get_client().inner_cow();
-        let opts = inner.options();
-        (opts.client_name.clone(), opts.client_version.clone())
+        let inner = self.connection.inner_cow();
+        (
+            inner.client_name().to_owned(),
+            inner.client_version().to_owned(),
+        )
     }
 
     fn identity(&self) -> String {
-        self.identity.clone()
+        self.identity()
     }
 
     fn worker_grouping_key(&self) -> Uuid {
-        self.client.get_client().inner_cow().worker_grouping_key()
+        self.connection.inner_cow().worker_grouping_key()
     }
 
     fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat) {
@@ -818,7 +813,7 @@ impl NamespacedClient for WorkerClientBag {
     }
 
     fn identity(&self) -> String {
-        self.identity.clone()
+        self.identity()
     }
 }
 

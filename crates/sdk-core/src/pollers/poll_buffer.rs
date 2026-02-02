@@ -2,7 +2,8 @@ use crate::{
     abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::{
-        WFTPollerShared,
+        ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WFTPollerShared,
+        WorkflowSlotKind,
         client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
     },
 };
@@ -22,15 +23,11 @@ use std::{
 use temporalio_client::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, request_extensions::NoRetryOnMatching,
 };
-use temporalio_common::{
-    protos::temporal::api::{
-        taskqueue::v1::PollerScalingDecision,
-        workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
-            PollWorkflowTaskQueueResponse,
-        },
+use temporalio_common::protos::temporal::api::{
+    taskqueue::v1::PollerScalingDecision,
+    workflowservice::v1::{
+        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
     },
-    worker::{ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind},
 };
 use tokio::{
     sync::{
@@ -764,8 +761,7 @@ mod tests {
     };
     use futures_util::FutureExt;
     use std::time::Duration;
-    use tokio::select;
-    use tokio::sync::Notify;
+    use tokio::{select, sync::Notify};
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {

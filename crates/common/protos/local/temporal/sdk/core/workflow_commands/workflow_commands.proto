@@ -209,7 +209,7 @@ message ContinueAsNewWorkflowExecution {
     map<string, temporal.api.common.v1.Payload> headers = 7;
     // If set, the new workflow will have these search attributes. If unset, re-uses the current
     // workflow's search attributes.
-    map<string, temporal.api.common.v1.Payload> search_attributes = 8;
+    temporal.api.common.v1.SearchAttributes search_attributes = 8;
     // If set, the new workflow will have this retry policy. If unset, re-uses the current
     // workflow's retry policy.
     temporal.api.common.v1.RetryPolicy retry_policy = 9;
@@ -263,7 +263,7 @@ message StartChildWorkflowExecution {
     // Memo fields
     map<string, temporal.api.common.v1.Payload> memo = 16;
     // Search attributes
-    map<string, temporal.api.common.v1.Payload> search_attributes = 17;
+    temporal.api.common.v1.SearchAttributes search_attributes = 17;
     // Defines behaviour of the underlying workflow when child workflow cancellation has been requested.
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
     // Whether this child should run on a worker with a compatible build id or not.
@@ -317,9 +317,9 @@ message CancelSignalWorkflow {
 }
 
 message UpsertWorkflowSearchAttributes {
-    // SearchAttributes fields - equivalent to indexed_fields on api. Key = search index, Value =
-    // value?
-    map<string, temporal.api.common.v1.Payload> search_attributes = 1;
+    // SearchAttributes to upsert. The indexed_fields map will be merged with existing search
+    // attributes, with these values taking precedence.
+    temporal.api.common.v1.SearchAttributes search_attributes = 1;
 }
 
 message ModifyWorkflowProperties {

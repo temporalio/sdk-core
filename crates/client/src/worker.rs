@@ -298,7 +298,7 @@ pub trait SharedNamespaceWorkerTrait {
 /// Enables local workers to make themselves visible to a shared client instance.
 ///
 /// For slot managing, there can only be one worker registered per
-/// namespace+queue_name+client, others will return an error.
+/// namespace+queue_name+connection, others will return an error.
 /// It also provides a convenient method to find compatible slots within the collection.
 pub struct ClientWorkerSet {
     worker_grouping_key: Uuid,

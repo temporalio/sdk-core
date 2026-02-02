@@ -4,14 +4,23 @@ mod common;
 mod shared_tests;
 
 use common::get_cloud_client;
-use temporalio_client::WorkflowClientTrait;
+use temporalio_client::{NamespacedClient, WorkflowService};
+use temporalio_common::protos::temporal::api::workflowservice::v1::ListWorkflowExecutionsRequest;
+use tonic::IntoRequest;
 
 #[tokio::test]
 async fn tls_test() {
-    let con = get_cloud_client().await;
-    con.list_workflow_executions(100, vec![], "".to_string())
-        .await
-        .unwrap();
+    let mut con = get_cloud_client().await;
+    con.list_workflow_executions(
+        ListWorkflowExecutionsRequest {
+            namespace: con.namespace(),
+            page_size: 100,
+            ..Default::default()
+        }
+        .into_request(),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]

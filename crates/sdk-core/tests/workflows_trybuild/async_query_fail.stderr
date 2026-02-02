@@ -1,0 +1,5 @@
+error: #[query] methods must not be async (queries are synchronous)
+  --> tests/workflows_trybuild/async_query_fail.rs:15:9
+   |
+15 |     pub async fn get_value(&self, _ctx: &WorkflowContextView) -> u32 {
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -1,10 +1,10 @@
 use crate::{
-    MetricsContext,
+    MetricsContext, WorkerConfig,
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
     pollers::{BoxedWFPoller, LongPollBuffer, Poller, WorkflowTaskOptions, WorkflowTaskPoller},
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
-    worker::{client::WorkerClient, wft_poller_behavior},
+    worker::{WorkflowSlotKind, client::WorkerClient, wft_poller_behavior},
 };
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
@@ -12,10 +12,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::SystemTime,
 };
-use temporalio_common::{
-    protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse,
-    worker::{WorkerConfig, WorkflowSlotKind},
-};
+use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
@@ -258,11 +255,10 @@ mod tests {
     use super::*;
     use crate::{
         abstractions::tests::fixed_size_permit_dealer, pollers::MockPermittedPollBuffer,
-        test_help::mock_poller,
+        test_help::mock_poller, worker::WorkflowSlotKind,
     };
     use futures_util::{StreamExt, pin_mut};
     use std::sync::Arc;
-    use temporalio_common::worker::WorkflowSlotKind;
 
     #[tokio::test]
     async fn poll_timeouts_do_not_produce_responses() {

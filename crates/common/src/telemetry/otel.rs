@@ -1,14 +1,17 @@
 use super::{
-    TELEM_SERVICE_NAME, default_buckets_for,
+    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
+    TELEM_SERVICE_NAME,
     metrics::{
         ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
-        DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
-        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
+        CoreMeter, Counter, DEFAULT_MS_BUCKETS, DEFAULT_S_BUCKETS, Gauge, GaugeF64, Histogram,
+        HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
+        MetricAttributable, MetricAttributes, MetricParameters, NewAttributes,
+        WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
-        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, default_buckets_for,
     },
 };
-use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
+use crate::dbg_panic;
 use opentelemetry::{
     self, Key, KeyValue, Value,
     metrics::{Meter, MeterProvider as MeterProviderT},
@@ -22,14 +25,6 @@ use opentelemetry_sdk::{
     },
 };
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use temporalio_common::telemetry::{
-    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
-    metrics::{
-        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramBase, HistogramDuration,
-        HistogramDurationBase, HistogramF64, HistogramF64Base, MetricAttributable,
-        MetricAttributes, MetricParameters, NewAttributes,
-    },
-};
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
 fn histo_view(
