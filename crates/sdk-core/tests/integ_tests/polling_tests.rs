@@ -261,7 +261,7 @@ impl OnlyOneWorkflowSlotAndTwoPollers {
                 )
                 .await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 

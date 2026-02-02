@@ -16,7 +16,7 @@ struct EmptyWorkflow;
 impl EmptyWorkflow {
     #[run]
     async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Ok(().into())
+        Ok(())
     }
 }
 

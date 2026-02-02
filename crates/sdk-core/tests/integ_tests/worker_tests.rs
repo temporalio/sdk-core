@@ -182,7 +182,7 @@ struct ResourceBasedNonStickyWf;
 impl ResourceBasedNonStickyWf {
     #[run]
     async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -241,11 +241,11 @@ async fn oversize_grpc_message() {
         #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
             if ctx.state(|wf| wf.has_run.load(Relaxed)) {
-                Ok(vec![].into())
+                Ok(vec![])
             } else {
                 ctx.state(|wf| wf.has_run.store(true, Relaxed));
                 let result: Vec<u8> = vec![0; 5000000];
-                Ok(result.into())
+                Ok(result)
             }
         }
     }
@@ -423,7 +423,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
                 .await
                 .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             ctx.state(|wf| wf.complete_token.cancel());
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -494,7 +494,7 @@ async fn max_wft_respected() {
                     .expect("No multiple concurrent workflow tasks!"),
             );
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -584,7 +584,7 @@ async fn history_length_with_fail_and_timeout(
             assert_eq!(ctx.history_length(), 14);
             ctx.timer(Duration::from_secs(1)).await;
             assert_eq!(ctx.history_length(), 19);
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -654,7 +654,7 @@ async fn sets_build_id_from_wft_complete() {
                 ctx.current_deployment_version().unwrap().build_id,
                 "fierce-predator"
             );
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -800,7 +800,7 @@ async fn test_custom_slot_supplier_simple() {
                     },
                 )
                 .await;
-            Ok(().into())
+            Ok(())
         }
     }
 

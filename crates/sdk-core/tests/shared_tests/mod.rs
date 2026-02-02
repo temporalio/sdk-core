@@ -29,11 +29,11 @@ impl OversizeGrpcMessageWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
         if ctx.state(|wf| wf.run_flag.load(Relaxed)) {
-            Ok(vec![].into())
+            Ok(vec![])
         } else {
             ctx.state(|wf| wf.run_flag.store(true, Relaxed));
             let result: Vec<u8> = vec![0; 5000000];
-            Ok(result.into())
+            Ok(result)
         }
     }
 }

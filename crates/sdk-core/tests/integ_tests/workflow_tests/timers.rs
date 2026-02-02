@@ -30,7 +30,7 @@ impl TimerWf {
     #[run(name = "timer_wf_new")]
     pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -142,7 +142,7 @@ impl ParallelTimerWf {
         let t1 = ctx.timer(Duration::from_secs(1));
         let t2 = ctx.timer(Duration::from_secs(1));
         let _ = tokio::join!(t1, t2);
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -167,7 +167,7 @@ impl HappyTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(5)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -204,7 +204,7 @@ impl MismatchedTimerWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(5)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -235,7 +235,7 @@ impl CancelTimerWf {
         ctx.timer(Duration::from_secs(5)).await;
         cancel_timer_fut.cancel();
         cancel_timer_fut.await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -276,7 +276,7 @@ impl CancelBeforeSentWf {
         let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
         cancel_timer_fut.cancel();
         cancel_timer_fut.await;
-        Ok(().into())
+        Ok(())
     }
 }
 

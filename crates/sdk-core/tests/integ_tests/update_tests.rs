@@ -645,7 +645,7 @@ async fn update_with_local_acts() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.wait_condition(|s| s.done).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[signal]
@@ -724,7 +724,7 @@ async fn update_rejection_sdk() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[update_validator(do_update)]
@@ -790,7 +790,7 @@ async fn update_fail_sdk() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[update]
@@ -845,7 +845,7 @@ async fn update_timer_sequence() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.wait_condition(|s| s.done).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[update]
@@ -906,7 +906,7 @@ async fn task_failure_during_validation() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[update_validator(do_update)]
@@ -991,7 +991,7 @@ async fn task_failure_after_update() {
             if FAILCT.fetch_add(1, Ordering::Relaxed) < 1 {
                 panic!("ahhhhhh");
             }
-            Ok(().into())
+            Ok(())
         }
 
         #[update]
@@ -1069,7 +1069,7 @@ async fn worker_restarted_in_middle_of_update() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.wait_condition(|s| s.done).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[signal]
@@ -1201,7 +1201,7 @@ async fn update_after_empty_wft() {
             join!(sig_handle, async {
                 ctx.timer(Duration::from_secs(2)).await;
             });
-            Ok(().into())
+            Ok(())
         }
 
         #[signal]
@@ -1299,7 +1299,7 @@ async fn update_lost_on_activity_mismatch() {
                     .await;
                 ctx.state_mut(|s| s.can_run -= 1);
             }
-            Ok(().into())
+            Ok(())
         }
 
         #[update]

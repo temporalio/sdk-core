@@ -59,7 +59,7 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
         } else {
             panic!("expected Failed, got {err:?}");
         }
-        Ok(().into())
+        Ok(())
     }
 }
 

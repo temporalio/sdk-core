@@ -54,7 +54,7 @@ impl TimerWfNondeterministic {
             }
             _ => panic!("Ran too many times"),
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -109,7 +109,7 @@ impl TaskFailReplayWf {
             ctx.state(|wf| wf.did_fail.store(true, Ordering::Relaxed));
             panic!("Die on purpose");
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -162,7 +162,7 @@ impl TimerWfFailsOnce {
         {
             panic!("Ahh");
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -215,7 +215,7 @@ impl NondeterministicTimerWf {
             ctx.timer(Duration::from_secs(1)).await;
         }
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -308,7 +308,7 @@ impl ActivityIdOrTypeChangeWf {
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -390,7 +390,7 @@ impl ChildWfIdOrTypeChangeWf {
         })
         .start()
         .await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -455,7 +455,7 @@ impl ReproChannelMissingWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.patched("wrongid");
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 

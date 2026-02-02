@@ -52,7 +52,7 @@ impl TimerTimeoutWf {
             ctx.state(|wf| wf.timed_out_once.store(true, Ordering::SeqCst));
         }
         t.await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -94,7 +94,7 @@ impl CacheMissWf {
     pub(crate) async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.state(|wf| wf.barr.clone()).wait().await;
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 

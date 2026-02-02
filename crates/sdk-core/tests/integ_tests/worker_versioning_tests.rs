@@ -252,6 +252,6 @@ impl ActivityHasDeploymentStampWf {
                 },
             )
             .await;
-        Ok(().into())
+        Ok(())
     }
 }

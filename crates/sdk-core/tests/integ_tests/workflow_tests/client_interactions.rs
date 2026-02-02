@@ -43,7 +43,7 @@ impl InteractionWorkflow {
                     .collect(),
             }
         });
-        Ok(rval.into())
+        Ok(rval)
     }
 
     #[signal]

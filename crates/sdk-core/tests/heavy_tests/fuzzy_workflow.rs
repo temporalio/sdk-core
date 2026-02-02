@@ -42,7 +42,7 @@ impl FuzzyWf {
     #[run(name = "fuzzy_wf")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.wait_condition(|s| s.done).await;
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "fuzzy_sig")]

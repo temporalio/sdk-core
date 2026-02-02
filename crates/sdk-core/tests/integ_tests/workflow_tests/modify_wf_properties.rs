@@ -34,7 +34,7 @@ impl MemoUpserter {
             (FIELD_A.to_string(), "enchi".as_json_payload().unwrap()),
             (FIELD_B.to_string(), 9001.as_json_payload().unwrap()),
         ]);
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -104,7 +104,7 @@ impl ModifyPropsWf {
                 },
             ),
         ]);
-        Ok(().into())
+        Ok(())
     }
 }
 

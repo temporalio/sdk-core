@@ -52,7 +52,7 @@ impl SignalSender {
         } else {
             sigres.unwrap();
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -87,7 +87,7 @@ impl SignalReceiver {
     #[run(name = "receiver")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.wait_condition(|s| s.received).await;
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]
@@ -113,7 +113,7 @@ impl SignalWithCreateWfReceiver {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.wait_condition(|s| s.received).await;
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]
@@ -209,7 +209,7 @@ impl SignalsChild {
         sig.data.with_header("tupac", b"shakur");
         started_child.signal(sig).await.unwrap();
         started_child.result().await.status.unwrap();
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -252,7 +252,7 @@ impl SignalSenderCanned {
         if res.is_err() {
             Err(anyhow::anyhow!("Signal fail!").into())
         } else {
-            Ok(().into())
+            Ok(())
         }
     }
 }
@@ -321,7 +321,7 @@ impl CancelsBeforeSending {
         ));
         sig.cancel();
         let _res = sig.await;
-        Ok(().into())
+        Ok(())
     }
 }
 

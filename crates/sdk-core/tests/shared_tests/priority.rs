@@ -83,7 +83,7 @@ pub(crate) async fn priority_values_sent_to_server() {
             );
             started.result().await;
             let _ = activity.await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -103,7 +103,7 @@ pub(crate) async fn priority_values_sent_to_server() {
                     fairness_weight: 1.23
                 })
             );
-            Ok(().into())
+            Ok(())
         }
     }
 

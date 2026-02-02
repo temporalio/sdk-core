@@ -55,7 +55,7 @@ impl TimersWf {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -274,7 +274,7 @@ impl OneTimerWf {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -296,7 +296,7 @@ impl SeqTimerWf {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 

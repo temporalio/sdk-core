@@ -22,7 +22,7 @@ pub(crate) struct EagerWf;
 impl EagerWf {
     #[run(name = "eager_wf_start")]
     pub(crate) async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Ok(().into())
+        Ok(())
     }
 }
 

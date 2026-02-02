@@ -197,7 +197,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                     },
                 )
                 .await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -348,7 +348,7 @@ async fn docker_worker_heartbeat_tuner() {
                     },
                 )
                 .await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -642,7 +642,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
                 )
                 .await;
 
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -734,7 +734,7 @@ async fn worker_heartbeat_multiple_workers() {
         #[run]
         #[allow(dead_code)]
         async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -887,7 +887,7 @@ async fn worker_heartbeat_failure_metrics() {
             }
 
             ctx.wait_condition(|s| s.signal_received).await;
-            Ok(().into())
+            Ok(())
         }
 
         #[signal]
@@ -1064,7 +1064,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
                     },
                 )
                 .await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1136,7 +1136,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
                     },
                 )
                 .await;
-            Ok(().into())
+            Ok(())
         }
     }
 

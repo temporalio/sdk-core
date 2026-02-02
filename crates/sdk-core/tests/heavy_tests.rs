@@ -72,7 +72,7 @@ impl ActivityLoadWf {
             )
             .await?;
         assert_eq!(res, input_str);
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -136,7 +136,7 @@ impl ChunkyActivityWf {
             )
             .await?;
         assert_eq!(res, input_str);
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -230,7 +230,7 @@ impl WorkflowLoadWf {
             ctx.timer(Duration::from_secs(1)).await;
         }
 
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]
@@ -365,7 +365,7 @@ impl ManyParallelTimersLonghistWf {
             }
             join_all(futs).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -440,7 +440,7 @@ impl PollerLoadWf {
                 .await;
         }
 
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]

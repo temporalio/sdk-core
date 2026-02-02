@@ -34,7 +34,7 @@ impl ResetMeWf {
         ctx.timer(Duration::from_secs(1)).await;
         ctx.state(|wf| wf.notify.notify_one());
         ctx.wait_condition(|s| s.post_reset_received).await;
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = POST_RESET_SIG)]
@@ -155,7 +155,7 @@ impl ResetRandomseedWf {
         ctx.wait_condition(|s| s.post_fail_received).await;
         ctx.state(|wf| wf.notify.notify_one());
         ctx.wait_condition(|s| s.post_reset_received).await;
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = POST_FAIL_SIG)]

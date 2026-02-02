@@ -88,7 +88,7 @@ impl ParallelWorkflowsWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -496,7 +496,7 @@ impl SlowCompletesWf {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -815,7 +815,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
         #[run(name = NONDETERMINISM_WF_NAME)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_secs(1000)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -867,7 +867,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -954,7 +954,7 @@ async fn history_out_of_order_on_restart() {
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.state(|wf| wf.hit_sleep.notify_one());
             ctx.timer(Duration::from_secs(5)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -989,7 +989,7 @@ async fn history_out_of_order_on_restart() {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
             ctx.timer(Duration::from_secs(2)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1070,7 +1070,7 @@ async fn pass_timer_summary_to_metadata() {
                 summary: Some("timer summary".to_string()),
             })
             .await;
-            Ok(().into())
+            Ok(())
         }
     }
 

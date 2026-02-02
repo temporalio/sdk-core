@@ -39,6 +39,6 @@ impl LaProblemWorkflow {
         )
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-        Ok(().into())
+        Ok(())
     }
 }

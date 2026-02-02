@@ -861,7 +861,7 @@ async fn activity_metrics() {
             // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
             local_act_cancel.cancel();
             let _ = local_act_cancel.await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -996,7 +996,7 @@ async fn nexus_metrics() {
                         .await;
                 }
             );
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1146,7 +1146,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     impl EvictOnCompleteWf {
         #[run]
         async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1244,7 +1244,7 @@ async fn metrics_available_from_custom_slot_supplier() {
     impl CustomSlotSupplierWf {
         #[run]
         async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1408,7 +1408,7 @@ async fn sticky_queue_label_strategy(
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_millis(1)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 
@@ -1496,7 +1496,7 @@ async fn resource_based_tuner_metrics() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
             ctx.timer(Duration::from_millis(100)).await;
-            Ok(().into())
+            Ok(())
         }
     }
 

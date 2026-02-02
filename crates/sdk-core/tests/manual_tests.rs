@@ -68,7 +68,7 @@ impl PollerLoadSpikyWf {
                 .await;
         }
 
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]
@@ -90,7 +90,7 @@ impl PollerLoadSustainedWf {
             ctx.timer(Duration::from_millis(jitterms)).await;
         }
 
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]
@@ -118,7 +118,7 @@ impl PollerLoadSpikeThenSustainedWf {
                 .await;
         }
 
-        Ok(().into())
+        Ok(())
     }
 
     #[signal(name = "signame")]

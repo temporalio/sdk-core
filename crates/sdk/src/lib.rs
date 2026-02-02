@@ -568,10 +568,10 @@ impl Worker {
                             let result = join_handle.await?;
                             // Eviction is normal workflow lifecycle - workflows loop waiting for
                             // eviction after completion to manage cache cleanup
-                            if let Err(e) = result {
-                                if !matches!(e, WorkflowTermination::Evicted) {
-                                    return Err(e.into());
-                                }
+                            if let Err(e) = result
+                                && !matches!(e, WorkflowTermination::Evicted)
+                            {
+                                return Err(e.into());
                             }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
@@ -1245,6 +1245,12 @@ impl WorkflowTermination {
 impl From<anyhow::Error> for WorkflowTermination {
     fn from(err: anyhow::Error) -> Self {
         Self::Failed(err)
+    }
+}
+
+impl From<ActivityExecutionError> for WorkflowTermination {
+    fn from(value: ActivityExecutionError) -> Self {
+        Self::failed(value)
     }
 }
 

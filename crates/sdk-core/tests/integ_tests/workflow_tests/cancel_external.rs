@@ -35,7 +35,7 @@ impl CancelSender {
             )
             .await;
         sigres.unwrap();
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -48,7 +48,7 @@ impl CancelReceiver {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         let r = ctx.cancelled().await;
-        Ok(r.into())
+        Ok(r)
     }
 }
 
@@ -117,7 +117,7 @@ impl CancelSenderCanned {
         if res.is_err() {
             Err(anyhow::anyhow!("Cancel fail!").into())
         } else {
-            Ok(().into())
+            Ok(())
         }
     }
 }

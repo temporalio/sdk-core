@@ -151,7 +151,7 @@ async fn async_activity_completions(
                     );
                 }
             }
-            Ok(().into())
+            Ok(())
         }
     }
 

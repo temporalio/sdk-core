@@ -63,7 +63,7 @@ impl ChangesWf {
         } else {
             ctx.timer(Duration::from_millis(200)).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -104,7 +104,7 @@ impl NoChangeThenChangeWf {
             ctx.state(|wf| wf.did_die.store(true, Ordering::Release));
             ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -138,7 +138,7 @@ impl ReplayWithChangeMarkerWf {
             ctx.state(|wf| wf.did_die.store(true, Ordering::Release));
             ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -176,7 +176,7 @@ impl TimerPatchedTimerWf {
         }
         assert!(ctx.patched(MY_PATCH_ID));
         ctx.timer(Duration::from_millis(1)).await;
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -219,7 +219,7 @@ impl RemoveDeprecatedPatchNearOtherPatchWf {
             ctx.state(|wf| wf.did_die.store(true, Ordering::Release));
             ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -261,7 +261,7 @@ impl DeprecatedPatchRemovalWf {
             ctx.state(|wf| wf.did_die.store(true, Ordering::Release));
             ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
         }
-        Ok(().into())
+        Ok(())
     }
 
     #[signal]
@@ -506,7 +506,7 @@ impl PatchWf {
             }
             _ => panic!("Invalid workflow version for test setup"),
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -699,7 +699,7 @@ impl SameChangeMultipleSpotsWf {
         } else {
             ctx.timer(ONE_SECOND).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
@@ -812,7 +812,7 @@ impl ManyPatchesWf {
             let _dontcare = ctx.patched(&format!("patch-{i}"));
             ctx.timer(ONE_SECOND).await;
         }
-        Ok(().into())
+        Ok(())
     }
 }
 
