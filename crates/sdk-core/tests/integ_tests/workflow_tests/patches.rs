@@ -508,10 +508,9 @@ async fn v2_and_v3_changes(
                 );
                 if expected_num_cmds == 3 {
                     let mut as_payload = [MY_PATCH_ID].as_json_payload().unwrap();
-                    as_payload.metadata.insert(
-                        "type".to_string(),
-                        "KeywordList".as_bytes().to_vec(),
-                    );
+                    as_payload
+                        .metadata
+                        .insert("type".to_string(), "KeywordList".as_bytes().to_vec());
                     assert_matches!(
                         commands.pop_front().unwrap().attributes.as_ref().unwrap(),
                         Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
