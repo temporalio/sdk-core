@@ -1909,6 +1909,7 @@ pub mod temporal {
                                 Some(c.search_attributes.into())
                             },
                             inherit_build_id,
+                            initial_versioning_behavior: c.initial_versioning_behavior,
                             ..Default::default()
                         },
                     )
