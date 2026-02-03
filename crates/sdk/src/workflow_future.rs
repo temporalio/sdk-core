@@ -541,8 +541,10 @@ impl WorkflowFuture {
         run_id: &str,
         activation_cmds: &mut Vec<WorkflowCommand>,
     ) -> Result<bool, Error> {
-        // TODO [rust-sdk-branch]: Make sure this is *actually* safe before un-prototyping rust sdk
-        // Poll the execution within the span for proper tracing
+        // SAFETY: AssertUnwindSafe is safe here because:
+        // 1. Workflows run in a single-threaded LocalSet - no data races possible
+        // 2. Workflow state uses closure-scoped borrows (RefCell guards released on unwind)
+        // 3. Core sends eviction after WFT failure, discarding all workflow state
         let mut res = {
             let _guard = self.span.enter();
             match panic::catch_unwind(AssertUnwindSafe(|| self.execution.poll_run(cx))) {
