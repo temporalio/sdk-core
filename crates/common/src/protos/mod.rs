@@ -1446,12 +1446,6 @@ pub mod coresdk {
                 Some(FailureInfo::NexusHandlerFailureInfo(v)) => {
                     write!(f, "Nexus Handler Failure: {}", v.r#type)?;
                 }
-                Some(FailureInfo::NexusSdkOperationFailureInfo(v)) => {
-                    write!(f, "Nexus Operation Failure: state: {}", v.state)?;
-                }
-                Some(FailureInfo::NexusSdkFailureErrorInfo(v)) => {
-                    write!(f, "Nexus Failure: metadata: {:?}", v.metadata)?;
-                }
             }
             write!(f, ")")
         }
@@ -1951,6 +1945,8 @@ pub mod temporal {
                                 schedule_to_start_timeout: c.schedule_to_start_timeout,
                                 start_to_close_timeout: c.start_to_close_timeout,
                                 nexus_header: c.nexus_header,
+                                schedule_to_start_timeout: c.schedule_to_start_timeout,
+                                start_to_close_timeout: c.start_to_close_timeout,
                             },
                         )
                     }

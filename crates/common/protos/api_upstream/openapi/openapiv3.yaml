@@ -1319,6 +1319,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/schedule-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountSchedules is a visibility API to count schedules in a specific namespace.
+      operationId: CountSchedules
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountSchedulesResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/schedules:
     get:
       tags:
@@ -3090,6 +3120,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/pause:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Note: This is an experimental API and the behavior may change in a future release.
+         PauseWorkflowExecution pauses the workflow execution specified in the request. Pausing a workflow execution results in
+         - The workflow execution status changes to `PAUSED` and a new WORKFLOW_EXECUTION_PAUSED event is added to the history
+         - No new workflow tasks or activity tasks are dispatched.
+           - Any workflow task currently executing on the worker will be allowed to complete.
+           - Any activity task currently executing will be paused.
+         - All server-side events will continue to be processed by the server.
+         - Queries & Updates on a paused workflow will be rejected.
+      operationId: PauseWorkflowExecution
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow to pause.
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: ID of the workflow execution to be paused. Required.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PauseWorkflowExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PauseWorkflowExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}:
     post:
       tags:
@@ -3138,6 +3214,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SignalWithStartWorkflowExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/unpause:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Note: This is an experimental API and the behavior may change in a future release.
+         UnpauseWorkflowExecution unpauses a previously paused workflow execution specified in the request.
+         Unpausing a workflow execution results in
+         - The workflow execution status changes to `RUNNING` and a new WORKFLOW_EXECUTION_UNPAUSED event is added to the history
+         - Workflow tasks and activity tasks are resumed.
+      operationId: UnpauseWorkflowExecution
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow to unpause.
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: ID of the workflow execution to be paused. Required.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UnpauseWorkflowExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnpauseWorkflowExecutionResponse'
         default:
           description: Default error response
           content:
@@ -5107,6 +5226,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/GetDeploymentReachabilityResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/schedule-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountSchedules is a visibility API to count schedules in a specific namespace.
+      operationId: CountSchedules
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountSchedulesResponse'
         default:
           description: Default error response
           content:
@@ -8568,6 +8717,33 @@ components:
             $ref: '#/components/schemas/Payload'
         count:
           type: string
+    CountSchedulesResponse:
+      type: object
+      properties:
+        count:
+          type: string
+          description: |-
+            If `query` is not grouping by any field, the count is an approximate number
+             of schedules that match the query.
+             If `query` is grouping by a field, the count is simply the sum of the counts
+             of the groups returned in the response. This number can be smaller than the
+             total number of schedules matching the query.
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/CountSchedulesResponse_AggregationGroup'
+          description: |-
+            Contains the groups if the request is grouping by a field.
+             The list might not be complete, and the counts of each group is approximate.
+    CountSchedulesResponse_AggregationGroup:
+      type: object
+      properties:
+        groupValues:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payload'
+        count:
+          type: string
     CountWorkflowExecutionsResponse:
       type: object
       properties:
@@ -9350,10 +9526,6 @@ components:
           $ref: '#/components/schemas/NexusOperationFailureInfo'
         nexusHandlerFailureInfo:
           $ref: '#/components/schemas/NexusHandlerFailureInfo'
-        nexusSdkOperationFailureInfo:
-          $ref: '#/components/schemas/NexusSDKOperationFailureInfo'
-        nexusSdkFailureErrorInfo:
-          $ref: '#/components/schemas/NexusSDKFailureErrorFailureInfo'
     FetchWorkerConfigRequest:
       type: object
       properties:
@@ -10266,6 +10438,9 @@ components:
         workflowPause:
           type: boolean
           description: True if the namespace supports pausing workflows
+        standaloneActivities:
+          type: boolean
+          description: True if the namespace supports standalone activities
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceInfo_Limits:
       type: object
@@ -10638,23 +10813,6 @@ components:
           type: string
           description: The request ID allocated at schedule time.
       description: Nexus operation timed out.
-    NexusSDKFailureErrorFailureInfo:
-      type: object
-      properties:
-        metadata:
-          type: object
-          additionalProperties:
-            type: string
-        data:
-          type: string
-          format: bytes
-      description: Representation of the Nexus SDK FailureError object.
-    NexusSDKOperationFailureInfo:
-      type: object
-      properties:
-        state:
-          type: string
-      description: Representation of the Nexus SDK OperationError object.
     OnConflictOptions:
       type: object
       properties:
@@ -14815,7 +14973,7 @@ components:
       properties:
         deploymentName:
           type: string
-          description: Required. Worker Deployment name.
+          description: Required when `worker_versioning_mode==VERSIONED`.
         buildId:
           type: string
           description: |-

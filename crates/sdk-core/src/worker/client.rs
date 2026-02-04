@@ -300,6 +300,8 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            //TODO: fill in worker_instance_key
+            ..Default::default()
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -337,6 +339,8 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            //TODO: fill in worker_instance_key
+            ..Default::default()
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -372,6 +376,8 @@ impl WorkerClient for WorkerClientBag {
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_heartbeat: Vec::new(),
+            //TODO: fill in worker_instance_key
+            ..Default::default()
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -708,6 +714,8 @@ impl WorkerClient for WorkerClientBag {
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
             worker_heartbeat: final_heartbeat,
+            //TODO: Fill in task_queue, task_queue_types, worker_instance_key
+            ..Default::default()
         }
         .into_request();
         request
@@ -785,7 +793,11 @@ impl WorkerClient for WorkerClientBag {
 
         let now = SystemTime::now();
         heartbeat.heartbeat_time = Some(now.into());
-        let mut heartbeat_map = self.worker_heartbeat_map.lock();
+        let mut heartbeat_map: parking_lot::lock_api::MutexGuard<
+            '_,
+            parking_lot::RawMutex,
+            HashMap<String, ClientHeartbeatData>,
+        > = self.worker_heartbeat_map.lock();
         let client_heartbeat_data = heartbeat_map
             .entry(heartbeat.worker_instance_key.clone())
             .or_default();

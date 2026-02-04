@@ -229,6 +229,9 @@ impl NexusManager {
                                         failure::v1::Failure::full_name().into(),
                                     )]),
                                     details: details,
+                                    //TODO: Do we need to walk the cause tree here?
+                                    cause: None,
+                                    stack_trace: f.stack_trace,
                                 }),
                                 //NexusHandlerFailureInfo and HandlerError both use enums::v1::NexusHandlerErrorRetryBehavior
                                 retry_behavior: failure_info.retry_behavior,
