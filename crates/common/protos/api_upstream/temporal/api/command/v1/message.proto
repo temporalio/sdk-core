@@ -179,6 +179,11 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     // Deprecated. Only considered for versioning v0.2.
     bool inherit_build_id = 15 [deprecated = true];
 
+    // Experimental. Optionally decide the versioning behavior that the first task of the new run should use.
+    // For example, choose to AutoUpgrade on continue-as-new instead of inheriting the pinned version
+    // of the previous run.
+    temporal.api.enums.v1.ContinueAsNewVersioningBehavior initial_versioning_behavior = 16;
+
     // `workflow_execution_timeout` is omitted as it shouldn't be overridden from within a workflow.
 }
 
@@ -244,6 +249,27 @@ message ScheduleNexusOperationCommandAttributes {
     // Note these headers are not the same as Temporal headers on internal activities and child workflows, these are
     // transmitted to Nexus operations that may be external and are not traditional payloads.
     map<string, string> nexus_header = 6;
+
+    // Schedule-to-start timeout for this operation.
+    // Indicates how long the caller is willing to wait for the operation to be started (or completed if synchronous)
+    // by the handler. If the operation is not started within this timeout, it will fail with
+    // TIMEOUT_TYPE_SCHEDULE_TO_START.
+    // If not set or zero, no schedule-to-start timeout is enforced.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    // Requires server version 1.31.0 or later.
+    google.protobuf.Duration schedule_to_start_timeout = 7;
+
+    // Start-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for an asynchronous operation to complete after it has been
+    // started. If the operation does not complete within this timeout after starting, it will fail with
+    // TIMEOUT_TYPE_START_TO_CLOSE.
+    // Only applies to asynchronous operations. Synchronous operations ignore this timeout.
+    // If not set or zero, no start-to-close timeout is enforced.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    // Requires server version 1.31.0 or later.
+    google.protobuf.Duration start_to_close_timeout = 8;
 }
 
 message RequestCancelNexusOperationCommandAttributes {

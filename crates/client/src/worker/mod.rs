@@ -213,28 +213,48 @@ impl ClientWorkerSetImpl {
         Ok(())
     }
 
-    fn unregister(
-        &mut self,
-        worker_instance_key: Uuid,
-    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
-        let worker = self
-            .all_workers
-            .remove(&worker_instance_key)
-            .ok_or_else(|| {
-                anyhow::anyhow!("Worker with worker_instance_key {worker_instance_key} not found")
-            })?;
+    /// Slot provider should be unregistered at the beginning of worker shutdown, in order to disable
+    /// eager workflow start.
+    fn unregister_slot_provider(&mut self, worker_instance_key: Uuid) -> Result<(), anyhow::Error> {
+        let worker = self.all_workers.get(&worker_instance_key).ok_or_else(|| {
+            anyhow::anyhow!("Worker not in all_workers during slot provider unregister")
+        })?;
 
         let slot_key = SlotKey::new(
             worker.namespace().to_string(),
             worker.task_queue().to_string(),
         );
-
         if let Some(slot_vec) = self.slot_providers.get_mut(&slot_key) {
             slot_vec.retain(|info| info.worker_id != worker_instance_key);
             if slot_vec.is_empty() {
                 self.slot_providers.remove(&slot_key);
             }
         }
+        Ok(())
+    }
+
+    fn finalize_unregister(
+        &mut self,
+        worker_instance_key: Uuid,
+    ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
+        if let Some(worker) = self.all_workers.get(&worker_instance_key)
+            && let Some(slot_vec) = self.slot_providers.get(&SlotKey::new(
+                worker.namespace().to_string(),
+                worker.task_queue().to_string(),
+            ))
+            && slot_vec
+                .iter()
+                .any(|info| info.worker_id == worker_instance_key)
+        {
+            return Err(anyhow::anyhow!(
+                "Worker still in slot_providers during finalize"
+            ));
+        }
+
+        let worker = self
+            .all_workers
+            .remove(&worker_instance_key)
+            .ok_or_else(|| anyhow::anyhow!("Worker not found in all_workers"))?;
 
         if let Some(w) = self.shared_worker.get_mut(worker.namespace()) {
             let (callback, is_empty) = w.unregister_callback(worker.worker_instance_key());
@@ -323,12 +343,24 @@ impl ClientWorkerSet {
             .register(worker, skip_client_worker_set_check)
     }
 
-    /// Unregisters a local worker, typically when that worker starts shutdown.
-    pub fn unregister_worker(
+    /// Disables Eager Workflow Start for this worker. This must be called before
+    /// `finalize_unregister`, otherwise `finalize_unregister` will return an err.
+    pub fn unregister_slot_provider(&self, worker_instance_key: Uuid) -> Result<(), anyhow::Error> {
+        self.worker_manager
+            .write()
+            .unregister_slot_provider(worker_instance_key)
+    }
+
+    /// Finalizes unregistering of worker from client. This must be called at the end of worker
+    /// shutdown in order to finalize shutdown for worker heartbeat properly. Must call after
+    /// `unregister_slot_provider`, otherwise an err will be returned.
+    pub fn finalize_unregister(
         &self,
         worker_instance_key: Uuid,
     ) -> Result<Arc<dyn ClientWorker + Send + Sync>, anyhow::Error> {
-        self.worker_manager.write().unregister(worker_instance_key)
+        self.worker_manager
+            .write()
+            .finalize_unregister(worker_instance_key)
     }
 
     /// Returns the worker grouping key, which is unique for each worker.
@@ -651,14 +683,14 @@ mod tests {
             let worker_instance_key = mock_provider.worker_instance_key();
 
             let result = manager.register_worker(Arc::new(mock_provider), false);
-            if result.is_ok() {
-                successful_registrations += 1;
-                worker_keys.push(worker_instance_key);
-            } else {
+            if let Err(err) = result {
                 // Should get error for overlapping worker task types
-                assert!(result.unwrap_err().to_string().contains(
+                assert!(err.to_string().contains(
                     "Registration of multiple workers with overlapping worker task types"
                 ));
+            } else {
+                successful_registrations += 1;
+                worker_keys.push(worker_instance_key);
             }
         }
 
@@ -666,9 +698,12 @@ mod tests {
         assert_eq!(3, manager.num_providers());
 
         let count = worker_keys.iter().fold(0, |count, key| {
-            manager.unregister_worker(*key).unwrap();
+            manager.unregister_slot_provider(*key).unwrap();
+            manager.finalize_unregister(*key).unwrap();
             // expect error since worker is already unregistered
-            let result = manager.unregister_worker(*key);
+            let result = manager.unregister_slot_provider(*key);
+            assert!(result.is_err());
+            let result = manager.finalize_unregister(*key);
             assert!(result.is_err());
             count + 1
         });
@@ -896,7 +931,10 @@ mod tests {
             assert_eq!(providers[1].build_id, Some("build-1".to_string()));
         }
 
-        manager.unregister_worker(worker2_instance_key).unwrap();
+        manager
+            .unregister_slot_provider(worker2_instance_key)
+            .unwrap();
+        manager.finalize_unregister(worker2_instance_key).unwrap();
 
         {
             let impl_ref = manager.worker_manager.read();
@@ -1016,7 +1054,10 @@ mod tests {
         drop(impl_ref);
 
         // Unregister first worker
-        manager.unregister_worker(worker_instance_key1).unwrap();
+        manager
+            .unregister_slot_provider(worker_instance_key1)
+            .unwrap();
+        manager.finalize_unregister(worker_instance_key1).unwrap();
 
         // After unregistering first worker: 1 slot provider, 1 heartbeat worker, shared worker still exists
         assert_eq!(1, manager.num_providers());
@@ -1036,7 +1077,10 @@ mod tests {
         drop(impl_ref);
 
         // Unregister second worker
-        manager.unregister_worker(worker_instance_key2).unwrap();
+        manager
+            .unregister_slot_provider(worker_instance_key2)
+            .unwrap();
+        manager.finalize_unregister(worker_instance_key2).unwrap();
 
         // After unregistering last worker: 0 slot providers, 0 heartbeat workers, shared worker is removed
         assert_eq!(0, manager.num_providers());
@@ -1447,8 +1491,11 @@ mod tests {
         );
 
         manager
-            .unregister_worker(wf_worker_key)
-            .expect("should unregister workflow worker");
+            .unregister_slot_provider(wf_worker_key)
+            .expect("should unregister slot provider for workflow worker");
+        manager
+            .finalize_unregister(wf_worker_key)
+            .expect("should finalize unregister for workflow worker");
 
         // Activity worker should still be registered
         assert_eq!(1, manager.num_providers());
@@ -1460,9 +1507,37 @@ mod tests {
         );
 
         manager
-            .unregister_worker(act_worker_key)
-            .expect("should unregister activity worker");
+            .unregister_slot_provider(act_worker_key)
+            .expect("should unregister slot provider for activity worker");
+        manager
+            .finalize_unregister(act_worker_key)
+            .expect("should finalize unregister for activity worker");
 
         assert_eq!(0, manager.num_providers());
+    }
+
+    #[test]
+    fn worker_unregister_order() {
+        let manager = ClientWorkerSet::new();
+        let worker = new_mock_provider_with_heartbeat(
+            "namespace1".to_string(),
+            "queue1".to_string(),
+            true,
+            None,
+        );
+        let worker_instance_key = worker.worker_instance_key();
+        manager.register_worker(Arc::new(worker), false).unwrap();
+
+        let res = manager.finalize_unregister(worker_instance_key);
+        assert!(res.is_err());
+        let err_string = res.err().map(|e| e.to_string()).unwrap();
+        assert!(err_string.contains("Worker still in slot_providers during finalize"));
+
+        // previous incorrect call to finalize_unregister should not cause any state leaks when
+        // properly removed later
+        manager
+            .unregister_slot_provider(worker_instance_key)
+            .unwrap();
+        manager.finalize_unregister(worker_instance_key).unwrap();
     }
 }

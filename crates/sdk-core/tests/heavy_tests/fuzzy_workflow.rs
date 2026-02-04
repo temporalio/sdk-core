@@ -77,11 +77,9 @@ async fn fuzzy_workflow() {
     let num_workflows = 200;
     let wf_name = "fuzzy_wf";
     let mut starter = CoreWfStarter::new("fuzzy_workflow");
-    starter
-        .worker_config
-        .max_outstanding_workflow_tasks(25_usize)
-        .max_cached_workflows(25_usize)
-        .max_outstanding_activities(25_usize);
+    starter.worker_config.max_outstanding_workflow_tasks = Some(25);
+    starter.worker_config.max_cached_workflows = 25;
+    starter.worker_config.max_outstanding_activities = Some(25);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
     worker.register_activity("echo_activity", echo);

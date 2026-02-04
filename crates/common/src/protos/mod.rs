@@ -520,6 +520,7 @@ pub mod coresdk {
                 continue_as_new_suggested: false,
                 deployment_version_for_current_task: None,
                 last_sdk_version: String::new(),
+                suggest_continue_as_new_reasons: vec![],
             }
         }
 
@@ -1538,6 +1539,7 @@ pub mod coresdk {
             Ok(Payload {
                 metadata,
                 data: as_json.into_bytes(),
+                external_payloads: Default::default(),
             })
         }
     }
@@ -1907,6 +1909,7 @@ pub mod temporal {
                                 Some(c.search_attributes.into())
                             },
                             inherit_build_id,
+                            initial_versioning_behavior: c.initial_versioning_behavior,
                             ..Default::default()
                         },
                     )
@@ -1929,6 +1932,8 @@ pub mod temporal {
                                 operation: c.operation,
                                 input: c.input,
                                 schedule_to_close_timeout: c.schedule_to_close_timeout,
+                                schedule_to_start_timeout: c.schedule_to_start_timeout,
+                                start_to_close_timeout: c.start_to_close_timeout,
                                 nexus_header: c.nexus_header,
                             },
                         )
@@ -2016,6 +2021,7 @@ pub mod temporal {
                         Self {
                             metadata,
                             data: v.as_ref().to_vec(),
+                            external_payloads: Default::default(),
                         }
                     }
                 }
@@ -2352,6 +2358,10 @@ pub mod temporal {
                                 Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => true,
                                 Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => false,
                                 Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => false,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionPausedEventAttributes(_) => true,
+                                // !! Ignorable !!
+                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => true,
                             }
                         } else {
                             false
@@ -2431,6 +2441,8 @@ pub mod temporal {
                             Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => { EventType::WorkflowExecutionOptionsUpdated }
                             Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => { EventType::NexusOperationCancelRequestCompleted }
                             Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => { EventType::NexusOperationCancelRequestFailed }
+                            Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
+                            Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
                         }
                     }
                 }

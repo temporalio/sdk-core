@@ -1,5 +1,5 @@
 use crate::{
-    ByteArray, ByteArrayRef, MetadataRef,
+    ByteArray, ByteArrayRef, NewlineDelimitedMapRef,
     metric::{CustomMetricMeter, CustomMetricMeterRef},
 };
 
@@ -17,12 +17,11 @@ use std::{
 };
 use temporalio_common::telemetry::{
     CoreLog, CoreLogConsumer, HistogramBucketOverrides, Logger, MetricTemporality,
-    OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
-    TelemetryOptions as CoreTelemetryOptions, TelemetryOptionsBuilder, metrics::CoreMeter,
+    OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions as CoreTelemetryOptions,
+    metrics::CoreMeter,
 };
 use temporalio_sdk_core::{
-    CoreRuntime, RuntimeOptions as CoreRuntimeOptions,
-    RuntimeOptionsBuilder as CoreRuntimeOptionsBuilder, TokioRuntimeBuilder,
+    CoreRuntime, RuntimeOptions as CoreRuntimeOptions, TokioRuntimeBuilder as TokioRuntime,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
 };
 use tracing::Level;
@@ -76,21 +75,21 @@ pub struct MetricsOptions {
     pub custom_meter: *const CustomMetricMeter,
 
     pub attach_service_name: bool,
-    pub global_tags: MetadataRef,
+    pub global_tags: NewlineDelimitedMapRef,
     pub metric_prefix: ByteArrayRef,
 }
 
 #[repr(C)]
 pub struct OpenTelemetryOptions {
     pub url: ByteArrayRef,
-    pub headers: MetadataRef,
+    pub headers: NewlineDelimitedMapRef,
     pub metric_periodicity_millis: u32,
     pub metric_temporality: OpenTelemetryMetricTemporality,
     pub durations_as_seconds: bool,
     pub protocol: OpenTelemetryProtocol,
     /// Histogram bucket overrides in form of
     /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
-    pub histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: NewlineDelimitedMapRef,
 }
 
 #[repr(C)]
@@ -113,7 +112,7 @@ pub struct PrometheusOptions {
     pub durations_as_seconds: bool,
     /// Histogram bucket overrides in form of
     /// `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
-    pub histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: NewlineDelimitedMapRef,
 }
 
 #[derive(Clone)]
@@ -143,11 +142,8 @@ pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> R
             // freeable
             let mut runtime = Runtime {
                 core: Arc::new(
-                    CoreRuntime::new(
-                        CoreRuntimeOptions::default(),
-                        TokioRuntimeBuilder::default(),
-                    )
-                    .unwrap(),
+                    CoreRuntime::new(CoreRuntimeOptions::default(), TokioRuntime::default())
+                        .unwrap(),
                 ),
                 log_forwarder: None,
             };
@@ -207,19 +203,15 @@ impl Runtime {
         // Build telemetry options
         let mut log_forwarder = None;
         let telemetry_options = if let Some(v) = unsafe { options.telemetry.as_ref() } {
-            let mut build = TelemetryOptionsBuilder::default();
+            let (attach_service_name, metric_prefix) =
+                if let Some(v) = unsafe { v.metrics.as_ref() } {
+                    (v.attach_service_name, v.metric_prefix.to_option_string())
+                } else {
+                    (true, None)
+                };
 
-            // Metrics options (note, metrics meter is late-bound later)
-            if let Some(v) = unsafe { v.metrics.as_ref() } {
-                build.attach_service_name(v.attach_service_name);
-                if let Some(metric_prefix) = v.metric_prefix.to_option_string() {
-                    build.metric_prefix(metric_prefix);
-                }
-            }
-
-            // Logging options
-            if let Some(v) = unsafe { v.logging.as_ref() } {
-                build.logging(if let Some(callback) = v.forward_to {
+            let logging = unsafe { v.logging.as_ref() }.map(|v| {
+                if let Some(callback) = v.forward_to {
                     let consumer = Arc::new(LogForwarder {
                         callback,
                         active: AtomicBool::new(false),
@@ -233,28 +225,29 @@ impl Runtime {
                     Logger::Console {
                         filter: v.filter.to_string(),
                     }
-                });
-            }
-            build.build()?
+                }
+            });
+
+            CoreTelemetryOptions::builder()
+                .attach_service_name(attach_service_name)
+                .maybe_metric_prefix(metric_prefix)
+                .maybe_logging(logging)
+                .build()
         } else {
             CoreTelemetryOptions::default()
         };
 
-        let heartbeat_interval = if options.worker_heartbeat_interval_millis == 0 {
-            None
-        } else {
-            Some(Duration::from_millis(
-                options.worker_heartbeat_interval_millis,
-            ))
-        };
-
-        let core_runtime_options = CoreRuntimeOptionsBuilder::default()
+        let core_runtime_options = CoreRuntimeOptions::builder()
             .telemetry_options(telemetry_options)
-            .heartbeat_interval(heartbeat_interval)
-            .build()?;
+            .heartbeat_interval(
+                (options.worker_heartbeat_interval_millis != 0)
+                    .then(|| Duration::from_millis(options.worker_heartbeat_interval_millis)),
+            )
+            .build()
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         // Build core runtime
-        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntimeBuilder::default())?;
+        let mut core = CoreRuntime::new(core_runtime_options, TokioRuntime::default())?;
 
         // We late-bind the metrics after core runtime is created since it needs
         // the Tokio handle
@@ -392,27 +385,28 @@ fn create_meter(
             ));
         }
         // Build OTel exporter
-        let mut build = OtelCollectorOptionsBuilder::default();
-        build
-            .url(Url::parse(otel_options.url.to_str())?)
-            .headers(otel_options.headers.to_string_map_on_newlines())
-            .metric_temporality(match otel_options.metric_temporality {
-                OpenTelemetryMetricTemporality::Cumulative => MetricTemporality::Cumulative,
-                OpenTelemetryMetricTemporality::Delta => MetricTemporality::Delta,
-            })
-            .global_tags(options.global_tags.to_string_map_on_newlines())
-            .use_seconds_for_durations(otel_options.durations_as_seconds)
-            .histogram_bucket_overrides(HistogramBucketOverrides {
-                overrides: parse_histogram_bucket_overrides(
-                    &otel_options.histogram_bucket_overrides,
-                )?,
-            });
-        if otel_options.metric_periodicity_millis > 0 {
-            build.metric_periodicity(Duration::from_millis(
-                otel_options.metric_periodicity_millis.into(),
-            ));
-        }
-        Ok(Arc::new(build_otlp_metric_exporter(build.build()?)?))
+        Ok(Arc::new(build_otlp_metric_exporter(
+            OtelCollectorOptions::builder()
+                .url(Url::parse(otel_options.url.to_str())?)
+                .headers(otel_options.headers.to_string_map_on_newlines())
+                .metric_temporality(match otel_options.metric_temporality {
+                    OpenTelemetryMetricTemporality::Cumulative => MetricTemporality::Cumulative,
+                    OpenTelemetryMetricTemporality::Delta => MetricTemporality::Delta,
+                })
+                .global_tags(options.global_tags.to_string_map_on_newlines())
+                .use_seconds_for_durations(otel_options.durations_as_seconds)
+                .histogram_bucket_overrides(HistogramBucketOverrides {
+                    overrides: parse_histogram_bucket_overrides(
+                        &otel_options.histogram_bucket_overrides,
+                    )?,
+                })
+                .maybe_metric_periodicity(
+                    (otel_options.metric_periodicity_millis > 0).then(|| {
+                        Duration::from_millis(otel_options.metric_periodicity_millis.into())
+                    }),
+                )
+                .build(),
+        )?))
     } else if let Some(prom_options) = unsafe { options.prometheus.as_ref() } {
         if custom_meter.is_some() {
             return Err(anyhow::anyhow!(
@@ -420,8 +414,7 @@ fn create_meter(
             ));
         }
         // Start prom exporter
-        let mut build = PrometheusExporterOptionsBuilder::default();
-        build
+        let build = PrometheusExporterOptions::builder()
             .socket_addr(SocketAddr::from_str(prom_options.bind_address.to_str())?)
             .global_tags(options.global_tags.to_string_map_on_newlines())
             .counters_total_suffix(prom_options.counters_total_suffix)
@@ -432,7 +425,7 @@ fn create_meter(
                     &prom_options.histogram_bucket_overrides,
                 )?,
             });
-        Ok(start_prometheus_metric_exporter(build.build()?)?.meter)
+        Ok(start_prometheus_metric_exporter(build.build())?.meter)
     } else if let Some(custom_meter) = custom_meter {
         Ok(Arc::new(custom_meter))
     } else {
@@ -443,7 +436,7 @@ fn create_meter(
 }
 
 fn parse_histogram_bucket_overrides(
-    raw: &MetadataRef,
+    raw: &NewlineDelimitedMapRef,
 ) -> anyhow::Result<HashMap<String, Vec<f64>>> {
     raw.to_string_map_on_newlines()
         .into_iter()

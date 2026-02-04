@@ -28,9 +28,7 @@ pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
@@ -42,9 +40,7 @@ async fn timer_workflow_workflow_driver() {
 async fn timer_workflow_manual() {
     let mut starter = init_core_and_create_wf("timer_workflow").await;
     let core = starter.get_worker().await;
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -68,9 +64,7 @@ async fn timer_workflow_manual() {
 async fn timer_cancel_workflow() {
     let mut starter = init_core_and_create_wf("timer_cancel_workflow").await;
     let core = starter.get_worker().await;
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -129,9 +123,7 @@ async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), parallel_timer_wf);
 

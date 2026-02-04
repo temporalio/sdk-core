@@ -22,7 +22,7 @@ use temporalio_common::protos::{
             UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
         },
         common::v1::ActivityType,
-        enums::v1::{CommandType, EventType, IndexedValueType},
+        enums::v1::{CommandType, EventType},
         history::v1::{
             ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
             ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
@@ -57,9 +57,7 @@ pub(crate) async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), changes_wf);
 
@@ -93,9 +91,7 @@ pub(crate) async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<(
 async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
@@ -119,9 +115,7 @@ pub(crate) async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResu
 async fn replaying_with_patch_marker() {
     let wf_name = "replaying_with_patch_marker";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
 
@@ -137,10 +131,8 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     let wf_name = "timer_patched_timer";
     let mut starter = CoreWfStarter::new(wf_name);
     // Disable caching to force replay from beginning
-    starter
-        .worker_config
-        .max_cached_workflows(0_usize)
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.max_cached_workflows = 0_usize;
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     // Include a task failure as well to make sure that works
     static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
@@ -163,9 +155,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
 async fn can_remove_deprecated_patch_near_other_patch() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
@@ -196,9 +186,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
 async fn deprecated_patch_removal() {
     let wf_name = "deprecated_patch_removal";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     let wf_id = starter.get_task_queue().to_string();
@@ -520,13 +508,9 @@ async fn v2_and_v3_changes(
                 );
                 if expected_num_cmds == 3 {
                     let mut as_payload = [MY_PATCH_ID].as_json_payload().unwrap();
-                    as_payload.metadata.insert(
-                        "type".to_string(),
-                        IndexedValueType::KeywordList
-                            .as_str_name()
-                            .as_bytes()
-                            .to_vec(),
-                    );
+                    as_payload
+                        .metadata
+                        .insert("type".to_string(), "KeywordList".as_bytes().to_vec());
                     assert_matches!(
                         commands.pop_front().unwrap().attributes.as_ref().unwrap(),
                         Attributes::UpsertWorkflowSearchAttributesCommandAttributes(

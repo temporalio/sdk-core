@@ -10,8 +10,10 @@ pub use temporalio_common::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
     FixedSizeSlotSupplier, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
     ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions, TunerBuilder, TunerHolder,
-    TunerHolderOptions, TunerHolderOptionsBuilder,
+    TunerHolderOptions,
 };
+// Re-export the generated builder (it's in the tuner module)
+pub use tuner::TunerHolderOptionsBuilder;
 pub(crate) use tuner::{RealSysInfo, SystemResourceInfo};
 
 pub(crate) use activities::{
@@ -72,9 +74,10 @@ use temporalio_common::{
     protos::{
         TaskToken,
         coresdk::{
-            ActivityTaskCompletion,
+            ActivityTaskCompletion, NamespaceInfo,
             activity_result::activity_execution_result,
             activity_task::ActivityTask,
+            namespace_info,
             nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
             workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
             workflow_completion::WorkflowActivationCompletion,
@@ -162,9 +165,31 @@ pub(crate) struct WorkerTelemetry {
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
-    async fn validate(&self) -> Result<(), WorkerValidationError> {
-        self.verify_namespace_exists().await?;
-        Ok(())
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
+        match self.client.describe_namespace().await {
+            Ok(info) => {
+                let limits = info.namespace_info.and_then(|ns_info| {
+                    ns_info.limits.map(|api_limits| namespace_info::Limits {
+                        blob_size_limit_error: api_limits.blob_size_limit_error,
+                        memo_size_limit_error: api_limits.memo_size_limit_error,
+                    })
+                });
+                return Ok(NamespaceInfo { limits });
+            }
+            Err(e) => {
+                if e.code() == tonic::Code::Unimplemented {
+                    // Ignore if unimplemented since we wouldn't want to fail against an old server, for
+                    // example.
+                    return Ok(NamespaceInfo {
+                        ..Default::default()
+                    });
+                }
+                return Err(WorkerValidationError::NamespaceDescribeError {
+                    source: e,
+                    namespace: self.config.namespace.clone(),
+                });
+            }
+        }
     }
 
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
@@ -258,15 +283,12 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        {
-            *self.status.write() = WorkerStatus::ShuttingDown;
-        }
-        // First, unregister worker from the client
+        // First, disable Eager Workflow Start
         if !self.client_worker_registrator.shared_namespace_worker {
             let _res = self
                 .client
                 .workers()
-                .unregister_worker(self.worker_instance_key);
+                .unregister_slot_provider(self.worker_instance_key);
         }
 
         // Push a BumpStream message to the workflow activation queue. This ensures that
@@ -348,10 +370,13 @@ impl Worker {
         CT: Into<AnyClient>,
     {
         // Unregister worker from current client, register in new client at the end
+        self.client
+            .workers()
+            .unregister_slot_provider(self.worker_instance_key)?;
         let client_worker = self
             .client
             .workers()
-            .unregister_worker(self.worker_instance_key)?;
+            .finalize_unregister(self.worker_instance_key)?;
 
         let new_worker_client = super::init_worker_client(
             self.config.namespace.clone(),
@@ -735,31 +760,35 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        if let Some(workflows) = &self.workflows
-            && let Some(name) = workflows.get_sticky_queue_name()
         {
-            let heartbeat = self
-                .client_worker_registrator
-                .heartbeat_manager
-                .as_ref()
-                .map(|hm| hm.heartbeat_callback.clone()());
-
-            // This is a best effort call and we can still shutdown the worker if it fails
-            match self.client.shutdown_worker(name, heartbeat).await {
-                Err(err)
-                    if !matches!(
-                        err.code(),
-                        tonic::Code::Unimplemented | tonic::Code::Unavailable
-                    ) =>
-                {
-                    warn!(
-                        "shutdown_worker rpc errored during worker shutdown: {:?}",
-                        err
-                    );
-                }
-                _ => {}
-            }
+            *self.status.write() = WorkerStatus::ShuttingDown;
         }
+        let heartbeat = self
+            .client_worker_registrator
+            .heartbeat_manager
+            .as_ref()
+            .map(|hm| hm.heartbeat_callback.clone()());
+        let sticky_name = self
+            .workflows
+            .as_ref()
+            .and_then(|wf| wf.get_sticky_queue_name())
+            .unwrap_or_default();
+        // This is a best effort call and we can still shutdown the worker if it fails
+        match self.client.shutdown_worker(sticky_name, heartbeat).await {
+            Err(err)
+                if !matches!(
+                    err.code(),
+                    tonic::Code::Unimplemented | tonic::Code::Unavailable
+                ) =>
+            {
+                warn!(
+                    "shutdown_worker rpc errored during worker shutdown: {:?}",
+                    err
+                );
+            }
+            _ => {}
+        }
+
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
         if let Some(la_mgr) = &self.local_act_mgr {
@@ -795,6 +824,13 @@ impl Worker {
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
+        // Only after worker is fully shutdown do we remove the heartbeat callback
+        // from SharedNamespaceWorker, allowing for accurate worker shutdown
+        // from Server POV
+        let _res = self
+            .client
+            .workers()
+            .finalize_unregister(self.worker_instance_key);
     }
 
     pub(crate) fn shutdown_token(&self) -> CancellationToken {
@@ -1073,20 +1109,6 @@ impl Worker {
             dbg_panic!("trying to notify local result when workflows not enabled for this worker");
         }
     }
-
-    async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
-        if let Err(e) = self.client.describe_namespace().await {
-            // Ignore if unimplemented since we wouldn't want to fail against an old server, for
-            // example.
-            if e.code() != tonic::Code::Unimplemented {
-                return Err(WorkerValidationError::NamespaceDescribeError {
-                    source: e,
-                    namespace: self.config.namespace.clone(),
-                });
-            }
-        }
-        Ok(())
-    }
 }
 
 struct ClientWorkerRegistrator {
@@ -1204,7 +1226,7 @@ impl WorkerHeartbeatManager {
                         as f32,
 
                     // Set by SharedNamespaceWorker because it relies on the client
-                    process_key: String::new(),
+                    worker_grouping_key: String::new(),
                 }),
                 task_queue: config.task_queue.clone(),
                 deployment_version,
@@ -1436,10 +1458,11 @@ mod tests {
 
     #[test]
     fn max_polls_calculated_properly() {
-        let cfg = test_worker_cfg()
-            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(5_usize))
-            .build()
-            .unwrap();
+        let cfg = {
+            let mut cfg = test_worker_cfg().build().unwrap();
+            cfg.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(5_usize);
+            cfg
+        };
         assert_eq!(
             wft_poller_behavior(&cfg, false),
             PollerBehavior::SimpleMaximum(1)
@@ -1452,8 +1475,15 @@ mod tests {
 
     #[test]
     fn max_polls_zero_is_err() {
+        use temporalio_common::worker::{WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy};
         assert!(
-            test_worker_cfg()
+            WorkerConfig::builder()
+                .namespace("test")
+                .task_queue("test")
+                .versioning_strategy(WorkerVersioningStrategy::None {
+                    build_id: "test".to_string(),
+                })
+                .task_types(WorkerTaskTypes::all())
                 .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(0_usize))
                 .build()
                 .is_err()

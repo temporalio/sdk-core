@@ -20,7 +20,7 @@ use temporalio_client::{
     TlsOptions as CoreTlsOptions, WorkflowService, callback_based, proxy::HttpConnectProxyOptions,
 };
 use tokio::sync::oneshot;
-use tonic::metadata::MetadataKey;
+use tonic::metadata::{MetadataKey, MetadataValue};
 use url::Url;
 
 #[repr(C)]
@@ -29,6 +29,7 @@ pub struct ClientOptions {
     pub client_name: ByteArrayRef,
     pub client_version: ByteArrayRef,
     pub metadata: MetadataRef,
+    pub binary_metadata: MetadataRef,
     pub api_key: ByteArrayRef,
     pub identity: ByteArrayRef,
     pub tls_options: *const ClientTlsOptions,
@@ -238,15 +239,24 @@ pub extern "C" fn temporal_core_client_free(client: *mut Client) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_client_update_metadata(
-    client: *mut Client,
-    metadata: ByteArrayRef,
-) {
+pub extern "C" fn temporal_core_client_update_metadata(client: *mut Client, metadata: MetadataRef) {
     let client = unsafe { &*client };
     let _result = client
         .core
         .get_client()
         .set_headers(metadata.to_string_map_on_newlines());
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_update_binary_metadata(
+    client: *mut Client,
+    metadata: MetadataRef,
+) {
+    let client = unsafe { &*client };
+    let _result = client
+        .core
+        .get_client()
+        .set_binary_headers(metadata.to_vec_map_on_newlines());
 }
 
 #[unsafe(no_mangle)]
@@ -271,6 +281,11 @@ pub type ClientGrpcOverrideCallback = Option<
     unsafe extern "C" fn(request: *mut ClientGrpcOverrideRequest, user_data: *mut libc::c_void),
 >;
 
+pub struct GrpcMetadataHolder {
+    pub data: Vec<ByteArrayRef>,
+    pub(super) _allocations: Vec<Vec<u8>>,
+}
+
 /// Representation of gRPC request for the callback.
 ///
 /// Note, temporal_core_client_grpc_override_request_respond is effectively the "free" call for
@@ -278,7 +293,7 @@ pub type ClientGrpcOverrideCallback = Option<
 /// call.
 pub struct ClientGrpcOverrideRequest {
     core: callback_based::GrpcRequest,
-    built_headers: OnceCell<String>,
+    built_headers: OnceCell<GrpcMetadataHolder>,
     response_sender: oneshot::Sender<Result<callback_based::GrpcSuccessResponse, tonic::Status>>,
 }
 
@@ -341,15 +356,24 @@ pub extern "C" fn temporal_core_client_grpc_override_request_headers(
     let req = unsafe { &*req };
     // Lazily create the headers on first access
     let headers = req.built_headers.get_or_init(|| {
-        req.core
+        let refs: Vec<Vec<u8>> = req
+            .core
             .headers
             .iter()
-            .filter_map(|(name, value)| value.to_str().ok().map(|val| (name.as_str(), val)))
-            .flat_map(|(k, v)| [k, v])
-            .collect::<Vec<_>>()
-            .join("\n")
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|val| {
+                    let mut entry = format!("{name}\n").into_bytes();
+                    entry.extend(val.as_bytes());
+                    entry
+                })
+            })
+            .collect();
+        GrpcMetadataHolder {
+            data: refs.iter().map(ByteArrayRef::from).collect(),
+            _allocations: refs,
+        }
     });
-    headers.as_str().into()
+    headers.into()
 }
 
 /// Get a reference to the request protobuf bytes.
@@ -403,13 +427,13 @@ impl ClientGrpcOverrideResponse {
     }
 
     fn client_headers_from_metadata_ref(headers: MetadataRef) -> Result<http::HeaderMap, String> {
-        let key_values = headers.to_str_map_on_newlines();
+        let key_values = headers.to_vec_map_on_newlines();
         let mut header_map = http::HeaderMap::with_capacity(key_values.len());
         for (k, v) in key_values.into_iter() {
-            let name = http::HeaderName::try_from(k)
+            let name = http::HeaderName::try_from(&k)
                 .map_err(|e| format!("Invalid header name '{k}': {e}"))?;
-            let value = http::HeaderValue::from_str(v)
-                .map_err(|e| format!("Invalid header value '{v}': {e}"))?;
+            let value = http::HeaderValue::from_bytes(v.as_slice())
+                .map_err(|e| format!("Invalid header value '{v:?}': {e}"))?;
             header_map.insert(name, value);
         }
         Ok(header_map)
@@ -423,6 +447,7 @@ pub struct RpcCallOptions {
     pub req: ByteArrayRef,
     pub retry: bool,
     pub metadata: MetadataRef,
+    pub binary_metadata: MetadataRef,
     /// 0 means no timeout
     pub timeout_millis: u32,
     pub cancellation_token: *const CancellationToken,
@@ -545,6 +570,9 @@ async fn call_workflow_service(
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
+        "CountActivityExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, count_activity_executions)
+        }
         "CountWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
         }
@@ -553,6 +581,9 @@ async fn call_workflow_service(
             rpc_call_on_trait!(client, call, WorkflowService, create_workflow_rule)
         }
         "DeleteSchedule" => rpc_call_on_trait!(client, call, WorkflowService, delete_schedule),
+        "DeleteActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, delete_activity_execution)
+        }
         "DeleteWorkerDeployment" => {
             rpc_call_on_trait!(client, call, WorkflowService, delete_worker_deployment)
         }
@@ -572,6 +603,9 @@ async fn call_workflow_service(
         }
         "DeprecateNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, deprecate_namespace)
+        }
+        "DescribeActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, describe_activity_execution)
         }
         "DescribeBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, describe_batch_operation)
@@ -651,6 +685,9 @@ async fn call_workflow_service(
                 get_workflow_execution_history_reverse
             )
         }
+        "ListActivityExecutions" => {
+            rpc_call_on_trait!(client, call, WorkflowService, list_activity_executions)
+        }
         "ListArchivedWorkflowExecutions" => {
             rpc_call_on_trait!(
                 client,
@@ -692,6 +729,12 @@ async fn call_workflow_service(
         }
         "PatchSchedule" => rpc_call_on_trait!(client, call, WorkflowService, patch_schedule),
         "PauseActivity" => rpc_call_on_trait!(client, call, WorkflowService, pause_activity),
+        "PauseWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, pause_workflow_execution)
+        }
+        "PollActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, poll_activity_execution)
+        }
         "PollActivityTaskQueue" => {
             rpc_call_on_trait!(client, call, WorkflowService, poll_activity_task_queue)
         }
@@ -727,6 +770,14 @@ async fn call_workflow_service(
         }
         "RegisterNamespace" => {
             rpc_call_on_trait!(client, call, WorkflowService, register_namespace)
+        }
+        "RequestCancelActivityExecution" => {
+            rpc_call_on_trait!(
+                client,
+                call,
+                WorkflowService,
+                request_cancel_activity_execution
+            )
         }
         "RequestCancelWorkflowExecution" => {
             rpc_call_on_trait!(
@@ -837,14 +888,20 @@ async fn call_workflow_service(
         "SignalWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, signal_workflow_execution)
         }
-        "StartWorkflowExecution" => {
-            rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
+        "StartActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, start_activity_execution)
         }
         "StartBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, start_batch_operation)
         }
+        "StartWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, start_workflow_execution)
+        }
         "StopBatchOperation" => {
             rpc_call_on_trait!(client, call, WorkflowService, stop_batch_operation)
+        }
+        "TerminateActivityExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, terminate_activity_execution)
         }
         "TerminateWorkflowExecution" => {
             rpc_call_on_trait!(client, call, WorkflowService, terminate_workflow_execution)
@@ -854,6 +911,9 @@ async fn call_workflow_service(
         }
         "UnpauseActivity" => {
             rpc_call_on_trait!(client, call, WorkflowService, unpause_activity)
+        }
+        "UnpauseWorkflowExecution" => {
+            rpc_call_on_trait!(client, call, WorkflowService, unpause_workflow_execution)
         }
         "UpdateActivityOptions" => {
             rpc_call_on_trait!(client, call, WorkflowService, update_activity_options)
@@ -1110,9 +1170,17 @@ fn rpc_req<P: prost::Message + Default>(
     let proto = P::decode(call.req.to_slice())?;
     let mut req = tonic::Request::new(proto);
     if call.metadata.size > 0 {
-        for (k, v) in call.metadata.to_str_map_on_newlines() {
+        for (k, v) in call.metadata.to_string_map_on_newlines() {
             req.metadata_mut()
-                .insert(MetadataKey::from_str(k)?, v.parse()?);
+                .insert(MetadataKey::from_str(k.as_str())?, v.parse()?);
+        }
+    }
+    if call.binary_metadata.size > 0 {
+        for (k, v) in call.binary_metadata.to_vec_map_on_newlines() {
+            req.metadata_mut().insert_bin(
+                MetadataKey::from_str(k.as_str())?,
+                MetadataValue::from_bytes(v.as_slice()),
+            );
         }
     }
     if call.timeout_millis > 0 {
@@ -1148,6 +1216,12 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             Some(opts.metadata.to_string_map_on_newlines())
         };
 
+        let binary_headers = if opts.binary_metadata.size == 0 {
+            None
+        } else {
+            Some(opts.binary_metadata.to_vec_map_on_newlines())
+        };
+
         let api_key = opts.api_key.to_option_string();
 
         let http_connect_proxy =
@@ -1164,6 +1238,7 @@ impl TryFrom<&ClientOptions> for CoreClientOptions {
             )
             .maybe_keep_alive(keep_alive.map(Some))
             .maybe_headers(headers)
+            .maybe_binary_headers(binary_headers)
             .maybe_api_key(api_key)
             .maybe_http_connect_proxy(http_connect_proxy)
             .maybe_tls_options(tls_cfg)
@@ -1232,6 +1307,15 @@ impl From<&ClientHttpConnectProxyOptions> for HttpConnectProxyOptions {
             } else {
                 None
             },
+        }
+    }
+}
+
+impl From<&GrpcMetadataHolder> for MetadataRef {
+    fn from(value: &GrpcMetadataHolder) -> Self {
+        MetadataRef {
+            data: value.data.as_ptr(),
+            size: value.data.len(),
         }
     }
 }

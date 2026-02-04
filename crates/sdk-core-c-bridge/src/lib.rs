@@ -27,6 +27,8 @@ pub struct ByteArrayRef {
     pub size: libc::size_t,
 }
 
+unsafe impl Sync for ByteArrayRef {}
+
 impl ByteArrayRef {
     pub fn empty() -> ByteArrayRef {
         static EMPTY: &str = "";
@@ -98,6 +100,24 @@ impl ByteArrayRef {
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
     }
+
+    pub fn to_option_str_key_value_pair(&self) -> Option<(&str, ByteArrayRef)> {
+        if let Some(index) = self.to_slice().iter().position(|&x| x == b'\n') {
+            let key_str = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.data, index))
+            };
+            let value = ByteArrayRef {
+                data: unsafe { self.data.add(index + 1) },
+                size: self.size - index - 1,
+            };
+            let _value_str = unsafe {
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(value.data, value.size))
+            };
+            Some((key_str, value))
+        } else {
+            None
+        }
+    }
 }
 
 impl From<&str> for ByteArrayRef {
@@ -111,6 +131,15 @@ impl From<&str> for ByteArrayRef {
 
 impl From<&[u8]> for ByteArrayRef {
     fn from(value: &[u8]) -> ByteArrayRef {
+        ByteArrayRef {
+            data: value.as_ptr(),
+            size: value.len(),
+        }
+    }
+}
+
+impl From<&Vec<u8>> for ByteArrayRef {
+    fn from(value: &Vec<u8>) -> ByteArrayRef {
         ByteArrayRef {
             data: value.as_ptr(),
             size: value.len(),
@@ -134,19 +163,74 @@ pub struct ByteArrayRefArray {
 }
 
 impl ByteArrayRefArray {
+    pub fn empty() -> ByteArrayRefArray {
+        static EMPTY: &[ByteArrayRef] = &[];
+        EMPTY.into()
+    }
+
+    pub fn to_slice(&self) -> &[ByteArrayRef] {
+        unsafe { std::slice::from_raw_parts(self.data, self.size) }
+    }
+
     pub fn to_str_vec(&self) -> Vec<&str> {
         if self.size == 0 {
             vec![]
         } else {
-            let raw = unsafe { std::slice::from_raw_parts(self.data, self.size) };
-            raw.iter().map(ByteArrayRef::to_str).collect()
+            self.to_slice().iter().map(ByteArrayRef::to_str).collect()
+        }
+    }
+
+    fn to_bytearrayref_map_on_newlines(&self) -> HashMap<&str, ByteArrayRef> {
+        if self.size == 0 {
+            HashMap::new()
+        } else {
+            self.to_slice()
+                .iter()
+                .filter_map(ByteArrayRef::to_option_str_key_value_pair)
+                .collect()
+        }
+    }
+
+    pub fn to_string_map_on_newlines(&self) -> HashMap<String, String> {
+        self.to_bytearrayref_map_on_newlines()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    pub fn to_vec_map_on_newlines(&self) -> HashMap<String, Vec<u8>> {
+        self.to_bytearrayref_map_on_newlines()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_vec()))
+            .collect()
+    }
+}
+
+impl From<&[ByteArrayRef]> for ByteArrayRefArray {
+    fn from(value: &[ByteArrayRef]) -> ByteArrayRefArray {
+        ByteArrayRefArray {
+            data: value.as_ptr(),
+            size: value.len(),
         }
     }
 }
 
-/// Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
-/// values cannot contain a newline within.
-pub type MetadataRef = ByteArrayRef;
+impl<T> From<Option<T>> for ByteArrayRefArray
+where
+    T: Into<ByteArrayRefArray>,
+{
+    fn from(value: Option<T>) -> ByteArrayRefArray {
+        value.map(Into::into).unwrap_or(ByteArrayRefArray::empty())
+    }
+}
+
+/// Each ByteArrayRef is `<key>\n<value>`.
+/// Keys cannot contain a newline.
+pub type MetadataRef = ByteArrayRefArray;
+
+/// Data is `<key1>\n<value1>\n<key2>\n<value2>`.
+/// Keys and values cannot contain a newline within.
+pub type NewlineDelimitedMapRef = ByteArrayRef;
 
 #[repr(C)]
 pub struct ByteArray {

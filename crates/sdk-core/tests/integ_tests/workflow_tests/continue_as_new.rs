@@ -5,7 +5,10 @@ use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
-        temporal::api::enums::v1::CommandType,
+        temporal::api::{
+            command::v1::command::Attributes,
+            enums::v1::{CommandType, ContinueAsNewVersioningBehavior},
+        },
     },
     worker::WorkerTaskTypes,
 };
@@ -29,9 +32,7 @@ async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only());
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
@@ -51,11 +52,9 @@ async fn continue_as_new_happy_path() {
 async fn continue_as_new_multiple_concurrent() {
     let wf_name = "continue_as_new_multiple_concurrent";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter
-        .worker_config
-        .task_types(WorkerTaskTypes::workflow_only())
-        .max_cached_workflows(5_usize)
-        .max_outstanding_workflow_tasks(5_usize);
+    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.worker_config.max_cached_workflows = 5_usize;
+    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
@@ -79,6 +78,7 @@ async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
     Ok(WfExitValue::continue_as_new(
         ContinueAsNewWorkflowExecution {
             arguments: vec![[1].into()],
+            initial_versioning_behavior: ContinueAsNewVersioningBehavior::AutoUpgrade.into(),
             ..Default::default()
         },
     ))
@@ -99,6 +99,11 @@ async fn wf_completing_with_continue_as_new() {
                 assert_matches!(
                     wft.commands[0].command_type(),
                     CommandType::ContinueAsNewWorkflowExecution
+                );
+                assert_matches!(
+                    wft.commands[0].attributes.as_ref().unwrap(),
+                    Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(can_attrs)
+                        if can_attrs.initial_versioning_behavior == ContinueAsNewVersioningBehavior::AutoUpgrade as i32
                 );
             });
     });

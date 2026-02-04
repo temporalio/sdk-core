@@ -16,7 +16,7 @@ use crate::{
         WorkerValidationError,
     },
     protos::coresdk::{
-        ActivityHeartbeat, ActivityTaskCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, NamespaceInfo,
         activity_task::ActivityTask,
         nexus::{NexusTask, NexusTaskCompletion},
         workflow_activation::WorkflowActivation,
@@ -35,7 +35,7 @@ pub trait Worker: Send + Sync {
     /// Validate that the worker can properly connect to server, plus any other validation that
     /// needs to be done asynchronously. Lang SDKs should call this function once before calling
     /// any others.
-    async fn validate(&self) -> Result<(), WorkerValidationError>;
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError>;
 
     /// Ask the worker for some work, returning a [WorkflowActivation]. It is then the language
     /// SDK's responsibility to call the appropriate workflow code with the provided inputs. Blocks
@@ -156,7 +156,7 @@ impl<W> Worker for Arc<W>
 where
     W: Worker + ?Sized,
 {
-    async fn validate(&self) -> Result<(), WorkerValidationError> {
+    async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
         (**self).validate().await
     }
 

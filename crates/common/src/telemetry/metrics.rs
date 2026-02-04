@@ -200,6 +200,8 @@ pub struct WorkerHeartbeatMetrics {
     pub activity_execution_failed: Arc<AtomicU64>,
     pub nexus_task_execution_failed: Arc<AtomicU64>,
     pub local_activity_execution_failed: Arc<AtomicU64>,
+    // Although latency metrics here are histograms, we are using the number of times they're called
+    // to represent the `total_processed_tasks` heartbeat field
     pub activity_execution_latency: Arc<AtomicU64>,
     pub local_activity_execution_latency: Arc<AtomicU64>,
     pub workflow_task_execution_latency: Arc<AtomicU64>,
@@ -259,16 +261,16 @@ impl WorkerHeartbeatMetrics {
     }
 }
 
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct MetricParameters {
     /// The name for the new metric/instrument
-    #[builder(setter(into))]
+    #[builder(into)]
     pub name: Cow<'static, str>,
     /// A description that will appear in metadata if the backend supports it
-    #[builder(setter(into), default = "\"\".into()")]
+    #[builder(into, default = Cow::Borrowed(""))]
     pub description: Cow<'static, str>,
     /// Unit information that will appear in metadata if the backend supports it
-    #[builder(setter(into), default = "\"\".into()")]
+    #[builder(into, default = Cow::Borrowed(""))]
     pub unit: Cow<'static, str>,
 }
 impl From<&'static str> for MetricParameters {

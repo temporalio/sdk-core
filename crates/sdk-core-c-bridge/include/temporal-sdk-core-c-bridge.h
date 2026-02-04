@@ -92,11 +92,16 @@ typedef struct TemporalCoreByteArrayRef {
   size_t size;
 } TemporalCoreByteArrayRef;
 
+typedef struct TemporalCoreByteArrayRefArray {
+  const struct TemporalCoreByteArrayRef *data;
+  size_t size;
+} TemporalCoreByteArrayRefArray;
+
 /**
- * Metadata is `<key1>\n<value1>\n<key2>\n<value2>`. Metadata keys or
- * values cannot contain a newline within.
+ * Each ByteArrayRef is `<key>\n<value>`.
+ * Keys cannot contain a newline.
  */
-typedef struct TemporalCoreByteArrayRef TemporalCoreMetadataRef;
+typedef struct TemporalCoreByteArrayRefArray TemporalCoreMetadataRef;
 
 typedef struct TemporalCoreClientTlsOptions {
   struct TemporalCoreByteArrayRef server_root_ca_cert;
@@ -144,6 +149,7 @@ typedef struct TemporalCoreClientOptions {
   struct TemporalCoreByteArrayRef client_name;
   struct TemporalCoreByteArrayRef client_version;
   TemporalCoreMetadataRef metadata;
+  TemporalCoreMetadataRef binary_metadata;
   struct TemporalCoreByteArrayRef api_key;
   struct TemporalCoreByteArrayRef identity;
   const struct TemporalCoreClientTlsOptions *tls_options;
@@ -223,6 +229,7 @@ typedef struct TemporalCoreRpcCallOptions {
   struct TemporalCoreByteArrayRef req;
   bool retry;
   TemporalCoreMetadataRef metadata;
+  TemporalCoreMetadataRef binary_metadata;
   /**
    * 0 means no timeout
    */
@@ -334,9 +341,15 @@ typedef struct TemporalCoreLoggingOptions {
   TemporalCoreForwardedLogCallback forward_to;
 } TemporalCoreLoggingOptions;
 
+/**
+ * Data is `<key1>\n<value1>\n<key2>\n<value2>`.
+ * Keys and values cannot contain a newline within.
+ */
+typedef struct TemporalCoreByteArrayRef TemporalCoreNewlineDelimitedMapRef;
+
 typedef struct TemporalCoreOpenTelemetryOptions {
   struct TemporalCoreByteArrayRef url;
-  TemporalCoreMetadataRef headers;
+  TemporalCoreNewlineDelimitedMapRef headers;
   uint32_t metric_periodicity_millis;
   enum TemporalCoreOpenTelemetryMetricTemporality metric_temporality;
   bool durations_as_seconds;
@@ -345,7 +358,7 @@ typedef struct TemporalCoreOpenTelemetryOptions {
    * Histogram bucket overrides in form of
    * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
-  TemporalCoreMetadataRef histogram_bucket_overrides;
+  TemporalCoreNewlineDelimitedMapRef histogram_bucket_overrides;
 } TemporalCoreOpenTelemetryOptions;
 
 typedef struct TemporalCorePrometheusOptions {
@@ -357,7 +370,7 @@ typedef struct TemporalCorePrometheusOptions {
    * Histogram bucket overrides in form of
    * `<metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>`
    */
-  TemporalCoreMetadataRef histogram_bucket_overrides;
+  TemporalCoreNewlineDelimitedMapRef histogram_bucket_overrides;
 } TemporalCorePrometheusOptions;
 
 typedef const void *(*TemporalCoreCustomMetricMeterMetricNewCallback)(struct TemporalCoreByteArrayRef name,
@@ -435,7 +448,7 @@ typedef struct TemporalCoreMetricsOptions {
    */
   const struct TemporalCoreCustomMetricMeter *custom_meter;
   bool attach_service_name;
-  TemporalCoreMetadataRef global_tags;
+  TemporalCoreNewlineDelimitedMapRef global_tags;
   struct TemporalCoreByteArrayRef metric_prefix;
 } TemporalCoreMetricsOptions;
 
@@ -760,11 +773,6 @@ typedef struct TemporalCorePollerBehavior {
   const struct TemporalCorePollerBehaviorAutoscaling *autoscaling;
 } TemporalCorePollerBehavior;
 
-typedef struct TemporalCoreByteArrayRefArray {
-  const struct TemporalCoreByteArrayRef *data;
-  size_t size;
-} TemporalCoreByteArrayRefArray;
-
 typedef struct TemporalCoreWorkerOptions {
   struct TemporalCoreByteArrayRef namespace_;
   struct TemporalCoreByteArrayRef task_queue;
@@ -833,7 +841,10 @@ void temporal_core_client_connect(struct TemporalCoreRuntime *runtime,
 void temporal_core_client_free(struct TemporalCoreClient *client);
 
 void temporal_core_client_update_metadata(struct TemporalCoreClient *client,
-                                          struct TemporalCoreByteArrayRef metadata);
+                                          TemporalCoreMetadataRef metadata);
+
+void temporal_core_client_update_binary_metadata(struct TemporalCoreClient *client,
+                                                 TemporalCoreMetadataRef metadata);
 
 void temporal_core_client_update_api_key(struct TemporalCoreClient *client,
                                          struct TemporalCoreByteArrayRef api_key);
