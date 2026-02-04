@@ -236,22 +236,9 @@ impl NexusManager {
                             NexusTaskFailure::Legacy(h)
                         }
                     } else {
-                        // The failure isn't a HandlerError, just send the failure if the server allows it.
-                        // This happens when Nexus operation handlers return an OperationError that is translated to
-                        // ApplicationError or CancelledError as indicated by OperationError.state
-                        if use_temporal_failures {
-                            self.metrics
-                                .with_new_attrs([metrics::failure_reason(
-                                    FailureReason::NexusOperation(f.message.clone()),
-                                )])
-                                .nexus_task_execution_failed();
-
-                            NexusTaskFailure::Temporal(f)
-                        } else {
-                            return Err(CompleteNexusError::MalformedNexusCompletion {
-                                reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo for old servers".to_string(),
-                            });
-                        }
+                        return Err(CompleteNexusError::MalformedNexusCompletion {
+                            reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo".to_string(),
+                        });
                     };
 
                     let maybe_net_err = client.fail_nexus_task(tt, task_failure).await.err();
