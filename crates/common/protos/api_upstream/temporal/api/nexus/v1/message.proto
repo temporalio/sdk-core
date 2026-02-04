@@ -18,9 +18,11 @@ import "temporal/api/failure/v1/message.proto";
 // See: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure
 message Failure {
     string message = 1;
+    string stack_trace = 4;
     map<string, string> metadata = 2;
     // UTF-8 encoded JSON serializable details.
     bytes details = 3;
+    Failure cause = 5;
 }
 
 message HandlerError {
@@ -128,7 +130,7 @@ message StartOperationResponse {
         // The operation completed unsuccessfully (failed or canceled).
         UnsuccessfulOperationError operation_error = 3;
         // The operation completed unsuccessfully (failed or canceled).
-        // Failure object must contain a NexusSDKOperationFailureInfo object.
+        // Failure object must contain an ApplicationFailureInfo or CanceledFailureInfo object.
         temporal.api.failure.v1.Failure failure = 4;
     }
 }

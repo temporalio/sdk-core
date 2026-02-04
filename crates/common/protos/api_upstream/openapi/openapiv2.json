@@ -1434,6 +1434,44 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/schedule-count": {
+      "get": {
+        "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
+        "operationId": "CountSchedules2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/schedules": {
       "get": {
         "summary": "List all schedules in a namespace.",
@@ -3731,6 +3769,53 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/pause": {
+      "post": {
+        "summary": "Note: This is an experimental API and the behavior may change in a future release.\nPauseWorkflowExecution pauses the workflow execution specified in the request. Pausing a workflow execution results in\n- The workflow execution status changes to `PAUSED` and a new WORKFLOW_EXECUTION_PAUSED event is added to the history\n- No new workflow tasks or activity tasks are dispatched.\n  - Any workflow task currently executing on the worker will be allowed to complete.\n  - Any activity task currently executing will be paused.\n- All server-side events will continue to be processed by the server.\n- Queries & Updates on a paused workflow will be rejected.",
+        "operationId": "PauseWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PauseWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow to pause.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "ID of the workflow execution to be paused. Required.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServicePauseWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}": {
       "post": {
         "summary": "SignalWithStartWorkflowExecution is used to ensure a signal is sent to a workflow, even if\nit isn't yet started.",
@@ -3776,6 +3861,53 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceSignalWithStartWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/unpause": {
+      "post": {
+        "summary": "Note: This is an experimental API and the behavior may change in a future release.\nUnpauseWorkflowExecution unpauses a previously paused workflow execution specified in the request.\nUnpausing a workflow execution results in\n- The workflow execution status changes to `RUNNING` and a new WORKFLOW_EXECUTION_UNPAUSED event is added to the history\n- Workflow tasks and activity tasks are resumed.",
+        "operationId": "UnpauseWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnpauseWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow to unpause.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "ID of the workflow execution to be paused. Required.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUnpauseWorkflowExecutionBody"
             }
           }
         ],
@@ -5660,6 +5792,44 @@
             "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
             "in": "path",
             "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/schedule-count": {
+      "get": {
+        "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
+        "operationId": "CountSchedules",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -8195,6 +8365,17 @@
         }
       }
     },
+    "ExecuteMultiOperationResponseResponse": {
+      "type": "object",
+      "properties": {
+        "startWorkflow": {
+          "$ref": "#/definitions/v1StartWorkflowExecutionResponse"
+        },
+        "updateWorkflow": {
+          "$ref": "#/definitions/v1UpdateWorkflowExecutionResponse"
+        }
+      }
+    },
     "LinkBatchJob": {
       "type": "object",
       "properties": {
@@ -8358,7 +8539,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/v1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionSignaled event."
         }
@@ -8841,7 +9022,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/apiCommonV1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionCanceled event."
         }
@@ -8899,8 +9080,7 @@
               "type": "string"
             }
           },
-          "description": "The workflow to reset. If this contains a run ID then the workflow will be reset back to the\nprovided event ID in that run. Otherwise it will be reset to the provided event ID in the\ncurrent run. In all cases the current run will be terminated and a new run started.",
-          "title": "The workflow to reset. If this contains a run ID then the workflow will be reset back to the\nprovided event ID in that run. Otherwise it will be reset to the provided event ID in the\ncurrent run. In all cases the current run will be terminated and a new run started."
+          "description": "The workflow to reset. If this contains a run ID then the workflow will be reset back to the\nprovided event ID in that run. Otherwise it will be reset to the provided event ID in the\ncurrent run. In all cases the current run will be terminated and a new run started."
         },
         "reason": {
           "type": "string"
@@ -9062,7 +9242,7 @@
           "title": "The task token as received in `PollActivityTaskQueueResponse`"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/apiFailureV1Failure",
           "title": "Detailed failure information"
         },
         "identity": {
@@ -9103,7 +9283,7 @@
           "title": "Id of the activity to fail"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/apiFailureV1Failure",
           "title": "Detailed failure information"
         },
         "identity": {
@@ -9309,7 +9489,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/apiCommonV1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events."
         },
@@ -9359,7 +9539,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/apiCommonV1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionSignaled event."
         }
@@ -9551,7 +9731,7 @@
           "description": "Request to get the first workflow task inline in the response bypassing matching service and worker polling.\nIf set to `true` the caller is expected to have a worker available and capable of processing the task.\nThe returned task will be marked as started and is expected to be completed by the specified\n`workflow_task_timeout`."
         },
         "continuedFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/apiFailureV1Failure",
           "description": "These values will be available as ContinuedFailure and LastCompletionResult in the\nWorkflowExecutionStarted event and through SDKs. The are currently only used by the\nserver itself (for the schedules feature) and are not intended to be exposed in\nStartWorkflowExecution."
         },
         "lastCompletionResult": {
@@ -9577,7 +9757,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/apiCommonV1Link"
           },
           "description": "Links to be associated with the workflow."
         },
@@ -9664,7 +9844,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/apiCommonV1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionTerminated event."
         }
@@ -9973,8 +10153,7 @@
               }
             }
           },
-          "description": "The request information that will be delivered all the way down to the\nWorkflow Execution.",
-          "title": "The request information that will be delivered all the way down to the\nWorkflow Execution."
+          "description": "The request information that will be delivered all the way down to the\nWorkflow Execution."
         }
       }
     },
@@ -10005,88 +10184,6 @@
         }
       },
       "description": "Keep the parameters in sync with:\n  - temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions.\n  - temporal.api.workflow.v1.PostResetOperation.UpdateWorkflowOptions."
-    },
-    "apicommonv1Link": {
-      "type": "object",
-      "properties": {
-        "workflowEvent": {
-          "$ref": "#/definitions/LinkWorkflowEvent"
-        },
-        "batchJob": {
-          "$ref": "#/definitions/LinkBatchJob"
-        }
-      },
-      "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
-    },
-    "apifailurev1Failure": {
-      "type": "object",
-      "properties": {
-        "message": {
-          "type": "string"
-        },
-        "source": {
-          "type": "string",
-          "description": "The source this Failure originated in, e.g. TypeScriptSDK / JavaSDK\nIn some SDKs this is used to rehydrate the stack trace into an exception object."
-        },
-        "stackTrace": {
-          "type": "string"
-        },
-        "encodedAttributes": {
-          "$ref": "#/definitions/v1Payload",
-          "description": "Alternative way to supply `message` and `stack_trace` and possibly other attributes, used for encryption of\nerrors originating in user code which might contain sensitive information.\nThe `encoded_attributes` Payload could represent any serializable object, e.g. JSON object or a `Failure` proto\nmessage.\n\nSDK authors:\n- The SDK should provide a default `encodeFailureAttributes` and `decodeFailureAttributes` implementation that:\n  - Uses a JSON object to represent `{ message, stack_trace }`.\n  - Overwrites the original message with \"Encoded failure\" to indicate that more information could be extracted.\n  - Overwrites the original stack_trace with an empty string.\n  - The resulting JSON object is converted to Payload using the default PayloadConverter and should be processed\n    by the user-provided PayloadCodec\n\n- If there's demand, we could allow overriding the default SDK implementation to encode other opaque Failure attributes."
-        },
-        "cause": {
-          "$ref": "#/definitions/apifailurev1Failure"
-        },
-        "applicationFailureInfo": {
-          "$ref": "#/definitions/v1ApplicationFailureInfo"
-        },
-        "timeoutFailureInfo": {
-          "$ref": "#/definitions/v1TimeoutFailureInfo"
-        },
-        "canceledFailureInfo": {
-          "$ref": "#/definitions/v1CanceledFailureInfo"
-        },
-        "terminatedFailureInfo": {
-          "$ref": "#/definitions/v1TerminatedFailureInfo"
-        },
-        "serverFailureInfo": {
-          "$ref": "#/definitions/v1ServerFailureInfo"
-        },
-        "resetWorkflowFailureInfo": {
-          "$ref": "#/definitions/v1ResetWorkflowFailureInfo"
-        },
-        "activityFailureInfo": {
-          "$ref": "#/definitions/v1ActivityFailureInfo"
-        },
-        "childWorkflowExecutionFailureInfo": {
-          "$ref": "#/definitions/v1ChildWorkflowExecutionFailureInfo"
-        },
-        "nexusOperationExecutionFailureInfo": {
-          "$ref": "#/definitions/v1NexusOperationFailureInfo"
-        },
-        "nexusHandlerFailureInfo": {
-          "$ref": "#/definitions/v1NexusHandlerFailureInfo"
-        },
-        "nexusSdkOperationFailureInfo": {
-          "$ref": "#/definitions/v1NexusSDKOperationFailureInfo"
-        },
-        "nexusSdkFailureErrorInfo": {
-          "$ref": "#/definitions/v1NexusSDKFailureErrorFailureInfo"
-        }
-      }
-    },
-    "apiupdatev1Request": {
-      "type": "object",
-      "properties": {
-        "meta": {
-          "$ref": "#/definitions/v1Meta"
-        },
-        "input": {
-          "$ref": "#/definitions/v1Input"
-        }
-      },
-      "description": "The client request that triggers a Workflow Update."
     },
     "protobufAny": {
       "type": "object",
@@ -10202,7 +10299,7 @@
           "description": "Time when the activity transitioned to a closed state."
         },
         "lastFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Failure details from the last failed attempt."
         },
         "lastWorkerIdentity": {
@@ -10319,7 +10416,7 @@
           "description": "The result if the activity completed successfully."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "The failure if the activity completed unsuccessfully."
         }
       },
@@ -10509,7 +10606,7 @@
       "type": "object",
       "properties": {
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "title": "Failure details"
         },
         "scheduledEventId": {
@@ -10611,7 +10708,7 @@
           "title": "Starting at 1, the number of times this task has been attempted"
         },
         "lastFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Will be set to the most recent failure details, if this task has previously failed and then\nbeen retried."
         },
         "workerVersion": {
@@ -10629,7 +10726,7 @@
       "type": "object",
       "properties": {
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "If this activity had failed, was retried, and then timed out, that failure is stored as the\n`cause` in here."
         },
         "scheduledEventId": {
@@ -11089,7 +11186,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/v1Link"
           },
           "description": "Links associated with the callback. It can be used to link to underlying resources of the\ncallback."
         }
@@ -11126,7 +11223,7 @@
           "description": "The time when the last attempt completed."
         },
         "lastAttemptFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "The last attempt's failure, if any."
         },
         "nextAttemptScheduleTime": {
@@ -11238,7 +11335,7 @@
       "type": "object",
       "properties": {
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure"
+          "$ref": "#/definitions/v1Failure"
         },
         "namespace": {
           "type": "string",
@@ -11469,6 +11566,40 @@
       }
     },
     "v1CountActivityExecutionsResponseAggregationGroup": {
+      "type": "object",
+      "properties": {
+        "groupValues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Payload"
+          }
+        },
+        "count": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1CountSchedulesResponse": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "description": "If `query` is not grouping by any field, the count is an approximate number\nof schedules that match the query.\nIf `query` is grouping by a field, the count is simply the sum of the counts\nof the groups returned in the response. This number can be smaller than the\ntotal number of schedules matching the query."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1CountSchedulesResponseAggregationGroup"
+          },
+          "description": "Contains the groups if the request is grouping by a field.\nThe list might not be complete, and the counts of each group is approximate."
+        }
+      }
+    },
+    "v1CountSchedulesResponseAggregationGroup": {
       "type": "object",
       "properties": {
         "groupValues": {
@@ -12113,22 +12244,11 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/v1ExecuteMultiOperationResponseResponse"
+            "$ref": "#/definitions/ExecuteMultiOperationResponseResponse"
           }
         }
       },
       "description": "IMPORTANT: For [StartWorkflow, UpdateWorkflow] combination (\"Update-with-Start\") when both\n  1. the workflow update for the requested update ID has already completed, and\n  2. the workflow for the requested workflow ID has already been closed,\nthen you'll receive\n  - an update response containing the update's outcome, and\n  - a start response with a `status` field that reflects the workflow's current state."
-    },
-    "v1ExecuteMultiOperationResponseResponse": {
-      "type": "object",
-      "properties": {
-        "startWorkflow": {
-          "$ref": "#/definitions/v1StartWorkflowExecutionResponse"
-        },
-        "updateWorkflow": {
-          "$ref": "#/definitions/v1UpdateWorkflowExecutionResponse"
-        }
-      }
     },
     "v1ExternalWorkflowExecutionCancelRequestedEventAttributes": {
       "type": "object",
@@ -12188,6 +12308,58 @@
         }
       },
       "title": "Represents a historical replication status of a Namespace"
+    },
+    "v1Failure": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "description": "The source this Failure originated in, e.g. TypeScriptSDK / JavaSDK\nIn some SDKs this is used to rehydrate the stack trace into an exception object."
+        },
+        "stackTrace": {
+          "type": "string"
+        },
+        "encodedAttributes": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Alternative way to supply `message` and `stack_trace` and possibly other attributes, used for encryption of\nerrors originating in user code which might contain sensitive information.\nThe `encoded_attributes` Payload could represent any serializable object, e.g. JSON object or a `Failure` proto\nmessage.\n\nSDK authors:\n- The SDK should provide a default `encodeFailureAttributes` and `decodeFailureAttributes` implementation that:\n  - Uses a JSON object to represent `{ message, stack_trace }`.\n  - Overwrites the original message with \"Encoded failure\" to indicate that more information could be extracted.\n  - Overwrites the original stack_trace with an empty string.\n  - The resulting JSON object is converted to Payload using the default PayloadConverter and should be processed\n    by the user-provided PayloadCodec\n\n- If there's demand, we could allow overriding the default SDK implementation to encode other opaque Failure attributes."
+        },
+        "cause": {
+          "$ref": "#/definitions/v1Failure"
+        },
+        "applicationFailureInfo": {
+          "$ref": "#/definitions/v1ApplicationFailureInfo"
+        },
+        "timeoutFailureInfo": {
+          "$ref": "#/definitions/v1TimeoutFailureInfo"
+        },
+        "canceledFailureInfo": {
+          "$ref": "#/definitions/v1CanceledFailureInfo"
+        },
+        "terminatedFailureInfo": {
+          "$ref": "#/definitions/v1TerminatedFailureInfo"
+        },
+        "serverFailureInfo": {
+          "$ref": "#/definitions/v1ServerFailureInfo"
+        },
+        "resetWorkflowFailureInfo": {
+          "$ref": "#/definitions/v1ResetWorkflowFailureInfo"
+        },
+        "activityFailureInfo": {
+          "$ref": "#/definitions/v1ActivityFailureInfo"
+        },
+        "childWorkflowExecutionFailureInfo": {
+          "$ref": "#/definitions/v1ChildWorkflowExecutionFailureInfo"
+        },
+        "nexusOperationExecutionFailureInfo": {
+          "$ref": "#/definitions/v1NexusOperationFailureInfo"
+        },
+        "nexusHandlerFailureInfo": {
+          "$ref": "#/definitions/v1NexusHandlerFailureInfo"
+        }
+      }
     },
     "v1FetchWorkerConfigResponse": {
       "type": "object",
@@ -12489,7 +12661,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/v1Link"
           },
           "description": "Links associated with the event."
         },
@@ -12740,6 +12912,18 @@
       },
       "description": "IntervalSpec matches times that can be expressed as:\nepoch + n * interval + phase\nwhere n is an integer.\nphase defaults to zero if missing. interval is required.\nBoth interval and phase must be non-negative and are truncated to the nearest\nsecond before any calculations.\nFor example, an interval of 1 hour with phase of zero would match every hour,\non the hour. The same interval but a phase of 19 minutes would match every\nxx:19:00. An interval of 28 days with phase zero would match\n2022-02-17T00:00:00Z (among other times). The same interval with a phase of 3\ndays, 5 hours, and 23 minutes would match 2022-02-20T05:23:00Z instead."
     },
+    "v1Link": {
+      "type": "object",
+      "properties": {
+        "workflowEvent": {
+          "$ref": "#/definitions/LinkWorkflowEvent"
+        },
+        "batchJob": {
+          "$ref": "#/definitions/LinkBatchJob"
+        }
+      },
+      "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
+    },
     "v1ListActivityExecutionsResponse": {
       "type": "object",
       "properties": {
@@ -12983,7 +13167,7 @@
           "$ref": "#/definitions/v1Header"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Some uses of markers, like a local activity, could \"fail\". If they did that is recorded here."
         }
       }
@@ -13156,6 +13340,10 @@
         "workflowPause": {
           "type": "boolean",
           "title": "True if the namespace supports pausing workflows"
+        },
+        "standaloneActivities": {
+          "type": "boolean",
+          "title": "True if the namespace supports standalone activities"
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -13309,7 +13497,7 @@
           "description": "The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported\nwith."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo."
         },
         "scheduledEventId": {
@@ -13343,7 +13531,7 @@
           "description": "The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Cancellation details."
         },
         "requestId": {
@@ -13375,7 +13563,7 @@
           "description": "The time when the last attempt completed."
         },
         "lastAttemptFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "The last attempt's failure, if any."
         },
         "nextAttemptScheduleTime": {
@@ -13432,7 +13620,7 @@
           "description": "The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Failure details. A NexusOperationFailureInfo wrapping an ApplicationFailureInfo."
         },
         "requestId": {
@@ -13515,6 +13703,14 @@
         "endpointId": {
           "type": "string",
           "description": "Endpoint ID as resolved in the endpoint registry at the time this event was generated.\nThis is stored on the event and used internally by the server in case the endpoint is renamed from the time the\nevent was originally scheduled."
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Schedule-to-start timeout for this operation.\nSee ScheduleNexusOperationCommandAttributes.schedule_to_start_timeout for details."
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Start-to-close timeout for this operation.\nSee ScheduleNexusOperationCommandAttributes.start_to_close_timeout for details."
         }
       },
       "description": "Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command."
@@ -13551,7 +13747,7 @@
           "description": "The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo."
         },
         "requestId": {
@@ -13560,31 +13756,6 @@
         }
       },
       "description": "Nexus operation timed out."
-    },
-    "v1NexusSDKFailureErrorFailureInfo": {
-      "type": "object",
-      "properties": {
-        "metadata": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "data": {
-          "type": "string",
-          "format": "byte"
-        }
-      },
-      "description": "Representation of the Nexus SDK FailureError object."
-    },
-    "v1NexusSDKOperationFailureInfo": {
-      "type": "object",
-      "properties": {
-        "state": {
-          "type": "string"
-        }
-      },
-      "description": "Representation of the Nexus SDK OperationError object."
     },
     "v1OnConflictOptions": {
       "type": "object",
@@ -13611,7 +13782,7 @@
           "$ref": "#/definitions/v1Payloads"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure"
+          "$ref": "#/definitions/v1Failure"
         }
       },
       "description": "The outcome of a Workflow Update: success or failure."
@@ -13694,7 +13865,7 @@
           "format": "date-time"
         },
         "lastFailure": {
-          "$ref": "#/definitions/apifailurev1Failure"
+          "$ref": "#/definitions/v1Failure"
         },
         "lastWorkerIdentity": {
           "type": "string"
@@ -13832,7 +14003,7 @@
           "description": "The time when the last attempt completed."
         },
         "lastAttemptFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "The last attempt's failure, if any."
         },
         "nextAttemptScheduleTime": {
@@ -13855,6 +14026,14 @@
         "operationToken": {
           "type": "string",
           "description": "Operation token. Only set for asynchronous operations after a successful StartOperation call."
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Schedule-to-start timeout for this operation."
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Start-to-close timeout for this operation."
         }
       },
       "description": "PendingNexusOperationInfo contains the state of a pending Nexus operation."
@@ -14291,6 +14470,18 @@
       ],
       "default": "REPLICATION_STATE_UNSPECIFIED"
     },
+    "v1Request": {
+      "type": "object",
+      "properties": {
+        "meta": {
+          "$ref": "#/definitions/v1Meta"
+        },
+        "input": {
+          "$ref": "#/definitions/v1Input"
+        }
+      },
+      "description": "The client request that triggers a Workflow Update."
+    },
     "v1RequestCancelActivityExecutionResponse": {
       "type": "object"
     },
@@ -14539,7 +14730,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apifailurev1Failure"
+            "$ref": "#/definitions/v1Failure"
           },
           "title": "Server validation failures could include\nlast_heartbeat_details payload is too large, request failure is too large"
         }
@@ -14552,7 +14743,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apifailurev1Failure"
+            "$ref": "#/definitions/v1Failure"
           },
           "title": "Server validation failures could include\nlast_heartbeat_details payload is too large, request failure is too large"
         }
@@ -15384,7 +15575,7 @@
           "description": "Request to get the first workflow task inline in the response bypassing matching service and worker polling.\nIf set to `true` the caller is expected to have a worker available and capable of processing the task.\nThe returned task will be marked as started and is expected to be completed by the specified\n`workflow_task_timeout`."
         },
         "continuedFailure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "These values will be available as ContinuedFailure and LastCompletionResult in the\nWorkflowExecutionStarted event and through SDKs. The are currently only used by the\nserver itself (for the schedules feature) and are not intended to be exposed in\nStartWorkflowExecution."
         },
         "lastCompletionResult": {
@@ -15410,7 +15601,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "$ref": "#/definitions/apicommonv1Link"
+            "$ref": "#/definitions/v1Link"
           },
           "description": "Links to be associated with the workflow."
         },
@@ -15452,7 +15643,7 @@
           "description": "When `request_eager_execution` is set on the `StartWorkflowExecutionRequest`, the server - if supported - will\nreturn the first workflow task to be eagerly executed.\nThe caller is expected to have a worker available to process the task."
         },
         "link": {
-          "$ref": "#/definitions/apicommonv1Link",
+          "$ref": "#/definitions/v1Link",
           "description": "Link to the workflow event."
         }
       }
@@ -16083,7 +16274,7 @@
           "description": "Specifies client's intent to wait for Update results.\nNOTE: This field works together with API call timeout which is limited by\nserver timeout (maximum wait time). If server timeout is expired before\nuser specified timeout, API call returns even if specified stage is not reached.\nActual reached stage will be included in the response."
         },
         "request": {
-          "$ref": "#/definitions/apiupdatev1Request",
+          "$ref": "#/definitions/v1Request",
           "description": "The request information that will be delivered all the way down to the\nWorkflow Execution."
         }
       }
@@ -16303,7 +16494,7 @@
       "properties": {
         "deploymentName": {
           "type": "string",
-          "description": "Required. Worker Deployment name."
+          "description": "Required when `worker_versioning_mode==VERSIONED`."
         },
         "buildId": {
           "type": "string",
@@ -16792,7 +16983,7 @@
           "$ref": "#/definitions/v1ContinueAsNewInitiator"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "Deprecated. If a workflow's retry policy would cause a new run to start when the current one\nhas failed, this field would be populated with that failure. Now (when supported by server\nand sdk) the final event will be `WORKFLOW_EXECUTION_FAILED` with `new_execution_run_id` set."
         },
         "lastCompletionResult": {
@@ -16867,7 +17058,7 @@
       "type": "object",
       "properties": {
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "title": "Serialized result of workflow failure (ex: An exception thrown, or error returned)"
         },
         "retryState": {
@@ -17148,7 +17339,7 @@
           "$ref": "#/definitions/v1ContinueAsNewInitiator"
         },
         "continuedFailure": {
-          "$ref": "#/definitions/apifailurev1Failure"
+          "$ref": "#/definitions/v1Failure"
         },
         "lastCompletionResult": {
           "$ref": "#/definitions/v1Payloads"
@@ -17333,7 +17524,7 @@
           "description": "The event ID used to sequence the original request message."
         },
         "acceptedRequest": {
-          "$ref": "#/definitions/apiupdatev1Request",
+          "$ref": "#/definitions/v1Request",
           "description": "The message payload of the original request message that initiated this\nupdate."
         }
       }
@@ -17342,7 +17533,7 @@
       "type": "object",
       "properties": {
         "request": {
-          "$ref": "#/definitions/apiupdatev1Request",
+          "$ref": "#/definitions/v1Request",
           "description": "The update request associated with this event."
         },
         "origin": {
@@ -17386,11 +17577,11 @@
           "description": "The event ID used to sequence the original request message."
         },
         "rejectedRequest": {
-          "$ref": "#/definitions/apiupdatev1Request",
+          "$ref": "#/definitions/v1Request",
           "description": "The message payload of the original request message that initiated this\nupdate."
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "description": "The cause of rejection."
         }
       }
@@ -17699,10 +17890,11 @@
         "WORKFLOW_TASK_FAILED_CAUSE_PENDING_NEXUS_OPERATIONS_LIMIT_EXCEEDED",
         "WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_NEXUS_OPERATION_ATTRIBUTES",
         "WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED",
-        "WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE"
+        "WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE",
+        "WORKFLOW_TASK_FAILED_CAUSE_PAYLOADS_TOO_LARGE"
       ],
       "default": "WORKFLOW_TASK_FAILED_CAUSE_UNSPECIFIED",
-      "description": "Workflow tasks can fail for various reasons. Note that some of these reasons can only originate\nfrom the server, and some of them can only originate from the SDK/worker.\n\n - WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND: Between starting and completing the workflow task (with a workflow completion command), some\nnew command (like a signal) was processed into workflow history. The outstanding task will be\nfailed with this reason, and a worker must pick up a new task.\n - WORKFLOW_TASK_FAILED_CAUSE_RESET_STICKY_TASK_QUEUE: The worker wishes to fail the task and have the next one be generated on a normal, not sticky\nqueue. Generally workers should prefer to use the explicit `ResetStickyTaskQueue` RPC call.\n - WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR: The worker encountered a mismatch while replaying history between what was expected, and\nwhat the workflow code actually did.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_CHILD_WORKFLOWS_LIMIT_EXCEEDED: We send the below error codes to users when their requests would violate a size constraint\nof their workflow. We do this to ensure that the state of their workflow does not become too\nlarge because that can cause severe performance degradation. You can modify the thresholds for\neach of these errors within your dynamic config.\n\nSpawning a new child workflow would cause this workflow to exceed its limit of pending child\nworkflows.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_ACTIVITIES_LIMIT_EXCEEDED: Starting a new activity would cause this workflow to exceed its limit of pending activities\nthat we track.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_SIGNALS_LIMIT_EXCEEDED: A workflow has a buffer of signals that have not yet reached their destination. We return this\nerror when sending a new signal would exceed the capacity of this buffer.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_REQUEST_CANCEL_LIMIT_EXCEEDED: Similarly, we have a buffer of pending requests to cancel other workflows. We return this error\nwhen our capacity for pending cancel requests is already reached.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_UPDATE_WORKFLOW_EXECUTION_MESSAGE: Workflow execution update message (update.Acceptance, update.Rejection, or update.Response)\nhas wrong format, or missing required fields.\n - WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_UPDATE: Similar to WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND, but for updates.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_SCHEDULE_NEXUS_OPERATION_ATTRIBUTES: A workflow task completed with an invalid ScheduleNexusOperation command.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_NEXUS_OPERATIONS_LIMIT_EXCEEDED: A workflow task completed requesting to schedule a Nexus Operation exceeding the server configured limit.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_NEXUS_OPERATION_ATTRIBUTES: A workflow task completed with an invalid RequestCancelNexusOperation command.\n - WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED: A workflow task completed requesting a feature that's disabled on the server (either system wide or - typically -\nfor the workflow's namespace).\nCheck the workflow task failure message for more information.\n - WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE: A workflow task failed because a grpc message was too large."
+      "description": "Workflow tasks can fail for various reasons. Note that some of these reasons can only originate\nfrom the server, and some of them can only originate from the SDK/worker.\n\n - WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND: Between starting and completing the workflow task (with a workflow completion command), some\nnew command (like a signal) was processed into workflow history. The outstanding task will be\nfailed with this reason, and a worker must pick up a new task.\n - WORKFLOW_TASK_FAILED_CAUSE_RESET_STICKY_TASK_QUEUE: The worker wishes to fail the task and have the next one be generated on a normal, not sticky\nqueue. Generally workers should prefer to use the explicit `ResetStickyTaskQueue` RPC call.\n - WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR: The worker encountered a mismatch while replaying history between what was expected, and\nwhat the workflow code actually did.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_CHILD_WORKFLOWS_LIMIT_EXCEEDED: We send the below error codes to users when their requests would violate a size constraint\nof their workflow. We do this to ensure that the state of their workflow does not become too\nlarge because that can cause severe performance degradation. You can modify the thresholds for\neach of these errors within your dynamic config.\n\nSpawning a new child workflow would cause this workflow to exceed its limit of pending child\nworkflows.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_ACTIVITIES_LIMIT_EXCEEDED: Starting a new activity would cause this workflow to exceed its limit of pending activities\nthat we track.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_SIGNALS_LIMIT_EXCEEDED: A workflow has a buffer of signals that have not yet reached their destination. We return this\nerror when sending a new signal would exceed the capacity of this buffer.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_REQUEST_CANCEL_LIMIT_EXCEEDED: Similarly, we have a buffer of pending requests to cancel other workflows. We return this error\nwhen our capacity for pending cancel requests is already reached.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_UPDATE_WORKFLOW_EXECUTION_MESSAGE: Workflow execution update message (update.Acceptance, update.Rejection, or update.Response)\nhas wrong format, or missing required fields.\n - WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_UPDATE: Similar to WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND, but for updates.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_SCHEDULE_NEXUS_OPERATION_ATTRIBUTES: A workflow task completed with an invalid ScheduleNexusOperation command.\n - WORKFLOW_TASK_FAILED_CAUSE_PENDING_NEXUS_OPERATIONS_LIMIT_EXCEEDED: A workflow task completed requesting to schedule a Nexus Operation exceeding the server configured limit.\n - WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_NEXUS_OPERATION_ATTRIBUTES: A workflow task completed with an invalid RequestCancelNexusOperation command.\n - WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED: A workflow task completed requesting a feature that's disabled on the server (either system wide or - typically -\nfor the workflow's namespace).\nCheck the workflow task failure message for more information.\n - WORKFLOW_TASK_FAILED_CAUSE_GRPC_MESSAGE_TOO_LARGE: A workflow task failed because a grpc message was too large.\n - WORKFLOW_TASK_FAILED_CAUSE_PAYLOADS_TOO_LARGE: A workflow task failed because payloads were too large."
     },
     "v1WorkflowTaskFailedEventAttributes": {
       "type": "object",
@@ -17721,7 +17913,7 @@
           "$ref": "#/definitions/v1WorkflowTaskFailedCause"
         },
         "failure": {
-          "$ref": "#/definitions/apifailurev1Failure",
+          "$ref": "#/definitions/v1Failure",
           "title": "The failure details"
         },
         "identity": {
