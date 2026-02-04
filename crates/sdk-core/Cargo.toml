@@ -31,7 +31,9 @@ antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
 anyhow = "1.0"
-antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = ["full"] }
+antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = [
+    "full",
+] }
 assert_matches = { version = "1.5", optional = true }
 bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
@@ -116,7 +118,11 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 # Only need specific features to decompress zip files for ephemeral server download
-zip = { version = "4.6", optional = true, default-features = false, features = ["deflate", "bzip2", "zstd"] }
+zip = { version = "4.6", optional = true, default-features = false, features = [
+    "deflate",
+    "bzip2",
+    "zstd",
+] }
 
 # 1st party local deps
 [dependencies.temporalio-common]
