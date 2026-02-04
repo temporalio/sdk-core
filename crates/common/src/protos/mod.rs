@@ -841,6 +841,20 @@ pub mod coresdk {
                 write!(f, ")")
             }
         }
+
+        pub enum NexusOperationErrorState {
+            Failed,
+            Canceled,
+        }
+
+        impl Display for NexusOperationErrorState {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Self::Failed => write!(f, "failed"),
+                    Self::Canceled => write!(f, "canceled"),
+                }
+            }
+        }
     }
 
     pub mod workflow_commands {
@@ -2577,7 +2591,11 @@ pub mod temporal {
                     },
                 };
                 use anyhow::{anyhow, bail};
-                use std::fmt::{Display, Formatter};
+                use prost::Name;
+                use std::{
+                    collections::HashMap,
+                    fmt::{Display, Formatter},
+                };
                 use tonic::transport::Uri;
 
                 tonic::include_proto!("temporal.api.nexus.v1");
@@ -2699,6 +2717,36 @@ pub mod temporal {
                             reference,
                         })),
                     })
+                }
+
+                impl TryFrom<failure::v1::Failure> for Failure {
+                    type Error = serde_json::Error;
+
+                    fn try_from(mut f: failure::v1::Failure) -> Result<Self, Self::Error> {
+                        // 1. Remove message from failure
+                        let message = std::mem::take(&mut f.message);
+
+                        // 2. Recurse on cause
+                        let cause = f.cause.take();
+                        let cause = cause
+                            .map(|boxed_cause| (*boxed_cause).try_into().map(Box::new))
+                            .transpose()?;
+
+                        // 3. Serialize Failure as JSON
+                        let details = serde_json::to_vec(&f)?;
+
+                        // 4. Package Temporal Failure as Nexus Failure
+                        Ok(Failure {
+                            message,
+                            stack_trace: f.stack_trace,
+                            metadata: HashMap::from([(
+                                "type".to_string(),
+                                failure::v1::Failure::full_name().into(),
+                            )]),
+                            details,
+                            cause,
+                        })
+                    }
                 }
             }
         }
