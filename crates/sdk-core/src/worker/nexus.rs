@@ -12,7 +12,7 @@ use futures_util::{
     Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
 };
-use prost_types::Timestamp;
+use prost::Name;
 use std::{
     collections::HashMap,
     sync::{
@@ -33,7 +33,7 @@ use temporalio_common::{
             },
         },
         temporal::api::{
-            failure::v1::failure::FailureInfo,
+            failure::{self, v1::failure::FailureInfo},
             nexus::{
                 self,
                 v1::{NexusTaskFailure, request::Variant, response, start_operation_response},
@@ -185,25 +185,77 @@ impl NexusManager {
                         .err();
                     (true, maybe_net_err)
                 }
-                nexus_task_completion::Status::Failure(f) => {
-                    if let Some(FailureInfo::NexusHandlerFailureInfo(failure_info)) =
-                        &f.failure_info
+                nexus_task_completion::Status::Failure(mut f) => {
+                    let use_temporal_failures = task_info
+                        .capabilities
+                        .as_ref()
+                        .map(|c| c.temporal_failure_responses)
+                        .unwrap_or_default();
+
+                    let task_failure = if let Some(FailureInfo::NexusHandlerFailureInfo(
+                        failure_info,
+                    )) = &f.failure_info
                     {
+                        // The failure is a HandlerError
                         self.metrics
                             .with_new_attrs([metrics::failure_reason(
                                 FailureReason::NexusHandlerError(failure_info.r#type.clone()),
                             )])
                             .nexus_task_execution_failed();
-                        let maybe_net_err = client
-                            .fail_nexus_task(tt, NexusTaskFailure::Temporal(f))
-                            .await
-                            .err();
-                        (true, maybe_net_err)
+
+                        if use_temporal_failures {
+                            NexusTaskFailure::Temporal(f)
+                        } else {
+                            // Convert Failure to Nexus HandlerError proto
+
+                            // 1. Remove message from failure
+                            let message = f.message;
+                            f.message = String::default();
+
+                            // 2. Serialize Failure as JSON
+                            let details = serde_json::to_vec(&f).map_err(|_| {
+                                CompleteNexusError::MalformedNexusCompletion {
+                                    reason: "error serializing failure".to_string(),
+                                }
+                            })?;
+
+                            // 3. Package Failure as HandlerError
+                            let h = nexus::v1::HandlerError {
+                                error_type: failure_info.r#type.clone(),
+                                failure: Some(nexus::v1::Failure {
+                                    message: message,
+                                    metadata: HashMap::from([(
+                                        "type".to_string(),
+                                        failure::v1::Failure::full_name().into(),
+                                    )]),
+                                    details: details,
+                                }),
+                                //NexusHandlerFailureInfo and HandlerError both use enums::v1::NexusHandlerErrorRetryBehavior
+                                retry_behavior: failure_info.retry_behavior,
+                            };
+                            NexusTaskFailure::Legacy(h)
+                        }
                     } else {
-                        return Err(CompleteNexusError::MalformedNexusCompletion {
-                            reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo".to_string(),
-                        });
-                    }
+                        // The failure isn't a HandlerError, just send the failure if the server allows it.
+                        // This happens when Nexus operation handlers return an OperationError that is translated to
+                        // ApplicationError or CancelledError as indicated by OperationError.state
+                        if use_temporal_failures {
+                            self.metrics
+                                .with_new_attrs([metrics::failure_reason(
+                                    FailureReason::NexusOperation(f.message.clone()),
+                                )])
+                                .nexus_task_execution_failed();
+
+                            NexusTaskFailure::Temporal(f)
+                        } else {
+                            return Err(CompleteNexusError::MalformedNexusCompletion {
+                                reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo for old servers".to_string(),
+                            });
+                        }
+                    };
+
+                    let maybe_net_err = client.fail_nexus_task(tt, task_failure).await.err();
+                    (true, maybe_net_err)
                 }
             };
 
@@ -344,6 +396,12 @@ where
                                     ),
                                 })
                                 .unwrap_or_default();
+
+                            let capabilities = t
+                                .resp
+                                .request
+                                .as_ref()
+                                .and_then(|r| r.capabilities);
                             self.outstanding_task_map.lock().insert(
                                 tt,
                                 NexusInFlightTask {
@@ -357,6 +415,7 @@ where
                                         .and_then(|t| t.try_into().ok()),
                                     start_time: Instant::now(),
                                     _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
+                                    capabilities,
                                 },
                             );
                             Some(Ok(NexusTask {
@@ -414,6 +473,7 @@ struct NexusInFlightTask {
     scheduled_time: Option<SystemTime>,
     start_time: Instant,
     _permit: UsedMeteredSemPermit<NexusSlotKind>,
+    capabilities: Option<nexus::v1::request::Capabilities>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Default)]

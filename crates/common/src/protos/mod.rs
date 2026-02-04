@@ -30,6 +30,13 @@ pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 /// The search attribute key used when registering change versions
 pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
 
+macro_rules! include_proto_with_serde {
+    ($pkg:tt) => {
+        tonic::include_proto!($pkg);
+        include!(concat!(env!("OUT_DIR"), concat!("/", $pkg, ".serde.rs")));
+    };
+}
+
 #[allow(
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
@@ -2016,7 +2023,7 @@ pub mod temporal {
                     collections::HashMap,
                     fmt::{Display, Formatter},
                 };
-                tonic::include_proto!("temporal.api.common.v1");
+                include_proto_with_serde!("temporal.api.common.v1");
 
                 impl<T> From<T> for Payload
                 where
@@ -2149,12 +2156,12 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.enums.v1");
+                include_proto_with_serde!("temporal.api.enums.v1");
             }
         }
         pub mod failure {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.failure.v1");
+                include_proto_with_serde!("temporal.api.failure.v1");
             }
         }
         pub mod filter {

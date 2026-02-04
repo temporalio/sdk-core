@@ -98,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "coresdk.external_data.LocalActivityMarkerData.backoff",
             "#[serde(with = \"opt_duration\")]",
         )
-        .file_descriptor_set_path(descriptor_file)
+        .file_descriptor_set_path(&descriptor_file)
         .skip_debug(["temporal.api.common.v1.Payload"])
         .compile_with_config(
             {
@@ -122,6 +122,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/grpc",
             ],
         )?;
+
+    let descriptors = std::fs::read(&descriptor_file)?;
+    pbjson_build::Builder::new()
+        .register_descriptors(&descriptors)?
+        .build(&[
+            ".temporal.api.failure",
+            ".temporal.api.common",
+            ".temporal.api.enums",
+        ])?;
 
     Ok(())
 }
