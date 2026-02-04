@@ -398,17 +398,13 @@ fn create_test_activity_task() -> PollActivityTaskQueueResponse {
     }
 }
 
-fn create_test_nexus_task() -> PollNexusTaskQueueResponse {
-    create_test_nexus_task_with_headers(Default::default())
-}
-
-fn create_test_nexus_task_with_headers(
-    header: std::collections::HashMap<String, String>,
+fn create_test_nexus_task(
+    capabilities: Option<nexus::v1::request::Capabilities>,
 ) -> PollNexusTaskQueueResponse {
     PollNexusTaskQueueResponse {
         task_token: b"nex-task".to_vec(),
         request: Some(NexusRequest {
-            capabilities: Some(nexus::v1::request::Capabilities{ temporal_failure_responses: true }),
+            capabilities,
             endpoint: "test-endpoint".to_string(),
             header: Default::default(),
             scheduled_time: None,
@@ -512,7 +508,11 @@ async fn test_task_type_combinations_unified(
             mocks.set_act_poller_from_resps(vec![QueueResponse::from(create_test_activity_task())]);
         }
         if enable_nexus {
-            mocks.set_nexus_poller_from_resps(vec![QueueResponse::from(create_test_nexus_task())]);
+            mocks.set_nexus_poller_from_resps(vec![QueueResponse::from(create_test_nexus_task(
+                Some(nexus::v1::request::Capabilities {
+                    temporal_failure_responses: true,
+                }),
+            ))]);
         }
         mocks
     } else {
@@ -527,7 +527,11 @@ async fn test_task_type_combinations_unified(
             None
         };
         let nexus_tasks = if enable_nexus && with_task {
-            Some(vec![QueueResponse::from(create_test_nexus_task())])
+            Some(vec![QueueResponse::from(create_test_nexus_task(Some(
+                nexus::v1::request::Capabilities {
+                    temporal_failure_responses: true,
+                },
+            )))])
         } else {
             None
         };
@@ -613,7 +617,11 @@ async fn nexus_task_completion_with_failure_status() {
         client,
         None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
         None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
-        Some(vec![QueueResponse::from(create_test_nexus_task())]),
+        Some(vec![QueueResponse::from(create_test_nexus_task(Some(
+            nexus::v1::request::Capabilities {
+                temporal_failure_responses: true,
+            },
+        )))]),
     );
     let worker = mock_worker(mocks);
 
@@ -645,14 +653,70 @@ async fn nexus_task_completion_with_failure_status() {
 }
 
 #[tokio::test]
-async fn nexus_task_completion_with_failure_status_missing_handler_info_fails() {
+async fn nexus_task_completion_with_failure_converts_to_legacy_for_old_server() {
+    let mut client = mock_worker_client();
+    client
+        .expect_fail_nexus_task()
+        .times(1)
+        .returning(|_, _| Ok(RespondNexusTaskFailedResponse::default()));
+
+    let mocks = MocksHolder::from_client_with_custom(
+        client,
+        None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
+        None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
+        Some(vec![QueueResponse::from(create_test_nexus_task(Some(
+            nexus::v1::request::Capabilities {
+                temporal_failure_responses: false,
+            },
+        )))]),
+    );
+    let worker = mock_worker(mocks);
+
+    let nexus_task = worker.poll_nexus_task().await.unwrap();
+    worker
+        .complete_nexus_task(NexusTaskCompletion {
+            task_token: nexus_task.task_token().to_vec(),
+            status: Some(nexus_task_completion::Status::Failure(Failure {
+                message: "handler failed".to_string(),
+                failure_info: Some(FailureInfo::NexusHandlerFailureInfo(
+                    NexusHandlerFailureInfo {
+                        r#type: "INTERNAL".to_string(),
+                        retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
+                    },
+                )),
+                ..Default::default()
+            })),
+        })
+        .await
+        .unwrap();
+
+    worker.initiate_shutdown();
+    assert_matches!(
+        worker.poll_nexus_task().await.unwrap_err(),
+        PollError::ShutDown
+    );
+    worker.shutdown().await;
+    worker.finalize_shutdown().await;
+}
+
+#[rstest::rstest]
+#[case::with_temporal_failure_responses(true)]
+#[case::without_temporal_failure_responses(false)]
+#[tokio::test]
+async fn nexus_task_completion_with_failure_status_missing_handler_info_fails(
+    #[case] temporal_failure_responses: bool,
+) {
     let client = mock_worker_client();
 
     let mocks = MocksHolder::from_client_with_custom(
         client,
         None::<stream::Empty<PollWorkflowTaskQueueResponse>>,
         None::<Vec<QueueResponse<PollActivityTaskQueueResponse>>>,
-        Some(vec![QueueResponse::from(create_test_nexus_task())]),
+        Some(vec![QueueResponse::from(create_test_nexus_task(Some(
+            nexus::v1::request::Capabilities {
+                temporal_failure_responses,
+            },
+        )))]),
     );
     let worker = mock_worker(mocks);
 
