@@ -141,7 +141,27 @@ impl NexusManager {
                                         FailureReason::NexusOperation(oe.operation_state.clone()),
                                     )])
                                     .nexus_task_execution_failed();
-                            };
+                            } else if let Some(start_operation_response::Variant::Failure(f)) =
+                                so.variant.as_ref()
+                            {
+                                let operation_state = match &f.failure_info {
+                                    Some(FailureInfo::ApplicationFailureInfo(_)) => "failed",
+                                    Some(FailureInfo::CanceledFailureInfo(_)) => "canceled",
+                                    _ => {
+                                        return Err(CompleteNexusError::MalformedNexusCompletion {
+                                            reason: "Nexus StartOperationResponse with a failure must contain ApplicationFailureInfo or CanceledFailureInfo"
+                                                .to_string(),
+                                        });
+                                    }
+                                };
+
+                                self.metrics
+                                    .with_new_attrs([metrics::failure_reason(
+                                        FailureReason::NexusOperation(operation_state.into()),
+                                    )])
+                                    .nexus_task_execution_failed();
+                            }
+
                             if task_info.request_kind != RequestKind::Start {
                                 return Err(CompleteNexusError::MalformedNexusCompletion {
                                     reason: "Nexus response was StartOperation but request was not"
