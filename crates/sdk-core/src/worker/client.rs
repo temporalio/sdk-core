@@ -27,7 +27,8 @@ use temporalio_common::{
             },
             deployment,
             enums::v1::{
-                TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
+                TaskQueueKind, TaskQueueType, VersioningBehavior, WorkerVersioningMode,
+                WorkflowTaskFailedCause,
             },
             failure::v1::Failure,
             nexus::{self, v1::NexusTaskFailure},
@@ -57,6 +58,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    worker_instance_key: Uuid,
     worker_heartbeat_map: Arc<Mutex<HashMap<String, ClientHeartbeatData>>>,
 }
 
@@ -66,12 +68,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
+        worker_instance_key: Uuid,
     ) -> Self {
         Self {
             client,
             namespace,
             identity,
             worker_versioning_strategy,
+            worker_instance_key,
             worker_heartbeat_map: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -221,6 +225,8 @@ pub trait WorkerClient: Sync + Send {
     async fn shutdown_worker(
         &self,
         sticky_task_queue: String,
+        task_queue: String,
+        task_queue_types: Vec<TaskQueueType>,
         final_heartbeat: Option<WorkerHeartbeat>,
     ) -> Result<ShutdownWorkerResponse>;
     /// Record a worker heartbeat
@@ -244,6 +250,8 @@ pub trait WorkerClient: Sync + Send {
     fn identity(&self) -> String;
     /// Get worker grouping key
     fn worker_grouping_key(&self) -> Uuid;
+    /// Get worker instance key (unique per worker instance)
+    fn worker_instance_key(&self) -> Uuid;
     /// Sets the client-reliant fields for WorkerHeartbeat. This also updates client-level tracking
     /// of heartbeat fields, like last heartbeat timestamp.
     fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat);
@@ -300,8 +308,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            //TODO: fill in worker_instance_key
-            ..Default::default()
+            worker_instance_key: self.worker_instance_key.to_string(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -339,8 +346,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            //TODO: fill in worker_instance_key
-            ..Default::default()
+            worker_instance_key: self.worker_instance_key.to_string(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -376,8 +382,7 @@ impl WorkerClient for WorkerClientBag {
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
             worker_heartbeat: Vec::new(),
-            //TODO: fill in worker_instance_key
-            ..Default::default()
+            worker_instance_key: self.worker_instance_key.to_string(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -702,6 +707,8 @@ impl WorkerClient for WorkerClientBag {
     async fn shutdown_worker(
         &self,
         sticky_task_queue: String,
+        task_queue: String,
+        task_queue_types: Vec<TaskQueueType>,
         final_heartbeat: Option<WorkerHeartbeat>,
     ) -> Result<ShutdownWorkerResponse> {
         let mut final_heartbeat = final_heartbeat;
@@ -714,8 +721,9 @@ impl WorkerClient for WorkerClientBag {
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
             worker_heartbeat: final_heartbeat,
-            //TODO: Fill in task_queue, task_queue_types, worker_instance_key
-            ..Default::default()
+            worker_instance_key: self.worker_instance_key.to_string(),
+            task_queue,
+            task_queue_types: task_queue_types.into_iter().map(|t| t as i32).collect(),
         }
         .into_request();
         request
@@ -780,6 +788,10 @@ impl WorkerClient for WorkerClientBag {
 
     fn worker_grouping_key(&self) -> Uuid {
         self.client.get_client().inner_cow().worker_grouping_key()
+    }
+
+    fn worker_instance_key(&self) -> Uuid {
+        self.worker_instance_key
     }
 
     fn set_heartbeat_client_fields(&self, heartbeat: &mut WorkerHeartbeat) {
