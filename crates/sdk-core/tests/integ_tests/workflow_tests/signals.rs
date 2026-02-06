@@ -19,7 +19,8 @@ use temporalio_common::protos::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, WorkflowContext,
+    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, SyncWorkflowContext,
+    WorkflowContext,
     WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
@@ -91,7 +92,7 @@ impl SignalReceiver {
     }
 
     #[signal(name = "signame")]
-    fn handle_signal(&mut self, ctx: &mut WorkflowContext<Self>, input: String) {
+    fn handle_signal(&mut self, ctx: &mut SyncWorkflowContext<Self>, input: String) {
         assert_eq!(input, "hi!");
         let headers = ctx.headers();
         assert_eq!(
@@ -117,7 +118,7 @@ impl SignalWithCreateWfReceiver {
     }
 
     #[signal(name = "signame")]
-    fn handle_signal(&mut self, ctx: &mut WorkflowContext<Self>, input: String) {
+    fn handle_signal(&mut self, ctx: &mut SyncWorkflowContext<Self>, input: String) {
         assert_eq!(input, "tada");
         let headers = ctx.headers();
         assert_eq!(

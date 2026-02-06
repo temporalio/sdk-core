@@ -13,7 +13,7 @@ use temporalio_common::protos::{
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult};
+use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{MockPollCfg, ResponseType, mock_worker_client};
 
 #[workflow]
@@ -31,7 +31,7 @@ impl WeirdPaginationWf {
     }
 
     #[signal(name = "hi")]
-    fn hi(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    fn hi(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
         self.signal_count += 1;
         self.sig_ctr.fetch_add(1, Ordering::AcqRel);
     }
@@ -149,7 +149,7 @@ impl ExtremePaginationWf {
     }
 
     #[signal(name = "hi")]
-    fn hi(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+    fn hi(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
         self.signal_count += 1;
         self.sig_ctr.fetch_add(1, Ordering::AcqRel);
     }

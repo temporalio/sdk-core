@@ -42,7 +42,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
+    ActivityOptions, LocalActivityOptions, SyncWorkflowContext, WorkflowContext,
+    WorkflowContextView, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -649,7 +650,7 @@ async fn update_with_local_acts() {
         }
 
         #[signal]
-        fn done_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        fn done_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
             self.done = true;
         }
 
@@ -1073,7 +1074,7 @@ async fn worker_restarted_in_middle_of_update() {
         }
 
         #[signal]
-        fn done_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        fn done_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
             self.done = true;
         }
 
@@ -1205,7 +1206,7 @@ async fn update_after_empty_wft() {
         }
 
         #[signal]
-        fn signal_handler(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        fn signal_handler(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
             self.signal_received = true;
         }
 
@@ -1303,7 +1304,7 @@ async fn update_lost_on_activity_mismatch() {
         }
 
         #[update]
-        fn do_update(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        fn do_update(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
             self.can_run += 1;
         }
     }

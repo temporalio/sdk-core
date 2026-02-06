@@ -15,7 +15,7 @@ use temporalio_common::protos::{
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 use temporalio_sdk_core::test_help::{
     MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
 };
@@ -192,7 +192,7 @@ impl CounterWf {
     }
 
     #[signal]
-    fn my_signal(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn my_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.got_signal = true;
     }
 

@@ -29,7 +29,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{CoreRuntime, PollerBehavior, TunerHolder};
@@ -72,7 +72,7 @@ impl PollerLoadSpikyWf {
     }
 
     #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
 }
 
 #[workflow]
@@ -94,7 +94,7 @@ impl PollerLoadSustainedWf {
     }
 
     #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
 }
 
 #[workflow]
@@ -122,7 +122,7 @@ impl PollerLoadSpikeThenSustainedWf {
     }
 
     #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test]

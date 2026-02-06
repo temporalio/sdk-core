@@ -9,7 +9,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
 #[derive(Default)]
@@ -47,7 +47,7 @@ impl InteractionWorkflow {
     }
 
     #[signal]
-    fn increment(&mut self, _ctx: &mut WorkflowContext<Self>, amount: i32) {
+    fn increment(&mut self, _ctx: &mut SyncWorkflowContext<Self>, amount: i32) {
         self.counter += amount;
     }
 
@@ -78,7 +78,7 @@ impl InteractionWorkflow {
     }
 
     #[update]
-    fn set_counter(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
+    fn set_counter(&mut self, _ctx: &mut SyncWorkflowContext<Self>, value: i32) -> i32 {
         self.log.push("set counter");
         let old = self.counter;
         self.counter = value;
@@ -86,7 +86,7 @@ impl InteractionWorkflow {
     }
 
     #[update]
-    fn invalidate_vec(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn invalidate_vec(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.log = vec![]
     }
 
@@ -113,7 +113,7 @@ impl InteractionWorkflow {
         }
     }
     #[update]
-    fn validated_set(&mut self, _ctx: &mut WorkflowContext<Self>, value: i32) -> i32 {
+    fn validated_set(&mut self, _ctx: &mut SyncWorkflowContext<Self>, value: i32) -> i32 {
         let old = self.counter;
         self.counter = value;
         old

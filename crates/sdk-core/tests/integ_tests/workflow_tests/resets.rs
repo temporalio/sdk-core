@@ -13,7 +13,7 @@ use temporalio_common::protos::temporal::api::{
 
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{LocalActivityOptions, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{LocalActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult};
 use tokio::sync::Notify;
 use tonic::IntoRequest;
 
@@ -38,7 +38,7 @@ impl ResetMeWf {
     }
 
     #[signal(name = POST_RESET_SIG)]
-    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn post_reset(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.post_reset_received = true;
     }
 }
@@ -159,12 +159,12 @@ impl ResetRandomseedWf {
     }
 
     #[signal(name = POST_FAIL_SIG)]
-    fn post_fail(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn post_fail(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.post_fail_received = true;
     }
 
     #[signal(name = POST_RESET_SIG)]
-    fn post_reset(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn post_reset(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.post_reset_received = true;
     }
 }

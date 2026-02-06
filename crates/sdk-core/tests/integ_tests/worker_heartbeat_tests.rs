@@ -35,7 +35,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -891,7 +891,7 @@ async fn worker_heartbeat_failure_metrics() {
         }
 
         #[signal]
-        fn handle_continue_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {
+        fn handle_continue_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
             self.signal_received = true;
         }
     }

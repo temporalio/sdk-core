@@ -85,7 +85,7 @@ pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
     ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
     PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
-    StartedChildWorkflow, TimerOptions, WorkflowContext, WorkflowContextView,
+    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{
@@ -1372,7 +1372,7 @@ mod tests {
         }
 
         #[signal(name = "increment")]
-        fn increment_counter(&mut self, _ctx: &mut WorkflowContext<Self>, amount: u32) {
+        fn increment_counter(&mut self, _ctx: &mut SyncWorkflowContext<Self>, amount: u32) {
             self.counter += amount;
         }
 
@@ -1385,7 +1385,7 @@ mod tests {
         }
 
         #[update(name = "double")]
-        fn double_counter(&mut self, _ctx: &mut WorkflowContext<Self>) -> u32 {
+        fn double_counter(&mut self, _ctx: &mut SyncWorkflowContext<Self>) -> u32 {
             self.counter *= 2;
             self.counter
         }

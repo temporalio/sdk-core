@@ -535,7 +535,7 @@ fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
 }
 
 fn is_wf_context_type(ty: &Type) -> bool {
-    // Check for WorkflowContext or WorkflowContextView
+    // Check for WorkflowContext, SyncWorkflowContext, or WorkflowContextView
     let inner_type = match ty {
         Type::Reference(r) => &*r.elem,
         other => other,
@@ -544,7 +544,9 @@ fn is_wf_context_type(ty: &Type) -> bool {
     if let Type::Path(TypePath { path, .. }) = inner_type
         && let Some(segment) = path.segments.last()
     {
-        return segment.ident == "WorkflowContext" || segment.ident == "WorkflowContextView";
+        return segment.ident == "WorkflowContext"
+            || segment.ident == "SyncWorkflowContext"
+            || segment.ident == "WorkflowContextView";
     }
     false
 }
@@ -784,7 +786,7 @@ impl WorkflowMethodsDefinition {
                 impl ::temporalio_sdk::workflows::ExecutableSyncSignal<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
                         &mut self,
-                        ctx: &mut ::temporalio_sdk::WorkflowContext<Self>,
+                        ctx: &mut ::temporalio_sdk::SyncWorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::SignalDefinition>::Input,
                     ) {
                         #method_call
@@ -926,7 +928,7 @@ impl WorkflowMethodsDefinition {
                 impl ::temporalio_sdk::workflows::ExecutableSyncUpdate<#module_ident::#struct_ident> for #impl_type {
                     fn handle(
                         &mut self,
-                        ctx: &mut ::temporalio_sdk::WorkflowContext<Self>,
+                        ctx: &mut ::temporalio_sdk::SyncWorkflowContext<Self>,
                         input: <#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Input,
                     ) -> Result<<#module_ident::#struct_ident as ::temporalio_common::UpdateDefinition>::Output, Box<dyn ::std::error::Error + Send + Sync>> {
                         #body

@@ -1,5 +1,5 @@
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
+use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
 pub struct MyWorkflow {
@@ -21,7 +21,7 @@ impl MyWorkflow {
 
     // Sync signal uses &mut self
     #[signal(name = "increment")]
-    pub fn increment_counter(&mut self, _ctx: &mut WorkflowContext<Self>, amount: u32) {
+    pub fn increment_counter(&mut self, _ctx: &mut SyncWorkflowContext<Self>, amount: u32) {
         self.counter += amount;
     }
 
@@ -35,7 +35,7 @@ impl MyWorkflow {
     }
 
     #[update(name = "double")]
-    pub fn double_counter(&mut self, _ctx: &mut WorkflowContext<Self>) -> u32 {
+    pub fn double_counter(&mut self, _ctx: &mut SyncWorkflowContext<Self>) -> u32 {
         self.counter *= 2;
         self.counter
     }

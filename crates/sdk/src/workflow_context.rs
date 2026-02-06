@@ -95,27 +95,59 @@ struct WorkflowContextInner {
     payload_converter: PayloadConverter,
 }
 
-// TODO [rust-sdk-branch]: may want a SyncWorkflowContext which doesn't have state_mut (since
-// they get direct &mut access and it panics)
+/// Context provided to synchronous signal and update handlers.
+///
+/// This type provides all workflow context capabilities except `state()`, `state_mut()`,
+/// and `wait_condition()`. Those methods are not applicable in sync handler contexts.
+///
+/// Sync handlers receive `&mut self` directly, so they can reference and mutate workflow state without
+/// needing `state()`/`state_mut()`.
+pub struct SyncWorkflowContext<W> {
+    base: BaseWorkflowContext,
+    /// Headers from the current handler invocation (signal, update, etc.)
+    headers: Rc<HashMap<String, Payload>>,
+    _phantom: PhantomData<W>,
+}
+
+impl<W> Clone for SyncWorkflowContext<W> {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            headers: self.headers.clone(),
+            _phantom: PhantomData,
+        }
+    }
+}
+
 /// Used within workflows to issue commands, get info, etc.
 ///
 /// The type parameter `W` represents the workflow type. This enables type-safe
 /// access to workflow state via `state_mut()` for mutations.
 pub struct WorkflowContext<W> {
-    base: BaseWorkflowContext,
+    sync: SyncWorkflowContext<W>,
     /// The workflow instance
     workflow_state: Rc<RefCell<W>>,
-    /// Headers from the current handler invocation (signal, update, etc.)
-    headers: Rc<HashMap<String, Payload>>,
 }
 
 impl<W> Clone for WorkflowContext<W> {
     fn clone(&self) -> Self {
         Self {
-            base: self.base.clone(),
+            sync: self.sync.clone(),
             workflow_state: self.workflow_state.clone(),
-            headers: self.headers.clone(),
         }
+    }
+}
+
+impl<W> Deref for WorkflowContext<W> {
+    type Target = SyncWorkflowContext<W>;
+    fn deref(&self) -> &SyncWorkflowContext<W> {
+        &self.sync
+    }
+}
+
+impl<W> DerefMut for WorkflowContext<W> {
+    fn deref_mut(&mut self) -> &mut SyncWorkflowContext<W> {
+        &mut self.sync
     }
 }
 
@@ -480,37 +512,7 @@ impl BaseWorkflowContext {
     }
 }
 
-impl<W> WorkflowContext<W> {
-    /// Create a new wf context from a base context and workflow state.
-    pub(crate) fn from_base(base: BaseWorkflowContext, workflow_state: Rc<RefCell<W>>) -> Self {
-        Self {
-            base,
-            workflow_state,
-            headers: Rc::new(HashMap::new()),
-        }
-    }
-
-    /// Create a read-only view of this context.
-    pub(crate) fn view(&self) -> WorkflowContextView {
-        self.base.view()
-    }
-
-    /// Access workflow state immutably via closure.
-    ///
-    /// The borrow is scoped to the closure and cannot escape, preventing
-    /// borrows from being held across await points.
-    pub fn state<R>(&self, f: impl FnOnce(&W) -> R) -> R {
-        f(&*self.workflow_state.borrow())
-    }
-
-    /// Access workflow state mutably via closure.
-    ///
-    /// The borrow is scoped to the closure and cannot escape, preventing
-    /// borrows from being held across await points.
-    pub fn state_mut<R>(&self, f: impl FnOnce(&mut W) -> R) -> R {
-        f(&mut *self.workflow_state.borrow_mut())
-    }
-
+impl<W> SyncWorkflowContext<W> {
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
         &self.base.inner.namespace
@@ -569,15 +571,6 @@ impl<W> WorkflowContext<W> {
     /// signal. When called from the main workflow run method, returns an empty map.
     pub fn headers(&self) -> &HashMap<String, Payload> {
         &self.headers
-    }
-
-    /// Returns a new context with the specified headers set.
-    pub(crate) fn with_headers(&self, headers: HashMap<String, Payload>) -> Self {
-        Self {
-            base: self.base.clone(),
-            workflow_state: self.workflow_state.clone(),
-            headers: Rc::new(headers),
-        }
     }
 
     /// Returns the [PayloadConverter] currently used by the worker running this workflow.
@@ -793,6 +786,58 @@ impl<W> WorkflowContext<W> {
             .into(),
         );
         cmd
+    }
+
+    /// Create a read-only view of this context.
+    pub(crate) fn view(&self) -> WorkflowContextView {
+        self.base.view()
+    }
+}
+
+impl<W> WorkflowContext<W> {
+    /// Create a new wf context from a base context and workflow state.
+    pub(crate) fn from_base(base: BaseWorkflowContext, workflow_state: Rc<RefCell<W>>) -> Self {
+        Self {
+            sync: SyncWorkflowContext {
+                base,
+                headers: Rc::new(HashMap::new()),
+                _phantom: PhantomData,
+            },
+            workflow_state,
+        }
+    }
+
+    /// Returns a new context with the specified headers set.
+    pub(crate) fn with_headers(&self, headers: HashMap<String, Payload>) -> Self {
+        Self {
+            sync: SyncWorkflowContext {
+                base: self.sync.base.clone(),
+                headers: Rc::new(headers),
+                _phantom: PhantomData,
+            },
+            workflow_state: self.workflow_state.clone(),
+        }
+    }
+
+    /// Returns a [`SyncWorkflowContext`] extracted from this context.
+    pub(crate) fn sync_context(&self) -> SyncWorkflowContext<W> {
+        self.sync.clone()
+    }
+
+    /// Access workflow state immutably via closure.
+    ///
+    /// The borrow is scoped to the closure and cannot escape, preventing
+    /// borrows from being held across await points.
+    pub fn state<R>(&self, f: impl FnOnce(&W) -> R) -> R {
+        f(&*self.workflow_state.borrow())
+    }
+
+    /// Access workflow state mutably via closure.
+    ///
+    /// The borrow is scoped to the closure and cannot escape, preventing
+    /// borrows from being held across await points.
+    pub fn state_mut<R>(&self, f: impl FnOnce(&mut W) -> R) -> R {
+        f(&mut *self.workflow_state.borrow_mut())
     }
 
     /// Wait for some condition on workflow state to become true, yielding the workflow if not.

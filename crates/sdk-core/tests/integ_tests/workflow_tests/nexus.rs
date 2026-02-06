@@ -43,7 +43,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, NexusOperationOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
+    CancellableFuture, NexusOperationOptions, SyncWorkflowContext, WorkflowContext,
+    WorkflowContextView, WorkflowResult,
     WorkflowTermination,
 };
 use temporalio_sdk_core::PollError;
@@ -782,7 +783,7 @@ impl AsyncCompleterWf {
     }
 
     #[signal(name = "proceed-to-exit")]
-    fn handle_proceed_signal(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn handle_proceed_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.proceed_signal_received = true;
     }
 }

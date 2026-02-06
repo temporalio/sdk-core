@@ -36,7 +36,7 @@ use temporalio_common::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
@@ -265,7 +265,7 @@ impl DeprecatedPatchRemovalWf {
     }
 
     #[signal]
-    fn handle_sig(&mut self, _ctx: &mut WorkflowContext<Self>) {
+    fn handle_sig(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
         self.signal_received = true;
     }
 }

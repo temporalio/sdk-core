@@ -39,7 +39,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -234,7 +234,7 @@ impl WorkflowLoadWf {
     }
 
     #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -444,7 +444,7 @@ impl PollerLoadWf {
     }
 
     #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: ()) {}
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
 }
 
 #[tokio::test]

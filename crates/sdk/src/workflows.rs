@@ -6,7 +6,7 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{WorkflowContext, WorkflowContextView, WorkflowResult};
+//! use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
@@ -29,7 +29,7 @@
 //!
 //!     // Sync signals use &mut self for direct mutations
 //!     #[signal]
-//!     pub fn increment(&mut self, ctx: &mut WorkflowContext<Self>, amount: u32) {
+//!     pub fn increment(&mut self, ctx: &mut SyncWorkflowContext<Self>, amount: u32) {
 //!         self.counter += amount;
 //!     }
 //!
@@ -41,7 +41,10 @@
 //! }
 //! ```
 
-use crate::{BaseWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowTermination};
+use crate::{
+    BaseWorkflowContext, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
+    WorkflowTermination,
+};
 use futures_util::future::{Fuse, FutureExt, LocalBoxFuture};
 use std::{
     cell::RefCell,
@@ -183,7 +186,7 @@ pub trait WorkflowImplementation: Sized + 'static {
 #[doc(hidden)]
 pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
     /// Handle an incoming signal with the given input.
-    fn handle(&mut self, ctx: &mut WorkflowContext<Self>, input: S::Input);
+    fn handle(&mut self, ctx: &mut SyncWorkflowContext<Self>, input: S::Input);
 
     /// Dispatch the signal with payload deserialization.
     fn dispatch(
@@ -193,8 +196,8 @@ pub trait ExecutableSyncSignal<S: SignalDefinition>: WorkflowImplementation {
     ) -> LocalBoxFuture<'static, Result<(), WorkflowError>> {
         match deserialize_input::<S::Input>(payloads.payloads, converter) {
             Ok(input) => {
-                let mut ctx_clone = ctx.clone();
-                ctx.state_mut(|wf| Self::handle(wf, &mut ctx_clone, input));
+                let mut sync_ctx = ctx.sync_context();
+                ctx.state_mut(|wf| Self::handle(wf, &mut sync_ctx, input));
                 std::future::ready(Ok(())).boxed_local()
             }
             Err(e) => std::future::ready(Err(e)).boxed_local(),
@@ -257,7 +260,7 @@ pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
     /// Returning an error will cause the update to fail with that error message.
     fn handle(
         &mut self,
-        ctx: &mut WorkflowContext<Self>,
+        ctx: &mut SyncWorkflowContext<Self>,
         input: U::Input,
     ) -> Result<U::Output, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -281,8 +284,8 @@ pub trait ExecutableSyncUpdate<U: UpdateDefinition>: WorkflowImplementation {
             Err(e) => return std::future::ready(Err(e)).boxed_local(),
         };
         let converter = converter.clone();
-        let mut ctx_clone = ctx.clone();
-        let result = ctx.state_mut(|wf| Self::handle(wf, &mut ctx_clone, input));
+        let mut sync_ctx = ctx.sync_context();
+        let result = ctx.state_mut(|wf| Self::handle(wf, &mut sync_ctx, input));
         match result {
             Ok(output) => match serialize_output(&output, &converter) {
                 Ok(payload) => std::future::ready(Ok(payload)).boxed_local(),

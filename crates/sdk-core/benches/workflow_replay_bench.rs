@@ -17,7 +17,7 @@ use temporalio_common::{
     telemetry::metrics::{MetricKeyValue, MetricParameters, NewAttributes},
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult};
+use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -165,7 +165,7 @@ impl BigSignalsWf {
     }
 
     #[signal(name = "bigsig")]
-    fn handle_signal(&mut self, _ctx: &mut WorkflowContext<Self>, _: Vec<u8>) {
+    fn handle_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: Vec<u8>) {
         self.signal_count += 1;
     }
 }
