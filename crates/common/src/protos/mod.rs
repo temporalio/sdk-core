@@ -33,6 +33,7 @@ pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
 macro_rules! include_proto_with_serde {
     ($pkg:tt) => {
         tonic::include_proto!($pkg);
+
         include!(concat!(env!("OUT_DIR"), concat!("/", $pkg, ".serde.rs")));
     };
 }

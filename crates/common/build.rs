@@ -5,11 +5,49 @@ use tonic_prost_build::Config;
 static ALWAYS_SERDE: &str = "#[cfg_attr(not(feature = \"serde_serialize\"), \
                                derive(::serde::Serialize, ::serde::Deserialize))]";
 
+static SERDE_ATTR: &str =
+    "#[cfg_attr(feature = \"serde_serialize\", derive(::serde::Serialize, ::serde::Deserialize))]";
+
+/// Package prefixes that get conditional serde derive via type_attribute.
+/// Packages under `temporal.api` are listed individually to exclude the pbjson packages
+/// (temporal.api.common, temporal.api.enums, temporal.api.failure), which get their
+/// Serialize/Deserialize impls from generated .serde.rs files.
+///
+/// If you add a new proto package, add its prefix here unless it is also
+/// added to the pbjson_build list below.
+const SERDE_DERIVE_PREFIXES: &[&str] = &[
+    ".coresdk",
+    ".grpc",
+    ".temporal.api.activity",
+    ".temporal.api.batch",
+    ".temporal.api.cloud",
+    ".temporal.api.command",
+    ".temporal.api.deployment",
+    ".temporal.api.filter",
+    ".temporal.api.history",
+    ".temporal.api.namespace",
+    ".temporal.api.nexus",
+    ".temporal.api.operatorservice",
+    ".temporal.api.protocol",
+    ".temporal.api.query",
+    ".temporal.api.replication",
+    ".temporal.api.rules",
+    ".temporal.api.schedule",
+    ".temporal.api.sdk",
+    ".temporal.api.taskqueue",
+    ".temporal.api.testservice",
+    ".temporal.api.update",
+    ".temporal.api.version",
+    ".temporal.api.worker",
+    ".temporal.api.workflow",
+    ".temporal.api.workflowservice",
+];
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=./protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
-    tonic_prost_build::configure()
+    let mut builder = tonic_prost_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
         .build_server(false)
@@ -81,11 +119,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         // All external data is useful to be able to JSON serialize, so it can render in web UI
-        .type_attribute(".coresdk.external_data", ALWAYS_SERDE)
-        .type_attribute(
-            ".",
-            "#[cfg_attr(feature = \"serde_serialize\", derive(::serde::Serialize, ::serde::Deserialize))]",
-        )
+        .type_attribute(".coresdk.external_data", ALWAYS_SERDE);
+
+    for prefix in SERDE_DERIVE_PREFIXES {
+        builder = builder.type_attribute(*prefix, SERDE_ATTR);
+    }
+
+    builder
         .field_attribute(
             "coresdk.external_data.LocalActivityMarkerData.complete_time",
             "#[serde(with = \"opt_timestamp\")]",
@@ -102,9 +142,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .skip_debug(["temporal.api.common.v1.Payload"])
         .compile_with_config(
             {
-              let mut c = Config::new();
-              c.enable_type_names();
-              c
+                let mut c = Config::new();
+                c.enable_type_names();
+                c
             },
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
