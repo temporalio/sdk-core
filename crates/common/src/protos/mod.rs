@@ -2727,16 +2727,10 @@ pub mod temporal {
                         // 1. Remove message from failure
                         let message = std::mem::take(&mut f.message);
 
-                        // 2. Recurse on cause
-                        let cause = f.cause.take();
-                        let cause = cause
-                            .map(|boxed_cause| (*boxed_cause).try_into().map(Box::new))
-                            .transpose()?;
-
-                        // 3. Serialize Failure as JSON
+                        // 2. Serialize Failure as JSON
                         let details = serde_json::to_vec(&f)?;
 
-                        // 4. Package Temporal Failure as Nexus Failure
+                        // 3. Package Temporal Failure as Nexus Failure
                         Ok(Failure {
                             message,
                             stack_trace: f.stack_trace,
@@ -2745,7 +2739,7 @@ pub mod temporal {
                                 failure::v1::Failure::full_name().into(),
                             )]),
                             details,
-                            cause,
+                            cause: None,
                         })
                     }
                 }
