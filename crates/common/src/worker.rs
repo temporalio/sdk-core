@@ -7,10 +7,7 @@ use crate::{
         coresdk,
         coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
         temporal,
-        temporal::api::{
-            enums::v1::{TaskQueueType, VersioningBehavior},
-            worker::v1::PluginInfo,
-        },
+        temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
     },
     telemetry::metrics::TemporalMeter,
 };
@@ -87,20 +84,6 @@ impl WorkerTaskTypes {
             || (self.enable_local_activities && other.enable_local_activities)
             || (self.enable_remote_activities && other.enable_remote_activities)
             || (self.enable_nexus && other.enable_nexus)
-    }
-
-    pub fn to_task_queue_types(&self) -> Vec<TaskQueueType> {
-        let mut types = Vec::new();
-        if self.enable_workflows {
-            types.push(TaskQueueType::Workflow);
-        }
-        if self.enable_remote_activities {
-            types.push(TaskQueueType::Activity);
-        }
-        if self.enable_nexus {
-            types.push(TaskQueueType::Nexus);
-        }
-        types
     }
 }
 

@@ -108,13 +108,11 @@ where
         bail!("Client identity cannot be empty. Either lang or user should be setting this value");
     }
 
-    let worker_instance_key = uuid::Uuid::new_v4();
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         namespace.clone(),
         client_ident.clone(),
         worker_config.versioning_strategy.clone(),
-        worker_instance_key,
     ));
 
     Worker::new(
