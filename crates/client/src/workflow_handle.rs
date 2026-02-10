@@ -2,7 +2,7 @@ use crate::{
     CancelWorkflowOptions, DescribeWorkflowOptions, FetchHistoryOptions, GetWorkflowResultOptions,
     NamespacedClient, QueryOptions, SignalOptions, StartUpdateOptions, TerminateWorkflowOptions,
     UpdateOptions, WorkflowClientTrait, WorkflowService, WorkflowUpdateWaitStage,
-    errors::{QueryError, UpdateError, WorkflowInteractionError},
+    errors::{WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError},
 };
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
@@ -423,7 +423,7 @@ where
         query: Q,
         input: Q::Input,
         opts: QueryOptions,
-    ) -> Result<Q::Output, QueryError>
+    ) -> Result<Q::Output, WorkflowQueryError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
         Q: QueryDefinition<Workflow = W>,
@@ -454,11 +454,11 @@ where
                 .into_request(),
             )
             .await
-            .map_err(QueryError::from_status)?
+            .map_err(WorkflowQueryError::from_status)?
             .into_inner();
 
         if let Some(rejected) = response.query_rejected {
-            return Err(QueryError::Rejected(rejected));
+            return Err(WorkflowQueryError::Rejected(rejected));
         }
 
         let result_payloads = response
@@ -468,7 +468,7 @@ where
 
         dc.from_payloads(&SerializationContextData::Workflow, result_payloads)
             .await
-            .map_err(QueryError::from)
+            .map_err(WorkflowQueryError::from)
     }
 
     /// Send an update to the workflow and wait for it to complete, returning the result.
@@ -477,7 +477,7 @@ where
         update: U,
         input: U::Input,
         options: UpdateOptions,
-    ) -> Result<U::Output, UpdateError>
+    ) -> Result<U::Output, WorkflowUpdateError>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -505,7 +505,7 @@ where
         update: U,
         input: U::Input,
         options: StartUpdateOptions,
-    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, UpdateError>
+    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
         CT: WorkflowClientTrait,
         U: UpdateDefinition<Workflow = W>,
@@ -553,7 +553,7 @@ where
             .into_request(),
         )
         .await
-        .map_err(UpdateError::from_status)?
+        .map_err(WorkflowUpdateError::from_status)?
         .into_inner();
 
         // Extract run_id from response if available
@@ -758,7 +758,7 @@ where
     CT: WorkflowService + NamespacedClient + Clone,
 {
     /// Wait for the update to complete and return the result.
-    pub async fn get_result(&self) -> Result<T, UpdateError>
+    pub async fn get_result(&self) -> Result<T, WorkflowUpdateError>
     where
         T: temporalio_common::data_converters::TemporalDeserializable,
     {
@@ -784,12 +784,12 @@ where
                 .into_request(),
             )
             .await
-            .map_err(UpdateError::from_status)?
+            .map_err(WorkflowUpdateError::from_status)?
             .into_inner();
 
-            response
-                .outcome
-                .ok_or_else(|| UpdateError::Other("Update poll returned no outcome".into()))?
+            response.outcome.ok_or_else(|| {
+                WorkflowUpdateError::Other("Update poll returned no outcome".into())
+            })?
         };
 
         match outcome.value {
@@ -798,11 +798,11 @@ where
                 .data_converter()
                 .from_payloads(&SerializationContextData::Workflow, success.payloads)
                 .await
-                .map_err(UpdateError::from),
+                .map_err(WorkflowUpdateError::from),
             Some(update::v1::outcome::Value::Failure(failure)) => {
-                Err(UpdateError::Failed(Box::new(failure)))
+                Err(WorkflowUpdateError::Failed(Box::new(failure)))
             }
-            None => Err(UpdateError::Other(
+            None => Err(WorkflowUpdateError::Other(
                 "Update returned no outcome value".into(),
             )),
         }

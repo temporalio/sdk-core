@@ -33,7 +33,7 @@ use temporalio_client::{
     NamespacedClient, TlsOptions, UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait,
     WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle, WorkflowOptions,
     WorkflowService,
-    errors::{StartWorkflowError, WorkflowInteractionError},
+    errors::{WorkflowInteractionError, WorkflowStartError},
 };
 use temporalio_common::{
     WorkflowDefinition,
@@ -591,7 +591,7 @@ impl TestWorker {
         workflow: W,
         input: W::Input,
         mut options: WorkflowOptions,
-    ) -> Result<WorkflowHandle<Client, W>, StartWorkflowError>
+    ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
     where
         W: WorkflowDefinition,
         W::Input: Send,

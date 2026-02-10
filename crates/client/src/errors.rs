@@ -61,7 +61,16 @@ pub enum InvalidHeaderError {
 /// Errors that can occur when starting a workflow.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum StartWorkflowError {
+pub enum WorkflowStartError {
+    /// The workflow already exists.
+    #[error("Workflow already started with run ID: {run_id}")]
+    AlreadyStarted {
+        /// The run ID of the existing workflow execution.
+        run_id: String,
+        /// The original gRPC status from the server.
+        #[source]
+        source: tonic::Status,
+    },
     /// Error converting the input to a payload.
     #[error("Failed to serialize workflow input: {0}")]
     PayloadConversion(#[from] PayloadConversionError),
@@ -70,10 +79,149 @@ pub enum StartWorkflowError {
     Rpc(#[from] tonic::Status),
 }
 
-/// Errors returned by client methods that don't need more specific error types.
+/// Errors returned by signal operations on workflows.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum ClientError {
+pub enum WorkflowSignalError {
+    /// The workflow was not found.
+    #[error("Workflow not found")]
+    NotFound(#[source] tonic::Status),
+
+    /// Error serializing the signal input.
+    #[error("Payload conversion error: {0}")]
+    PayloadConversion(#[from] PayloadConversionError),
+
+    /// An uncategorized RPC error from the server.
+    #[error("Server error: {0}")]
+    Rpc(tonic::Status),
+}
+
+impl WorkflowSignalError {
+    #[allow(dead_code)]
+    pub(crate) fn from_status(status: tonic::Status) -> Self {
+        if status.code() == Code::NotFound {
+            Self::NotFound(status)
+        } else {
+            Self::Rpc(status)
+        }
+    }
+}
+
+/// Errors returned by query operations on [crate::WorkflowHandle].
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WorkflowQueryError {
+    /// The workflow was not found.
+    #[error("Workflow not found")]
+    NotFound(#[source] tonic::Status),
+
+    /// The query was rejected based on the rejection condition.
+    #[error("Query rejected: workflow status {:?}", .0.status)]
+    Rejected(QueryRejected),
+
+    /// Error serializing input or deserializing output.
+    #[error("Payload conversion error: {0}")]
+    PayloadConversion(#[from] PayloadConversionError),
+
+    /// An uncategorized RPC error from the server.
+    #[error("Server error: {0}")]
+    Rpc(tonic::Status),
+
+    /// Other errors.
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl WorkflowQueryError {
+    pub(crate) fn from_status(status: tonic::Status) -> Self {
+        if status.code() == Code::NotFound {
+            Self::NotFound(status)
+        } else {
+            Self::Rpc(status)
+        }
+    }
+}
+
+/// Errors returned by update operations on [crate::WorkflowHandle].
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WorkflowUpdateError {
+    /// The workflow was not found.
+    #[error("Workflow not found")]
+    NotFound(#[source] tonic::Status),
+
+    /// The update failed with an application-level failure.
+    #[error("Update failed: {0:?}")]
+    Failed(Box<Failure>),
+
+    /// Error serializing input or deserializing output.
+    #[error("Payload conversion error: {0}")]
+    PayloadConversion(#[from] PayloadConversionError),
+
+    /// An uncategorized RPC error from the server.
+    #[error("Server error: {0}")]
+    Rpc(tonic::Status),
+
+    /// Other errors.
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl WorkflowUpdateError {
+    pub(crate) fn from_status(status: tonic::Status) -> Self {
+        if status.code() == Code::NotFound {
+            Self::NotFound(status)
+        } else {
+            Self::Rpc(status)
+        }
+    }
+}
+
+/// Errors returned by workflow get_result operations.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum WorkflowGetResultError {
+    /// The workflow was not found.
+    #[error("Workflow not found")]
+    NotFound(#[source] tonic::Status),
+
+    /// Error serializing input or deserializing output.
+    #[error("Payload conversion error: {0}")]
+    PayloadConversion(#[from] PayloadConversionError),
+
+    /// An uncategorized RPC error from the server.
+    #[error("Server error: {0}")]
+    Rpc(tonic::Status),
+
+    /// Other errors.
+    #[error(transparent)]
+    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl From<WorkflowInteractionError> for WorkflowGetResultError {
+    fn from(err: WorkflowInteractionError) -> Self {
+        match err {
+            WorkflowInteractionError::NotFound(s) => Self::NotFound(s),
+            WorkflowInteractionError::PayloadConversion(e) => Self::PayloadConversion(e),
+            WorkflowInteractionError::Rpc(s) => Self::Rpc(s),
+            WorkflowInteractionError::Other(e) => Self::Other(e),
+        }
+    }
+}
+
+/// Errors returned by workflow list operations.
+#[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
+pub enum WorkflowListError {
+    /// An uncategorized rpc error from the server.
+    #[error("Server error: {0}")]
+    Rpc(#[from] tonic::Status),
+}
+
+/// Errors returned by workflow count operations.
+#[derive(thiserror::Error, Debug)]
+#[non_exhaustive]
+pub enum WorkflowCountError {
     /// An uncategorized rpc error from the server.
     #[error("Server error: {0}")]
     Rpc(#[from] tonic::Status),
@@ -111,76 +259,6 @@ impl WorkflowInteractionError {
     }
 }
 
-/// Errors returned by query operations on [crate::WorkflowHandle].
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum QueryError {
-    /// The workflow was not found.
-    #[error("Workflow not found")]
-    NotFound(#[source] tonic::Status),
-
-    /// The query was rejected based on the rejection condition.
-    #[error("Query rejected: workflow status {:?}", .0.status)]
-    Rejected(QueryRejected),
-
-    /// Error serializing input or deserializing output.
-    #[error("Payload conversion error: {0}")]
-    PayloadConversion(#[from] PayloadConversionError),
-
-    /// An uncategorized RPC error from the server.
-    #[error("Server error: {0}")]
-    Rpc(tonic::Status),
-
-    /// Other errors.
-    #[error(transparent)]
-    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
-}
-
-impl QueryError {
-    pub(crate) fn from_status(status: tonic::Status) -> Self {
-        if status.code() == Code::NotFound {
-            Self::NotFound(status)
-        } else {
-            Self::Rpc(status)
-        }
-    }
-}
-
-/// Errors returned by update operations on [crate::WorkflowHandle].
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum UpdateError {
-    /// The workflow was not found.
-    #[error("Workflow not found")]
-    NotFound(#[source] tonic::Status),
-
-    /// The update failed with an application-level failure.
-    #[error("Update failed: {0:?}")]
-    Failed(Box<Failure>),
-
-    /// Error serializing input or deserializing output.
-    #[error("Payload conversion error: {0}")]
-    PayloadConversion(#[from] PayloadConversionError),
-
-    /// An uncategorized RPC error from the server.
-    #[error("Server error: {0}")]
-    Rpc(tonic::Status),
-
-    /// Other errors.
-    #[error(transparent)]
-    Other(#[from] Box<dyn std::error::Error + Send + Sync>),
-}
-
-impl UpdateError {
-    pub(crate) fn from_status(status: tonic::Status) -> Self {
-        if status.code() == Code::NotFound {
-            Self::NotFound(status)
-        } else {
-            Self::Rpc(status)
-        }
-    }
-}
-
 /// Errors that can occur when completing an activity asynchronously.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -202,3 +280,17 @@ impl AsyncActivityError {
         }
     }
 }
+
+// Backwards compatibility type aliases
+/// Alias for backwards compatibility. Use [`WorkflowStartError`] instead.
+#[deprecated(note = "Renamed to WorkflowStartError")]
+pub type StartWorkflowError = WorkflowStartError;
+/// Alias for backwards compatibility. Use [`WorkflowQueryError`] instead.
+#[deprecated(note = "Renamed to WorkflowQueryError")]
+pub type QueryError = WorkflowQueryError;
+/// Alias for backwards compatibility. Use [`WorkflowUpdateError`] instead.
+#[deprecated(note = "Renamed to WorkflowUpdateError")]
+pub type UpdateError = WorkflowUpdateError;
+/// Alias for backwards compatibility. Use [`WorkflowListError`] instead.
+#[deprecated(note = "Renamed to WorkflowListError")]
+pub type ClientError = WorkflowListError;
