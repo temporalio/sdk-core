@@ -340,7 +340,7 @@ async fn cloud_ops_test() {
         hm
     });
     let connection = Connection::connect(opts).await.unwrap();
-    let mut cloud_client = connection.cloud_svc();
+    let mut cloud_client = connection.cloud_service();
     let res = cloud_client
         .get_namespace(
             GetNamespaceRequest {

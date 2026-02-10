@@ -274,23 +274,23 @@ impl RawClientProducer for Connection {
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner.service.workflow_svc()
+        self.inner.service.workflow_service()
     }
 
     fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner.service.operator_svc()
+        self.inner.service.operator_service()
     }
 
     fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner.service.cloud_svc()
+        self.inner.service.cloud_service()
     }
 
     fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner.service.test_svc()
+        self.inner.service.test_service()
     }
 
     fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner.service.health_svc()
+        self.inner.service.health_service()
     }
 }
 
@@ -300,23 +300,23 @@ impl RawClientProducer for TemporalServiceClient {
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.workflow_svc()
+        self.workflow_service()
     }
 
     fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.operator_svc()
+        self.operator_service()
     }
 
     fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.cloud_svc()
+        self.cloud_service()
     }
 
     fn test_client(&mut self) -> Box<dyn TestService> {
-        self.test_svc()
+        self.test_service()
     }
 
     fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.health_svc()
+        self.health_service()
     }
 }
 

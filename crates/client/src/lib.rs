@@ -298,8 +298,8 @@ impl Connection {
     }
 
     /// Get the underlying cloud service client
-    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
-        self.inner.service.cloud_svc()
+    pub fn cloud_service(&self) -> Box<dyn CloudService> {
+        self.inner.service.cloud_service()
     }
 }
 
@@ -541,23 +541,23 @@ impl TemporalServiceClient {
     }
 
     /// Get the underlying workflow service client
-    pub fn workflow_svc(&self) -> Box<dyn WorkflowService> {
+    pub fn workflow_service(&self) -> Box<dyn WorkflowService> {
         self.workflow_svc_client.clone()
     }
     /// Get the underlying operator service client
-    pub fn operator_svc(&self) -> Box<dyn OperatorService> {
+    pub fn operator_service(&self) -> Box<dyn OperatorService> {
         self.operator_svc_client.clone()
     }
     /// Get the underlying cloud service client
-    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
+    pub fn cloud_service(&self) -> Box<dyn CloudService> {
         self.cloud_svc_client.clone()
     }
     /// Get the underlying test service client
-    pub fn test_svc(&self) -> Box<dyn TestService> {
+    pub fn test_service(&self) -> Box<dyn TestService> {
         self.test_svc_client.clone()
     }
     /// Get the underlying health service client
-    pub fn health_svc(&self) -> Box<dyn HealthService> {
+    pub fn health_service(&self) -> Box<dyn HealthService> {
         self.health_svc_client.clone()
     }
 }
