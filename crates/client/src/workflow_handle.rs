@@ -43,9 +43,15 @@ pub enum WorkflowExecutionResult<T> {
     /// The workflow finished in failure
     Failed(Failure),
     /// The workflow was cancelled
-    Cancelled(Vec<Payload>),
+    Cancelled {
+        /// Details provided at cancellation time
+        details: Vec<Payload>,
+    },
     /// The workflow was terminated
-    Terminated(Vec<Payload>),
+    Terminated {
+        /// Details provided at termination time
+        details: Vec<Payload>,
+    },
     /// The workflow timed out
     TimedOut,
     /// The workflow continued as new
@@ -330,16 +336,20 @@ where
                         attrs.failure.unwrap_or_default(),
                     ))
                 }
-                Some(Attributes::WorkflowExecutionCanceledEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Cancelled(Vec::from_payloads(attrs.details)),
-                ),
+                Some(Attributes::WorkflowExecutionCanceledEventAttributes(attrs)) => {
+                    Ok(WorkflowExecutionResult::Cancelled {
+                        details: Vec::from_payloads(attrs.details),
+                    })
+                }
                 Some(Attributes::WorkflowExecutionTimedOutEventAttributes(attrs)) => {
                     follow!(attrs);
                     Ok(WorkflowExecutionResult::TimedOut)
                 }
-                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Terminated(Vec::from_payloads(attrs.details)),
-                ),
+                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(attrs)) => {
+                    Ok(WorkflowExecutionResult::Terminated {
+                        details: Vec::from_payloads(attrs.details),
+                    })
+                }
                 Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(attrs)) => {
                     if opts.follow_runs {
                         if !attrs.new_execution_run_id.is_empty() {
