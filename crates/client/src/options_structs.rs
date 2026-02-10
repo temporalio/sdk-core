@@ -232,8 +232,9 @@ pub struct WorkflowOptions {
     #[builder(default)]
     pub completion_callbacks: Vec<common::v1::Callback>,
 
-    /// Priority for the workflow
-    pub priority: Option<Priority>,
+    /// Priority for the workflow. Defaults to all-inherited (empty).
+    #[builder(default)]
+    pub priority: Priority,
 
     /// Headers to include with the start request.
     pub header: Option<Header>,

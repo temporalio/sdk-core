@@ -1001,7 +1001,7 @@ where
                         retry_policy: options.retry_policy,
                         links: options.links,
                         completion_callbacks: options.completion_callbacks,
-                        priority: options.priority.map(Into::into),
+                        priority: Some(options.priority.into()),
                         header: options.header,
                         ..Default::default()
                     }

@@ -8,12 +8,12 @@ use crate::protos::temporal::api::common;
 ///
 /// Priority is attached to workflows and activities. Activities and child
 /// workflows inherit Priority from the workflow that created them, but may
-/// override fields when they are started or modified. For each field of a
-/// Priority on an activity/workflow, not present or equal to zero/empty string
-/// means to inherit the value from the calling workflow, or if there is no
-/// calling workflow, then use the default (documented below).
+/// override fields when they are started or modified.
 ///
-/// Despite being named "Priority", this message will also contains fields that
+/// All fields default to `None`, which means "inherit from the calling workflow"
+/// or, if there is no calling workflow, "use the server default."
+///
+/// Despite being named "Priority", this type also contains fields that
 /// control "fairness" mechanisms.
 ///
 /// The overall semantics of Priority are:
@@ -29,13 +29,15 @@ pub struct Priority {
     /// The maximum priority value (minimum priority) is determined by server
     /// configuration, and defaults to 5.
     ///
-    /// The default priority is (min+max)/2. With the default max of 5 and min of
-    /// 1, that comes out to 3.
-    pub priority_key: u32,
+    /// The server default priority is `(min + max) / 2`. With the default max
+    /// of 5 and min of 1, that comes out to 3.
+    ///
+    /// `None` means inherit from the calling workflow or use the server default.
+    pub priority_key: Option<u32>,
 
     /// Fairness key is a short string that's used as a key for a fairness
     /// balancing mechanism. It may correspond to a tenant id, or to a fixed
-    /// string like "high" or "low". The default is the empty string.
+    /// string like "high" or "low".
     ///
     /// The fairness mechanism attempts to dispatch tasks for a given key in
     /// proportion to its weight. For example, using a thousand distinct tenant
@@ -43,8 +45,7 @@ pub struct Priority {
     /// getting a roughly equal share of task dispatch throughput.
     ///
     /// (Note: this does not imply equal share of worker capacity! Fairness
-    /// decisions are made based on queue statistics, not
-    /// current worker load.)
+    /// decisions are made based on queue statistics, not current worker load.)
     ///
     /// As another example, using keys "high" and "low" with weight 9.0 and 1.0
     /// respectively will prefer dispatching "high" tasks over "low" tasks at a
@@ -57,25 +58,31 @@ pub struct Priority {
     /// accurate the results will be.
     ///
     /// Fairness keys are limited to 64 bytes.
-    pub fairness_key: String,
+    ///
+    /// `None` means inherit from the calling workflow or use the server default
+    /// (empty string).
+    pub fairness_key: Option<String>,
 
     /// Fairness weight for a task can come from multiple sources for
     /// flexibility. From highest to lowest precedence:
     /// 1. Weights for a small set of keys can be overridden in task queue
     ///    configuration with an API.
     /// 2. It can be attached to the workflow/activity in this field.
-    /// 3. The default weight of 1.0 will be used.
+    /// 3. The server default weight of 1.0 will be used.
     ///
-    /// Weight values are clamped by the server to the range [0.001, 1000].
-    pub fairness_weight: f32,
+    /// Weight values are clamped by the server to the range \[0.001, 1000\].
+    ///
+    /// `None` means inherit from the calling workflow or use the server default
+    /// (1.0).
+    pub fairness_weight: Option<f32>,
 }
 
 impl From<Priority> for common::v1::Priority {
     fn from(priority: Priority) -> Self {
         common::v1::Priority {
-            priority_key: priority.priority_key as i32,
-            fairness_key: priority.fairness_key,
-            fairness_weight: priority.fairness_weight,
+            priority_key: priority.priority_key.unwrap_or(0) as i32,
+            fairness_key: priority.fairness_key.unwrap_or_default(),
+            fairness_weight: priority.fairness_weight.unwrap_or(0.0),
         }
     }
 }
@@ -83,9 +90,21 @@ impl From<Priority> for common::v1::Priority {
 impl From<common::v1::Priority> for Priority {
     fn from(priority: common::v1::Priority) -> Self {
         Self {
-            priority_key: priority.priority_key as u32,
-            fairness_key: priority.fairness_key,
-            fairness_weight: priority.fairness_weight,
+            priority_key: if priority.priority_key == 0 {
+                None
+            } else {
+                Some(priority.priority_key as u32)
+            },
+            fairness_key: if priority.fairness_key.is_empty() {
+                None
+            } else {
+                Some(priority.fairness_key)
+            },
+            fairness_weight: if priority.fairness_weight == 0.0 {
+                None
+            } else {
+                Some(priority.fairness_weight)
+            },
         }
     }
 }
