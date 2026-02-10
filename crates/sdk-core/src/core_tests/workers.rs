@@ -344,10 +344,8 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     mock.expect_identity()
         .returning(|| "test-identity".to_string());
-    mock.expect_worker_grouping_key()
-        .returning(Uuid::new_v4);
-    mock.expect_worker_instance_key()
-        .returning(Uuid::new_v4);
+    mock.expect_worker_grouping_key().returning(Uuid::new_v4);
+    mock.expect_worker_instance_key().returning(Uuid::new_v4);
     if api_success {
         mock.expect_shutdown_worker()
             .times(1)
@@ -428,7 +426,6 @@ fn create_test_nexus_task(
                     links: vec![],
                 }
             )),
-            endpoint: "".to_string(),
         }),
         poller_scaling_decision: None,
     }

@@ -12,6 +12,7 @@ use futures_util::{
     Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
 };
+use prost_types::Timestamp;
 use std::{
     collections::HashMap,
     sync::{

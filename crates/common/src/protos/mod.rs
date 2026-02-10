@@ -1960,8 +1960,6 @@ pub mod temporal {
                                 schedule_to_start_timeout: c.schedule_to_start_timeout,
                                 start_to_close_timeout: c.start_to_close_timeout,
                                 nexus_header: c.nexus_header,
-                                schedule_to_start_timeout: c.schedule_to_start_timeout,
-                                start_to_close_timeout: c.start_to_close_timeout,
                             },
                         )
                     }
@@ -2374,8 +2372,6 @@ pub mod temporal {
                                 Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => false,
                                 Attributes::WorkflowPropertiesModifiedEventAttributes(_) => false,
                                 Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => false,
-                                Attributes::WorkflowExecutionPausedEventAttributes(_) => false,
-                                Attributes::WorkflowExecutionUnpausedEventAttributes(_) => false,
                                 Attributes::NexusOperationScheduledEventAttributes(_) => false,
                                 Attributes::NexusOperationStartedEventAttributes(_) => false,
                                 Attributes::NexusOperationCompletedEventAttributes(_) => false,
@@ -2415,8 +2411,6 @@ pub mod temporal {
                         match self {
                             Attributes::WorkflowExecutionStartedEventAttributes(_) => { EventType::WorkflowExecutionStarted }
                             Attributes::WorkflowExecutionCompletedEventAttributes(_) => { EventType::WorkflowExecutionCompleted }
-                            Attributes::WorkflowExecutionPausedEventAttributes(_) => { EventType::WorkflowExecutionPaused }
-                            Attributes::WorkflowExecutionUnpausedEventAttributes(_) => { EventType::WorkflowExecutionUnpaused }
                             Attributes::WorkflowExecutionFailedEventAttributes(_) => { EventType::WorkflowExecutionFailed }
                             Attributes::WorkflowExecutionTimedOutEventAttributes(_) => { EventType::WorkflowExecutionTimedOut }
                             Attributes::WorkflowTaskScheduledEventAttributes(_) => { EventType::WorkflowTaskScheduled }

@@ -448,12 +448,6 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                         .cancellation_type
                         .unwrap_or(NexusOperationCancellationType::WaitCancellationCompleted)
                         .into(),
-                    schedule_to_start_timeout: self
-                        .schedule_to_start_timeout
-                        .and_then(|t| t.try_into().ok()),
-                    start_to_close_timeout: self
-                        .start_to_close_timeout
-                        .and_then(|t| t.try_into().ok()),
                 }
                 .into(),
             ),
