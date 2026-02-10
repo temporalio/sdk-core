@@ -54,6 +54,7 @@ use temporalio_common::{
     worker::{PollerBehavior, WorkerTaskTypes},
 };
 use tokio::sync::{Barrier, watch};
+use uuid::Uuid;
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
@@ -343,15 +344,19 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
         .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     mock.expect_identity()
         .returning(|| "test-identity".to_string());
+    mock.expect_worker_grouping_key()
+        .returning(Uuid::new_v4);
+    mock.expect_worker_instance_key()
+        .returning(Uuid::new_v4);
     if api_success {
         mock.expect_shutdown_worker()
             .times(1)
-            .returning(|_, _| Ok(ShutdownWorkerResponse {}));
+            .returning(|_, _, _, _| Ok(ShutdownWorkerResponse {}));
     } else {
         // worker.shutdown() should succeed even if shutdown_worker fails
         mock.expect_shutdown_worker()
             .times(1)
-            .returning(|_, _| Err(tonic::Status::unavailable("fake shutdown error")));
+            .returning(|_, _, _, _| Err(tonic::Status::unavailable("fake shutdown error")));
     }
 
     let t = canned_histories::single_timer("1");
