@@ -234,6 +234,9 @@ pub struct WorkflowOptions {
 
     /// Priority for the workflow
     pub priority: Option<Priority>,
+
+    /// Headers to include with the start request.
+    pub header: Option<Header>,
 }
 
 /// A signal to send atomically when starting a workflow.

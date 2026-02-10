@@ -962,7 +962,7 @@ where
                     workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                     search_attributes: options.search_attributes.map(|d| d.into()),
                     cron_schedule: options.cron_schedule.unwrap_or_default(),
-                    header: start_signal.header,
+                    header: options.header.or(start_signal.header),
                     ..Default::default()
                 }
                 .into_request(),
@@ -1002,6 +1002,7 @@ where
                         links: options.links,
                         completion_callbacks: options.completion_callbacks,
                         priority: options.priority.map(Into::into),
+                        header: options.header,
                         ..Default::default()
                     }
                     .into_request(),
