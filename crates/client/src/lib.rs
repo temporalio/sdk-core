@@ -133,7 +133,7 @@ struct ConnectionInner {
 
 impl Connection {
     /// Connect to a Temporal service.
-    pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientInitError> {
+    pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientConnectError> {
         let service = if let Some(service_override) = options.service_override {
             GrpcMetricSvc {
                 inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
@@ -194,7 +194,7 @@ impl Connection {
                 Ok(sysinfo) => sysinfo.into_inner().capabilities,
                 Err(status) => match status.code() {
                     Code::Unimplemented => None,
-                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
+                    _ => return Err(ClientConnectError::SystemInfoCallError(status)),
                 },
             }
         } else {
@@ -338,7 +338,7 @@ impl ClientHeaders {
 async fn add_tls_to_channel(
     tls_options: Option<&TlsOptions>,
     mut channel: Endpoint,
-) -> Result<Endpoint, ClientInitError> {
+) -> Result<Endpoint, ClientConnectError> {
     if let Some(tls_cfg) = tls_options {
         let mut tls = tonic::transport::ClientTlsConfig::new();
 

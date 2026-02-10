@@ -10,7 +10,7 @@ use tonic::Code;
 /// Errors thrown while attempting to establish a connection to the server
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum ClientInitError {
+pub enum ClientConnectError {
     /// Invalid URI. Configuration error, fatal.
     #[error("Invalid URI: {0:?}")]
     InvalidUri(#[from] InvalidUri),
