@@ -15,7 +15,12 @@ mod options_structs;
 /// Visible only for tests
 #[doc(hidden)]
 pub mod proxy;
-mod raw;
+/// gRPC service traits for direct access to Temporal services.
+///
+/// Most users should use the higher-level methods on [`Client`] or [`Connection`] instead.
+/// These traits are useful for advanced scenarios like custom interceptors, testing with mocks,
+/// or making raw gRPC calls not covered by the higher-level API.
+pub mod grpc;
 mod replaceable;
 pub mod request_extensions;
 mod retry;
@@ -29,7 +34,7 @@ pub use crate::{
 pub use async_activity_handle::{ActivityIdentifier, AsyncActivityHandle, HeartbeatResponse};
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
-pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
+pub use grpc::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
@@ -41,7 +46,7 @@ pub use workflow_handle::{
 
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
-    raw::AttachMetricLabels,
+    grpc::AttachMetricLabels,
     request_extensions::RequestExt,
     worker::ClientWorkerSet,
 };
@@ -297,9 +302,29 @@ impl Connection {
         self.inner.workers.worker_grouping_key()
     }
 
-    /// Get the underlying cloud service client
+    /// Get the underlying workflow service client for making raw gRPC calls.
+    pub fn workflow_service(&self) -> Box<dyn WorkflowService> {
+        self.inner.service.workflow_service()
+    }
+
+    /// Get the underlying operator service client for making raw gRPC calls.
+    pub fn operator_service(&self) -> Box<dyn OperatorService> {
+        self.inner.service.operator_service()
+    }
+
+    /// Get the underlying cloud service client for making raw gRPC calls.
     pub fn cloud_service(&self) -> Box<dyn CloudService> {
         self.inner.service.cloud_service()
+    }
+
+    /// Get the underlying test service client for making raw gRPC calls.
+    pub fn test_service(&self) -> Box<dyn TestService> {
+        self.inner.service.test_service()
+    }
+
+    /// Get the underlying health service client for making raw gRPC calls.
+    pub fn health_service(&self) -> Box<dyn HealthService> {
+        self.inner.service.health_service()
     }
 }
 
