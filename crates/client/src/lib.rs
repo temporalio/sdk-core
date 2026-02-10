@@ -99,8 +99,10 @@ static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 
+#[doc(hidden)]
 /// Key used to communicate when a GRPC message is too large
 pub static MESSAGE_TOO_LARGE_KEY: &str = "message-too-large";
+#[doc(hidden)]
 /// Key used to indicate a error was returned by the retryer because of the short-circuit predicate
 pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 
