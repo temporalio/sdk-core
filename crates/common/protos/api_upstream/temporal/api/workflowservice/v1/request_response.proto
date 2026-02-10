@@ -261,7 +261,7 @@ message PollWorkflowTaskQueueRequest {
     string identity = 3;
     // A unique key for this worker instance, used for tracking worker lifecycle.
     // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
-    string worker_instance_key = 7;
+    string worker_instance_key = 8;
     // Deprecated. Use deployment_options instead.
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
@@ -273,6 +273,10 @@ message PollWorkflowTaskQueueRequest {
     // Worker deployment options that user has set in the worker.
     // Experimental. Worker Deployments are experimental and might significantly change in the future.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
+    reserved 7; 
+    reserved "worker_heartbeat";
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -439,7 +443,7 @@ message PollActivityTaskQueueRequest {
     string identity = 3;
     // A unique key for this worker instance, used for tracking worker lifecycle.
     // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
-    string worker_instance_key = 7;
+    string worker_instance_key = 8;
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
@@ -447,6 +451,10 @@ message PollActivityTaskQueueRequest {
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
+
+    // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
+    reserved 7; 
+    reserved "worker_heartbeat";
 }
 
 message PollActivityTaskQueueResponse {

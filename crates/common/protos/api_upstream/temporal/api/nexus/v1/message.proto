@@ -128,7 +128,8 @@ message StartOperationResponse {
         Sync sync_success = 1;
         Async async_success = 2;
         // The operation completed unsuccessfully (failed or canceled).
-        UnsuccessfulOperationError operation_error = 3;
+        // Deprecated. Use the failure variant instead.
+        UnsuccessfulOperationError operation_error = 3 [deprecated = true];
         // The operation completed unsuccessfully (failed or canceled).
         // Failure object must contain an ApplicationFailureInfo or CanceledFailureInfo object.
         temporal.api.failure.v1.Failure failure = 4;
