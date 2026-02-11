@@ -12,8 +12,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    CancelWorkflowOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowOptions,
+    WorkflowCancelOptions, WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{
@@ -400,7 +400,7 @@ async fn nexus_async(
                 .submit_wf(
                     AsyncCompleter::name(),
                     payloads,
-                    WorkflowOptions::new(task_queue, completer_id.clone())
+                    WorkflowStartOptions::new(task_queue, completer_id.clone())
                         .completion_callbacks(vec![Callback {
                             variant: Some(callback::Variant::Nexus(callback::Nexus {
                                 url: start_req.callback,
@@ -449,7 +449,7 @@ async fn nexus_async(
             let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id, "");
             handle
                 .cancel(
-                    CancelWorkflowOptions::builder()
+                    WorkflowCancelOptions::builder()
                         .reason("nexus cancel")
                         .build(),
                 )
@@ -866,7 +866,7 @@ async fn nexus_cancellation_types(
             .submit_wf(
                 "async_completer",
                 vec![],
-                WorkflowOptions::new(task_queue, completer_id.clone())
+                WorkflowStartOptions::new(task_queue, completer_id.clone())
                     .completion_callbacks(vec![Callback {
                         variant: Some(callback::Variant::Nexus(callback::Nexus {
                             url: start_req.callback,
@@ -926,7 +926,7 @@ async fn nexus_cancellation_types(
                 client.get_workflow_handle::<UntypedWorkflow>(completer_id.to_string(), "");
             handle
                 .cancel(
-                    CancelWorkflowOptions::builder()
+                    WorkflowCancelOptions::builder()
                         .reason("nexus cancel")
                         .build(),
                 )
@@ -961,7 +961,7 @@ async fn nexus_cancellation_types(
                 .signal(
                     UntypedSignal::new("wakeupdude"),
                     RawValue::empty(),
-                    SignalOptions::default(),
+                    WorkflowSignalOptions::default(),
                 )
                 .await;
             wf_handle.get_result(Default::default()).await.unwrap();
@@ -997,7 +997,7 @@ async fn nexus_cancellation_types(
             .signal(
                 AsyncCompleterWf::handle_proceed_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();

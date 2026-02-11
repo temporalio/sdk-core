@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities, eventually};
 use std::time::Duration;
-use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_client::{NamespacedClient, WorkflowStartOptions, WorkflowService};
 use temporalio_common::{
     protos::{
         coresdk::{
@@ -205,7 +205,7 @@ async fn activity_has_deployment_stamp() {
             .submit_wf(
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::new(task_queue, workflow_id).build(),
+                WorkflowStartOptions::new(task_queue, workflow_id).build(),
             )
             .await
             .unwrap();

@@ -14,7 +14,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, SignalOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    Client, NamespacedClient, WorkflowSignalOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
     WorkflowService,
 };
 use temporalio_common::{
@@ -905,7 +905,7 @@ async fn worker_heartbeat_failure_metrics() {
         .submit_workflow(
             FailureMetricsWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id)
+            WorkflowStartOptions::new(task_queue, workflow_id)
                 .retry_policy(RetryPolicy {
                     maximum_attempts: 2,
                     ..Default::default()
@@ -1007,7 +1007,7 @@ async fn worker_heartbeat_failure_metrics() {
             .signal(
                 FailureMetricsWf::handle_continue_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();

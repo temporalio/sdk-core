@@ -16,8 +16,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, QueryOptions, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowOptions, WorkflowService,
+    Connection, WorkflowQueryOptions, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -275,7 +275,7 @@ async fn one_slot_worker_reports_available_slot() {
             .start_workflow(
                 UntypedWorkflow::new("whatever"),
                 RawValue::default(),
-                WorkflowOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
+                WorkflowStartOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
                     .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
                     .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
                     .execution_timeout(Duration::from_secs(5))
@@ -466,7 +466,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
             .query(
                 UntypedQuery::new("fake_query"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
@@ -872,7 +872,7 @@ async fn activity_metrics() {
         .submit_workflow(
             ActivityMetricsWf::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), workflow_id).build(),
+            WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1007,7 +1007,7 @@ async fn nexus_metrics() {
         .submit_workflow(
             NexusMetricsWf::run,
             endpoint,
-            WorkflowOptions::new(task_queue.clone(), workflow_id).build(),
+            WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1157,7 +1157,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
         .submit_workflow(
             EvictOnCompleteWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id).build(),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1254,7 +1254,7 @@ async fn metrics_available_from_custom_slot_supplier() {
         .submit_workflow(
             CustomSlotSupplierWf::run,
             (),
-            WorkflowOptions::new(task_queue, "s_wf".to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, "s_wf".to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1418,7 +1418,7 @@ async fn sticky_queue_label_strategy(
         .submit_workflow(
             StickyQueueLabelStrategyWf::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), wf_name.clone())
+            WorkflowStartOptions::new(task_queue.clone(), wf_name.clone())
                 .enable_eager_workflow_start(false)
                 .build(),
         )
@@ -1507,7 +1507,7 @@ async fn resource_based_tuner_metrics() {
         .submit_workflow(
             ResourceBasedTunerMetricsWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id).build(),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();

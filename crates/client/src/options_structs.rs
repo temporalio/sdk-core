@@ -177,7 +177,7 @@ impl std::fmt::Debug for ClientTlsOptions {
 #[derive(Debug, Clone, bon::Builder)]
 #[builder(start_fn = new, on(String, into))]
 #[non_exhaustive]
-pub struct WorkflowOptions {
+pub struct WorkflowStartOptions {
     /// The task queue to run the workflow on.
     #[builder(start_fn)]
     pub task_queue: String,
@@ -221,7 +221,7 @@ pub struct WorkflowOptions {
 
     /// If set, send a signal to the workflow atomically with start.
     /// The workflow will receive this signal before its first task.
-    pub start_signal: Option<StartSignal>,
+    pub start_signal: Option<WorkflowStartSignal>,
 
     /// Links to associate with the workflow. Ex: References to a nexus operation.
     #[builder(default)]
@@ -241,11 +241,11 @@ pub struct WorkflowOptions {
 }
 
 /// A signal to send atomically when starting a workflow.
-/// Use with `WorkflowOptions::start_signal` to achieve signal-with-start behavior.
+/// Use with `WorkflowStartOptions::start_signal` to achieve signal-with-start behavior.
 #[derive(Debug, Clone, bon::Builder)]
 #[builder(start_fn = new, on(String, into))]
 #[non_exhaustive]
-pub struct StartSignal {
+pub struct WorkflowStartSignal {
     /// Name of the signal to send.
     #[builder(start_fn)]
     pub signal_name: String,
@@ -260,13 +260,13 @@ pub use temporalio_common::Priority;
 /// Options for fetching workflow results
 #[derive(Debug, Clone, Copy, bon::Builder)]
 #[non_exhaustive]
-pub struct GetWorkflowResultOptions {
+pub struct WorkflowGetResultOptions {
     /// If true (the default), follows to the next workflow run in the execution chain while
     /// retrieving results.
     #[builder(default = true)]
     pub follow_runs: bool,
 }
-impl Default for GetWorkflowResultOptions {
+impl Default for WorkflowGetResultOptions {
     fn default() -> Self {
         Self { follow_runs: true }
     }
@@ -275,7 +275,7 @@ impl Default for GetWorkflowResultOptions {
 /// Options for starting a workflow update.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct UpdateOptions {
+pub struct WorkflowExecuteUpdateOptions {
     /// Update ID for idempotency.
     pub update_id: Option<String>,
     /// Headers to include.
@@ -285,7 +285,7 @@ pub struct UpdateOptions {
 /// Options for sending a signal to a workflow.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct SignalOptions {
+pub struct WorkflowSignalOptions {
     /// Request ID for idempotency. If not provided, a UUID will be generated.
     pub request_id: Option<String>,
     /// Headers to include with the signal.
@@ -295,7 +295,7 @@ pub struct SignalOptions {
 /// Options for querying a workflow.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct QueryOptions {
+pub struct WorkflowQueryOptions {
     /// Query reject condition. Determines when the query should be rejected
     /// based on workflow state.
     pub reject_condition: Option<QueryRejectCondition>,
@@ -307,7 +307,7 @@ pub struct QueryOptions {
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[builder(on(String, into))]
 #[non_exhaustive]
-pub struct CancelWorkflowOptions {
+pub struct WorkflowCancelOptions {
     /// Reason for cancellation.
     #[builder(default)]
     pub reason: String,
@@ -319,7 +319,7 @@ pub struct CancelWorkflowOptions {
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[builder(on(String, into))]
 #[non_exhaustive]
-pub struct TerminateWorkflowOptions {
+pub struct WorkflowTerminateOptions {
     /// Reason for termination.
     #[builder(default)]
     pub reason: String,
@@ -330,7 +330,7 @@ pub struct TerminateWorkflowOptions {
 /// Options for describing a workflow.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct DescribeWorkflowOptions {}
+pub struct WorkflowDescribeOptions {}
 
 /// Default workflow execution retention for a Namespace is 3 days
 const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration = Duration::from_secs(60 * 60 * 24 * 3);
@@ -404,7 +404,7 @@ impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
 /// Options for fetching workflow history.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct FetchHistoryOptions {
+pub struct WorkflowFetchHistoryOptions {
     /// Whether to skip archival.
     #[builder(default)]
     pub skip_archival: bool,
@@ -432,7 +432,7 @@ pub enum WorkflowUpdateWaitStage {
 /// Options for starting an update without waiting for completion.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct StartUpdateOptions {
+pub struct WorkflowStartUpdateOptions {
     /// Update ID for idempotency. If not provided, a UUID will be generated.
     pub update_id: Option<String>,
     /// Headers to include with the update.
@@ -445,7 +445,7 @@ pub struct StartUpdateOptions {
 /// Options for listing workflows.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct ListWorkflowsOptions {
+pub struct WorkflowListOptions {
     /// Maximum number of workflows to return.
     /// If not specified, returns all matching workflows.
     pub limit: Option<usize>,
@@ -454,4 +454,57 @@ pub struct ListWorkflowsOptions {
 /// Options for counting workflows.
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
-pub struct CountWorkflowsOptions {}
+pub struct WorkflowCountOptions {}
+
+// Deprecated type aliases for backwards compatibility
+#[deprecated(note = "Renamed to WorkflowStartOptions")]
+/// Use [`WorkflowStartOptions`] instead.
+pub type WorkflowOptions = WorkflowStartOptions;
+
+#[deprecated(note = "Renamed to WorkflowStartSignal")]
+/// Use [`WorkflowStartSignal`] instead.
+pub type StartSignal = WorkflowStartSignal;
+
+#[deprecated(note = "Renamed to WorkflowGetResultOptions")]
+/// Use [`WorkflowGetResultOptions`] instead.
+pub type GetWorkflowResultOptions = WorkflowGetResultOptions;
+
+#[deprecated(note = "Renamed to WorkflowExecuteUpdateOptions")]
+/// Use [`WorkflowExecuteUpdateOptions`] instead.
+pub type UpdateOptions = WorkflowExecuteUpdateOptions;
+
+#[deprecated(note = "Renamed to WorkflowSignalOptions")]
+/// Use [`WorkflowSignalOptions`] instead.
+pub type SignalOptions = WorkflowSignalOptions;
+
+#[deprecated(note = "Renamed to WorkflowQueryOptions")]
+/// Use [`WorkflowQueryOptions`] instead.
+pub type QueryOptions = WorkflowQueryOptions;
+
+#[deprecated(note = "Renamed to WorkflowCancelOptions")]
+/// Use [`WorkflowCancelOptions`] instead.
+pub type CancelWorkflowOptions = WorkflowCancelOptions;
+
+#[deprecated(note = "Renamed to WorkflowTerminateOptions")]
+/// Use [`WorkflowTerminateOptions`] instead.
+pub type TerminateWorkflowOptions = WorkflowTerminateOptions;
+
+#[deprecated(note = "Renamed to WorkflowDescribeOptions")]
+/// Use [`WorkflowDescribeOptions`] instead.
+pub type DescribeWorkflowOptions = WorkflowDescribeOptions;
+
+#[deprecated(note = "Renamed to WorkflowFetchHistoryOptions")]
+/// Use [`WorkflowFetchHistoryOptions`] instead.
+pub type FetchHistoryOptions = WorkflowFetchHistoryOptions;
+
+#[deprecated(note = "Renamed to WorkflowStartUpdateOptions")]
+/// Use [`WorkflowStartUpdateOptions`] instead.
+pub type StartUpdateOptions = WorkflowStartUpdateOptions;
+
+#[deprecated(note = "Renamed to WorkflowListOptions")]
+/// Use [`WorkflowListOptions`] instead.
+pub type ListWorkflowsOptions = WorkflowListOptions;
+
+#[deprecated(note = "Renamed to WorkflowCountOptions")]
+/// Use [`WorkflowCountOptions`] instead.
+pub type CountWorkflowsOptions = WorkflowCountOptions;

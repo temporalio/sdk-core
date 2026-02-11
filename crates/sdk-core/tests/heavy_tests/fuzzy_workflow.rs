@@ -3,7 +3,7 @@ use futures_util::{StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{
-    SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{data_converters::RawValue, protos::coresdk::AsJsonPayloadExt};
 use temporalio_macros::{workflow, workflow_methods};
@@ -97,7 +97,7 @@ async fn fuzzy_workflow() {
             .submit_workflow(
                 FuzzyWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), wfid).build(),
+                WorkflowStartOptions::new(task_queue.clone(), wfid).build(),
             )
             .await
             .unwrap();
@@ -120,7 +120,7 @@ async fn fuzzy_workflow() {
                                 RawValue::new(vec![
                                     action.as_json_payload().expect("Serializes ok"),
                                 ]),
-                                SignalOptions::default(),
+                                WorkflowSignalOptions::default(),
                             )
                             .await
                     }

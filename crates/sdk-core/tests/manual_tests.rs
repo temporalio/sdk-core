@@ -21,8 +21,8 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    GetWorkflowResultOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowOptions,
+    WorkflowGetResultOptions, WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue, telemetry::PrometheusExporterOptions, worker::WorkerTaskTypes,
@@ -172,7 +172,7 @@ async fn poller_load_spiky() {
             .submit_wf(
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::new(tq.clone(), wfid.clone())
+                WorkflowStartOptions::new(tq.clone(), wfid.clone())
                     .execution_timeout(Duration::from_secs(120))
                     .build(),
             )
@@ -187,7 +187,7 @@ async fn poller_load_spiky() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -202,7 +202,7 @@ async fn poller_load_spiky() {
                 .submit_wf(
                     wf_name.to_owned(),
                     vec![],
-                    WorkflowOptions::new(tq.clone(), wfid.clone())
+                    WorkflowStartOptions::new(tq.clone(), wfid.clone())
                         .execution_timeout(Duration::from_secs(120))
                         .build(),
                 )
@@ -212,7 +212,7 @@ async fn poller_load_spiky() {
         }
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         info!("Second load ran for {:?}", start_processing.elapsed());
@@ -232,7 +232,7 @@ async fn poller_load_spiky() {
                                 .signal(
                                     UntypedSignal::new(SIGNAME),
                                     RawValue::empty(),
-                                    SignalOptions::default(),
+                                    WorkflowSignalOptions::default(),
                                 )
                                 .await
                         }
@@ -291,7 +291,7 @@ async fn poller_load_sustained() {
             .submit_wf(
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::new(tq.clone(), wfid.clone())
+                WorkflowStartOptions::new(tq.clone(), wfid.clone())
                     .execution_timeout(Duration::from_secs(800))
                     .build(),
             )
@@ -305,7 +305,7 @@ async fn poller_load_sustained() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -365,7 +365,7 @@ async fn poller_load_spike_then_sustained() {
             .submit_wf(
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::new(tq.clone(), wfid.clone())
+                WorkflowStartOptions::new(tq.clone(), wfid.clone())
                     .execution_timeout(Duration::from_secs(100))
                     .build(),
             )
@@ -380,7 +380,7 @@ async fn poller_load_spike_then_sustained() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
@@ -394,7 +394,7 @@ async fn poller_load_spike_then_sustained() {
                 .submit_wf(
                     wf_name.to_owned(),
                     vec![],
-                    WorkflowOptions::new(tq.clone(), wfid.clone())
+                    WorkflowStartOptions::new(tq.clone(), wfid.clone())
                         .execution_timeout(Duration::from_secs(100))
                         .build(),
                 )
@@ -405,7 +405,7 @@ async fn poller_load_spike_then_sustained() {
         }
         stream::iter(workflow_handles)
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         info!("Second load ran for {:?}", start_processing.elapsed());
@@ -425,7 +425,7 @@ async fn poller_load_spike_then_sustained() {
                                 .signal(
                                     UntypedSignal::new(SIGNAME),
                                     RawValue::empty(),
-                                    SignalOptions::default(),
+                                    WorkflowSignalOptions::default(),
                                 )
                                 .await
                         }

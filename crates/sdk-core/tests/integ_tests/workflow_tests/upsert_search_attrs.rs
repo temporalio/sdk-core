@@ -2,8 +2,8 @@ use crate::common::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, build_fake_
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
 use temporalio_client::{
-    DescribeWorkflowOptions, GetWorkflowResultOptions, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowExecutionResult, WorkflowOptions,
+    WorkflowDescribeOptions, WorkflowGetResultOptions, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowExecutionResult, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -64,7 +64,7 @@ async fn sends_upsert() {
         .submit_wf(
             wf_name,
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_string())
+            WorkflowStartOptions::new(task_queue, wf_id.to_string())
                 .search_attributes(HashMap::from([
                     (
                         SEARCH_ATTR_TXT.to_string(),
@@ -82,7 +82,7 @@ async fn sends_upsert() {
     let client = starter.get_client().await;
     let search_attrs = client
         .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), "")
-        .describe(DescribeWorkflowOptions::default())
+        .describe(WorkflowDescribeOptions::default())
         .await
         .unwrap()
         .raw_description
@@ -103,7 +103,7 @@ async fn sends_upsert() {
     assert_eq!(3, usize::from_json_payload(int_attr_payload).unwrap());
     let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), "");
     let res = handle
-        .get_result(GetWorkflowResultOptions::default())
+        .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));

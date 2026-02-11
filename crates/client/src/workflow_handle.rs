@@ -1,7 +1,8 @@
 use crate::{
-    CancelWorkflowOptions, DescribeWorkflowOptions, FetchHistoryOptions, GetWorkflowResultOptions,
-    NamespacedClient, QueryOptions, SignalOptions, StartUpdateOptions, TerminateWorkflowOptions,
-    UpdateOptions, WorkflowClientTrait, WorkflowService, WorkflowUpdateWaitStage,
+    NamespacedClient, WorkflowCancelOptions, WorkflowClientTrait, WorkflowDescribeOptions,
+    WorkflowExecuteUpdateOptions, WorkflowFetchHistoryOptions, WorkflowGetResultOptions,
+    WorkflowQueryOptions, WorkflowService, WorkflowSignalOptions, WorkflowStartUpdateOptions,
+    WorkflowTerminateOptions, WorkflowUpdateWaitStage,
     errors::{WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError},
 };
 use std::{fmt::Debug, marker::PhantomData};
@@ -285,13 +286,13 @@ where
     /// Await the result of the workflow execution
     pub async fn get_result(
         &self,
-        opts: GetWorkflowResultOptions,
+        opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>
     where
         CT: WorkflowClientTrait,
     {
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
-        let fetch_opts = FetchHistoryOptions::builder()
+        let fetch_opts = WorkflowFetchHistoryOptions::builder()
             .skip_archival(true)
             .wait_new_event(true)
             .event_filter_type(HistoryEventFilterType::CloseEvent)
@@ -381,7 +382,7 @@ where
         &self,
         signal: S,
         input: S::Input,
-        opts: SignalOptions,
+        opts: WorkflowSignalOptions,
     ) -> Result<(), WorkflowInteractionError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
@@ -422,7 +423,7 @@ where
         &self,
         query: Q,
         input: Q::Input,
-        opts: QueryOptions,
+        opts: WorkflowQueryOptions,
     ) -> Result<Q::Output, WorkflowQueryError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
@@ -476,7 +477,7 @@ where
         &self,
         update: U,
         input: U::Input,
-        options: UpdateOptions,
+        options: WorkflowExecuteUpdateOptions,
     ) -> Result<U::Output, WorkflowUpdateError>
     where
         CT: WorkflowClientTrait,
@@ -488,7 +489,7 @@ where
             .start_update(
                 update,
                 input,
-                StartUpdateOptions::builder()
+                WorkflowStartUpdateOptions::builder()
                     .maybe_update_id(options.update_id)
                     .maybe_header(options.header)
                     .wait_for_stage(WorkflowUpdateWaitStage::Completed)
@@ -504,7 +505,7 @@ where
         &self,
         update: U,
         input: U::Input,
-        options: StartUpdateOptions,
+        options: WorkflowStartUpdateOptions,
     ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
         CT: WorkflowClientTrait,
@@ -576,7 +577,7 @@ where
     }
 
     /// Request cancellation of this workflow.
-    pub async fn cancel(&self, opts: CancelWorkflowOptions) -> Result<(), WorkflowInteractionError>
+    pub async fn cancel(&self, opts: WorkflowCancelOptions) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -610,7 +611,7 @@ where
     /// Terminate this workflow.
     pub async fn terminate(
         &self,
-        opts: TerminateWorkflowOptions,
+        opts: WorkflowTerminateOptions,
     ) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -643,7 +644,7 @@ where
     /// Get workflow execution description/metadata.
     pub async fn describe(
         &self,
-        _opts: DescribeWorkflowOptions,
+        _opts: WorkflowDescribeOptions,
     ) -> Result<WorkflowExecutionDescription, WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -667,7 +668,7 @@ where
     /// Fetch workflow execution history.
     pub async fn fetch_history(
         &self,
-        opts: FetchHistoryOptions,
+        opts: WorkflowFetchHistoryOptions,
     ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -680,7 +681,7 @@ where
     async fn fetch_history_for_run(
         &self,
         run_id: &str,
-        opts: &FetchHistoryOptions,
+        opts: &WorkflowFetchHistoryOptions,
     ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,

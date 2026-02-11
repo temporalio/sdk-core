@@ -1,6 +1,6 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::collections::HashMap;
-use temporalio_client::{StartSignal, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{WorkflowClientTrait, WorkflowStartOptions, WorkflowStartSignal};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
@@ -20,8 +20,7 @@ use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, SyncWorkflowContext,
-    WorkflowContext,
-    WorkflowResult,
+    WorkflowContext, WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
@@ -70,7 +69,7 @@ async fn sends_signal_to_missing_wf() {
         .submit_workflow(
             SignalSender::run,
             (Uuid::new_v4().to_string(), true),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -142,7 +141,7 @@ async fn sends_signal_to_other_wf() {
         .submit_wf(
             "receiver",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
+            WorkflowStartOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
         )
         .await
         .unwrap();
@@ -150,7 +149,7 @@ async fn sends_signal_to_other_wf() {
         .submit_wf(
             "sender",
             vec![(receiver_run_id, false).as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue, "sends-signal-sender").build(),
+            WorkflowStartOptions::new(task_queue, "sends-signal-sender").build(),
         )
         .await
         .unwrap();
@@ -168,11 +167,11 @@ async fn sends_signal_with_create_wf() {
     let mut header: HashMap<String, Payload> = HashMap::new();
     header.insert("tupac".into(), "shakur".into());
     let task_queue = worker.inner_mut().task_queue().to_string();
-    let start_signal = StartSignal::new(SIGNAME)
+    let start_signal = WorkflowStartSignal::new(SIGNAME)
         .maybe_input(vec!["tada".to_string().as_json_payload().unwrap()].into_payloads())
         .maybe_header(Some(header.into()))
         .build();
-    let options = WorkflowOptions::new(task_queue, "sends_signal_with_create_wf")
+    let options = WorkflowStartOptions::new(task_queue, "sends_signal_with_create_wf")
         .start_signal(start_signal)
         .build();
     let handle = client
@@ -227,7 +226,7 @@ async fn sends_signal_to_child() {
         .submit_wf(
             "child_signaler",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue, "sends-signal-to-child").build(),
+            WorkflowStartOptions::new(task_queue, "sends-signal-to-child").build(),
         )
         .await
         .unwrap();

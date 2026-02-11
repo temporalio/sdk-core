@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use std::time::{Duration, Instant};
 use temporalio_client::{
-    QueryOptions, SignalOptions, TerminateWorkflowOptions, UntypedQuery, UntypedSignal,
+    WorkflowQueryOptions, WorkflowSignalOptions, WorkflowTerminateOptions, UntypedQuery, UntypedSignal,
     UntypedWorkflow, WorkflowClientTrait,
 };
 use temporalio_common::{
@@ -56,7 +56,7 @@ async fn simple_query_legacy() {
             .query(
                 UntypedQuery::new("myquery"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -198,7 +198,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 .query(
                     UntypedQuery::new("myquery"),
                     RawValue::empty(),
-                    QueryOptions::default(),
+                    WorkflowQueryOptions::default(),
                 )
                 .await
                 .unwrap();
@@ -240,7 +240,7 @@ async fn fail_legacy_query(#[case] with_nde: bool) {
             .query(
                 UntypedQuery::new("myquery"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap_err()
@@ -310,7 +310,7 @@ async fn multiple_concurrent_queries_no_new_history() {
             .query(
                 UntypedQuery::new("myquery"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
@@ -345,7 +345,7 @@ async fn multiple_concurrent_queries_no_new_history() {
     // No need to properly finish
     client
         .get_workflow_handle::<UntypedWorkflow>(workflow_id, "")
-        .terminate(TerminateWorkflowOptions::default())
+        .terminate(WorkflowTerminateOptions::default())
         .await
         .unwrap();
     // This test should not take a long time. Things can still work, but if it takes a long time
@@ -378,7 +378,7 @@ async fn queries_handled_before_next_wft() {
             .query(
                 UntypedQuery::new("myquery"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
@@ -401,7 +401,7 @@ async fn queries_handled_before_next_wft() {
             .signal(
                 UntypedSignal::new("blah"),
                 RawValue::empty(),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -471,7 +471,7 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
     let query_fut = handle.query(
         UntypedQuery::new("myquery"),
         RawValue::empty(),
-        QueryOptions::default(),
+        WorkflowQueryOptions::default(),
     );
     // Poll for the task and respond with a task failure
     let poll_and_fail_fut = async {

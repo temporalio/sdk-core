@@ -6,7 +6,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::WorkflowOptions;
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowResult};
@@ -28,7 +28,7 @@ async fn timer_workflow_not_sticky() {
         .submit_workflow(
             TimerWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id).build(),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();
@@ -119,7 +119,7 @@ async fn cache_miss_ok() {
         .submit_workflow(
             CacheMissWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();

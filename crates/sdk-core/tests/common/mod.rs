@@ -29,10 +29,10 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsOptions, Connection, ConnectionOptions, GetWorkflowResultOptions,
-    NamespacedClient, TlsOptions, UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait,
-    WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle, WorkflowOptions,
-    WorkflowService,
+    Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
+    UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait, WorkflowExecutionInfo,
+    WorkflowExecutionResult, WorkflowGetResultOptions, WorkflowHandle, WorkflowService,
+    WorkflowStartOptions,
     errors::{WorkflowInteractionError, WorkflowStartError},
 };
 use temporalio_common::{
@@ -242,7 +242,7 @@ pub(crate) struct CoreWfStarter {
     pub sdk_config: WorkerOptions,
     /// Options to use when starting workflow(s). Is initialized with task_queue & workflow_id
     /// to be the same, derived from test name given to `new`.
-    pub workflow_options: WorkflowOptions,
+    pub workflow_options: WorkflowStartOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
     client_override: Option<Client>,
@@ -321,7 +321,7 @@ impl CoreWfStarter {
             task_queue_name: task_queue.clone(),
             sdk_config,
             initted_worker: OnceCell::new(),
-            workflow_options: WorkflowOptions::new(task_queue.clone(), task_queue).build(),
+            workflow_options: WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
             runtime_override: runtime_override.map(Arc::new),
             client_override,
             min_local_server_version: None,
@@ -452,7 +452,7 @@ impl CoreWfStarter {
             .client
             .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name, "")
             .get_result(
-                GetWorkflowResultOptions::builder()
+                WorkflowGetResultOptions::builder()
                     .follow_runs(false)
                     .build(),
             )
@@ -570,7 +570,7 @@ impl TestWorker {
         &self,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        mut options: WorkflowOptions,
+        mut options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
         if self.client.is_none() {
             return Ok("fake_run_id".to_string());
@@ -590,7 +590,7 @@ impl TestWorker {
         &self,
         workflow: W,
         input: W::Input,
-        mut options: WorkflowOptions,
+        mut options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
     where
         W: WorkflowDefinition,
@@ -679,7 +679,7 @@ impl TestWorkerSubmitterHandle {
         &self,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        options: WorkflowOptions,
+        options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
         let wfid = options.workflow_id.clone();
         let handle = self

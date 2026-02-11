@@ -1,6 +1,6 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{GetWorkflowResultOptions, Priority, UntypedWorkflow, WorkflowClientTrait};
+use temporalio_client::{WorkflowGetResultOptions, Priority, UntypedWorkflow, WorkflowClientTrait};
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
@@ -122,7 +122,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     let client = starter.get_client().await;
     let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue(), "");
     let res = handle
-        .get_result(GetWorkflowResultOptions::default())
+        .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
     // Expect workflow success

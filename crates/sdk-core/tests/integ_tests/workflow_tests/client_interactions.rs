@@ -1,8 +1,8 @@
 use crate::common::CoreWfStarter;
 use assert_matches::assert_matches;
 use temporalio_client::{
-    QueryOptions, SignalOptions, UntypedQuery, UntypedSignal, UntypedUpdate, UpdateOptions,
-    WorkflowExecutionResult, WorkflowOptions,
+    WorkflowQueryOptions, WorkflowSignalOptions, UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowExecuteUpdateOptions,
+    WorkflowExecutionResult, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
@@ -136,7 +136,7 @@ async fn test_typed_signal() {
         .submit_workflow(
             InteractionWorkflow::run,
             42, // Wait for counter == 42
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_signal", starter.get_task_queue()),
             )
@@ -148,7 +148,7 @@ async fn test_typed_signal() {
     // Send signal concurrently with worker
     let signaler = async {
         handle
-            .signal(InteractionWorkflow::increment, 42, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 42, WorkflowSignalOptions::default())
             .await
             .unwrap();
     };
@@ -174,7 +174,7 @@ async fn test_typed_update() {
         .submit_workflow(
             InteractionWorkflow::run,
             999, // Wait for counter == 999
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_update", starter.get_task_queue()),
             )
@@ -188,7 +188,7 @@ async fn test_typed_update() {
             .execute_update(
                 InteractionWorkflow::set_counter,
                 2,
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -197,7 +197,7 @@ async fn test_typed_update() {
             .execute_update(
                 InteractionWorkflow::invalidate_vec,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -205,7 +205,7 @@ async fn test_typed_update() {
             .execute_update(
                 InteractionWorkflow::change_and_wait,
                 (997, 999),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -232,7 +232,7 @@ async fn test_typed_query() {
         .submit_workflow(
             InteractionWorkflow::run,
             100,
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_query", starter.get_task_queue()),
             )
@@ -246,13 +246,13 @@ async fn test_typed_query() {
             .query(
                 InteractionWorkflow::get_counter,
                 (),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
         assert_eq!(counter, 0);
         handle
-            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
             .await
             .unwrap();
 
@@ -260,13 +260,13 @@ async fn test_typed_query() {
             .query(
                 InteractionWorkflow::get_counter,
                 (),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
             .await
             .unwrap();
     };
@@ -292,7 +292,7 @@ async fn test_update_validation() {
         .submit_workflow(
             InteractionWorkflow::run,
             42,
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_validation", starter.get_task_queue()),
             )
@@ -306,7 +306,7 @@ async fn test_update_validation() {
             .execute_update(
                 InteractionWorkflow::validated_set,
                 10,
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -316,7 +316,7 @@ async fn test_update_validation() {
             .execute_update(
                 InteractionWorkflow::validated_set,
                 -5,
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(result.is_err());
@@ -327,7 +327,7 @@ async fn test_update_validation() {
             .execute_update(
                 InteractionWorkflow::validated_set,
                 42,
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -355,7 +355,7 @@ async fn test_async_signal() {
         .submit_workflow(
             InteractionWorkflow::run,
             100,
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_async_signal", starter.get_task_queue()),
             )
@@ -370,20 +370,20 @@ async fn test_async_signal() {
             .signal(
                 InteractionWorkflow::increment_and_wait,
                 (20, 50),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
 
         // Send another signal to reach the target (20 + 30 = 50)
         handle
-            .signal(InteractionWorkflow::increment, 30, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 30, WorkflowSignalOptions::default())
             .await
             .unwrap();
 
         // Now send final signal to complete the workflow (50 + 50 = 100)
         handle
-            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
             .await
             .unwrap();
     };
@@ -410,7 +410,7 @@ async fn test_fallible_query() {
         .submit_workflow(
             InteractionWorkflow::run,
             100,
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_fallible_query", starter.get_task_queue()),
             )
@@ -424,27 +424,27 @@ async fn test_fallible_query() {
             .query(
                 InteractionWorkflow::get_counter_checked,
                 10,
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await;
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.to_string().contains("below minimum"));
         handle
-            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
             .await
             .unwrap();
         let counter = handle
             .query(
                 InteractionWorkflow::get_counter_checked,
                 10,
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50, SignalOptions::default())
+            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
             .await
             .unwrap();
     };
@@ -470,7 +470,7 @@ async fn test_untyped_signal_query_update() {
         .submit_workflow(
             InteractionWorkflow::run,
             100,
-            WorkflowOptions::new(
+            WorkflowStartOptions::new(
                 task_queue.clone(),
                 format!("{}_untyped", starter.get_task_queue()),
             )
@@ -486,7 +486,7 @@ async fn test_untyped_signal_query_update() {
             .signal(
                 UntypedSignal::new("increment"),
                 RawValue::from_value(&25i32, &pc),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -495,7 +495,7 @@ async fn test_untyped_signal_query_update() {
             .query(
                 UntypedQuery::new("get_counter"),
                 RawValue::from_value(&(), &pc),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap();
@@ -506,7 +506,7 @@ async fn test_untyped_signal_query_update() {
             .execute_update(
                 UntypedUpdate::new("set_counter"),
                 RawValue::from_value(&50i32, &pc),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -517,7 +517,7 @@ async fn test_untyped_signal_query_update() {
             .signal(
                 UntypedSignal::new("increment"),
                 RawValue::from_value(&50i32, &pc),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();

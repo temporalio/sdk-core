@@ -1,7 +1,7 @@
 use crate::common::CoreWfStarter;
 use rstest::rstest;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{ActivityIdentifier, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{ActivityIdentifier, WorkflowClientTrait, WorkflowStartOptions};
 use temporalio_common::protos::{
     coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::{
@@ -220,7 +220,7 @@ async fn async_activity_completions(
         .submit_workflow(
             AsyncCompletionWorkflow::run,
             outcome,
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();

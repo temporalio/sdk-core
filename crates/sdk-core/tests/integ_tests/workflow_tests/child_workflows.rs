@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{
-    CancelWorkflowOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowCancelOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -115,7 +115,7 @@ async fn child_workflow_happy_path() {
         .submit_wf(
             PARENT_WF_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, "parent".to_string()).build(),
+            WorkflowStartOptions::new(task_queue, "parent".to_string()).build(),
         )
         .await
         .unwrap();
@@ -185,7 +185,7 @@ async fn abandoned_child_bug_repro() {
         .submit_workflow(
             AbandonedChildBugReproParent::run,
             (),
-            WorkflowOptions::new(task_queue, "parent-abandoner").build(),
+            WorkflowStartOptions::new(task_queue, "parent-abandoner").build(),
         )
         .await
         .unwrap();
@@ -194,12 +194,12 @@ async fn abandoned_child_bug_repro() {
         barr.wait().await;
         let parent_handle = client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner", "");
         parent_handle
-            .cancel(CancelWorkflowOptions::builder().reason("die").build())
+            .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await
             .unwrap();
         let child_handle = client.get_workflow_handle::<UntypedWorkflow>("abandoned-child", "");
         child_handle
-            .cancel(CancelWorkflowOptions::builder().reason("die").build())
+            .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await
             .unwrap();
     };
@@ -271,7 +271,7 @@ async fn abandoned_child_resolves_post_cancel() {
         .submit_workflow(
             AbandonedChildResolvesPostCancelParent::run,
             (),
-            WorkflowOptions::new(task_queue, "parent-abandoner-resolving").build(),
+            WorkflowStartOptions::new(task_queue, "parent-abandoner-resolving").build(),
         )
         .await
         .unwrap();
@@ -281,7 +281,7 @@ async fn abandoned_child_resolves_post_cancel() {
         let handle =
             client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving", "");
         handle
-            .cancel(CancelWorkflowOptions::builder().reason("die").build())
+            .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await
             .unwrap();
     };
@@ -348,7 +348,7 @@ async fn cancelled_child_gets_reason() {
         .submit_workflow(
             CancelledChildGetsReasonParent::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), task_queue).build(),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
         )
         .await
         .unwrap();
@@ -413,7 +413,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
         .submit_wf(
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -637,7 +637,7 @@ async fn pass_child_workflow_summary_to_metadata() {
         .submit_wf(
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

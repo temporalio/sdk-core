@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, Connection, ConnectionOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    Client, Connection, ConnectionOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -171,7 +171,7 @@ async fn switching_worker_client_changes_poll() {
             .start_workflow(
                 UntypedWorkflow::new("my-workflow-type"),
                 RawValue::default(),
-                WorkflowOptions::new("my-task-queue".to_owned(), "my-workflow-1".to_owned())
+                WorkflowStartOptions::new("my-task-queue".to_owned(), "my-workflow-1".to_owned())
                     .build(),
             )
             .await
@@ -181,7 +181,7 @@ async fn switching_worker_client_changes_poll() {
             .start_workflow(
                 UntypedWorkflow::new("my-workflow-type"),
                 RawValue::default(),
-                WorkflowOptions::new("my-task-queue".to_owned(), "my-workflow-2".to_owned())
+                WorkflowStartOptions::new("my-task-queue".to_owned(), "my-workflow-2".to_owned())
                     .build(),
             )
             .await
@@ -290,7 +290,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
         .submit_workflow(
             OnlyOneWorkflowSlotAndTwoPollers::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), task_queue.clone()).build(),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue.clone()).build(),
         )
         .await
         .unwrap();
@@ -299,7 +299,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
         .submit_workflow(
             OnlyOneWorkflowSlotAndTwoPollers::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), wf2id.clone()).build(),
+            WorkflowStartOptions::new(task_queue.clone(), wf2id.clone()).build(),
         )
         .await
         .unwrap();
@@ -413,7 +413,7 @@ async fn replace_client_works_after_polling_failure() {
                 .start_workflow(
                     UntypedWorkflow::new(wf_name),
                     RawValue::default(),
-                    WorkflowOptions::new(task_queue.clone(), wf_name.to_string()).build(),
+                    WorkflowStartOptions::new(task_queue.clone(), wf_name.to_string()).build(),
                 )
                 .await
                 .unwrap();
@@ -455,7 +455,7 @@ async fn replace_client_works_after_polling_failure() {
                 .start_workflow(
                     UntypedWorkflow::new(wf_name),
                     RawValue::default(),
-                    WorkflowOptions::new(task_queue, wf_name)
+                    WorkflowStartOptions::new(task_queue, wf_name)
                         .execution_timeout(Duration::from_secs(60))
                         .build(),
                 )

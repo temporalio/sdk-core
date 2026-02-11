@@ -34,8 +34,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    NamespacedClient, QueryOptions, SignalOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions, WorkflowService,
+    NamespacedClient, WorkflowQueryOptions, WorkflowSignalOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowExecutionResult, WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -105,7 +105,7 @@ async fn parallel_workflows_same_queue() {
         core.submit_workflow(
             ParallelWorkflowsWf::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
+            WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
         )
         .await
         .unwrap();
@@ -243,7 +243,7 @@ async fn signal_workflow() {
         .signal(
             UntypedSignal::new(signal_id_1),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -251,7 +251,7 @@ async fn signal_workflow() {
         .signal(
             UntypedSignal::new(signal_id_2),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -339,7 +339,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
                 .signal(
                     UntypedSignal::new(signal_id_1),
                     RawValue::empty(),
-                    SignalOptions::default(),
+                    WorkflowSignalOptions::default(),
                 )
                 .await
                 .unwrap();
@@ -417,7 +417,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .signal(
             UntypedSignal::new(signal_at_start),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -432,7 +432,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .signal(
             UntypedSignal::new(signal_at_complete),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -517,7 +517,7 @@ async fn slow_completes_with_small_cache() {
             .submit_workflow(
                 SlowCompletesWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
+                WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -598,7 +598,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
             .query(
                 UntypedQuery::new("q1"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -686,7 +686,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
             .query(
                 UntypedQuery::new("q2"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -759,7 +759,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
         .signal(
             UntypedSignal::new("whatever"),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -891,7 +891,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
         .signal(
             UntypedSignal::new("hi"),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -1004,7 +1004,7 @@ async fn history_out_of_order_on_restart() {
         .submit_workflow(
             HistoryOutOfOrderWf1::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned())
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned())
                 .execution_timeout(Duration::from_secs(20))
                 .build(),
         )
@@ -1080,7 +1080,7 @@ async fn pass_timer_summary_to_metadata() {
         .submit_wf(
             DEFAULT_WORKFLOW_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
+            WorkflowStartOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

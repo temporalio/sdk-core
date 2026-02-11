@@ -2,7 +2,7 @@ use crate::common::{CoreWfStarter, eventually, rand_6_chars};
 use futures::TryStreamExt;
 use std::{collections::HashSet, time::Duration};
 use temporalio_client::{
-    CountWorkflowsOptions, ListWorkflowsOptions, WorkflowClientTrait, WorkflowOptions,
+    WorkflowCountOptions, WorkflowListOptions, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
@@ -45,7 +45,7 @@ async fn list_workflows(#[case] limit: Option<usize>) {
             .submit_workflow(
                 EmptyWorkflow::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), wf_id).build(),
+                WorkflowStartOptions::new(task_queue.clone(), wf_id).build(),
             )
             .await
             .unwrap();
@@ -63,8 +63,8 @@ async fn list_workflows(#[case] limit: Option<usize>) {
             async move {
                 let query = format!("TaskQueue = '{task_queue}'");
                 let opts = match limit {
-                    Some(l) => ListWorkflowsOptions::builder().limit(l).build(),
-                    None => ListWorkflowsOptions::default(),
+                    Some(l) => WorkflowListOptions::builder().limit(l).build(),
+                    None => WorkflowListOptions::default(),
                 };
                 let stream = client.list_workflows(query, opts);
                 let results: Vec<_> = stream.try_collect().await.expect("No errors");
@@ -112,7 +112,7 @@ async fn list_workflows(#[case] limit: Option<usize>) {
     // Verify count_workflows works too
     let query = format!("TaskQueue = '{task_queue}'");
     let count = client
-        .count_workflows(&query, CountWorkflowsOptions::default())
+        .count_workflows(&query, WorkflowCountOptions::default())
         .await
         .unwrap();
     assert!(count.count() == num_workflows);

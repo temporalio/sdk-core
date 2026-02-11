@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::{
-    DescribeWorkflowOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowDescribeOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -52,7 +52,7 @@ async fn sends_modify_wf_props() {
         .submit_wf(
             wf_name,
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_string()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_string()).build(),
         )
         .await
         .unwrap();
@@ -62,7 +62,7 @@ async fn sends_modify_wf_props() {
         .get_client()
         .await
         .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), run_id)
-        .describe(DescribeWorkflowOptions::default())
+        .describe(WorkflowDescribeOptions::default())
         .await
         .unwrap()
         .raw_description

@@ -10,7 +10,7 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowExecutionResult,
-    WorkflowOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{
@@ -135,7 +135,7 @@ async fn data_converter_tracks_serialization_points() {
         .submit_workflow(
             DataConverterTestWorkflow::run,
             TrackedWrapper(input),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -201,7 +201,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
         .submit_workflow(
             MultiArgs2Workflow::run,
             input,
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -360,7 +360,7 @@ async fn codec_encodes_and_decodes_payloads() {
         .submit_workflow(
             DataConverterTestWorkflow::run,
             TrackedWrapper(input),
-            WorkflowOptions::new(task_queue, wf_id).build(),
+            WorkflowStartOptions::new(task_queue, wf_id).build(),
         )
         .await
         .unwrap();

@@ -670,7 +670,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         &self,
         workflow: W,
         input: W::Input,
-        options: WorkflowOptions,
+        options: WorkflowStartOptions,
     ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, WorkflowStartError>>
     where
         Self: Sized,
@@ -697,14 +697,14 @@ pub trait WorkflowClientTrait: NamespacedClient {
     fn list_workflows(
         &self,
         query: impl Into<String>,
-        opts: ListWorkflowsOptions,
+        opts: WorkflowListOptions,
     ) -> ListWorkflowsStream;
 
     /// Count workflows matching a query.
     fn count_workflows(
         &self,
         query: impl Into<String>,
-        opts: CountWorkflowsOptions,
+        opts: WorkflowCountOptions,
     ) -> impl Future<Output = Result<WorkflowExecutionCount, WorkflowCountError>>;
 
     /// Get a handle to complete an activity asynchronously.
@@ -944,7 +944,7 @@ where
         &self,
         workflow: W,
         input: W::Input,
-        options: WorkflowOptions,
+        options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
         W: WorkflowDefinition,
@@ -1071,7 +1071,7 @@ where
     fn list_workflows(
         &self,
         query: impl Into<String>,
-        opts: ListWorkflowsOptions,
+        opts: WorkflowListOptions,
     ) -> ListWorkflowsStream {
         let client = self.clone();
         let namespace = self.namespace();
@@ -1147,7 +1147,7 @@ where
     async fn count_workflows(
         &self,
         query: impl Into<String>,
-        _opts: CountWorkflowsOptions,
+        _opts: WorkflowCountOptions,
     ) -> Result<WorkflowExecutionCount, WorkflowCountError> {
         let resp = WorkflowService::count_workflow_executions(
             &mut self.clone(),
@@ -1430,7 +1430,7 @@ mod tests {
                 total_workflows: 10,
             };
 
-            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let stream = client.list_workflows("", WorkflowListOptions::default());
             let results: Vec<_> = stream.collect().await;
 
             assert_eq!(results.len(), 10);
@@ -1452,7 +1452,7 @@ mod tests {
                 total_workflows: 10,
             };
 
-            let opts = ListWorkflowsOptions::builder().limit(5).build();
+            let opts = WorkflowListOptions::builder().limit(5).build();
             let stream = client.list_workflows("", opts);
             let results: Vec<_> = stream.collect().await;
 
@@ -1474,7 +1474,7 @@ mod tests {
                 total_workflows: 100,
             };
 
-            let opts = ListWorkflowsOptions::builder().limit(3).build();
+            let opts = WorkflowListOptions::builder().limit(3).build();
             let stream = client.list_workflows("", opts);
             let results: Vec<_> = stream.collect().await;
 
@@ -1492,7 +1492,7 @@ mod tests {
                 total_workflows: 0,
             };
 
-            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let stream = client.list_workflows("", WorkflowListOptions::default());
             let results: Vec<_> = stream.collect().await;
 
             assert_eq!(results.len(), 0);

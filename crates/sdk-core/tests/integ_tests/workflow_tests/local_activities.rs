@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{UntypedWorkflow, UpdateOptions, WorkflowClientTrait, WorkflowOptions};
+use temporalio_client::{UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowClientTrait, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
@@ -97,7 +97,7 @@ async fn one_local_activity() {
         .submit_workflow(
             OneLocalActivityWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -140,7 +140,7 @@ async fn local_act_concurrent_with_timer() {
         .submit_workflow(
             LocalActConcurrentWithTimerWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -180,7 +180,7 @@ async fn local_act_then_timer_then_wait_result() {
         .submit_workflow(
             LocalActThenTimerThenWaitResult::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -221,7 +221,7 @@ async fn long_running_local_act_with_timer() {
         .submit_workflow(
             LocalActThenTimerThenWait::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -261,7 +261,7 @@ async fn local_act_fanout() {
         .submit_workflow(
             LocalActFanoutWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -312,7 +312,7 @@ async fn local_act_retry_timer_backoff() {
         .submit_workflow(
             LocalActRetryTimerBackoff::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -405,7 +405,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         .submit_workflow(
             CancelImmediate::run,
             cancel_type,
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -561,7 +561,7 @@ async fn cancel_after_act_starts(
         .submit_workflow(
             CancelAfterActStartsWf::run,
             (bo_dur, cancel_type),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -667,7 +667,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         .submit_workflow(
             XToCloseTimeoutWf::run,
             (sched, start, timeout_type as i32),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -750,7 +750,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         .submit_workflow(
             ScheduleToCloseTimeoutAcrossTimerBackoff::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -772,11 +772,11 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
 
     let task_queue = starter.get_task_queue().to_owned();
     let opts = if short_wft_timeout {
-        WorkflowOptions::new(task_queue, wf_name.clone())
+        WorkflowStartOptions::new(task_queue, wf_name.clone())
             .task_timeout(Duration::from_secs(1))
             .build()
     } else {
-        WorkflowOptions::new(task_queue, wf_name.clone()).build()
+        WorkflowStartOptions::new(task_queue, wf_name.clone()).build()
     };
     worker
         .submit_workflow(LocalActThenTimerThenWait::run, (), opts)
@@ -844,7 +844,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         .submit_workflow(
             TimerBackoffConcurrentWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -901,7 +901,7 @@ async fn repro_nondeterminism_with_timer_bug() {
         .submit_workflow(
             ReproNondeterminismWithTimerBugWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1055,7 +1055,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         .submit_workflow(
             LaResolveSameTimeAsOtherCancelWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1131,7 +1131,7 @@ async fn long_local_activity_with_update(
         .submit_workflow(
             LongLocalActivityWithUpdateWf::run,
             update_inner_timer,
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1143,7 +1143,7 @@ async fn long_local_activity_with_update(
                 .execute_update(
                     LongLocalActivityWithUpdateWf::do_update,
                     (),
-                    UpdateOptions::default(),
+                    WorkflowExecuteUpdateOptions::default(),
                 )
                 .await;
         }
@@ -1228,7 +1228,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         .submit_workflow(
             LocalActivityWithHeartbeatOnlyCausesOneWakeupWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();

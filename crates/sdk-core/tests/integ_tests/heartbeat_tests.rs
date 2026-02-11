@@ -1,7 +1,7 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporalio_client::WorkflowOptions;
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -228,7 +228,7 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
         .submit_workflow(
             ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();

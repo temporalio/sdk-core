@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use std::{sync::Arc, time::Duration};
-use temporalio_client::WorkflowOptions;
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
@@ -48,7 +48,7 @@ async fn continue_as_new_happy_path() {
         .submit_workflow(
             ContinueAsNewWf::run,
             1u8,
-            WorkflowOptions::new(task_queue, wf_name.to_string()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_string()).build(),
         )
         .await
         .unwrap();
@@ -72,7 +72,7 @@ async fn continue_as_new_multiple_concurrent() {
             .submit_workflow(
                 ContinueAsNewWf::run,
                 1u8,
-                WorkflowOptions::new(task_queue.clone(), name).build(),
+                WorkflowStartOptions::new(task_queue.clone(), name).build(),
             )
             .await
             .unwrap();

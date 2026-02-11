@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, NamespacedClient, SignalOptions, UntypedSignal, UntypedUpdate, UntypedWorkflow,
-    UpdateOptions, WorkflowClientTrait, WorkflowOptions, WorkflowService,
+    Client, NamespacedClient, WorkflowSignalOptions, UntypedSignal, UntypedUpdate, UntypedWorkflow,
+    WorkflowExecuteUpdateOptions, WorkflowClientTrait, WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -210,7 +210,7 @@ async fn send_and_handle_update(
             .execute_update(
                 UntypedUpdate::new(update_id),
                 RawValue::from_value(&"hi", client.data_converter().payload_converter()),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
     };
@@ -315,7 +315,7 @@ async fn update_rejection() {
             .execute_update(
                 UntypedUpdate::new(update_id),
                 RawValue::from_value(&"hi", client.data_converter().payload_converter()),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
     };
@@ -387,7 +387,7 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
             .execute_update(
                 UntypedUpdate::new(update_id),
                 RawValue::from_value(&"hi", client.data_converter().payload_converter()),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -474,7 +474,7 @@ async fn update_complete_after_accept_without_new_task() {
             .execute_update(
                 UntypedUpdate::new(update_id),
                 RawValue::from_value(&"hi", client.data_converter().payload_converter()),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -563,7 +563,7 @@ async fn update_speculative_wft() {
             .execute_update(
                 UntypedUpdate::new(update_id),
                 RawValue::from_value(&"hi", client.data_converter().payload_converter()),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         barr.wait().await;
@@ -571,7 +571,7 @@ async fn update_speculative_wft() {
             .signal(
                 UntypedSignal::new("hi"),
                 RawValue::empty(),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -675,7 +675,7 @@ async fn update_with_local_acts() {
         .submit_workflow(
             UpdateWithLocalActsWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -685,7 +685,7 @@ async fn update_with_local_acts() {
             handle.execute_update(
                 UpdateWithLocalActsWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
         });
         for res in join_all(updates).await {
@@ -695,7 +695,7 @@ async fn update_with_local_acts() {
             .signal(
                 UpdateWithLocalActsWf::done_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -752,7 +752,7 @@ async fn update_rejection_sdk() {
         .submit_workflow(
             UpdateRejectionSdkWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -761,7 +761,7 @@ async fn update_rejection_sdk() {
             .execute_update(
                 UpdateRejectionSdkWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(res.is_err());
@@ -809,13 +809,13 @@ async fn update_fail_sdk() {
         .submit_workflow(
             UpdateFailSdkWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
     let update = async {
         let res = handle
-            .execute_update(UpdateFailSdkWf::do_update, (), UpdateOptions::default())
+            .execute_update(UpdateFailSdkWf::do_update, (), WorkflowExecuteUpdateOptions::default())
             .await;
         assert!(res.is_err());
     };
@@ -867,7 +867,7 @@ async fn update_timer_sequence() {
         .submit_workflow(
             UpdateTimerSequenceWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -876,7 +876,7 @@ async fn update_timer_sequence() {
             .execute_update(
                 UpdateTimerSequenceWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(res.unwrap() == "done");
@@ -938,7 +938,7 @@ async fn task_failure_during_validation() {
         .submit_workflow(
             TaskFailureDuringValidationWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -947,7 +947,7 @@ async fn task_failure_during_validation() {
             .execute_update(
                 TaskFailureDuringValidationWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(res.unwrap() == "done");
@@ -1010,7 +1010,7 @@ async fn task_failure_after_update() {
         .submit_workflow(
             TaskFailureAfterUpdateWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1019,7 +1019,7 @@ async fn task_failure_after_update() {
             .execute_update(
                 TaskFailureAfterUpdateWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(res.unwrap() == "done");
@@ -1102,7 +1102,7 @@ async fn worker_restarted_in_middle_of_update() {
         .submit_workflow(
             WorkerRestartedInMiddleOfUpdateWf::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue.clone(), starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1113,7 +1113,7 @@ async fn worker_restarted_in_middle_of_update() {
             .execute_update(
                 WorkerRestartedInMiddleOfUpdateWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await;
         assert!(res.is_ok());
@@ -1121,7 +1121,7 @@ async fn worker_restarted_in_middle_of_update() {
             .signal(
                 WorkerRestartedInMiddleOfUpdateWf::done_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -1234,7 +1234,7 @@ async fn update_after_empty_wft() {
         .submit_workflow(
             UpdateAfterEmptyWftWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1244,7 +1244,7 @@ async fn update_after_empty_wft() {
             .signal(
                 UpdateAfterEmptyWftWf::signal_handler,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -1253,7 +1253,7 @@ async fn update_after_empty_wft() {
             .execute_update(
                 UpdateAfterEmptyWftWf::do_update,
                 (),
-                UpdateOptions::default(),
+                WorkflowExecuteUpdateOptions::default(),
             )
             .await
             .unwrap();
@@ -1316,7 +1316,7 @@ async fn update_lost_on_activity_mismatch() {
         .submit_workflow(
             UpdateLostOnActivityMismatchWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1331,7 +1331,7 @@ async fn update_lost_on_activity_mismatch() {
                 .execute_update(
                     UpdateLostOnActivityMismatchWf::do_update,
                     (),
-                    UpdateOptions::default(),
+                    WorkflowExecuteUpdateOptions::default(),
                 )
                 .await
                 .unwrap();

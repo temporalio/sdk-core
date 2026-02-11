@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::{
-    GetWorkflowResultOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
+    WorkflowGetResultOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -65,7 +65,7 @@ async fn sends_cancel_to_other_wf() {
         .submit_wf(
             "CancelReceiver",
             vec![().as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
+            WorkflowStartOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
         )
         .await
         .unwrap();
@@ -73,7 +73,7 @@ async fn sends_cancel_to_other_wf() {
         .submit_wf(
             "CancelSender",
             vec![receiver_run_id.clone().as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue, "sends-cancel-sender").build(),
+            WorkflowStartOptions::new(task_queue, "sends-cancel-sender").build(),
         )
         .await
         .unwrap();
@@ -83,7 +83,7 @@ async fn sends_cancel_to_other_wf() {
         .await
         .get_workflow_handle::<UntypedWorkflow>(RECEIVER_WFID, receiver_run_id);
     let res = String::from_json_payload(
-        h.get_result(GetWorkflowResultOptions::default())
+        h.get_result(WorkflowGetResultOptions::default())
             .await
             .unwrap()
             .unwrap_success()
