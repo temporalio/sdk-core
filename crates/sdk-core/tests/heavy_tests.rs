@@ -24,7 +24,7 @@ use std::{
 };
 use temporalio_client::{
     NamespacedClient, WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowSignalOptions,
-    UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
+    UntypedSignal, UntypedWorkflow, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue, protos::temporal::api::enums::v1::WorkflowIdConflictPolicy,

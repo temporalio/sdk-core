@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{
-    WorkflowCancelOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
+    WorkflowCancelOptions, UntypedWorkflow, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{

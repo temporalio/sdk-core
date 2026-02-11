@@ -1,7 +1,7 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
 use temporalio_client::{
-    WorkflowCancelOptions, WorkflowDescribeOptions, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowCancelOptions, WorkflowDescribeOptions, UntypedWorkflow,
     WorkflowStartOptions,
 };
 use temporalio_common::{

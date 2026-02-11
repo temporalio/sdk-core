@@ -1,7 +1,7 @@
 use crate::common::CoreWfStarter;
 use rstest::rstest;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{ActivityIdentifier, WorkflowClientTrait, WorkflowStartOptions};
+use temporalio_client::{ActivityIdentifier, WorkflowStartOptions};
 use temporalio_common::protos::{
     coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::{

@@ -4,7 +4,7 @@ use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnorde
 use std::time::{Duration, Instant};
 use temporalio_client::{
     NamespacedClient, WorkflowExecutionInfo, WorkflowQueryOptions, WorkflowSignalOptions,
-    WorkflowTerminateOptions, UntypedQuery, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowTerminateOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
 };
 use temporalio_common::{
     data_converters::RawValue,

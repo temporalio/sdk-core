@@ -15,7 +15,7 @@ use std::{
 };
 use temporalio_client::{
     ActivityIdentifier, WorkflowDescribeOptions, WorkflowTerminateOptions, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowStartOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     prost_dur,

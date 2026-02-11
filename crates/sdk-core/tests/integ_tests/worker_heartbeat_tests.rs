@@ -14,7 +14,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions, WorkflowClientTrait,
+    Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions,
     WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{

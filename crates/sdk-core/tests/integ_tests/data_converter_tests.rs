@@ -8,7 +8,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, ClientOptions, UntypedWorkflow, WorkflowClientTrait,
+    Client, ClientOptions, UntypedWorkflow,
     WorkflowStartOptions,
 };
 use temporalio_common::{

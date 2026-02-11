@@ -2,7 +2,7 @@ use crate::common::{CoreWfStarter, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, build_fake_
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
 use temporalio_client::{
-    WorkflowDescribeOptions, WorkflowGetResultOptions, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowDescribeOptions, WorkflowGetResultOptions, UntypedWorkflow,
     WorkflowStartOptions,
 };
 use temporalio_common::{

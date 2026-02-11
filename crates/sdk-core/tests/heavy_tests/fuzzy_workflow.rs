@@ -3,7 +3,7 @@ use futures_util::{StreamExt, sink, stream::FuturesUnordered};
 use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{
-    WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
+    WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowStartOptions,
 };
 use temporalio_common::{data_converters::RawValue, protos::coresdk::AsJsonPayloadExt};
 use temporalio_macros::{workflow, workflow_methods};

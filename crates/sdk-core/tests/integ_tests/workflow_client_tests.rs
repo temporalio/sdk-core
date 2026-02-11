@@ -2,7 +2,7 @@ use crate::common::{CoreWfStarter, eventually, rand_6_chars};
 use futures::TryStreamExt;
 use std::{collections::HashSet, time::Duration};
 use temporalio_client::{
-    WorkflowCountOptions, WorkflowListOptions, WorkflowClientTrait, WorkflowStartOptions,
+    WorkflowCountOptions, WorkflowListOptions, WorkflowStartOptions,
 };
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};

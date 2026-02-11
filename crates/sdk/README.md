@@ -295,7 +295,7 @@ among other operations.
 ```rust
 use temporalio_client::{
     Client, ClientOptions, Connection, ConnectionOptions,
-    WorkflowClientTrait, WorkflowOptions, GetWorkflowResultOptions,
+    WorkflowOptions, GetWorkflowResultOptions,
 };
 use temporalio_sdk_core::{Url, CoreRuntime, RuntimeOptions};
 use std::str::FromStr;

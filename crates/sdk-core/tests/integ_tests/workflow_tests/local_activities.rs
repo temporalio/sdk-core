@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{NamespacedClient, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowClientTrait, WorkflowStartOptions};
+use temporalio_client::{NamespacedClient, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{

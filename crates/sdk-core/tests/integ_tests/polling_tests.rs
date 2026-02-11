@@ -15,7 +15,7 @@ use std::{
 };
 use temporalio_client::{
     Client, Connection, ConnectionOptions, NamespacedClient, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionInfo, WorkflowStartOptions,
+    WorkflowExecutionInfo, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue,

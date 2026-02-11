@@ -633,6 +633,69 @@ impl Client {
     }
 }
 
+// High-level workflow operations on Client.
+// These forward to the internal WorkflowClientTrait blanket impl which is
+// available because Client implements WorkflowService + NamespacedClient + Clone.
+impl Client {
+    /// Start a workflow execution.
+    ///
+    /// Returns a [`WorkflowHandle`] that can be used to interact with the workflow
+    /// (e.g., get its result, send signals, query, etc.).
+    pub async fn start_workflow<W>(
+        &self,
+        workflow: W,
+        input: W::Input,
+        options: WorkflowStartOptions,
+    ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        WorkflowClientTrait::start_workflow(self, workflow, input, options).await
+    }
+
+    /// Get a handle to an existing workflow.
+    ///
+    /// For untyped access, use `get_workflow_handle::<UntypedWorkflow>(...)`.
+    pub fn get_workflow_handle<W: WorkflowDefinition>(
+        &self,
+        workflow_id: impl Into<String>,
+    ) -> WorkflowHandle<Self, W> {
+        WorkflowClientTrait::get_workflow_handle(self, workflow_id)
+    }
+
+    /// List workflows matching a query.
+    ///
+    /// Returns a stream that lazily paginates through results.
+    /// Use `limit` in options to cap the number of results returned.
+    pub fn list_workflows(
+        &self,
+        query: impl Into<String>,
+        opts: WorkflowListOptions,
+    ) -> ListWorkflowsStream {
+        WorkflowClientTrait::list_workflows(self, query, opts)
+    }
+
+    /// Count workflows matching a query.
+    pub async fn count_workflows(
+        &self,
+        query: impl Into<String>,
+        opts: WorkflowCountOptions,
+    ) -> Result<WorkflowExecutionCount, ClientError> {
+        WorkflowClientTrait::count_workflows(self, query, opts).await
+    }
+
+    /// Get a handle to complete an activity asynchronously.
+    ///
+    /// An activity returning `ActivityError::WillCompleteAsync` can be completed with this handle.
+    pub fn get_async_activity_handle(
+        &self,
+        identifier: ActivityIdentifier,
+    ) -> AsyncActivityHandle<Self> {
+        WorkflowClientTrait::get_async_activity_handle(self, identifier)
+    }
+}
+
 impl NamespacedClient for Client {
     fn namespace(&self) -> String {
         self.options.namespace.clone()
@@ -669,7 +732,7 @@ impl Namespace {
 
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
-pub trait WorkflowClientTrait: NamespacedClient {
+pub(crate) trait WorkflowClientTrait: NamespacedClient {
     /// Start a workflow execution.
     fn start_workflow<W>(
         &self,

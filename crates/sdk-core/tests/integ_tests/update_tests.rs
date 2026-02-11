@@ -14,7 +14,7 @@ use std::{
 };
 use temporalio_client::{
     Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions, UntypedSignal,
-    UntypedUpdate, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowClientTrait,
+    UntypedUpdate, UntypedWorkflow, WorkflowExecuteUpdateOptions,
     WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{

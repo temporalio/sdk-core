@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    WorkflowCancelOptions, WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowCancelOptions, WorkflowSignalOptions, UntypedSignal, UntypedWorkflow,
     WorkflowStartOptions,
 };
 use temporalio_common::{

@@ -1,6 +1,6 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{WorkflowGetResultOptions, Priority, UntypedWorkflow, WorkflowClientTrait};
+use temporalio_client::{WorkflowGetResultOptions, Priority, UntypedWorkflow};
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{

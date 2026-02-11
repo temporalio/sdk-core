@@ -1,7 +1,7 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::{
     NamespacedClient, WorkflowDescribeOptions, WorkflowExecutionInfo, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowStartOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{

@@ -1,6 +1,6 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::collections::HashMap;
-use temporalio_client::{WorkflowClientTrait, WorkflowStartOptions, WorkflowStartSignal};
+use temporalio_client::{WorkflowStartOptions, WorkflowStartSignal};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{

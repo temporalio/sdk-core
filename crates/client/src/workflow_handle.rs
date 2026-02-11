@@ -1,8 +1,8 @@
 use crate::{
-    NamespacedClient, WorkflowCancelOptions, WorkflowClientTrait, WorkflowDescribeOptions,
-    WorkflowExecuteUpdateOptions, WorkflowFetchHistoryOptions, WorkflowGetResultOptions,
-    WorkflowQueryOptions, WorkflowService, WorkflowSignalOptions, WorkflowStartUpdateOptions,
-    WorkflowTerminateOptions, WorkflowUpdateWaitStage,
+    NamespacedClient, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowExecuteUpdateOptions,
+    WorkflowFetchHistoryOptions, WorkflowGetResultOptions, WorkflowQueryOptions, WorkflowService,
+    WorkflowSignalOptions, WorkflowStartUpdateOptions, WorkflowTerminateOptions,
+    WorkflowUpdateWaitStage,
     errors::{
         WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError,
     },
@@ -279,7 +279,7 @@ where
         opts: WorkflowGetResultOptions,
     ) -> Result<W::Output, WorkflowGetResultError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
     {
         let raw = self.get_result_raw(opts).await?;
         match raw {
@@ -304,7 +304,7 @@ where
         opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
     {
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
         let fetch_opts = WorkflowFetchHistoryOptions::builder()
@@ -495,7 +495,7 @@ where
         options: WorkflowExecuteUpdateOptions,
     ) -> Result<U::Output, WorkflowUpdateError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         U: UpdateDefinition<Workflow = W>,
         U::Input: Send,
         U::Output: 'static,
@@ -523,7 +523,7 @@ where
         options: WorkflowStartUpdateOptions,
     ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         U: UpdateDefinition<Workflow = W>,
         U::Input: Send,
     {

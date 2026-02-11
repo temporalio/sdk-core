@@ -17,7 +17,7 @@ use std::{
 };
 use temporalio_client::{
     Connection, NamespacedClient, WorkflowExecutionInfo, WorkflowQueryOptions,
-    REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow, WorkflowClientTrait,
+    REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
     WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{

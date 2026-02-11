@@ -30,7 +30,7 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
-    UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait, WorkflowExecutionInfo,
+    UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo,
     WorkflowGetResultOptions, WorkflowHandle, WorkflowService,
     WorkflowStartOptions,
     errors::{WorkflowGetResultError, WorkflowStartError},
