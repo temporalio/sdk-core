@@ -998,7 +998,9 @@ async fn nexus_start_operation_failure_converts_to_legacy_for_old_server(
             matches!(response,
                 nexus::v1::Response{
                     variant: Some(response::Variant::StartOperation(StartOperationResponse {
-                        variant: Some(start_operation_response::Variant::OperationError(
+                        #[allow(deprecated)]
+                        variant: Some(
+                            start_operation_response::Variant::OperationError(
                             UnsuccessfulOperationError{
                                 operation_state,
                                 failure: Some(nexus::v1::Failure{
