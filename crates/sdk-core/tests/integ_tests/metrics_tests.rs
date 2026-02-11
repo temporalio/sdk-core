@@ -1003,6 +1003,7 @@ async fn nexus_metrics() {
                                 variant: Some(nexus::v1::response::Variant::StartOperation(
                                     StartOperationResponse {
                                         variant: Some(
+                                            #[allow(deprecated)]
                                             start_operation_response::Variant::OperationError(
                                                 UnsuccessfulOperationError {
                                                     operation_state: "failed".to_string(),
