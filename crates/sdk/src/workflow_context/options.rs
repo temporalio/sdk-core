@@ -413,6 +413,7 @@ pub struct NexusOperationOptions {
     /// Indicates how long the caller is willing to wait for the operation to be started (or completed if synchronous)
     /// by the handler. If the operation is not started within this timeout, it will fail with
     /// TIMEOUT_TYPE_SCHEDULE_TO_START.
+    /// If not set or zero, no schedule-to-start timeout is enforced.
     pub schedule_to_start_timeout: Option<Duration>,
     /// Start-to-close timeout for this operation.
     /// Indicates how long the caller is willing to wait for an asynchronous operation to complete after it has been
