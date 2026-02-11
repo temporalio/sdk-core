@@ -3,7 +3,9 @@ use crate::{
     WorkflowExecuteUpdateOptions, WorkflowFetchHistoryOptions, WorkflowGetResultOptions,
     WorkflowQueryOptions, WorkflowService, WorkflowSignalOptions, WorkflowStartUpdateOptions,
     WorkflowTerminateOptions, WorkflowUpdateWaitStage,
-    errors::{WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError},
+    errors::{
+        WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError,
+    },
 };
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
@@ -57,19 +59,6 @@ pub enum WorkflowExecutionResult<T> {
     TimedOut,
     /// The workflow continued as new
     ContinuedAsNew,
-}
-
-impl<T> WorkflowExecutionResult<T>
-where
-    T: Debug,
-{
-    /// Unwrap the result, panicking if it was not a success
-    pub fn unwrap_success(self) -> T {
-        match self {
-            Self::Succeeded(t) => t,
-            o => panic!("Expected success, got {o:?}"),
-        }
-    }
 }
 
 /// Description of a workflow execution returned by `WorkflowHandle::describe`.
@@ -283,8 +272,34 @@ where
         &self.client
     }
 
-    /// Await the result of the workflow execution
+    /// Await the result of the workflow execution, returning the output on success or an error
+    /// describing the non-success outcome (failed, cancelled, terminated, etc.).
     pub async fn get_result(
+        &self,
+        opts: WorkflowGetResultOptions,
+    ) -> Result<W::Output, WorkflowGetResultError>
+    where
+        CT: WorkflowClientTrait,
+    {
+        let raw = self.get_result_raw(opts).await?;
+        match raw {
+            WorkflowExecutionResult::Succeeded(v) => Ok(v),
+            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(f)),
+            WorkflowExecutionResult::Cancelled { details } => {
+                Err(WorkflowGetResultError::Cancelled { details })
+            }
+            WorkflowExecutionResult::Terminated { details } => {
+                Err(WorkflowGetResultError::Terminated { details })
+            }
+            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::TimedOut),
+            WorkflowExecutionResult::ContinuedAsNew => Err(WorkflowGetResultError::ContinuedAsNew),
+        }
+    }
+
+    /// Await the result of the workflow execution, returning the full
+    /// [`WorkflowExecutionResult`] enum for callers that need to inspect non-success outcomes
+    /// directly.
+    pub async fn get_result_raw(
         &self,
         opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>

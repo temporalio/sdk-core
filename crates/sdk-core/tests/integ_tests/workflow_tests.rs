@@ -35,7 +35,8 @@ use std::{
 };
 use temporalio_client::{
     NamespacedClient, WorkflowQueryOptions, WorkflowSignalOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionResult, WorkflowStartOptions, WorkflowService,
+    WorkflowClientTrait, WorkflowStartOptions, WorkflowService,
+    errors::WorkflowGetResultError,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -1028,8 +1029,8 @@ async fn history_out_of_order_on_restart() {
         .get_client()
         .await
         .get_workflow_handle::<UntypedWorkflow>(wf_name, "");
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Failed(_));
+    let res = handle.get_result(Default::default()).await;
+    assert_matches!(res, Err(WorkflowGetResultError::Failed(_)));
 }
 
 #[tokio::test]

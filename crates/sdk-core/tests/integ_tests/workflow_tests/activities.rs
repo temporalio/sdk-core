@@ -15,7 +15,7 @@ use std::{
 };
 use temporalio_client::{
     ActivityIdentifier, WorkflowDescribeOptions, WorkflowTerminateOptions, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionResult, WorkflowStartOptions,
+    WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     prost_dur,
@@ -102,8 +102,7 @@ async fn one_activity_only() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let r = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(r, input);
 }
 
@@ -946,8 +945,7 @@ async fn one_activity_abandon_cancelled_before_started() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[workflow]
@@ -995,8 +993,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[tokio::test]

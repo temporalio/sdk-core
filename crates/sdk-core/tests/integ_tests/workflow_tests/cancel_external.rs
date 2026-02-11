@@ -86,7 +86,6 @@ async fn sends_cancel_to_other_wf() {
         h.get_result(WorkflowGetResultOptions::default())
             .await
             .unwrap()
-            .unwrap_success()
             .payloads
             .first()
             .unwrap(),

@@ -196,7 +196,7 @@ async fn nexus_basic(
         .await
         .unwrap();
     let res = Result::<NexusOperationResult, Failure>::from_json_payload(
-        res.unwrap_success().payloads.first().unwrap(),
+        res.payloads.first().unwrap(),
     )
     .unwrap();
     match outcome {
@@ -485,7 +485,7 @@ async fn nexus_async(
         .await
         .unwrap();
     let res =
-        NexusOperationResult::from_json_payload(res.unwrap_success().payloads.first().unwrap())
+        NexusOperationResult::from_json_payload(res.payloads.first().unwrap())
             .unwrap();
     match outcome {
         Outcome::Succeed => {
@@ -1038,7 +1038,7 @@ async fn nexus_cancellation_types(
         .await
         .unwrap();
     let res =
-        NexusOperationResult::from_json_payload(res.unwrap_success().payloads.first().unwrap())
+        NexusOperationResult::from_json_payload(res.payloads.first().unwrap())
             .unwrap();
 
     match cancellation_type {

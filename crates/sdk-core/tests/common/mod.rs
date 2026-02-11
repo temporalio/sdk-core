@@ -31,9 +31,9 @@ use std::{
 use temporalio_client::{
     Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
     UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait, WorkflowExecutionInfo,
-    WorkflowExecutionResult, WorkflowGetResultOptions, WorkflowHandle, WorkflowService,
+    WorkflowGetResultOptions, WorkflowHandle, WorkflowService,
     WorkflowStartOptions,
-    errors::{WorkflowInteractionError, WorkflowStartError},
+    errors::{WorkflowGetResultError, WorkflowStartError},
 };
 use temporalio_common::{
     WorkflowDefinition,
@@ -445,7 +445,7 @@ impl CoreWfStarter {
 
     pub(crate) async fn wait_for_default_wf_finish(
         &self,
-    ) -> Result<WorkflowExecutionResult<RawValue>, WorkflowInteractionError> {
+    ) -> Result<RawValue, WorkflowGetResultError> {
         self.initted_worker
             .get()
             .unwrap()

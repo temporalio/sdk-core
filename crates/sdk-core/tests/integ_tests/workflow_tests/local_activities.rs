@@ -1158,7 +1158,7 @@ async fn long_local_activity_with_update(
         .await
         .unwrap();
     assert_eq!(
-        res.unwrap_success(),
+        res,
         usize::from_json_payload(&replay_res.unwrap()).unwrap()
     );
 
@@ -1234,7 +1234,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     let r = handle.get_result(Default::default()).await.unwrap();
-    assert_eq!(r.unwrap_success(), 2);
+    assert_eq!(r, 2);
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await

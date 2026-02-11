@@ -3,7 +3,9 @@
 use http::uri::InvalidUri;
 use temporalio_common::{
     data_converters::PayloadConversionError,
-    protos::temporal::api::{failure::v1::Failure, query::v1::QueryRejected},
+    protos::temporal::api::{
+        common::v1::Payload, failure::v1::Failure, query::v1::QueryRejected,
+    },
 };
 use tonic::Code;
 
@@ -181,6 +183,32 @@ impl WorkflowUpdateError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum WorkflowGetResultError {
+    /// The workflow finished in failure.
+    #[error("Workflow failed: {0:?}")]
+    Failed(Failure),
+
+    /// The workflow was cancelled.
+    #[error("Workflow cancelled")]
+    Cancelled {
+        /// Details provided at cancellation time.
+        details: Vec<Payload>,
+    },
+
+    /// The workflow was terminated.
+    #[error("Workflow terminated")]
+    Terminated {
+        /// Details provided at termination time.
+        details: Vec<Payload>,
+    },
+
+    /// The workflow timed out.
+    #[error("Workflow timed out")]
+    TimedOut,
+
+    /// The workflow continued as new.
+    #[error("Workflow continued as new")]
+    ContinuedAsNew,
+
     /// The workflow was not found.
     #[error("Workflow not found")]
     NotFound(#[source] tonic::Status),
@@ -206,6 +234,22 @@ impl From<WorkflowInteractionError> for WorkflowGetResultError {
             WorkflowInteractionError::Rpc(s) => Self::Rpc(s),
             WorkflowInteractionError::Other(e) => Self::Other(e),
         }
+    }
+}
+
+impl WorkflowGetResultError {
+    /// Returns `true` if this error represents a workflow-level non-success outcome
+    /// (Failed, Cancelled, Terminated, TimedOut, or ContinuedAsNew) rather than an
+    /// infrastructure/RPC error.
+    pub fn is_workflow_outcome(&self) -> bool {
+        matches!(
+            self,
+            Self::Failed(_)
+                | Self::Cancelled { .. }
+                | Self::Terminated { .. }
+                | Self::TimedOut
+                | Self::ContinuedAsNew
+        )
     }
 }
 

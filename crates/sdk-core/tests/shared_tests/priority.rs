@@ -121,12 +121,10 @@ pub(crate) async fn priority_values_sent_to_server() {
 
     let client = starter.get_client().await;
     let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue(), "");
-    let res = handle
+    handle
         .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
-    // Expect workflow success
-    res.unwrap_success();
     let events = handle
         .fetch_history(Default::default())
         .await

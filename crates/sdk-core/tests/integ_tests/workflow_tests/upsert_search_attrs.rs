@@ -3,7 +3,7 @@ use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
 use temporalio_client::{
     WorkflowDescribeOptions, WorkflowGetResultOptions, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowExecutionResult, WorkflowStartOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -102,11 +102,10 @@ async fn sends_upsert() {
     );
     assert_eq!(3, usize::from_json_payload(int_attr_payload).unwrap());
     let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), "");
-    let res = handle
+    handle
         .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
 
 #[workflow]

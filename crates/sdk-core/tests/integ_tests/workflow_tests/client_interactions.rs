@@ -1,8 +1,7 @@
 use crate::common::CoreWfStarter;
-use assert_matches::assert_matches;
 use temporalio_client::{
     WorkflowQueryOptions, WorkflowSignalOptions, UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowExecuteUpdateOptions,
-    WorkflowExecutionResult, WorkflowStartOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
@@ -156,8 +155,7 @@ async fn test_typed_signal() {
     let (_, worker_res) = tokio::join!(signaler, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 42);
 }
 
@@ -214,8 +212,7 @@ async fn test_typed_update() {
     let (_, workerres) = tokio::join!(updates, worker.run_until_done());
     workerres.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 999);
 }
 
@@ -274,8 +271,7 @@ async fn test_typed_query() {
     let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
 }
 
@@ -337,8 +333,7 @@ async fn test_update_validation() {
     let (_, worker_res) = tokio::join!(updater, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 42);
 }
 
@@ -391,8 +386,7 @@ async fn test_async_signal() {
     let (_, worker_res) = tokio::join!(signaler, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
     assert!(result.log.contains(&"async signal done".to_owned()));
 }
@@ -452,8 +446,7 @@ async fn test_fallible_query() {
     let (_, worker_res) = tokio::join!(querier, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
 }
 
@@ -526,7 +519,6 @@ async fn test_untyped_signal_query_update() {
     let (_, worker_res) = tokio::join!(interactions, worker.run_until_done());
     worker_res.unwrap();
 
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let result = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
 }

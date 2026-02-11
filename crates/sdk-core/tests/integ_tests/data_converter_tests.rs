@@ -1,5 +1,4 @@
 use crate::common::{CoreWfStarter, get_integ_connection, integ_namespace};
-use assert_matches::assert_matches;
 use futures::{FutureExt, future::BoxFuture};
 use std::{
     sync::{
@@ -9,7 +8,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, ClientOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowExecutionResult,
+    Client, ClientOptions, UntypedWorkflow, WorkflowClientTrait,
     WorkflowStartOptions,
 };
 use temporalio_common::{
@@ -141,8 +140,7 @@ async fn data_converter_tracks_serialization_points() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let result = handle.get_result(Default::default()).await.unwrap();
-    let output = assert_matches!(result, WorkflowExecutionResult::Succeeded(v) => v).0;
+    let output = handle.get_result(Default::default()).await.unwrap().0;
 
     assert!(
         output.data.contains("activity-processed:test-input"),
@@ -207,8 +205,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let result = handle.get_result(Default::default()).await.unwrap();
-    let output = assert_matches!(result, WorkflowExecutionResult::Succeeded(v) => v);
+    let output = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(output, "received: hello and 42");
 
     // Verify the workflow history contains multiple payloads in the input
@@ -366,8 +363,7 @@ async fn codec_encodes_and_decodes_payloads() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let result = handle.get_result(Default::default()).await.unwrap();
-    let output = assert_matches!(result, WorkflowExecutionResult::Succeeded(v) => v).0;
+    let output = handle.get_result(Default::default()).await.unwrap().0;
 
     // Verify the workflow processed correctly (activity echoed the data)
     assert!(
