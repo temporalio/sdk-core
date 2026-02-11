@@ -195,7 +195,7 @@ async fn non_retryable_errors() {
         opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::new("ns").build();
-        let client = temporalio_client::Client::new(connection, client_opts);
+        let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
         let result = client.count_workflows("whatever", Default::default()).await;
 
@@ -236,7 +236,7 @@ async fn retryable_errors() {
         opts.set_skip_get_system_info(true);
         let connection = Connection::connect(opts).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::new("ns").build();
-        let client = temporalio_client::Client::new(connection, client_opts);
+        let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
         let result = client.count_workflows("whatever", Default::default()).await;
 
@@ -284,7 +284,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     opts.retry_options = RetryOptions::no_retries();
     let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new(namespace).build();
-    let client = temporalio_client::Client::new(connection, client_opts);
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
     let _ = client
         .get_workflow_handle::<UntypedWorkflow>("hi", "")
@@ -380,7 +380,7 @@ async fn http_proxy() {
         .unwrap();
     let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
-    let client = temporalio_client::Client::new(connection, client_opts);
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
     let _ = WorkflowService::list_namespaces(
         &mut client.clone(),
         ListNamespacesRequest::default().into_request(),
@@ -396,7 +396,7 @@ async fn http_proxy() {
     });
     let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
-    let proxied_client = temporalio_client::Client::new(connection, client_opts);
+    let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
     let _ = WorkflowService::list_namespaces(
         &mut proxied_client.clone(),
         ListNamespacesRequest::default().into_request(),
@@ -424,7 +424,7 @@ async fn http_proxy() {
         });
         let connection = Connection::connect(opts.clone()).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
-        let proxied_client = temporalio_client::Client::new(connection, client_opts);
+        let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
         let _ = WorkflowService::list_namespaces(
             &mut proxied_client.clone(),
             ListNamespacesRequest::default().into_request(),

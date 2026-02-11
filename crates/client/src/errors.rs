@@ -325,6 +325,13 @@ impl AsyncActivityError {
     }
 }
 
+/// Errors that can occur when constructing a [`crate::Client`].
+///
+/// Currently has no variants, but is `#[non_exhaustive]` so validation or plugin
+/// errors can be added in the future without a breaking change.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ClientNewError {}
 // Backwards compatibility type aliases
 /// Alias for backwards compatibility. Use [`WorkflowStartError`] instead.
 #[deprecated(note = "Renamed to WorkflowStartError")]

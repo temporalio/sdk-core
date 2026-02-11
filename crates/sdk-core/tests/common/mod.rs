@@ -232,7 +232,7 @@ pub(crate) async fn get_cloud_client() -> Client {
     let connection = Connection::connect(connection_opts).await.unwrap();
     let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
     let client_opts = temporalio_client::ClientOptions::new(namespace).build();
-    Client::new(connection, client_opts)
+    Client::new(connection, client_opts).unwrap()
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
@@ -478,7 +478,7 @@ impl CoreWfStarter {
                     let connection = Connection::connect(opts).await.expect("Must connect");
                     let client_opts =
                         temporalio_client::ClientOptions::new(integ_namespace()).build();
-                    let client = Client::new(connection.clone(), client_opts);
+                    let client = Client::new(connection.clone(), client_opts).unwrap();
                     (connection, client)
                 };
                 let mut core_config = self
@@ -804,7 +804,7 @@ pub(crate) async fn get_integ_client(
 ) -> Client {
     let connection = get_integ_connection(meter).await;
     let client_opts = temporalio_client::ClientOptions::new(namespace).build();
-    Client::new(connection, client_opts)
+    Client::new(connection, client_opts).unwrap()
 }
 
 pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {

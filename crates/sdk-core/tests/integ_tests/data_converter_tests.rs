@@ -339,7 +339,7 @@ async fn codec_encodes_and_decodes_payloads() {
     let client_opts = ClientOptions::new(integ_namespace())
         .data_converter(data_converter)
         .build();
-    let client = Client::new(connection, client_opts);
+    let client = Client::new(connection, client_opts).unwrap();
 
     let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
     starter.sdk_config.register_activities(TestActivities);

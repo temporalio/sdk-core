@@ -970,7 +970,7 @@ async fn shutdown_worker_not_retried() {
     opts.set_skip_get_system_info(true);
     let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("ns").build();
-    let client = temporalio_client::Client::new(connection, client_opts);
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
     let wf_type = "shutdown_worker_not_retried";
     let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));

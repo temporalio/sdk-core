@@ -601,11 +601,14 @@ pub struct Client {
 
 impl Client {
     /// Create a new client from a connection and options.
-    pub fn new(connection: Connection, options: ClientOptions) -> Self {
-        Client {
+    ///
+    /// Currently infallible, but returns a `Result` for future extensibility
+    /// (e.g., interceptor or plugin validation).
+    pub fn new(connection: Connection, options: ClientOptions) -> Result<Self, ClientNewError> {
+        Ok(Client {
             connection,
             options: Arc::new(options),
-        }
+        })
     }
 
     /// Return the options this client was initialized with

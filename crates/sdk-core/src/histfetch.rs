@@ -19,7 +19,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .client_version("0.0")
         .build();
     let connection = Connection::connect(copts).await?;
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let client = Client::new(connection, ClientOptions::new("default").build())?;
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");

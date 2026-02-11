@@ -64,7 +64,7 @@ async fn eager_wf_start_different_clients() {
 
     let connection = get_integ_connection(None).await;
     let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
-    let client = Client::new(connection, client_opts);
+    let client = Client::new(connection, client_opts).unwrap();
     let task_queue = starter.get_task_queue().to_string();
     let res = eager_start(
         wf_name,
