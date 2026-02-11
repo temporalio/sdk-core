@@ -2,9 +2,12 @@ mod activities;
 pub(crate) mod client;
 pub(crate) mod heartbeat;
 mod nexus;
+pub(crate) mod replaceable_client;
 mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
+
+pub(crate) use replaceable_client::SharedReplaceableClient;
 
 use temporalio_client::Connection;
 use temporalio_common::{

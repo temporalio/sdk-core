@@ -21,7 +21,6 @@ pub mod proxy;
 /// These traits are useful for advanced scenarios like custom interceptors, testing with mocks,
 /// or making raw gRPC calls not covered by the higher-level API.
 pub mod grpc;
-mod replaceable;
 pub mod request_extensions;
 mod retry;
 pub mod worker;
@@ -39,7 +38,6 @@ pub type HeartbeatResponse = ActivityHeartbeatResponse;
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
 pub use grpc::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
-pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{

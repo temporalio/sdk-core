@@ -3,8 +3,8 @@
 //! happen.
 
 use crate::{
-    Client, Connection, LONG_POLL_TIMEOUT, RequestExt, SharedReplaceableClient,
-    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
+    Client, Connection, LONG_POLL_TIMEOUT, RequestExt, TEMPORAL_NAMESPACE_HEADER_KEY,
+    TemporalServiceClient,
     metrics::namespace_kv,
     retry::make_future_retry,
     worker::{ClientWorkerSet, Slot},
@@ -33,7 +33,7 @@ use tonic::{
 };
 
 /// Something that has access to the raw grpc services
-trait RawClientProducer {
+pub trait RawClientProducer {
     /// Returns information about workers associated with this client. Implementers outside of
     /// core can safely return `None`.
     fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>>;
@@ -57,7 +57,8 @@ trait RawClientProducer {
 /// Any client that can make gRPC calls. The default implementation simply invokes the passed-in
 /// function. Implementers may override this to provide things like retry behavior.
 #[async_trait::async_trait]
-trait RawGrpcCaller: Send + Sync + 'static {
+pub trait RawGrpcCaller: Send + Sync + 'static {
+    /// Make a gRPC call. The default implementation simply invokes the provided function.
     async fn call<F, Req, Resp>(
         &mut self,
         _call_name: &'static str,
@@ -214,57 +215,6 @@ where
     ) -> BoxFuture<'static, Result<Response<Box<dyn Any + Send>>, Status>> {
         let raw: &mut dyn ErasedRawClient = self;
         op.invoke(raw, call_name)
-    }
-}
-
-impl<RC> RawClientProducer for SharedReplaceableClient<RC>
-where
-    RC: RawClientProducer + Clone + Send + Sync + 'static,
-{
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        self.inner_cow().get_workers_info()
-    }
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner_mut_refreshed().workflow_client()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner_mut_refreshed().operator_client()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner_mut_refreshed().cloud_client()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner_mut_refreshed().test_client()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner_mut_refreshed().health_client()
-    }
-}
-
-#[async_trait::async_trait]
-impl<RC> RawGrpcCaller for SharedReplaceableClient<RC>
-where
-    RC: RawGrpcCaller + Clone + Sync + 'static,
-{
-    async fn call<F, Req, Resp>(
-        &mut self,
-        call_name: &'static str,
-        callfn: F,
-        req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        Resp: Send + 'static,
-        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-        F: Send + Sync + Unpin + 'static,
-    {
-        self.inner_mut_refreshed()
-            .call(call_name, callfn, req)
-            .await
     }
 }
 

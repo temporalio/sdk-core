@@ -9,9 +9,9 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
+use super::SharedReplaceableClient;
 use temporalio_client::{
-    Connection, Namespace, NamespacedClient, RetryOptions, SharedReplaceableClient,
-    WorkflowService,
+    Connection, Namespace, NamespacedClient, RetryOptions, WorkflowService,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
     worker::ClientWorkerSet,
 };
