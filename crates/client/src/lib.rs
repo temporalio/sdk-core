@@ -940,6 +940,24 @@ impl WorkflowCountAggregationGroup {
     }
 }
 
+/// Try to extract the run ID from an ALREADY_EXISTS gRPC status.
+/// The Temporal server encodes it in the error message.
+fn parse_run_id_from_already_exists(status: &tonic::Status) -> String {
+    // The server includes the run ID in the message, e.g.:
+    // "Workflow execution already started (WorkflowId: ..., RunId: <run-id>)"
+    let msg = status.message();
+    if let Some(idx) = msg.find("RunId: ") {
+        let after = &msg["RunId: ".len() + idx..];
+        // Extract until the next ')' or end of string
+        after
+            .find(')')
+            .map(|end| after[..end].to_string())
+            .unwrap_or_else(|| after.to_string())
+    } else {
+        String::new()
+    }
+}
+
 impl<T> WorkflowClientTrait for T
 where
     T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
@@ -1036,7 +1054,17 @@ where
                     }
                     .into_request(),
                 )
-                .await?
+                .await
+                .map_err(|status| {
+                    if status.code() == Code::AlreadyExists {
+                        WorkflowStartError::AlreadyStarted {
+                            run_id: parse_run_id_from_already_exists(&status),
+                            source: status,
+                        }
+                    } else {
+                        WorkflowStartError::Rpc(status)
+                    }
+                })?
                 .into_inner();
             res.run_id
         };
