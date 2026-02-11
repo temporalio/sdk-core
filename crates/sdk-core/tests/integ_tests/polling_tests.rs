@@ -14,7 +14,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, Connection, ConnectionOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
+    Client, Connection, ConnectionOptions, NamespacedClient, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowExecutionInfo, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -206,8 +207,13 @@ async fn switching_worker_client_changes_poll() {
         worker.complete_execution(&act1.run_id).await;
         worker.handle_eviction().await;
         info!("Waiting on first workflow complete");
-        client1
-            .get_workflow_handle::<UntypedWorkflow>("my-workflow-1", wf1_run_id.clone())
+        WorkflowExecutionInfo {
+                namespace: client1.namespace(),
+                workflow_id: "my-workflow-1".into(),
+                run_id: Some(wf1_run_id.clone()),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(client1.clone())
             .get_result(Default::default())
             .await
             .unwrap();
@@ -220,8 +226,13 @@ async fn switching_worker_client_changes_poll() {
         worker.complete_execution(&act2.run_id).await;
         worker.handle_eviction().await;
         info!("Waiting on second workflow complete");
-        client2
-            .get_workflow_handle::<UntypedWorkflow>("my-workflow-2", wf2_run_id)
+        WorkflowExecutionInfo {
+                namespace: client2.namespace(),
+                workflow_id: "my-workflow-2".into(),
+                run_id: Some(wf2_run_id),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(client2.clone())
             .get_result(Default::default())
             .await
             .unwrap();
@@ -315,7 +326,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     let events = starter
         .get_client()
         .await
-        .get_workflow_handle::<UntypedWorkflow>(&wf2id, "")
+        .get_workflow_handle::<UntypedWorkflow>(&wf2id)
         .fetch_history(Default::default())
         .await
         .unwrap()

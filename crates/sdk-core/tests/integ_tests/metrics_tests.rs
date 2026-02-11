@@ -16,8 +16,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, WorkflowQueryOptions, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowStartOptions, WorkflowService,
+    Connection, NamespacedClient, WorkflowExecutionInfo, WorkflowQueryOptions,
+    REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow, WorkflowClientTrait,
+    WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -461,8 +462,13 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     // Query the now-closed workflow
     let client = starter.get_client().await;
     let queryer = async {
-        client
-            .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), run_id)
+        WorkflowExecutionInfo {
+                namespace: client.namespace(),
+                workflow_id: starter.get_wf_id().to_string(),
+                run_id: Some(run_id.into()),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(client.clone())
             .query(
                 UntypedQuery::new("fake_query"),
                 RawValue::empty(),

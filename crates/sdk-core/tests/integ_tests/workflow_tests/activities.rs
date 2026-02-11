@@ -813,7 +813,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     starter
         .get_client()
         .await
-        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .get_workflow_handle::<UntypedWorkflow>(task_q)
         .terminate(WorkflowTerminateOptions::default())
         .await
         .unwrap();
@@ -874,7 +874,7 @@ async fn activity_heartbeat_not_flushed_on_success() {
         || async {
             // Verify pending details has the flushed heartbeat
             let details = client
-                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), "")
+                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string())
                 .describe(WorkflowDescribeOptions::default())
                 .await
                 .unwrap();
@@ -895,7 +895,7 @@ async fn activity_heartbeat_not_flushed_on_success() {
     .await
     .unwrap();
     client
-        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
+        .get_workflow_handle::<UntypedWorkflow>(task_q)
         .terminate(WorkflowTerminateOptions::default())
         .await
         .unwrap();
@@ -1081,7 +1081,7 @@ async fn graceful_shutdown() {
         // cancels, otherwise run_until_done will hang since the workflow won't complete.
         let _ = acts_done.acquire_many(10).await;
         client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned())
             .terminate(WorkflowTerminateOptions::default())
             .await
             .unwrap();

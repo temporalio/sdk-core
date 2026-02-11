@@ -81,7 +81,7 @@ async fn sends_upsert() {
 
     let client = starter.get_client().await;
     let search_attrs = client
-        .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), "")
+        .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string())
         .describe(WorkflowDescribeOptions::default())
         .await
         .unwrap()
@@ -101,7 +101,7 @@ async fn sends_upsert() {
         String::from_json_payload(txt_attr_payload).unwrap()
     );
     assert_eq!(3, usize::from_json_payload(int_attr_payload).unwrap());
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), "");
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id.to_string());
     handle
         .get_result(WorkflowGetResultOptions::default())
         .await

@@ -192,12 +192,12 @@ async fn abandoned_child_bug_repro() {
     let client = starter.get_client().await;
     let canceller = async {
         barr.wait().await;
-        let parent_handle = client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner", "");
+        let parent_handle = client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner");
         parent_handle
             .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await
             .unwrap();
-        let child_handle = client.get_workflow_handle::<UntypedWorkflow>("abandoned-child", "");
+        let child_handle = client.get_workflow_handle::<UntypedWorkflow>("abandoned-child");
         child_handle
             .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await
@@ -279,7 +279,7 @@ async fn abandoned_child_resolves_post_cancel() {
     let canceller = async {
         barr.wait().await;
         let handle =
-            client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving", "");
+            client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving");
         handle
             .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await

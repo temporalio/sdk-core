@@ -1,6 +1,7 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
 use temporalio_client::{
-    WorkflowDescribeOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
+    NamespacedClient, WorkflowDescribeOptions, WorkflowExecutionInfo, UntypedWorkflow,
+    WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -58,19 +59,23 @@ async fn sends_modify_wf_props() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let memo = starter
-        .get_client()
-        .await
-        .get_workflow_handle::<UntypedWorkflow>(wf_id.to_string(), run_id)
-        .describe(WorkflowDescribeOptions::default())
-        .await
-        .unwrap()
-        .raw_description
-        .workflow_execution_info
-        .unwrap()
-        .memo
-        .unwrap()
-        .fields;
+    let client = starter.get_client().await;
+    let memo = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_id.to_string(),
+        run_id: Some(run_id.into()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone())
+    .describe(WorkflowDescribeOptions::default())
+    .await
+    .unwrap()
+    .raw_description
+    .workflow_execution_info
+    .unwrap()
+    .memo
+    .unwrap()
+    .fields;
     let catname = memo.get(FIELD_A).unwrap();
     let cuteness = memo.get(FIELD_B).unwrap();
     for payload in [catname, cuteness] {

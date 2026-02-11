@@ -93,7 +93,7 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain handle.
-        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned(), "");
+        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned());
         handle
             .signal(ResetMeWf::post_reset, (), WorkflowSignalOptions::default())
             .await
@@ -235,7 +235,7 @@ async fn reset_randomseed() {
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain the handle.
         client
-            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned(), "")
+            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned())
             .signal(ResetRandomseedWf::post_reset, (), WorkflowSignalOptions::default())
             .await
             .unwrap();

@@ -13,8 +13,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, NamespacedClient, WorkflowSignalOptions, UntypedSignal, UntypedUpdate, UntypedWorkflow,
-    WorkflowExecuteUpdateOptions, WorkflowClientTrait, WorkflowStartOptions, WorkflowService,
+    Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions, UntypedSignal,
+    UntypedUpdate, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowClientTrait,
+    WorkflowStartOptions, WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -87,7 +88,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
 
     // Make sure replay works
     let events = client
-        .get_workflow_handle::<UntypedWorkflow>(workflow_id, "")
+        .get_workflow_handle::<UntypedWorkflow>(workflow_id)
         .fetch_history(Default::default())
         .await
         .unwrap()
@@ -162,9 +163,14 @@ async fn reapplied_updates_due_to_reset() {
     assert_eq!(post_reset_run_id, reset_response.run_id);
 
     // Make sure replay works
-    let events = client
-        .get_workflow_handle::<UntypedWorkflow>(workflow_id, &post_reset_run_id)
-        .fetch_history(Default::default())
+    let events = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.into(),
+        run_id: Some(post_reset_run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone())
+    .fetch_history(Default::default())
         .await
         .unwrap()
         .into_events();
@@ -202,7 +208,13 @@ async fn send_and_handle_update(
         .await
         .unwrap();
 
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(workflow_id, act.run_id.clone());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.into(),
+        run_id: Some(act.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {
@@ -305,8 +317,13 @@ async fn update_rejection() {
     .await
     .unwrap();
 
-    let handle =
-        client.get_workflow_handle::<UntypedWorkflow>(workflow_id.clone(), res.run_id.clone());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.clone(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {
@@ -347,7 +364,7 @@ async fn update_rejection() {
     };
     join!(update_task, processing_task);
     let events = client
-        .get_workflow_handle::<UntypedWorkflow>(&workflow_id, "")
+        .get_workflow_handle::<UntypedWorkflow>(&workflow_id)
         .fetch_history(Default::default())
         .await
         .unwrap()
@@ -379,7 +396,13 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
     .await
     .unwrap();
 
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(workflow_id, res.run_id.clone());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.into(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let (update_task, stop_wait_update) = future::abortable(async {
@@ -466,7 +489,13 @@ async fn update_complete_after_accept_without_new_task() {
     .await
     .unwrap();
 
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(workflow_id, res.run_id.clone());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.into(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {
@@ -552,7 +581,7 @@ async fn update_speculative_wft() {
 
     let update_id = "some_update";
 
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(workflow_id, "");
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(workflow_id);
 
     // Send update after the timer has fired
     let barr = Barrier::new(2);

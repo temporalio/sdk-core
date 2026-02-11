@@ -17,7 +17,7 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowClientTrait, WorkflowStartOptions};
+use temporalio_client::{NamespacedClient, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowClientTrait, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
@@ -907,7 +907,13 @@ async fn repro_nondeterminism_with_timer_bug() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, handle.run_id().unwrap());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_name.into(),
+        run_id: Some(handle.run_id().unwrap().to_string()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await
@@ -1061,7 +1067,13 @@ async fn la_resolve_same_time_as_other_cancel() {
         .unwrap();
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, handle.run_id().unwrap());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_name.into(),
+        run_id: Some(handle.run_id().unwrap().to_string()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await

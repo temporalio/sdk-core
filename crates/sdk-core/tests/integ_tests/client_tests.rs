@@ -287,7 +287,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
     let _ = client
-        .get_workflow_handle::<UntypedWorkflow>("hi", "")
+        .get_workflow_handle::<UntypedWorkflow>("hi")
         .fetch_history(Default::default())
         .await;
     let val = header_rx.recv().await.unwrap();

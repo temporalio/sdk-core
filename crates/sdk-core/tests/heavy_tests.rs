@@ -23,8 +23,8 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    WorkflowGetResultOptions, WorkflowSignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowStartOptions,
+    NamespacedClient, WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowSignalOptions,
+    UntypedSignal, UntypedWorkflow, WorkflowClientTrait, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue, protos::temporal::api::enums::v1::WorkflowIdConflictPolicy,
@@ -277,7 +277,7 @@ async fn workflow_load() {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     let handle =
-                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                     async move {
                         handle
                             .signal(
@@ -333,15 +333,20 @@ async fn evict_while_la_running_no_interference() {
         subfs.push(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             cw.request_workflow_eviction(&run_id);
-            client
-                .get_workflow_handle::<UntypedWorkflow>(wf_id, run_id)
-                .signal(
-                    UntypedSignal::new("whaatever"),
-                    RawValue::empty(),
-                    WorkflowSignalOptions::default(),
-                )
-                .await
-                .unwrap();
+            WorkflowExecutionInfo {
+                namespace: client.namespace(),
+                workflow_id: wf_id.into(),
+                run_id: Some(run_id.into()),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(client)
+            .signal(
+                UntypedSignal::new("whaatever"),
+                RawValue::empty(),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
         });
     }
     let runf = async {
@@ -390,7 +395,13 @@ async fn can_paginate_long_history() {
     let run_id = handle.run_id().unwrap().to_owned();
     let client = starter.get_client().await;
     tokio::spawn(async move {
-        let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, run_id);
+        let handle = WorkflowExecutionInfo {
+            namespace: client.namespace(),
+            workflow_id: wf_name.into(),
+            run_id: Some(run_id.into()),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client);
         loop {
             for _ in 0..10 {
                 handle
@@ -506,7 +517,7 @@ async fn poller_autoscaling_basic_loadtest() {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
                         let handle = client
-                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                         async move {
                             handle
                                 .signal(

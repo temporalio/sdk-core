@@ -211,7 +211,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
     // Verify the workflow history contains multiple payloads in the input
     let client = starter.get_client().await;
     let events = client
-        .get_workflow_handle::<UntypedWorkflow>(wf_name, "")
+        .get_workflow_handle::<UntypedWorkflow>(wf_name)
         .fetch_history(Default::default())
         .await
         .unwrap()

@@ -191,7 +191,7 @@ async fn nexus_basic(
     });
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();
@@ -446,7 +446,7 @@ async fn nexus_async(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)
             );
-            let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id, "");
+            let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id);
             handle
                 .cancel(
                     WorkflowCancelOptions::builder()
@@ -480,7 +480,7 @@ async fn nexus_async(
     });
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();
@@ -923,7 +923,7 @@ async fn nexus_cancellation_types(
                 request::Variant::CancelOperation(_)
             );
             let handle =
-                client.get_workflow_handle::<UntypedWorkflow>(completer_id.to_string(), "");
+                client.get_workflow_handle::<UntypedWorkflow>(completer_id.to_string());
             handle
                 .cancel(
                     WorkflowCancelOptions::builder()
@@ -957,7 +957,7 @@ async fn nexus_cancellation_types(
             // Send a signal just to wake up the workflow so it'll check the condition
             // (it may already have completed, so ignore the result)
             let _ = client
-                .get_workflow_handle::<UntypedWorkflow>(completer_id.to_string(), "")
+                .get_workflow_handle::<UntypedWorkflow>(completer_id.to_string())
                 .signal(
                     UntypedSignal::new("wakeupdude"),
                     RawValue::empty(),
@@ -993,7 +993,7 @@ async fn nexus_cancellation_types(
             .try_recv()
             .expect("Should have received handler workflow ID");
         client
-            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id, "")
+            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id)
             .signal(
                 AsyncCompleterWf::handle_proceed_signal,
                 (),
@@ -1033,7 +1033,7 @@ async fn nexus_cancellation_types(
     }
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();

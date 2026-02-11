@@ -112,7 +112,7 @@ async fn fuzzy_workflow() {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     let handle =
-                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                     async move {
                         handle
                             .signal(

@@ -395,7 +395,7 @@ impl CoreWfStarter {
             .get()
             .unwrap()
             .client
-            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name, run_id)
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
     }
 
     pub(crate) async fn start_wf_with_id(&self, workflow_id: String) -> String {
@@ -435,7 +435,7 @@ impl CoreWfStarter {
             .expect("Starter must be initialized")
             .client;
         let events = client
-            .get_workflow_handle::<UntypedWorkflow>(self.get_wf_id(), "")
+            .get_workflow_handle::<UntypedWorkflow>(self.get_wf_id())
             .fetch_history(Default::default())
             .await
             .unwrap()
@@ -450,7 +450,7 @@ impl CoreWfStarter {
             .get()
             .unwrap()
             .client
-            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name, "")
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
             .get_result(
                 WorkflowGetResultOptions::builder()
                     .follow_runs(false)

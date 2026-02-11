@@ -693,7 +693,6 @@ pub trait WorkflowClientTrait: NamespacedClient {
     fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
     where
         Self: Sized;
@@ -1086,18 +1085,16 @@ where
     fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
     where
         Self: Sized,
     {
-        let rid = run_id.into();
         WorkflowHandle::new(
             self.clone(),
             WorkflowExecutionInfo {
                 namespace: self.namespace(),
                 workflow_id: workflow_id.into(),
-                run_id: if rid.is_empty() { None } else { Some(rid) },
+                run_id: None,
                 first_execution_run_id: None,
             },
         )

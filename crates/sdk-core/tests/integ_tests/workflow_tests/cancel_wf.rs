@@ -74,7 +74,7 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = client
-        .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
+        .get_workflow_handle::<UntypedWorkflow>(wf_id)
         .describe(WorkflowDescribeOptions::default())
         .await
         .unwrap();
