@@ -712,7 +712,7 @@ pub trait WorkflowClientTrait: NamespacedClient {
         &self,
         query: impl Into<String>,
         opts: WorkflowCountOptions,
-    ) -> impl Future<Output = Result<WorkflowExecutionCount, WorkflowCountError>>;
+    ) -> impl Future<Output = Result<WorkflowExecutionCount, ClientError>>;
 
     /// Get a handle to complete an activity asynchronously.
     ///
@@ -864,19 +864,19 @@ impl From<workflow::WorkflowExecutionInfo> for WorkflowExecution {
 /// A stream of workflow executions from a list query.
 /// Internally paginates through results from the server.
 pub struct ListWorkflowsStream {
-    inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, WorkflowListError>> + Send>>,
+    inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
 }
 
 impl ListWorkflowsStream {
     fn new(
-        inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, WorkflowListError>> + Send>>,
+        inner: Pin<Box<dyn Stream<Item = Result<WorkflowExecution, ClientError>> + Send>>,
     ) -> Self {
         Self { inner }
     }
 }
 
 impl Stream for ListWorkflowsStream {
-    type Item = Result<WorkflowExecution, WorkflowListError>;
+    type Item = Result<WorkflowExecution, ClientError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.inner.as_mut().poll_next(cx)
@@ -1183,7 +1183,7 @@ where
         &self,
         query: impl Into<String>,
         _opts: WorkflowCountOptions,
-    ) -> Result<WorkflowExecutionCount, WorkflowCountError> {
+    ) -> Result<WorkflowExecutionCount, ClientError> {
         let resp = WorkflowService::count_workflow_executions(
             &mut self.clone(),
             CountWorkflowExecutionsRequest {

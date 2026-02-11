@@ -81,34 +81,6 @@ pub enum WorkflowStartError {
     Rpc(#[from] tonic::Status),
 }
 
-/// Errors returned by signal operations on workflows.
-#[derive(thiserror::Error, Debug)]
-#[non_exhaustive]
-pub enum WorkflowSignalError {
-    /// The workflow was not found.
-    #[error("Workflow not found")]
-    NotFound(#[source] tonic::Status),
-
-    /// Error serializing the signal input.
-    #[error("Payload conversion error: {0}")]
-    PayloadConversion(#[from] PayloadConversionError),
-
-    /// An uncategorized RPC error from the server.
-    #[error("Server error: {0}")]
-    Rpc(tonic::Status),
-}
-
-impl WorkflowSignalError {
-    #[allow(dead_code)]
-    pub(crate) fn from_status(status: tonic::Status) -> Self {
-        if status.code() == Code::NotFound {
-            Self::NotFound(status)
-        } else {
-            Self::Rpc(status)
-        }
-    }
-}
-
 /// Errors returned by query operations on [crate::WorkflowHandle].
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -253,19 +225,10 @@ impl WorkflowGetResultError {
     }
 }
 
-/// Errors returned by workflow list operations.
+/// Errors returned by client methods that don't need more specific error types.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
-pub enum WorkflowListError {
-    /// An uncategorized rpc error from the server.
-    #[error("Server error: {0}")]
-    Rpc(#[from] tonic::Status),
-}
-
-/// Errors returned by workflow count operations.
-#[derive(thiserror::Error, Debug)]
-#[non_exhaustive]
-pub enum WorkflowCountError {
+pub enum ClientError {
     /// An uncategorized rpc error from the server.
     #[error("Server error: {0}")]
     Rpc(#[from] tonic::Status),
@@ -342,6 +305,3 @@ pub type QueryError = WorkflowQueryError;
 /// Alias for backwards compatibility. Use [`WorkflowUpdateError`] instead.
 #[deprecated(note = "Renamed to WorkflowUpdateError")]
 pub type UpdateError = WorkflowUpdateError;
-/// Alias for backwards compatibility. Use [`WorkflowListError`] instead.
-#[deprecated(note = "Renamed to WorkflowListError")]
-pub type ClientError = WorkflowListError;
