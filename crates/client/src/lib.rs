@@ -31,7 +31,11 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RETRYABLE_ERROR_CODES},
 };
-pub use async_activity_handle::{ActivityIdentifier, AsyncActivityHandle, HeartbeatResponse};
+pub use async_activity_handle::{ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle};
+
+/// Alias for backwards compatibility. Use [`ActivityHeartbeatResponse`] instead.
+#[deprecated(note = "Renamed to ActivityHeartbeatResponse")]
+pub type HeartbeatResponse = ActivityHeartbeatResponse;
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
 pub use grpc::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
