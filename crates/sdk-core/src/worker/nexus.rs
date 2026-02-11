@@ -236,6 +236,7 @@ impl NexusManager {
                     (false, None)
                 }
 
+                #[allow(deprecated)]
                 nexus_task_completion::Status::Error(e) => {
                     // Deprecated branch left for SDKs that have not yet started using Temporal failures
                     self.metrics
