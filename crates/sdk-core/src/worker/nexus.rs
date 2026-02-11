@@ -442,7 +442,7 @@ where
                                 .resp
                                 .request
                                 .as_ref()
-                                .and_then(|r| r.capabilities.clone());
+                                .and_then(|r| r.capabilities);
                             self.outstanding_task_map.lock().insert(
                                 tt,
                                 NexusInFlightTask {
