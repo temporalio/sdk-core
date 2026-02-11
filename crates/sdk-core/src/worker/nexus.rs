@@ -136,6 +136,7 @@ impl NexusManager {
                     // here to make life easier for lang implementors.
                     match &mut c.variant {
                         Some(response::Variant::StartOperation(so)) => {
+                            #[allow(deprecated)]
                             if let Some(start_operation_response::Variant::OperationError(oe)) =
                                 so.variant.as_ref()
                             {
@@ -184,13 +185,15 @@ impl NexusManager {
                                         })?;
 
                                     // Set StartOperationResponse variant to new UnsuccessfulOperationError
-                                    so.variant =
-                                        Some(start_operation_response::Variant::OperationError(
+                                    so.variant = Some(
+                                        #[allow(deprecated)]
+                                        start_operation_response::Variant::OperationError(
                                             UnsuccessfulOperationError {
                                                 operation_state: operation_state.to_string(),
                                                 failure: Some(failure),
                                             },
-                                        ))
+                                        ),
+                                    )
                                 }
 
                                 self.metrics
