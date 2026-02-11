@@ -174,7 +174,7 @@ impl NexusManager {
                                     // Take the failure from the StartOperationResponse variant
                                     let failure = std::mem::take(f);
 
-                                    //Convert the failure to an UnsuccessfulOperationError
+                                    // Convert the failure to an UnsuccessfulOperationError
                                     let failure =
                                         nexus::v1::Failure::try_from(failure)
                                         .map_err(|err| CompleteNexusError::MalformedNexusCompletion {
@@ -442,7 +442,7 @@ where
                                 .resp
                                 .request
                                 .as_ref()
-                                .and_then(|r| r.capabilities);
+                                .and_then(|r| r.capabilities.clone());
                             self.outstanding_task_map.lock().insert(
                                 tt,
                                 NexusInFlightTask {

@@ -843,6 +843,7 @@ pub mod coresdk {
             }
         }
 
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub enum NexusOperationErrorState {
             Failed,
             Canceled,

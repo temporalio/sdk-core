@@ -805,11 +805,7 @@ impl WorkerClient for WorkerClientBag {
 
         let now = SystemTime::now();
         heartbeat.heartbeat_time = Some(now.into());
-        let mut heartbeat_map: parking_lot::lock_api::MutexGuard<
-            '_,
-            parking_lot::RawMutex,
-            HashMap<String, ClientHeartbeatData>,
-        > = self.worker_heartbeat_map.lock();
+        let mut heartbeat_map = self.worker_heartbeat_map.lock();
         let client_heartbeat_data = heartbeat_map
             .entry(heartbeat.worker_instance_key.clone())
             .or_default();
