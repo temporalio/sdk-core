@@ -832,6 +832,7 @@ pub mod coresdk {
                     nexus_task_completion::Status::AckCancel(_) => {
                         write!(f, "AckCancel")
                     }
+                    #[allow(deprecated)]
                     nexus_task_completion::Status::Error(error) => {
                         write!(f, "Error({error:?})")
                     }
