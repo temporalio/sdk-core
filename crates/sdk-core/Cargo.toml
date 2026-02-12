@@ -33,6 +33,7 @@ antithesis_assertions = ["dep:antithesis_sdk"]
 anyhow = "1.0"
 antithesis_sdk = { version = "0.2.1", optional = true, default-features = false, features = ["full"] }
 assert_matches = { version = "1.5", optional = true }
+backoff = "0.4"
 bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
 bon = { workspace = true }
