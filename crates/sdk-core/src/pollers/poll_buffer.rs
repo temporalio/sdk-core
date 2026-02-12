@@ -1081,7 +1081,6 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         // Let the hot loop run for 100ms while we continue to attempt consuming
-        let start = std::time::Instant::now();
         tokio::time::sleep(Duration::from_millis(100)).await;
         let hot_loop_calls = call_count.load(Ordering::SeqCst);
 
