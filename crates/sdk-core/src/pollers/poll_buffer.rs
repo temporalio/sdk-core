@@ -494,7 +494,7 @@ where
             last_successful_poll_time,
             // Use same backoff config as gRPC client's throttle_backoff for ResourceExhausted
             // (1s initial, 10s max, 2x multiplier, 0.2 randomization, unlimited retries)
-            resource_exhausted_backoff: std::sync::Mutex::new(ExponentialBackoff {
+            resource_exhausted_backoff: parking_lot::Mutex::new(ExponentialBackoff {
                 // Copied from RetryOptions::throttle_retry_policy()
                 current_interval: Duration::from_secs(1),
                 initial_interval: Duration::from_secs(1),
@@ -569,7 +569,7 @@ struct PollScalerReportHandle {
     scale_up_allowed: AtomicBool,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
 
-    resource_exhausted_backoff: std::sync::Mutex<ExponentialBackoff<SystemClock>>,
+    resource_exhausted_backoff: parking_lot::Mutex<ExponentialBackoff<SystemClock>>,
 }
 
 impl PollScalerReportHandle {
@@ -586,9 +586,7 @@ impl PollScalerReportHandle {
                     .store(Some(SystemTime::now()));
 
                 // Reset backoff on successful poll
-                if let Ok(mut backoff) = self.resource_exhausted_backoff.lock() {
-                    backoff.reset();
-                }
+                self.resource_exhausted_backoff.lock().reset();
 
                 if let PollerBehavior::SimpleMaximum(_) = self.behavior {
                     // We don't do auto-scaling with the simple max
@@ -635,11 +633,8 @@ impl PollScalerReportHandle {
                             // Scale down significantly for resource exhaustion
                             self.change_target(usize::saturating_div, 2);
 
-                            let backoff_duration = self
-                                .resource_exhausted_backoff
-                                .lock()
-                                .unwrap()
-                                .next_backoff();
+                            let backoff_duration =
+                                self.resource_exhausted_backoff.lock().next_backoff();
 
                             return (false, backoff_duration);
                         } else {
