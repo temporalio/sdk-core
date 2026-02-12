@@ -163,6 +163,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ],
         )?;
 
+    // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization
     let descriptors = std::fs::read(&descriptor_file)?;
     pbjson_build::Builder::new()
         .register_descriptors(&descriptors)?

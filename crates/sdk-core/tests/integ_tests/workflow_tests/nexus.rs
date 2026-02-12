@@ -132,6 +132,7 @@ async fn nexus_basic(
                 core_worker
                     .complete_nexus_task(NexusTaskCompletion {
                         task_token: nt.task_token,
+                        #[allow(deprecated)]
                         status: Some(nexus_task_completion::Status::Error(HandlerError {
                             error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
                             failure: Some(nexus::v1::Failure {
@@ -544,6 +545,7 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
             core_worker
                 .complete_nexus_task(NexusTaskCompletion {
                     task_token: nt.task_token,
+                    #[allow(deprecated)]
                     status: Some(nexus_task_completion::Status::Error(HandlerError {
                         error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
                         failure: Some(nexus::v1::Failure {

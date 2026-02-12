@@ -1018,7 +1018,9 @@ async fn nexus_metrics() {
                                 )),
                             })
                         }
-                        Some(p) if p == "handler-fail".into() => {
+                        Some(p) if p == "handler-fail".into() =>
+                        {
+                            #[allow(deprecated)]
                             nexus_task_completion::Status::Error(HandlerError {
                                 error_type: "BAD_REQUEST".to_string(),
                                 failure: Some(nexus::v1::Failure {
