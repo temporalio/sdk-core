@@ -596,6 +596,10 @@ impl PollScalerReportHandle {
                     self.ingested_this_period.fetch_add(1, Ordering::Relaxed);
                 }
                 if let Some(scaling_decision) = res.scaling_decision() {
+                    debug!(
+                        "Scaling decision from server: {:?}",
+                        scaling_decision.poll_request_delta_suggestion
+                    );
                     match scaling_decision.poll_request_delta_suggestion.cmp(&0) {
                         cmp::Ordering::Less => self.change_target(
                             usize::saturating_sub,
@@ -625,24 +629,12 @@ impl PollScalerReportHandle {
             }
             Err(e) => {
                 if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
-                    // We should only react to errors in autoscaling mode if we saw a scaling
-                    // decision
-                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
-                        debug!("Got error from server while polling: {:?}", e);
-                        if e.code() == Code::ResourceExhausted {
-                            // Scale down significantly for resource exhaustion
-                            self.change_target(usize::saturating_div, 2);
+                    let backoff_duration = if e.code() == Code::ResourceExhausted {
+                        self.resource_exhausted_backoff.lock().next_backoff()
+                    } else {
+                        None
+                    };
 
-                            let backoff_duration =
-                                self.resource_exhausted_backoff.lock().next_backoff();
-
-                            return (false, backoff_duration);
-                        } else {
-                            // Other codes that would normally have made us back off briefly can
-                            // reclaim this poller
-                            self.change_target(usize::saturating_sub, 1);
-                        }
-                    }
                     // Only propagate errors out if they weren't because of the short-circuiting
                     // logic. IE: We don't want to fail callers because we said we wanted to know
                     // about ResourceExhausted errors, but we haven't seen a scaling decision yet,
@@ -650,7 +642,19 @@ impl PollScalerReportHandle {
                     let should_forward = !e
                         .metadata()
                         .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
-                    return (should_forward, None);
+
+                    // We should only react to errors in autoscaling mode if we saw a scaling decision
+                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
+                        debug!("Got error from server while polling: {:?}", e);
+                        if e.code() == Code::ResourceExhausted {
+                            // Scale down significantly for resource exhaustion
+                            self.change_target(usize::saturating_div, 2);
+                        } else {
+                            // Other codes that would normally have made us back off briefly can reclaim this poller
+                            self.change_target(usize::saturating_sub, 1);
+                        }
+                    }
+                    return (should_forward, backoff_duration);
                 }
             }
         }
