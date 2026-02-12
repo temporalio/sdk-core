@@ -37,7 +37,6 @@ pub use async_activity_handle::{ActivityHeartbeatResponse, ActivityIdentifier, A
 pub type HeartbeatResponse = ActivityHeartbeatResponse;
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
-pub use grpc::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
@@ -48,7 +47,10 @@ pub use workflow_handle::{
 
 use crate::{
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
-    grpc::AttachMetricLabels,
+    grpc::{
+        AttachMetricLabels, CloudService, HealthService, OperatorService, TestService,
+        WorkflowService,
+    },
     request_extensions::RequestExt,
     worker::ClientWorkerSet,
 };

@@ -36,7 +36,7 @@ use std::{
 use temporalio_client::{
     NamespacedClient, WorkflowExecutionInfo, WorkflowQueryOptions, WorkflowSignalOptions,
     UntypedQuery, UntypedSignal, UntypedWorkflow,
-    WorkflowStartOptions, WorkflowService,
+    WorkflowStartOptions, grpc::WorkflowService,
     errors::WorkflowGetResultError,
 };
 use temporalio_common::{

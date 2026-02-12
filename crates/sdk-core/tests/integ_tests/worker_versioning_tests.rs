@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities, eventually};
 use std::time::Duration;
-use temporalio_client::{NamespacedClient, WorkflowStartOptions, WorkflowService};
+use temporalio_client::{NamespacedClient, WorkflowStartOptions, grpc::WorkflowService};
 use temporalio_common::{
     protos::{
         coresdk::{

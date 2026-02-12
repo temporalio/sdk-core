@@ -30,10 +30,10 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
-    UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo,
-    WorkflowGetResultOptions, WorkflowHandle, WorkflowService,
-    WorkflowStartOptions,
+    UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo, WorkflowGetResultOptions,
+    WorkflowHandle, WorkflowStartOptions,
     errors::{WorkflowGetResultError, WorkflowStartError},
+    grpc::WorkflowService,
 };
 use temporalio_common::{
     WorkflowDefinition,

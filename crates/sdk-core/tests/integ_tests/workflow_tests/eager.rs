@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, NAMESPACE, get_integ_connection};
 use std::time::Duration;
-use temporalio_client::{Client, NamespacedClient, WorkflowStartOptions, WorkflowService};
+use temporalio_client::{Client, NamespacedClient, WorkflowStartOptions, grpc::WorkflowService};
 use temporalio_common::{
     protos::temporal::api::{
         common::v1::WorkflowType,

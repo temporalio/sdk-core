@@ -6,7 +6,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions, WorkflowService};
+use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions, grpc::WorkflowService};
 use temporalio_common::protos::temporal::api::{
     common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
 };

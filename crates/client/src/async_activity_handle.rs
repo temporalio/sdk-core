@@ -1,6 +1,6 @@
 //! Handle for completing activities asynchronously via a client.
 
-use crate::{NamespacedClient, WorkflowService, errors::AsyncActivityError};
+use crate::{NamespacedClient, errors::AsyncActivityError, grpc::WorkflowService};
 use temporalio_common::protos::{
     TaskToken,
     temporal::api::{

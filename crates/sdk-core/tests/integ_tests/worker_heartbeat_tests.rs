@@ -15,7 +15,7 @@ use std::{
 };
 use temporalio_client::{
     Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions,
-    WorkflowStartOptions, WorkflowService,
+    WorkflowStartOptions, grpc::WorkflowService,
 };
 use temporalio_common::{
     prost_dur,

@@ -1,8 +1,9 @@
 use crate::{
     NamespacedClient, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowExecuteUpdateOptions,
-    WorkflowFetchHistoryOptions, WorkflowGetResultOptions, WorkflowQueryOptions, WorkflowService,
+    WorkflowFetchHistoryOptions, WorkflowGetResultOptions, WorkflowQueryOptions,
     WorkflowSignalOptions, WorkflowStartUpdateOptions, WorkflowTerminateOptions,
     WorkflowUpdateWaitStage,
+    grpc::WorkflowService,
     errors::{
         WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError,
     },

@@ -14,8 +14,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ClientKeepAliveOptions as CoreClientKeepAliveOptions, CloudService, HealthService,
-    OperatorService, RetryOptions, TestService, WorkflowService, callback_based,
+    ClientKeepAliveOptions as CoreClientKeepAliveOptions, RetryOptions, callback_based,
+    grpc::{CloudService, HealthService, OperatorService, TestService, WorkflowService},
 };
 use tokio::sync::oneshot;
 use tonic::metadata::{MetadataKey, MetadataValue};
