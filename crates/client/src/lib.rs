@@ -10,17 +10,17 @@ extern crate tracing;
 mod async_activity_handle;
 pub mod callback_based;
 pub mod errors;
-mod metrics;
-mod options_structs;
-/// Visible only for tests
-#[doc(hidden)]
-pub mod proxy;
 /// gRPC service traits for direct access to Temporal services.
 ///
 /// Most users should use the higher-level methods on [`Client`] or [`Connection`] instead.
 /// These traits are useful for advanced scenarios like custom interceptors, testing with mocks,
 /// or making raw gRPC calls not covered by the higher-level API.
 pub mod grpc;
+mod metrics;
+mod options_structs;
+/// Visible only for tests
+#[doc(hidden)]
+pub mod proxy;
 pub mod request_extensions;
 mod retry;
 pub mod worker;
@@ -30,11 +30,10 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RETRYABLE_ERROR_CODES},
 };
-pub use async_activity_handle::{ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle};
+pub use async_activity_handle::{
+    ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle,
+};
 
-/// Alias for backwards compatibility. Use [`ActivityHeartbeatResponse`] instead.
-#[deprecated(note = "Renamed to ActivityHeartbeatResponse")]
-pub type HeartbeatResponse = ActivityHeartbeatResponse;
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
 pub use retry::RetryOptions;
@@ -46,11 +45,11 @@ pub use workflow_handle::{
 };
 
 use crate::{
-    metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     grpc::{
         AttachMetricLabels, CloudService, HealthService, OperatorService, TestService,
         WorkflowService,
     },
+    metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
     request_extensions::RequestExt,
     worker::ClientWorkerSet,
 };
