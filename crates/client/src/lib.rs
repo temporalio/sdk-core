@@ -77,6 +77,7 @@ use temporalio_common::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
             common::v1::{Memo, Payload, SearchAttributes, WorkflowType},
             enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
+            errordetails::v1::WorkflowExecutionAlreadyStartedFailure,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
             taskqueue::v1::TaskQueue,
             testservice::v1::test_service_client::TestServiceClient,
@@ -86,6 +87,7 @@ use temporalio_common::{
                 *,
             },
         },
+        utilities::decode_status_detail,
     },
 };
 use tonic::{
@@ -1004,24 +1006,6 @@ impl WorkflowCountAggregationGroup {
     }
 }
 
-/// Try to extract the run ID from an ALREADY_EXISTS gRPC status.
-/// The Temporal server encodes it in the error message.
-fn parse_run_id_from_already_exists(status: &tonic::Status) -> String {
-    // The server includes the run ID in the message, e.g.:
-    // "Workflow execution already started (WorkflowId: ..., RunId: <run-id>)"
-    let msg = status.message();
-    if let Some(idx) = msg.find("RunId: ") {
-        let after = &msg["RunId: ".len() + idx..];
-        // Extract until the next ')' or end of string
-        after
-            .find(')')
-            .map(|end| after[..end].to_string())
-            .unwrap_or_else(|| after.to_string())
-    } else {
-        String::new()
-    }
-}
-
 impl<T> WorkflowClientTrait for T
 where
     T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
@@ -1121,8 +1105,13 @@ where
                 .await
                 .map_err(|status| {
                     if status.code() == Code::AlreadyExists {
+                        let run_id =
+                            decode_status_detail::<WorkflowExecutionAlreadyStartedFailure>(
+                                status.details(),
+                            )
+                            .map(|f| f.run_id);
                         WorkflowStartError::AlreadyStarted {
-                            run_id: parse_run_id_from_already_exists(&status),
+                            run_id,
                             source: status,
                         }
                     } else {

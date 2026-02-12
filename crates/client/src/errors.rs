@@ -3,9 +3,7 @@
 use http::uri::InvalidUri;
 use temporalio_common::{
     data_converters::PayloadConversionError,
-    protos::temporal::api::{
-        common::v1::Payload, failure::v1::Failure, query::v1::QueryRejected,
-    },
+    protos::temporal::api::{common::v1::Payload, failure::v1::Failure, query::v1::QueryRejected},
 };
 use tonic::Code;
 
@@ -65,10 +63,10 @@ pub enum InvalidHeaderError {
 #[non_exhaustive]
 pub enum WorkflowStartError {
     /// The workflow already exists.
-    #[error("Workflow already started with run ID: {run_id}")]
+    #[error("Workflow already started with run ID: {run_id:?}")]
     AlreadyStarted {
-        /// The run ID of the existing workflow execution.
-        run_id: String,
+        /// Run ID of the already-started workflow if this was raised by the client.
+        run_id: Option<String>,
         /// The original gRPC status from the server.
         #[source]
         source: tonic::Status,

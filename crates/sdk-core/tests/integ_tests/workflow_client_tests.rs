@@ -2,9 +2,10 @@ use crate::common::{CoreWfStarter, eventually, rand_6_chars};
 use futures::TryStreamExt;
 use std::{collections::HashSet, time::Duration};
 use temporalio_client::{
-    WorkflowCountOptions, WorkflowListOptions, WorkflowStartOptions,
+    UntypedWorkflow, WorkflowCountOptions, WorkflowListOptions, WorkflowStartOptions,
+    WorkflowTerminateOptions, errors::WorkflowStartError,
 };
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::{data_converters::RawValue, worker::WorkerTaskTypes};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowResult};
 
@@ -116,4 +117,45 @@ async fn list_workflows(#[case] limit: Option<usize>) {
         .await
         .unwrap();
     assert!(count.count() == num_workflows);
+}
+
+#[tokio::test]
+async fn already_started_error_contains_run_id() {
+    let test_name = "already_started_error_contains_run_id";
+    let mut starter = CoreWfStarter::new(test_name);
+    let client = starter.get_client().await;
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = format!("{test_name}_{}", rand_6_chars());
+
+    let handle = client
+        .start_workflow(
+            UntypedWorkflow::new(test_name),
+            RawValue::empty(),
+            WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    let first_run_id = handle.run_id().unwrap().to_string();
+
+    let err = client
+        .start_workflow(
+            UntypedWorkflow::new(test_name),
+            RawValue::empty(),
+            WorkflowStartOptions::new(task_queue, wf_id).build(),
+        )
+        .await
+        .err()
+        .expect("duplicate wfid should error");
+
+    match err {
+        WorkflowStartError::AlreadyStarted { run_id, .. } => {
+            assert_eq!(run_id.as_deref(), Some(first_run_id.as_str()));
+        }
+        other => panic!("Expected AlreadyStarted, got: {other}"),
+    }
+
+    handle
+        .terminate(WorkflowTerminateOptions::default())
+        .await
+        .unwrap();
 }

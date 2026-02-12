@@ -26,6 +26,16 @@ pub fn pack_any<T: Message>(type_url: String, msg: &T) -> Result<prost_types::An
     Ok(prost_types::Any { type_url, value })
 }
 
+/// Decode a specific protobuf message type from gRPC status details bytes.
+///
+/// The details bytes should be the serialized `google.rpc.Status` message from
+/// `tonic::Status::details()`.
+pub fn decode_status_detail<T: Message + Default>(details: &[u8]) -> Option<T> {
+    let status = super::google::rpc::Status::decode(details).ok()?;
+    let first_detail = status.details.first()?;
+    T::decode(first_detail.value.as_slice()).ok()
+}
+
 /// Given a header map, lowercase all the keys and return it as a new map.
 /// Any keys that are duplicated after lowercasing will clobber each other in undefined ordering.
 pub fn normalize_http_headers(headers: HashMap<String, String>) -> HashMap<String, String> {
