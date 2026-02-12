@@ -6,6 +6,7 @@ use crate::{
         client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
     },
 };
+use backoff::{SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use governor::{Quota, RateLimiter};
@@ -366,13 +367,18 @@ where
                             r = pf(timeout_override) => r,
                             _ = poll_interruptor => return,
                         };
-                        drop(active_guard);
                         if let Ok(r) = &r
                             && let Some(ppf) = post_pf.as_ref()
                         {
                             ppf(r);
                         }
-                        if report_handle.poll_result(&r) {
+                        let (should_forward, backoff_duration) = report_handle.poll_result(&r);
+                        if let Some(duration) = backoff_duration {
+                            // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
+                            tokio::time::sleep(duration).await;
+                        }
+                        drop(active_guard);
+                        if should_forward {
                             let _ = tx.send(r.map(|r| (r, permit)));
                         }
                     });
@@ -486,6 +492,19 @@ where
             ingested_last_period: Default::default(),
             scale_up_allowed: AtomicBool::new(true),
             last_successful_poll_time,
+            // Use same backoff config as gRPC client's throttle_backoff for ResourceExhausted
+            // (1s initial, 10s max, 2x multiplier, 0.2 randomization, unlimited retries)
+            resource_exhausted_backoff: std::sync::Mutex::new(ExponentialBackoff {
+                // Copied from RetryOptions::throttle_retry_policy()
+                current_interval: Duration::from_secs(1),
+                initial_interval: Duration::from_secs(1),
+                randomization_factor: 0.2,
+                multiplier: 2.0,
+                max_interval: Duration::from_secs(10),
+                max_elapsed_time: None,
+                clock: SystemClock::default(),
+                start_time: std::time::Instant::now(),
+            }),
         });
         let rhc = report_handle.clone();
         let ingestor_task = if behavior.is_autoscaling() {
@@ -549,18 +568,31 @@ struct PollScalerReportHandle {
     ingested_last_period: AtomicUsize,
     scale_up_allowed: AtomicBool,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+
+    resource_exhausted_backoff: std::sync::Mutex<ExponentialBackoff<SystemClock>>,
 }
 
 impl PollScalerReportHandle {
-    /// Returns true if the response should be passed on, false if it should be swallowed
-    fn poll_result(&self, res: &Result<impl TaskPollerResult, tonic::Status>) -> bool {
+    /// Returns (should_forward, backoff_duration)
+    /// - should_forward: true if the response should be passed on, false if it should be swallowed
+    /// - backoff_duration: Some(duration) if we should sleep before the next poll
+    fn poll_result(
+        &self,
+        res: &Result<impl TaskPollerResult, tonic::Status>,
+    ) -> (bool, Option<Duration>) {
         match res {
             Ok(res) => {
                 self.last_successful_poll_time
                     .store(Some(SystemTime::now()));
+
+                // Reset backoff on successful poll
+                if let Ok(mut backoff) = self.resource_exhausted_backoff.lock() {
+                    backoff.reset();
+                }
+
                 if let PollerBehavior::SimpleMaximum(_) = self.behavior {
                     // We don't do auto-scaling with the simple max
-                    return true;
+                    return (true, None);
                 }
                 if !res.is_empty() {
                     self.ingested_this_period.fetch_add(1, Ordering::Relaxed);
@@ -602,6 +634,14 @@ impl PollScalerReportHandle {
                         if e.code() == Code::ResourceExhausted {
                             // Scale down significantly for resource exhaustion
                             self.change_target(usize::saturating_div, 2);
+
+                            let backoff_duration = self
+                                .resource_exhausted_backoff
+                                .lock()
+                                .unwrap()
+                                .next_backoff();
+
+                            return (false, backoff_duration);
                         } else {
                             // Other codes that would normally have made us back off briefly can
                             // reclaim this poller
@@ -612,13 +652,14 @@ impl PollScalerReportHandle {
                     // logic. IE: We don't want to fail callers because we said we wanted to know
                     // about ResourceExhausted errors, but we haven't seen a scaling decision yet,
                     // so we're not reacting to errors, only propagating them.
-                    return !e
+                    let should_forward = !e
                         .metadata()
                         .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
+                    return (should_forward, None);
                 }
             }
         }
-        true
+        (true, None)
     }
 
     #[inline]
@@ -971,5 +1012,92 @@ mod tests {
         POLL_SHUTDOWN_INTERRUPT.with(|v| {
             *v.borrow_mut() = None;
         });
+    }
+
+    #[tokio::test]
+    async fn autoscaler_applies_backoff_on_resource_exhausted() {
+        use temporalio_common::protos::temporal::api::taskqueue::v1::PollerScalingDecision;
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+        let first_poll_done = Arc::new(AtomicBool::new(false));
+        let first_poll_done_clone = first_poll_done.clone();
+
+        let mut mock_client = mock_manual_worker_client();
+        mock_client
+            .expect_poll_workflow_task()
+            .returning(move |_, _| {
+                call_count_clone.fetch_add(1, Ordering::SeqCst);
+                let first_done = first_poll_done_clone.clone();
+                async move {
+                    // First poll: return empty response with scaling decision
+                    // This sets ever_saw_scaling_decision to true
+                    if !first_done.swap(true, Ordering::SeqCst) {
+                        Ok(PollWorkflowTaskQueueResponse {
+                            task_token: vec![], // Empty poll
+                            poller_scaling_decision: Some(PollerScalingDecision {
+                                // Aggressively scale up to max
+                                poll_request_delta_suggestion: 100,
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        })
+                    } else {
+                        // All subsequent polls: return ResourceExhausted immediately
+                        // This simulates the namespace RPS limit being exceeded
+                        Err(tonic::Status::new(
+                            Code::ResourceExhausted,
+                            "namespace rate limit exceeded",
+                        ))
+                    }
+                }
+                .boxed()
+            });
+
+        let pb = Arc::new(LongPollBuffer::new_workflow_task(
+            Arc::new(mock_client),
+            "sometq".to_string(),
+            None,
+            PollerBehavior::Autoscaling {
+                minimum: 5,
+                maximum: 100,
+                initial: 10,
+            },
+            fixed_size_permit_dealer(10),
+            CancellationToken::new(),
+            None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
+            },
+            Arc::new(AtomicCell::new(None)),
+        ));
+
+        // Trigger the first poll to initialize and get the scaling decision
+        let pb_clone = pb.clone();
+        tokio::spawn(async move {
+            let _ = pb_clone.poll().await;
+        });
+
+        // Wait for the first poll to complete
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Let the hot loop run for 100ms while we continue to attempt consuming
+        let start = std::time::Instant::now();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let elapsed = start.elapsed();
+        let hot_loop_calls = call_count.load(Ordering::SeqCst);
+
+        // Without backoff, this was producing ~6300 polls in ~100ms on my machine.
+        // With exponential backoff, I'm getting exactly 10 (initial poller count).
+        assert!(
+            hot_loop_calls == 10,
+            "Expected proper backoff with == 10 polls in 100ms, but got {} polls.",
+            hot_loop_calls
+        );
+
+        Arc::try_unwrap(pb)
+            .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
+            .shutdown()
+            .await;
     }
 }
