@@ -41,8 +41,7 @@
 //!     let telemetry_options = TelemetryOptions::builder().build();
 //!     let runtime_options = RuntimeOptions::builder()
 //!         .telemetry_options(telemetry_options)
-//!         .build()
-//!         .unwrap();
+//!         .build()?;
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let connection = Connection::connect(connection_options).await?;

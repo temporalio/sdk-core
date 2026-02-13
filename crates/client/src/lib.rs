@@ -3,6 +3,27 @@
 //! This crate contains client implementations that can be used to contact the Temporal service.
 //!
 //! It implements auto-retry behavior and metrics collection.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::str::FromStr;
+//! use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
+//! use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let connection_options =
+//!         ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build();
+//!     let connection = Connection::connect(connection_options).await?;
+//!     let client = Client::new(connection, ClientOptions::new("my_namespace").build())?;
+//!
+//!     // Use the client to interact with Temporal
+//!     println!("Connected to namespace: {}", client.options().namespace);
+//!
+//!     Ok(())
+//! }
+//! ```
 
 #[macro_use]
 extern crate tracing;
