@@ -523,11 +523,6 @@ impl<W> SyncWorkflowContext<W> {
         &self.base.inner.task_queue
     }
 
-    /// Get the arguments provided to the workflow upon execution start
-    pub fn get_args(&self) -> &[Payload] {
-        self.base.inner.inital_information.arguments.as_slice()
-    }
-
     /// Return the current time according to the workflow (which is not wall-clock time).
     pub fn workflow_time(&self) -> Option<SystemTime> {
         self.base.inner.shared.borrow().wf_time
