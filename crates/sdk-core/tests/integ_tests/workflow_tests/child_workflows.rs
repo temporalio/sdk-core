@@ -2,9 +2,7 @@ use crate::common::{CoreWfStarter, build_fake_sdk, mock_sdk, mock_sdk_cfg};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{
-    WorkflowCancelOptions, UntypedWorkflow, WorkflowStartOptions,
-};
+use temporalio_client::{UntypedWorkflow, WorkflowCancelOptions, WorkflowStartOptions};
 use temporalio_common::{
     protos::{
         TestHistoryBuilder, canned_histories,
@@ -278,8 +276,7 @@ async fn abandoned_child_resolves_post_cancel() {
     let client = starter.get_client().await;
     let canceller = async {
         barr.wait().await;
-        let handle =
-            client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving");
+        let handle = client.get_workflow_handle::<UntypedWorkflow>("parent-abandoner-resolving");
         handle
             .cancel(WorkflowCancelOptions::builder().reason("die").build())
             .await

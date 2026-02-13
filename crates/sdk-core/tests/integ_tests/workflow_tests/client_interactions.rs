@@ -1,7 +1,7 @@
 use crate::common::CoreWfStarter;
 use temporalio_client::{
-    WorkflowQueryOptions, WorkflowSignalOptions, UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowExecuteUpdateOptions,
-    WorkflowStartOptions,
+    UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowExecuteUpdateOptions, WorkflowQueryOptions,
+    WorkflowSignalOptions, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
@@ -147,7 +147,11 @@ async fn test_typed_signal() {
     // Send signal concurrently with worker
     let signaler = async {
         handle
-            .signal(InteractionWorkflow::increment, 42, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                42,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
     };
@@ -249,7 +253,11 @@ async fn test_typed_query() {
             .unwrap();
         assert_eq!(counter, 0);
         handle
-            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
 
@@ -263,7 +271,11 @@ async fn test_typed_query() {
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
     };
@@ -372,13 +384,21 @@ async fn test_async_signal() {
 
         // Send another signal to reach the target (20 + 30 = 50)
         handle
-            .signal(InteractionWorkflow::increment, 30, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                30,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
 
         // Now send final signal to complete the workflow (50 + 50 = 100)
         handle
-            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
     };
@@ -425,7 +445,11 @@ async fn test_fallible_query() {
         let err = result.unwrap_err();
         assert!(err.to_string().contains("below minimum"));
         handle
-            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
         let counter = handle
@@ -438,7 +462,11 @@ async fn test_fallible_query() {
             .unwrap();
         assert_eq!(counter, 50);
         handle
-            .signal(InteractionWorkflow::increment, 50, WorkflowSignalOptions::default())
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
     };

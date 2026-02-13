@@ -34,7 +34,10 @@ mod integ_tests {
         get_integ_telem_options, rand_6_chars,
     };
     use std::time::Duration;
-    use temporalio_client::{Connection, NamespacedClient, grpc::{OperatorService, WorkflowService}};
+    use temporalio_client::{
+        Connection, NamespacedClient,
+        grpc::{OperatorService, WorkflowService},
+    };
     use temporalio_common::{
         protos::temporal::api::{
             nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},

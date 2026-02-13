@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions, UntypedSignal,
-    UntypedUpdate, UntypedWorkflow, WorkflowExecuteUpdateOptions,
+    Client, NamespacedClient, UntypedSignal, UntypedUpdate, UntypedWorkflow,
+    WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowSignalOptions,
     WorkflowStartOptions, grpc::WorkflowService,
 };
 use temporalio_common::{
@@ -171,9 +171,9 @@ async fn reapplied_updates_due_to_reset() {
     }
     .bind_untyped(client.clone())
     .fetch_history(Default::default())
-        .await
-        .unwrap()
-        .into_events();
+    .await
+    .unwrap()
+    .into_events();
     let with_id = HistoryForReplay::new(events, workflow_id.to_string());
 
     let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
@@ -844,7 +844,11 @@ async fn update_fail_sdk() {
         .unwrap();
     let update = async {
         let res = handle
-            .execute_update(UpdateFailSdkWf::do_update, (), WorkflowExecuteUpdateOptions::default())
+            .execute_update(
+                UpdateFailSdkWf::do_update,
+                (),
+                WorkflowExecuteUpdateOptions::default(),
+            )
             .await;
         assert!(res.is_err());
     };

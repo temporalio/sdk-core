@@ -14,8 +14,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ActivityIdentifier, WorkflowDescribeOptions, WorkflowTerminateOptions, UntypedWorkflow,
-    WorkflowStartOptions,
+    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
+    WorkflowTerminateOptions,
 };
 use temporalio_common::{
     prost_dur,

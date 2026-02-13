@@ -6,8 +6,8 @@
 
 use prost::Message;
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions, NamespacedClient,
-    WorkflowExecutionInfo, WorkflowFetchHistoryOptions,
+    Client, ClientOptions, Connection, ConnectionOptions, NamespacedClient, WorkflowExecutionInfo,
+    WorkflowFetchHistoryOptions,
 };
 use temporalio_common::protos::temporal::api::history::v1::History;
 use url::Url;

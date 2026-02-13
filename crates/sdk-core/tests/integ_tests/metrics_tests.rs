@@ -16,9 +16,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, NamespacedClient, WorkflowExecutionInfo, WorkflowQueryOptions,
-    REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
-    WorkflowStartOptions, grpc::WorkflowService,
+    Connection, NamespacedClient, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
+    WorkflowExecutionInfo, WorkflowQueryOptions, WorkflowStartOptions, grpc::WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -463,19 +462,19 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let client = starter.get_client().await;
     let queryer = async {
         WorkflowExecutionInfo {
-                namespace: client.namespace(),
-                workflow_id: starter.get_wf_id().to_string(),
-                run_id: Some(run_id),
-                first_execution_run_id: None,
-            }
-            .bind_untyped(client.clone())
-            .query(
-                UntypedQuery::new("fake_query"),
-                RawValue::empty(),
-                WorkflowQueryOptions::default(),
-            )
-            .await
-            .unwrap();
+            namespace: client.namespace(),
+            workflow_id: starter.get_wf_id().to_string(),
+            run_id: Some(run_id),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client.clone())
+        .query(
+            UntypedQuery::new("fake_query"),
+            RawValue::empty(),
+            WorkflowQueryOptions::default(),
+        )
+        .await
+        .unwrap();
     };
     let query_reply = async {
         // Need to re-complete b/c replay

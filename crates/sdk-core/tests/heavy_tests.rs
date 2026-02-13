@@ -23,8 +23,8 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    NamespacedClient, WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowSignalOptions,
-    UntypedSignal, UntypedWorkflow, WorkflowStartOptions,
+    NamespacedClient, UntypedSignal, UntypedWorkflow, WorkflowExecutionInfo,
+    WorkflowGetResultOptions, WorkflowSignalOptions, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue, protos::temporal::api::enums::v1::WorkflowIdConflictPolicy,
@@ -516,8 +516,8 @@ async fn poller_autoscaling_basic_loadtest() {
             loop {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
-                        let handle = client
-                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
+                        let handle =
+                            client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                         async move {
                             handle
                                 .signal(

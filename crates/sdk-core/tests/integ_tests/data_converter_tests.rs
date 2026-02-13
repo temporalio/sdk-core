@@ -7,10 +7,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{
-    Client, ClientOptions, UntypedWorkflow,
-    WorkflowStartOptions,
-};
+use temporalio_client::{Client, ClientOptions, UntypedWorkflow, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::{
         DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
