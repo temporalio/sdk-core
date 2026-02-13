@@ -102,7 +102,7 @@ pub struct ReturnWorkflowExitValueInterceptor {
 
 impl ReturnWorkflowExitValueInterceptor {
     /// Can be used to fetch the workflow result if/when it is determined
-    pub fn get_result_handle(&self) -> Arc<OnceLock<Payload>> {
+    pub fn result_handle(&self) -> Arc<OnceLock<Payload>> {
         self.result_value.clone()
     }
 }

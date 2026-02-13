@@ -899,7 +899,7 @@ where
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(Arc::new(replay_worker));
         let retval_icept = ReturnWorkflowExitValueInterceptor::default();
-        let retval_handle = retval_icept.get_result_handle();
+        let retval_handle = retval_icept.result_handle();
         let mut top_icept = InterceptorWithNext::new(Box::new(FailOnNondeterminismInterceptor {}));
         top_icept.set_next(Box::new(retval_icept));
         worker.set_worker_interceptor(top_icept);
