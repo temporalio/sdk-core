@@ -981,7 +981,7 @@ enum UnblockEvent {
 }
 
 /// Result of awaiting on a timer
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TimerResult {
     /// The timer was cancelled
     Cancelled,
@@ -990,13 +990,13 @@ pub enum TimerResult {
 }
 
 /// Successful result of sending a signal to an external workflow
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignalExternalOk;
 /// Result of awaiting on sending a signal to an external workflow
 pub type SignalExternalWfResult = Result<SignalExternalOk, Failure>;
 
 /// Successful result of sending a cancel request to an external workflow
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CancelExternalOk;
 /// Result of awaiting on sending a cancel request to an external workflow
 pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
