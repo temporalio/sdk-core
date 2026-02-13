@@ -596,10 +596,6 @@ impl PollScalerReportHandle {
                     self.ingested_this_period.fetch_add(1, Ordering::Relaxed);
                 }
                 if let Some(scaling_decision) = res.scaling_decision() {
-                    debug!(
-                        "Scaling decision from server: {:?}",
-                        scaling_decision.poll_request_delta_suggestion
-                    );
                     match scaling_decision.poll_request_delta_suggestion.cmp(&0) {
                         cmp::Ordering::Less => self.change_target(
                             usize::saturating_sub,
