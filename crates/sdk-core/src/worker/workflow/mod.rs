@@ -354,6 +354,7 @@ impl Workflows {
                         mut versioning_behavior,
                         attempt,
                     },
+                metrics: run_metrics,
             } => {
                 let reserved_act_permits =
                     self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
@@ -371,6 +372,7 @@ impl Workflows {
                     } else {
                         0
                     };
+                let mut maybe_record_terminal_metric = detect_terminal_command(&commands);
                 let mut completion = WorkflowTaskCompletion {
                     task_token: task_token.clone(),
                     commands,
@@ -397,6 +399,9 @@ impl Workflows {
                 self.handle_wft_reporting_errs(run_id, || async {
                     match self.client.complete_workflow_task(completion).await {
                         Ok(response) => {
+                            if let Some(record) = maybe_record_terminal_metric.take() {
+                                record(&run_metrics);
+                            }
                             if response.reset_history_event_id > 0 {
                                 reset_last_started_to = Some(response.reset_history_event_id);
                             }
@@ -459,6 +464,7 @@ impl Workflows {
             ServerCommandsWithWorkflowInfo {
                 task_token,
                 action: ActivationAction::RespondLegacyQuery { result },
+                ..
             } => {
                 self.respond_legacy_query(task_token, LegacyQueryResult::Succeeded(*result))
                     .await;
@@ -1007,10 +1013,18 @@ enum FailedActivationWFTReport {
     ReportLegacyQueryFailure(TaskToken, Failure),
 }
 
-#[derive(Debug)]
 struct ServerCommandsWithWorkflowInfo {
     task_token: TaskToken,
     action: ActivationAction,
+    metrics: MetricsContext,
+}
+impl Debug for ServerCommandsWithWorkflowInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServerCommandsWithWorkflowInfo")
+            .field("task_token", &self.task_token)
+            .field("action", &self.action)
+            .finish()
+    }
 }
 
 #[derive(Debug)]
@@ -1044,6 +1058,35 @@ impl EvictionRequestResult {
             | EvictionRequestResult::EvictionAlreadyRequested(_) => None,
         }
     }
+}
+
+#[allow(clippy::type_complexity)]
+fn detect_terminal_command(
+    commands: &[ProtoCommand],
+) -> Option<Box<dyn FnOnce(&MetricsContext) + Send>> {
+    for cmd in commands {
+        match cmd.attributes.as_ref() {
+            Some(Attributes::CompleteWorkflowExecutionCommandAttributes(_)) => {
+                return Some(Box::new(|m: &MetricsContext| m.wf_completed()));
+            }
+            Some(Attributes::FailWorkflowExecutionCommandAttributes(attrs)) => {
+                let should_record = metrics::should_record_failure_metric(&attrs.failure);
+                return Some(Box::new(move |m: &MetricsContext| {
+                    if should_record {
+                        m.wf_failed();
+                    }
+                }));
+            }
+            Some(Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(_)) => {
+                return Some(Box::new(|m: &MetricsContext| m.wf_continued_as_new()));
+            }
+            Some(Attributes::CancelWorkflowExecutionCommandAttributes(_)) => {
+                return Some(Box::new(|m: &MetricsContext| m.wf_canceled()));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 #[derive(Debug)]
