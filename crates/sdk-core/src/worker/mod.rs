@@ -163,6 +163,15 @@ pub(crate) struct WorkerTelemetry {
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
 }
 
+impl WorkerTelemetry {
+    pub(crate) fn from_meter(meter: TemporalMeter) -> Self {
+        Self {
+            temporal_metric_meter: Some(meter),
+            trace_subscriber: None,
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
