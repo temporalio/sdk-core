@@ -602,9 +602,12 @@ impl TestWorker {
         }
         let wfid = options.workflow_id.clone();
         let handle = c.start_workflow(workflow, input, options).await?;
-        let info = WorkflowExecutionInfo::new(c.namespace(), wfid)
-            .maybe_run_id(handle.info().run_id.clone())
-            .build();
+        let info = WorkflowExecutionInfo {
+            namespace: c.namespace(),
+            workflow_id: wfid,
+            run_id: handle.info().run_id.clone(),
+            first_execution_run_id: None,
+        };
         self.started_workflows.lock().push(info);
         Ok(handle)
     }
@@ -619,9 +622,12 @@ impl TestWorker {
             .as_ref()
             .map(|c| c.namespace())
             .unwrap_or(NAMESPACE.to_owned());
-        let info = WorkflowExecutionInfo::new(ns, wf_id.into())
-            .maybe_run_id(run_id)
-            .build();
+        let info = WorkflowExecutionInfo {
+            namespace: ns,
+            workflow_id: wf_id.into(),
+            run_id,
+            first_execution_run_id: None,
+        };
         self.started_workflows.lock().push(info);
     }
 
@@ -690,7 +696,12 @@ impl TestWorkerSubmitterHandle {
         let run_id = handle.run_id().unwrap().to_string();
         self.started_workflows
             .lock()
-            .push(WorkflowExecutionInfo::new(self.client.namespace(), wfid).run_id(run_id.clone()).build());
+            .push(WorkflowExecutionInfo {
+                namespace: self.client.namespace(),
+                workflow_id: wfid,
+                run_id: Some(run_id.clone()),
+                first_execution_run_id: None,
+            });
         Ok(run_id)
     }
 }

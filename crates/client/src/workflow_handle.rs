@@ -120,14 +120,11 @@ impl<CT, W> WorkflowHandle<CT, W> {
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
-#[derive(Debug, Clone, bon::Builder)]
-#[builder(start_fn = new, on(String, into))]
+#[derive(Debug, Clone)]
 pub struct WorkflowExecutionInfo {
     /// Namespace the workflow lives in.
-    #[builder(start_fn)]
     pub namespace: String,
     /// The workflow's id.
-    #[builder(start_fn)]
     pub workflow_id: String,
     /// If set, target this specific run of the workflow.
     pub run_id: Option<String>,
