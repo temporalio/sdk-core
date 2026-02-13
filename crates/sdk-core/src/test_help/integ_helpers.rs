@@ -14,7 +14,7 @@ use crate::{
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
     worker::{
-        TaskPollers,
+        TaskPollers, WorkerTelemetry,
         client::{LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion},
     },
 };
@@ -36,6 +36,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+pub use temporalio_common::telemetry::metrics::TemporalMeter;
 use temporalio_common::{
     Worker as WorkerTrait,
     errors::PollError,
@@ -214,7 +215,7 @@ pub fn mock_worker(mocks: MocksHolder) -> Worker {
             act_poller,
             nexus_poller,
         },
-        None,
+        mocks.worker_telemetry,
         None,
         false,
     )
@@ -232,6 +233,7 @@ pub struct MocksHolder {
     client: Arc<dyn WorkerClient>,
     inputs: MockWorkerInputs,
     pub outstanding_task_map: Option<OutstandingWFTMap>,
+    worker_telemetry: Option<WorkerTelemetry>,
 }
 
 impl MocksHolder {
@@ -263,6 +265,10 @@ impl MocksHolder {
     {
         let nexus_poller = mock_poller_from_resps(nexus_tasks);
         self.inputs.nexus_poller = Some(nexus_poller);
+    }
+
+    pub fn set_temporal_meter(&mut self, meter: TemporalMeter) {
+        self.worker_telemetry = Some(WorkerTelemetry::from_meter(meter));
     }
 
     /// Can be used for tests that need to avoid auto-shutdown due to running out of mock responses
@@ -308,6 +314,7 @@ impl MocksHolder {
             client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
+            worker_telemetry: None,
         }
     }
 
@@ -331,6 +338,7 @@ impl MocksHolder {
             client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
+            worker_telemetry: None,
         }
     }
 
@@ -354,6 +362,7 @@ impl MocksHolder {
             client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
+            worker_telemetry: None,
         }
     }
 
@@ -391,6 +400,7 @@ impl MocksHolder {
             client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
+            worker_telemetry: None,
         }
     }
 
@@ -416,6 +426,7 @@ impl MocksHolder {
             client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
+            worker_telemetry: None,
         }
     }
 }
@@ -826,6 +837,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         client: Arc::new(cfg.mock_client),
         inputs: mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
+        worker_telemetry: None,
     };
     if let Some(activity_responses) = cfg.activity_responses {
         let act_poller = mock_poller_from_resps(activity_responses);
