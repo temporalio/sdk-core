@@ -179,13 +179,9 @@ async fn poller_load_spiky() {
             .await
             .unwrap();
         workflow_handles.push(
-            WorkflowExecutionInfo {
-                namespace: client.namespace(),
-                workflow_id: wfid,
-                run_id: Some(rid),
-                first_execution_run_id: None,
-            }
-            .bind_untyped(client.clone()),
+            WorkflowExecutionInfo::new(client.namespace(), wfid)
+                .with_run_id(rid)
+                .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -217,13 +213,9 @@ async fn poller_load_spiky() {
                 .await
                 .unwrap();
             workflow_handles.push(
-                WorkflowExecutionInfo {
-                    namespace: client.namespace(),
-                    workflow_id: wfid,
-                    run_id: Some(rid),
-                    first_execution_run_id: None,
-                }
-                .bind_untyped(client.clone()),
+                WorkflowExecutionInfo::new(client.namespace(), wfid)
+                    .with_run_id(rid)
+                    .bind_untyped(client.clone()),
             );
         }
         stream::iter(workflow_handles)
@@ -314,13 +306,9 @@ async fn poller_load_sustained() {
             .await
             .unwrap();
         workflow_handles.push(
-            WorkflowExecutionInfo {
-                namespace: client.namespace(),
-                workflow_id: wfid,
-                run_id: Some(rid),
-                first_execution_run_id: None,
-            }
-            .bind_untyped(client.clone()),
+            WorkflowExecutionInfo::new(client.namespace(), wfid)
+                .with_run_id(rid)
+                .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -396,13 +384,9 @@ async fn poller_load_spike_then_sustained() {
             .await
             .unwrap();
         workflow_handles.push(
-            WorkflowExecutionInfo {
-                namespace: client.namespace(),
-                workflow_id: wfid,
-                run_id: Some(rid),
-                first_execution_run_id: None,
-            }
-            .bind_untyped(client.clone()),
+            WorkflowExecutionInfo::new(client.namespace(), wfid)
+                .with_run_id(rid)
+                .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -433,13 +417,9 @@ async fn poller_load_spike_then_sustained() {
                 .await
                 .unwrap();
             workflow_handles.push(
-                WorkflowExecutionInfo {
-                    namespace: client.namespace(),
-                    workflow_id: wfid,
-                    run_id: Some(rid),
-                    first_execution_run_id: None,
-                }
-                .bind_untyped(client.clone()),
+                WorkflowExecutionInfo::new(client.namespace(), wfid)
+                    .with_run_id(rid)
+                    .bind_untyped(client.clone()),
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }

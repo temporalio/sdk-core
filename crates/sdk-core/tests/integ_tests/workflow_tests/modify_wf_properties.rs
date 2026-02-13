@@ -59,14 +59,10 @@ async fn sends_modify_wf_props() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let memo = WorkflowExecutionInfo {
-        namespace: client.namespace(),
-        workflow_id: wf_id.to_string(),
-        run_id: Some(run_id),
-        first_execution_run_id: None,
-    }
-    .bind_untyped(client.clone())
-    .describe(WorkflowDescribeOptions::default())
+    let memo = WorkflowExecutionInfo::new(client.namespace(), wf_id.to_string())
+        .with_run_id(run_id)
+        .bind_untyped(client.clone())
+        .describe(WorkflowDescribeOptions::default())
     .await
     .unwrap()
     .raw_description

@@ -143,6 +143,7 @@ impl<W> Clone for WorkflowContext<W> {
 ///
 /// This provides access to workflow information but cannot issue commands.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct WorkflowContextView {
     /// The workflow's unique identifier
     pub workflow_id: String,
@@ -188,6 +189,7 @@ pub struct WorkflowContextView {
 
 /// Information about a parent workflow.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ParentWorkflowInfo {
     /// The parent workflow's unique identifier
     pub workflow_id: String,
@@ -199,6 +201,7 @@ pub struct ParentWorkflowInfo {
 
 /// Information about the root workflow in an execution chain.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RootWorkflowInfo {
     /// The root workflow's unique identifier
     pub workflow_id: String,
