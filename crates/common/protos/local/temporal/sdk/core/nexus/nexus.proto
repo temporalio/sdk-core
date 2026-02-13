@@ -28,13 +28,15 @@ message NexusTaskCompletion {
         // The handler completed (successfully or not). Note that the response kind must match the
         // request kind (start or cancel).
         temporal.api.nexus.v1.Response completed = 2;
-        // The handler could not complete the request for some reason.
-        temporal.api.nexus.v1.HandlerError error = 3;
+        // The handler could not complete the request for some reason. Deprecated, use failure.
+        temporal.api.nexus.v1.HandlerError error = 3 [deprecated = true];
         // The lang SDK acknowledges that it is responding to a `CancelNexusTask` and thus the
         // response is irrelevant. This is not the only way to respond to a cancel, the other
         // variants can still be used, but this variant should be used when the handler was aborted
         // by cancellation.
         bool ack_cancel = 4;
+        // The handler could not complete the request for some reason.
+        temporal.api.failure.v1.Failure failure = 5;
     }
 }
 

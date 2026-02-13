@@ -18,7 +18,7 @@ import "temporal/api/common/v1/message.proto";
 // Worker Deployment options set in SDK that need to be sent to server in every poll.
 // Experimental. Worker Deployments are experimental and might significantly change in the future.
 message WorkerDeploymentOptions {
-    // Required. Worker Deployment name.
+    // Required when `worker_versioning_mode==VERSIONED`.
     string deployment_name = 1;
     // The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,
     // the worker will be part of a Deployment Version.

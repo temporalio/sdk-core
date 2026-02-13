@@ -81,7 +81,8 @@ grpc-install:
 	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 	@go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
 	@go install github.com/pseudomuto/protoc-gen-doc/cmd/protoc-gen-doc@latest
-	@go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+	# v2.27.8 errors with --openapiv2_out: can't resolve OpenAPI name from ".temporal.api.protocol.v1.Message"
+	@go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.27.7
 	@go install github.com/google/gnostic/cmd/protoc-gen-openapi@latest
 	@go install github.com/mikefarah/yq/v4@latest
 

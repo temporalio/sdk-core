@@ -670,6 +670,16 @@ service WorkflowService {
         };
     }
 
+    // CountSchedules is a visibility API to count schedules in a specific namespace.
+    rpc CountSchedules (CountSchedulesRequest) returns (CountSchedulesResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/schedule-count"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/schedule-count"
+            }
+        };
+    }
+
     // Deprecated. Use `UpdateWorkerVersioningRules`.
     //
     // Allows users to specify sets of worker build id versions on a per task queue basis. Versions
@@ -1288,6 +1298,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}/pause"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/pause"
+                body: "*"
+            }
         };
     }
 
@@ -1300,6 +1314,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}/unpause"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/unpause"
+                body: "*"
+            }
         };
     }
 
