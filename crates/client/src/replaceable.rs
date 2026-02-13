@@ -1,4 +1,4 @@
-use futures_util::future::BoxFuture;
+use crate::NamespacedClient;
 use std::{
     borrow::Cow,
     sync::{
@@ -6,15 +6,6 @@ use std::{
         atomic::{AtomicU32, Ordering},
     },
 };
-use temporalio_client::{
-    NamespacedClient,
-    grpc::{
-        CloudService, HealthService, OperatorService, RawClientProducer, RawGrpcCaller,
-        TestService, WorkflowService,
-    },
-    worker::ClientWorkerSet,
-};
-use tonic::{Request, Response, Status};
 
 /// A client wrapper that allows replacing the underlying client at a later point in time.
 /// Clones of this struct have a shared reference to the underlying client, and each clone also
@@ -24,13 +15,13 @@ use tonic::{Request, Response, Status};
 /// This struct is fully thread-safe, and it works in a lock-free manner except when the client is
 /// being replaced. A read-write lock is used then, with minimal locking time.
 #[derive(Debug)]
-pub(crate) struct SharedReplaceableClient<C>
+pub struct SharedReplaceableClient<C>
 where
     C: Clone + Send + Sync,
 {
     shared_data: Arc<SharedClientData<C>>,
-    cloned_client: C,
-    cloned_generation: u32,
+    pub(crate) cloned_client: C,
+    pub(crate) cloned_generation: u32,
 }
 
 #[derive(Debug)]
@@ -74,7 +65,7 @@ where
 {
     /// Creates the initial instance of replaceable client with the provided underlying client.
     /// Use [`clone()`](Self::clone) method to create more instances that share the same underlying client.
-    pub(crate) fn new(client: C) -> Self {
+    pub fn new(client: C) -> Self {
         let cloned_client = client.clone();
         Self {
             shared_data: Arc::new(SharedClientData {
@@ -87,13 +78,13 @@ where
     }
 
     /// Replaces the client for all instances that share this instance's underlying client.
-    pub(crate) fn replace_client(&self, new_client: C) {
+    pub fn replace_client(&self, new_client: C) {
         self.shared_data.replace_client(new_client); // cloned_client will be updated on next mutable call
     }
 
     /// Returns a clone of the underlying client.
     #[allow(dead_code)]
-    pub(crate) fn inner_clone(&self) -> C {
+    pub fn inner_clone(&self) -> C {
         self.inner_cow().into_owned()
     }
 
@@ -101,7 +92,7 @@ where
     /// it's up to date, or a fresh clone of the shared client otherwise. Because it's an immutable
     /// method, it will not update this instance's cached clone. For this reason, prefer to use
     /// [`inner_mut_refreshed()`](Self::inner_mut_refreshed) when possible.
-    pub(crate) fn inner_cow(&self) -> Cow<'_, C> {
+    pub fn inner_cow(&self) -> Cow<'_, C> {
         self.shared_data
             .fetch_newer_than(self.cloned_generation)
             .map(|(c, _)| Cow::Owned(c))
@@ -117,7 +108,7 @@ where
     /// will not be shared with other instances, and will be lost if the client gets replaced from
     /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client)
     /// instead.
-    pub(crate) fn inner_mut_refreshed(&mut self) -> &mut C {
+    pub fn inner_mut_refreshed(&mut self) -> &mut C {
         if let Some((client, generation)) =
             self.shared_data.fetch_newer_than(self.cloned_generation)
         {
@@ -160,61 +151,9 @@ where
     }
 }
 
-impl<RC> RawClientProducer for SharedReplaceableClient<RC>
-where
-    RC: RawClientProducer + Clone + Send + Sync + 'static,
-{
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        self.inner_cow().get_workers_info()
-    }
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner_mut_refreshed().workflow_client()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner_mut_refreshed().operator_client()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner_mut_refreshed().cloud_client()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner_mut_refreshed().test_client()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner_mut_refreshed().health_client()
-    }
-}
-
-#[async_trait::async_trait]
-impl<RC> RawGrpcCaller for SharedReplaceableClient<RC>
-where
-    RC: RawGrpcCaller + Clone + Sync + 'static,
-{
-    async fn call<F, Req, Resp>(
-        &mut self,
-        call_name: &'static str,
-        callfn: F,
-        req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        Resp: Send + 'static,
-        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-        F: Send + Sync + Unpin + 'static,
-    {
-        self.inner_mut_refreshed()
-            .call(call_name, callfn, req)
-            .await
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temporalio_client::NamespacedClient;
     use std::borrow::Cow;
 
     #[derive(Debug, Clone)]

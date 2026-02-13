@@ -57,8 +57,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::{sync::Arc, time::Duration};
-use crate::worker::SharedReplaceableClient;
-use temporalio_client::Connection;
+use temporalio_client::{Connection, SharedReplaceableClient};
 use temporalio_common::{
     protos::coresdk::ActivityHeartbeat,
     telemetry::{

@@ -21,6 +21,7 @@ mod options_structs;
 /// Visible only for tests
 #[doc(hidden)]
 pub mod proxy;
+mod replaceable;
 pub mod request_extensions;
 mod retry;
 pub mod worker;
@@ -36,6 +37,7 @@ pub use async_activity_handle::{
 
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
+pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
