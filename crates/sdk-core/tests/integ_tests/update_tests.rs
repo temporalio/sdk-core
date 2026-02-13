@@ -130,7 +130,7 @@ async fn reapplied_updates_due_to_reset() {
         ResetWorkflowExecutionRequest {
             namespace: client.namespace(),
             workflow_execution: Some(WorkflowExecution {
-                workflow_id: workflow_id.into(),
+                workflow_id: workflow_id.to_string(),
                 run_id: pre_reset_run_id.clone(),
             }),
             workflow_task_finish_event_id,
@@ -165,7 +165,7 @@ async fn reapplied_updates_due_to_reset() {
     // Make sure replay works
     let events = WorkflowExecutionInfo {
         namespace: client.namespace(),
-        workflow_id: workflow_id.into(),
+        workflow_id: workflow_id.to_string(),
         run_id: Some(post_reset_run_id.clone()),
         first_execution_run_id: None,
     }
@@ -210,7 +210,7 @@ async fn send_and_handle_update(
 
     let handle = WorkflowExecutionInfo {
         namespace: client.namespace(),
-        workflow_id: workflow_id.into(),
+        workflow_id: workflow_id.to_string(),
         run_id: Some(act.run_id.clone()),
         first_execution_run_id: None,
     }
@@ -398,7 +398,7 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
 
     let handle = WorkflowExecutionInfo {
         namespace: client.namespace(),
-        workflow_id: workflow_id.into(),
+        workflow_id,
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
@@ -491,7 +491,7 @@ async fn update_complete_after_accept_without_new_task() {
 
     let handle = WorkflowExecutionInfo {
         namespace: client.namespace(),
-        workflow_id: workflow_id.into(),
+        workflow_id,
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }

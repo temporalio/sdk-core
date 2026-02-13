@@ -284,7 +284,7 @@ where
         let raw = self.get_result_raw(opts).await?;
         match raw {
             WorkflowExecutionResult::Succeeded(v) => Ok(v),
-            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(f)),
+            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(Box::new(f))),
             WorkflowExecutionResult::Cancelled { details } => {
                 Err(WorkflowGetResultError::Cancelled { details })
             }

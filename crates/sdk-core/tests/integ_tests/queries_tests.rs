@@ -51,7 +51,7 @@ async fn simple_query_legacy() {
     let query_fut = async {
         WorkflowExecutionInfo {
                 namespace: starter.get_client().await.namespace(),
-                workflow_id: workflow_id.into(),
+                workflow_id,
                 run_id: Some(task.run_id.to_string()),
                 first_execution_run_id: None,
             }

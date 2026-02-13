@@ -180,8 +180,8 @@ async fn poller_load_spiky() {
             .unwrap();
         workflow_handles.push(WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wfid.into(),
-                run_id: Some(rid.into()),
+                workflow_id: wfid,
+                run_id: Some(rid),
                 first_execution_run_id: None,
             }.bind_untyped(client.clone()));
     }
@@ -215,8 +215,8 @@ async fn poller_load_spiky() {
                 .unwrap();
             workflow_handles.push(WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wfid.into(),
-                run_id: Some(rid.into()),
+                workflow_id: wfid,
+                run_id: Some(rid),
                 first_execution_run_id: None,
             }.bind_untyped(client.clone()));
         }
@@ -309,8 +309,8 @@ async fn poller_load_sustained() {
             .unwrap();
         workflow_handles.push(WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wfid.into(),
-                run_id: Some(rid.into()),
+                workflow_id: wfid,
+                run_id: Some(rid),
                 first_execution_run_id: None,
             }.bind_untyped(client.clone()));
     }
@@ -388,8 +388,8 @@ async fn poller_load_spike_then_sustained() {
             .unwrap();
         workflow_handles.push(WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wfid.into(),
-                run_id: Some(rid.into()),
+                workflow_id: wfid,
+                run_id: Some(rid),
                 first_execution_run_id: None,
             }.bind_untyped(client.clone()));
     }
@@ -422,8 +422,8 @@ async fn poller_load_spike_then_sustained() {
                 .unwrap();
             workflow_handles.push(WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wfid.into(),
-                run_id: Some(rid.into()),
+                workflow_id: wfid,
+                run_id: Some(rid),
                 first_execution_run_id: None,
             }.bind_untyped(client.clone()));
             tokio::time::sleep(Duration::from_secs(1)).await;

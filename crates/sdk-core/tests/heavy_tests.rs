@@ -335,8 +335,8 @@ async fn evict_while_la_running_no_interference() {
             cw.request_workflow_eviction(&run_id);
             WorkflowExecutionInfo {
                 namespace: client.namespace(),
-                workflow_id: wf_id.into(),
-                run_id: Some(run_id.into()),
+                workflow_id: wf_id,
+                run_id: Some(run_id),
                 first_execution_run_id: None,
             }
             .bind_untyped(client)
@@ -398,7 +398,7 @@ async fn can_paginate_long_history() {
         let handle = WorkflowExecutionInfo {
             namespace: client.namespace(),
             workflow_id: wf_name.into(),
-            run_id: Some(run_id.into()),
+            run_id: Some(run_id),
             first_execution_run_id: None,
         }
         .bind_untyped(client);

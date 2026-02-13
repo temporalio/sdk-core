@@ -465,7 +465,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
         WorkflowExecutionInfo {
                 namespace: client.namespace(),
                 workflow_id: starter.get_wf_id().to_string(),
-                run_id: Some(run_id.into()),
+                run_id: Some(run_id),
                 first_execution_run_id: None,
             }
             .bind_untyped(client.clone())

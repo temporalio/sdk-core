@@ -155,7 +155,7 @@ impl WorkflowUpdateError {
 pub enum WorkflowGetResultError {
     /// The workflow finished in failure.
     #[error("Workflow failed: {0:?}")]
-    Failed(Failure),
+    Failed(Box<Failure>),
 
     /// The workflow was cancelled.
     #[error("Workflow cancelled")]
