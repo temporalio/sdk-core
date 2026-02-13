@@ -292,13 +292,3 @@ impl AsyncActivityError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientNewError {}
-// Backwards compatibility type aliases
-/// Alias for backwards compatibility. Use [`WorkflowStartError`] instead.
-#[deprecated(note = "Renamed to WorkflowStartError")]
-pub type StartWorkflowError = WorkflowStartError;
-/// Alias for backwards compatibility. Use [`WorkflowQueryError`] instead.
-#[deprecated(note = "Renamed to WorkflowQueryError")]
-pub type QueryError = WorkflowQueryError;
-/// Alias for backwards compatibility. Use [`WorkflowUpdateError`] instead.
-#[deprecated(note = "Renamed to WorkflowUpdateError")]
-pub type UpdateError = WorkflowUpdateError;
