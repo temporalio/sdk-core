@@ -223,12 +223,11 @@ pub struct ActivityInfo {
 }
 
 /// Returned as errors from activity functions.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ActivityError {
     /// This error can be returned from activities to allow the explicit configuration of certain
     /// error properties. It's also the default error type that arbitrary errors will be converted
     /// into.
-    #[error("Retryable activity error: {source}")]
     Retryable {
         /// The underlying error
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
@@ -236,17 +235,14 @@ pub enum ActivityError {
         explicit_delay: Option<StdDuration>,
     },
     /// Return this error to indicate your activity is cancelling
-    #[error("Activity cancelled")]
     Cancelled {
         /// Some data to save as the cancellation reason
         details: Option<Payload>,
     },
     /// Return this error to indicate that the activity should not be retried.
-    #[error("Non-retryable activity error: {0}")]
-    NonRetryable(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
+    NonRetryable(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Return this error to indicate that the activity will be completed outside of this activity
     /// definition, by an external client.
-    #[error("Activity will complete asynchronously")]
     WillCompleteAsync,
 }
 
@@ -257,10 +253,13 @@ impl ActivityError {
     }
 }
 
-impl From<anyhow::Error> for ActivityError {
-    fn from(source: anyhow::Error) -> Self {
+impl<E> From<E> for ActivityError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(source: E) -> Self {
         Self::Retryable {
-            source: source.into_boxed_dyn_error(),
+            source: source.into().into_boxed_dyn_error(),
             explicit_delay: None,
         }
     }
@@ -390,10 +389,9 @@ impl ActivityDefinitions {
                     };
                     let deserialized: AD::Input = pc
                         .from_payloads(&ctx, payloads)
-                        .map_err(|e| ActivityError::from(anyhow::Error::from(e)))?;
+                        .map_err(ActivityError::from)?;
                     let result = AD::execute(Some(instance), c, deserialized).await?;
-                    pc.to_payload(&ctx, &result)
-                        .map_err(|e| ActivityError::from(anyhow::Error::from(e)))
+                    pc.to_payload(&ctx, &result).map_err(ActivityError::from)
                 }
                 .boxed()
             }),
