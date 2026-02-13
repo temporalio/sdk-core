@@ -910,7 +910,8 @@ async fn repro_nondeterminism_with_timer_bug() {
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
     let handle = WorkflowExecutionInfo::new(client.namespace(), wf_name)
-        .with_run_id(handle.run_id().unwrap().to_string())
+        .run_id(handle.run_id().unwrap().to_string())
+        .build()
         .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())
@@ -1066,7 +1067,8 @@ async fn la_resolve_same_time_as_other_cancel() {
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
     let handle = WorkflowExecutionInfo::new(client.namespace(), wf_name)
-        .with_run_id(handle.run_id().unwrap().to_string())
+        .run_id(handle.run_id().unwrap().to_string())
+        .build()
         .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())

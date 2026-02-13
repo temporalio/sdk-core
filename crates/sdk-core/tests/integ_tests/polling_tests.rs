@@ -208,7 +208,8 @@ async fn switching_worker_client_changes_poll() {
         worker.handle_eviction().await;
         info!("Waiting on first workflow complete");
         WorkflowExecutionInfo::new(client1.namespace(), "my-workflow-1")
-            .with_run_id(wf1_run_id.clone())
+            .run_id(wf1_run_id.clone())
+            .build()
             .bind_untyped(client1.clone())
             .get_result(Default::default())
         .await
@@ -223,7 +224,8 @@ async fn switching_worker_client_changes_poll() {
         worker.handle_eviction().await;
         info!("Waiting on second workflow complete");
         WorkflowExecutionInfo::new(client2.namespace(), "my-workflow-2")
-            .with_run_id(wf2_run_id)
+            .run_id(wf2_run_id)
+            .build()
             .bind_untyped(client2.clone())
             .get_result(Default::default())
         .await

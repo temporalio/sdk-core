@@ -50,7 +50,8 @@ async fn simple_query_legacy() {
     // Query after timer should have fired and there should be new WFT
     let query_fut = async {
         WorkflowExecutionInfo::new(starter.get_client().await.namespace(), workflow_id)
-            .with_run_id(task.run_id.to_string())
+            .run_id(task.run_id.to_string())
+            .build()
             .bind_untyped(starter.get_client().await.clone())
             .query(
                 UntypedQuery::new("myquery"),
@@ -193,7 +194,8 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
         let gw = starter.get_client().await.clone();
         let query_fut = async move {
             let q_resp: RawValue = WorkflowExecutionInfo::new(gw.namespace(), workflow_id.to_string())
-                .with_run_id(run_id.to_string())
+                .run_id(run_id.to_string())
+                .build()
                 .bind_untyped(gw.clone())
                 .query(
                 UntypedQuery::new("myquery"),
@@ -231,7 +233,8 @@ async fn fail_legacy_query(#[case] with_nde: bool) {
     core.handle_eviction().await;
     let query_fut = async {
         WorkflowExecutionInfo::new(starter.get_client().await.namespace(), workflow_id.to_string())
-            .with_run_id(task.run_id.to_string())
+            .run_id(task.run_id.to_string())
+            .build()
             .bind_untyped(starter.get_client().await.clone())
             .query(
                 UntypedQuery::new("myquery"),
@@ -299,7 +302,8 @@ async fn multiple_concurrent_queries_no_new_history() {
     let num_queries = 10;
     let query_futs = (1..=num_queries).map(|_| async {
         WorkflowExecutionInfo::new(client.namespace(), workflow_id.to_string())
-            .with_run_id(task.run_id.to_string())
+            .run_id(task.run_id.to_string())
+            .build()
             .bind_untyped(client.clone())
             .query(
             UntypedQuery::new("myquery"),
@@ -365,7 +369,8 @@ async fn queries_handled_before_next_wft() {
     // Send two queries so that one of them is buffered
     let query_futs = (1..=2).map(|_| async {
         WorkflowExecutionInfo::new(client.namespace(), workflow_id.to_string())
-            .with_run_id(task.run_id.to_string())
+            .run_id(task.run_id.to_string())
+            .build()
             .bind_untyped(client.clone())
             .query(
             UntypedQuery::new("myquery"),
@@ -386,7 +391,8 @@ async fn queries_handled_before_next_wft() {
         // While handling the first query, signal the workflow so a new WFT is generated and the
         // second query is still in the buffer
         WorkflowExecutionInfo::new(client.namespace(), workflow_id.to_string())
-            .with_run_id(task.run_id.to_string())
+            .run_id(task.run_id.to_string())
+            .build()
             .bind_untyped(client.clone())
             .signal(
             UntypedSignal::new("blah"),

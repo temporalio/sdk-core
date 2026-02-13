@@ -80,7 +80,8 @@ async fn sends_cancel_to_other_wf() {
     worker.run_until_done().await.unwrap();
     let client = starter.get_client().await;
     let h = WorkflowExecutionInfo::new(client.namespace(), RECEIVER_WFID)
-        .with_run_id(receiver_run_id)
+        .run_id(receiver_run_id)
+        .build()
         .bind_untyped(client.clone());
     let res = String::from_json_payload(
         h.get_result(WorkflowGetResultOptions::default())

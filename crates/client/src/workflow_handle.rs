@@ -120,12 +120,15 @@ impl<CT, W> WorkflowHandle<CT, W> {
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 #[non_exhaustive]
+#[builder(start_fn = new, on(String, into))]
 pub struct WorkflowExecutionInfo {
     /// Namespace the workflow lives in.
+    #[builder(start_fn)]
     pub namespace: String,
     /// The workflow's id.
+    #[builder(start_fn)]
     pub workflow_id: String,
     /// If set, target this specific run of the workflow.
     pub run_id: Option<String>,
@@ -136,28 +139,6 @@ pub struct WorkflowExecutionInfo {
 }
 
 impl WorkflowExecutionInfo {
-    /// Create a new `WorkflowExecutionInfo` with the given namespace and workflow ID.
-    pub fn new(namespace: impl Into<String>, workflow_id: impl Into<String>) -> Self {
-        Self {
-            namespace: namespace.into(),
-            workflow_id: workflow_id.into(),
-            run_id: None,
-            first_execution_run_id: None,
-        }
-    }
-
-    /// Set the run ID to target a specific run of the workflow.
-    pub fn with_run_id(mut self, run_id: impl Into<String>) -> Self {
-        self.run_id = Some(run_id.into());
-        self
-    }
-
-    /// Set the first execution run ID.
-    pub fn with_first_execution_run_id(mut self, run_id: impl Into<String>) -> Self {
-        self.first_execution_run_id = Some(run_id.into());
-        self
-    }
-
     /// Bind the workflow info to a specific client, turning it into a workflow handle
     pub fn bind_untyped<CT>(self, client: CT) -> UntypedWorkflowHandle<CT>
     where

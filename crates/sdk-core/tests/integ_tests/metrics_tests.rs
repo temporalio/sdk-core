@@ -462,7 +462,8 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let client = starter.get_client().await;
     let queryer = async {
         WorkflowExecutionInfo::new(client.namespace(), starter.get_wf_id().to_string())
-            .with_run_id(run_id)
+            .run_id(run_id)
+            .build()
             .bind_untyped(client.clone())
             .query(
             UntypedQuery::new("fake_query"),

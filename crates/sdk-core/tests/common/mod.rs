@@ -602,8 +602,9 @@ impl TestWorker {
         }
         let wfid = options.workflow_id.clone();
         let handle = c.start_workflow(workflow, input, options).await?;
-        let mut info = WorkflowExecutionInfo::new(c.namespace(), wfid);
-        info.run_id = handle.info().run_id.clone();
+        let info = WorkflowExecutionInfo::new(c.namespace(), wfid)
+            .maybe_run_id(handle.info().run_id.clone())
+            .build();
         self.started_workflows.lock().push(info);
         Ok(handle)
     }
@@ -618,8 +619,9 @@ impl TestWorker {
             .as_ref()
             .map(|c| c.namespace())
             .unwrap_or(NAMESPACE.to_owned());
-        let mut info = WorkflowExecutionInfo::new(ns, wf_id.into());
-        info.run_id = run_id;
+        let info = WorkflowExecutionInfo::new(ns, wf_id.into())
+            .maybe_run_id(run_id)
+            .build();
         self.started_workflows.lock().push(info);
     }
 
@@ -688,7 +690,7 @@ impl TestWorkerSubmitterHandle {
         let run_id = handle.run_id().unwrap().to_string();
         self.started_workflows
             .lock()
-            .push(WorkflowExecutionInfo::new(self.client.namespace(), wfid).with_run_id(run_id.clone()));
+            .push(WorkflowExecutionInfo::new(self.client.namespace(), wfid).run_id(run_id.clone()).build());
         Ok(run_id)
     }
 }

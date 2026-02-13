@@ -164,7 +164,8 @@ async fn reapplied_updates_due_to_reset() {
 
     // Make sure replay works
     let events = WorkflowExecutionInfo::new(client.namespace(), workflow_id.to_string())
-        .with_run_id(post_reset_run_id.clone())
+        .run_id(post_reset_run_id.clone())
+        .build()
         .bind_untyped(client.clone())
         .fetch_history(Default::default())
     .await
@@ -205,7 +206,8 @@ async fn send_and_handle_update(
         .unwrap();
 
     let handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id.to_string())
-        .with_run_id(act.run_id.clone())
+        .run_id(act.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
 
     // Send the update to the server
@@ -310,7 +312,8 @@ async fn update_rejection() {
     .unwrap();
 
     let handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id.clone())
-        .with_run_id(res.run_id.clone())
+        .run_id(res.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
 
     // Send the update to the server
@@ -385,7 +388,8 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
     .unwrap();
 
     let handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id)
-        .with_run_id(res.run_id.clone())
+        .run_id(res.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
 
     // Send the update to the server
@@ -474,7 +478,8 @@ async fn update_complete_after_accept_without_new_task() {
     .unwrap();
 
     let handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id)
-        .with_run_id(res.run_id.clone())
+        .run_id(res.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
 
     // Send the update to the server

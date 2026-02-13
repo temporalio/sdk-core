@@ -180,7 +180,8 @@ async fn poller_load_spiky() {
             .unwrap();
         workflow_handles.push(
             WorkflowExecutionInfo::new(client.namespace(), wfid)
-                .with_run_id(rid)
+                .run_id(rid)
+                .build()
                 .bind_untyped(client.clone()),
         );
     }
@@ -214,7 +215,8 @@ async fn poller_load_spiky() {
                 .unwrap();
             workflow_handles.push(
                 WorkflowExecutionInfo::new(client.namespace(), wfid)
-                    .with_run_id(rid)
+                    .run_id(rid)
+                    .build()
                     .bind_untyped(client.clone()),
             );
         }
@@ -307,7 +309,8 @@ async fn poller_load_sustained() {
             .unwrap();
         workflow_handles.push(
             WorkflowExecutionInfo::new(client.namespace(), wfid)
-                .with_run_id(rid)
+                .run_id(rid)
+                .build()
                 .bind_untyped(client.clone()),
         );
     }
@@ -385,7 +388,8 @@ async fn poller_load_spike_then_sustained() {
             .unwrap();
         workflow_handles.push(
             WorkflowExecutionInfo::new(client.namespace(), wfid)
-                .with_run_id(rid)
+                .run_id(rid)
+                .build()
                 .bind_untyped(client.clone()),
         );
     }
@@ -418,7 +422,8 @@ async fn poller_load_spike_then_sustained() {
                 .unwrap();
             workflow_handles.push(
                 WorkflowExecutionInfo::new(client.namespace(), wfid)
-                    .with_run_id(rid)
+                    .run_id(rid)
+                    .build()
                     .bind_untyped(client.clone()),
             );
             tokio::time::sleep(Duration::from_secs(1)).await;

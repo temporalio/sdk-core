@@ -334,7 +334,8 @@ async fn evict_while_la_running_no_interference() {
             tokio::time::sleep(Duration::from_secs(1)).await;
             cw.request_workflow_eviction(&run_id);
             WorkflowExecutionInfo::new(client.namespace(), wf_id)
-                .with_run_id(run_id)
+                .run_id(run_id)
+                .build()
                 .bind_untyped(client)
                 .signal(
                 UntypedSignal::new("whaatever"),
@@ -392,7 +393,8 @@ async fn can_paginate_long_history() {
     let client = starter.get_client().await;
     tokio::spawn(async move {
         let handle = WorkflowExecutionInfo::new(client.namespace(), wf_name)
-            .with_run_id(run_id)
+            .run_id(run_id)
+            .build()
             .bind_untyped(client);
         loop {
             for _ in 0..10 {

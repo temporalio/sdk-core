@@ -240,7 +240,8 @@ async fn signal_workflow() {
 
     // Send the signals to the server
     let handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id.clone())
-        .with_run_id(res.run_id.clone())
+        .run_id(res.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
     handle
         .signal(
@@ -337,7 +338,8 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             // Send the signal to the server
             let sig_client = starter.get_client().await;
             WorkflowExecutionInfo::new(sig_client.namespace(), workflow_id.clone())
-                .with_run_id(res.run_id.clone())
+                .run_id(res.run_id.clone())
+                .build()
                 .bind_untyped(sig_client.clone())
                 .signal(
                 UntypedSignal::new(signal_id_1),
@@ -414,7 +416,8 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // corresponding signals.
     let ac_task = core.poll_activity_task().await.unwrap();
     let handle = WorkflowExecutionInfo::new(client.namespace(), wf_id.to_string())
-        .with_run_id(wf_task.run_id.clone())
+        .run_id(wf_task.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
@@ -598,7 +601,8 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
 
     // Ensure a query on first wft also sees the correct id
     let query_handle = WorkflowExecutionInfo::new(client.namespace(), workflow_id.clone())
-        .with_run_id(res.run_id.clone())
+        .run_id(res.run_id.clone())
+        .build()
         .bind_untyped(client.clone());
     let query_fut = async {
         query_handle

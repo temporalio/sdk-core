@@ -60,7 +60,8 @@ async fn sends_modify_wf_props() {
 
     let client = starter.get_client().await;
     let memo = WorkflowExecutionInfo::new(client.namespace(), wf_id.to_string())
-        .with_run_id(run_id)
+        .run_id(run_id)
+        .build()
         .bind_untyped(client.clone())
         .describe(WorkflowDescribeOptions::default())
     .await
