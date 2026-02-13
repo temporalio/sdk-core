@@ -751,35 +751,50 @@ async fn docker_metrics_with_prometheus(
     let client = starter.get_client().await;
     client.list_namespaces().await.unwrap();
 
-    // Give Prometheus time to scrape metrics
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Query Prometheus API for metrics
-    let client = reqwest::Client::new();
+    // Poll Prometheus API until metrics appear
+    let http_client = reqwest::Client::new();
     let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
-    let response = client
-        .get(PROMETHEUS_QUERY_API)
-        .query(&[("query", query)])
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let mut attempts = 0;
+    let wait_time = Duration::from_secs(1);
+    let max_attempts = 10;
 
-    // Validate the Prometheus response
-    if let Some(data) = response["data"]["result"].as_array() {
-        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
-        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
-        assert_eq!(data[0]["metric"]["job"], "otel-collector");
-        assert!(
-            data[0]["metric"]["task_queue"]
-                .as_str()
-                .unwrap()
-                .starts_with(test_name)
-        );
-    } else {
-        panic!("Invalid Prometheus response: {response:?}");
+    loop {
+        attempts += 1;
+
+        let response = http_client
+            .get(PROMETHEUS_QUERY_API)
+            .query(&[("query", &query)])
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap();
+
+        // Check if we have metrics available
+        if let Some(data) = response["data"]["result"].as_array() {
+            if !data.is_empty() {
+                // Validate the Prometheus response
+                assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+                assert_eq!(data[0]["metric"]["job"], "otel-collector");
+                assert!(
+                    data[0]["metric"]["task_queue"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with(test_name)
+                );
+                break;
+            }
+        }
+
+        // No metrics found yet, retry or fail
+        if attempts >= max_attempts {
+            panic!(
+                "No metrics found for query: {test_uid} after {max_attempts} attempts ({} seconds)",
+                max_attempts
+            );
+        }
+        tokio::time::sleep(wait_time).await;
     }
 }
 
