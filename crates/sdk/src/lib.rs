@@ -894,7 +894,7 @@ impl ActivityHalf {
 
                 tokio::spawn(async move {
                     let act_fut = async move {
-                        if let Some(info) = &ctx.get_info().workflow_execution {
+                        if let Some(info) = &ctx.info().workflow_execution {
                             Span::current()
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);

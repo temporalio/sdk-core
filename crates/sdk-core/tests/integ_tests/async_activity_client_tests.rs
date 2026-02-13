@@ -75,7 +75,7 @@ async fn async_activity_completions(
                 }
             }
 
-            let activity_info = ctx.get_info();
+            let activity_info = ctx.info();
             let wf_exec = activity_info.workflow_execution.as_ref().unwrap();
             let info = SharedActivityInfo {
                 task_token: activity_info.task_token.clone(),

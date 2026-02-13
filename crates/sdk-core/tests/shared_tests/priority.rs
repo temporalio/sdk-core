@@ -30,7 +30,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         #[activity]
         async fn echo(ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
             assert_eq!(
-                ctx.get_info().priority,
+                ctx.info().priority,
                 Priority {
                     priority_key: Some(5),
                     fairness_key: Some("fair-act".to_string()),
