@@ -3,10 +3,10 @@ use crate::{
     WorkflowFetchHistoryOptions, WorkflowGetResultOptions, WorkflowQueryOptions,
     WorkflowSignalOptions, WorkflowStartUpdateOptions, WorkflowTerminateOptions,
     WorkflowUpdateWaitStage,
-    grpc::WorkflowService,
     errors::{
         WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError,
     },
+    grpc::WorkflowService,
 };
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
@@ -273,8 +273,7 @@ where
         &self.client
     }
 
-    /// Await the result of the workflow execution, returning the output on success or an error
-    /// describing the non-success outcome (failed, cancelled, terminated, etc.).
+    /// Await the result of the workflow execution
     pub async fn get_result(
         &self,
         opts: WorkflowGetResultOptions,
@@ -300,7 +299,7 @@ where
     /// Await the result of the workflow execution, returning the full
     /// [`WorkflowExecutionResult`] enum for callers that need to inspect non-success outcomes
     /// directly.
-    pub async fn get_result_raw(
+    async fn get_result_raw(
         &self,
         opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>

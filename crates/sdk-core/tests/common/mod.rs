@@ -733,7 +733,11 @@ impl TestWorkerCompletionIceptor {
             future::Either::Left(async move {
                 stream
                     .try_for_each_concurrent(None, |wh| async move {
-                        wh.get_result(Default::default()).await?;
+                        if let Err(e) = wh.get_result(Default::default()).await
+                            && !e.is_workflow_outcome()
+                        {
+                            return Err(e.into());
+                        }
                         Ok::<_, anyhow::Error>(())
                     })
                     .await?;

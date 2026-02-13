@@ -6,7 +6,10 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions, grpc::WorkflowService};
+use temporalio_client::{
+    WorkflowSignalOptions, WorkflowStartOptions, errors::WorkflowGetResultError,
+    grpc::WorkflowService,
+};
 use temporalio_common::protos::temporal::api::{
     common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
 };
@@ -210,7 +213,11 @@ async fn reset_randomseed() {
     let client_fur = async {
         notify.notified().await;
         handle
-            .signal(ResetRandomseedWf::post_fail, (), WorkflowSignalOptions::default())
+            .signal(
+                ResetRandomseedWf::post_fail,
+                (),
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
         notify.notified().await;
@@ -236,12 +243,17 @@ async fn reset_randomseed() {
         // we re-obtain the handle.
         client
             .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned())
-            .signal(ResetRandomseedWf::post_reset, (), WorkflowSignalOptions::default())
+            .signal(
+                ResetRandomseedWf::post_reset,
+                (),
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
 
         // Wait for the now-reset workflow to finish
-        handle.get_result(Default::default()).await.unwrap();
+        let result = handle.get_result(Default::default()).await;
+        assert_matches!(result, Err(WorkflowGetResultError::Terminated { .. }));
         starter.shutdown().await;
     };
     let run_fut = worker.run_until_done();
