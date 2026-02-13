@@ -387,7 +387,7 @@ impl CoreWfStarter {
         worker: &mut TestWorker,
     ) -> UntypedWorkflowHandle<Client> {
         let wf_name = wf_name.into();
-        let run_id = worker
+        worker
             .submit_wf(&wf_name, vec![], self.workflow_options.clone())
             .await
             .unwrap();

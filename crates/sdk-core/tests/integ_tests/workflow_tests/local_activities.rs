@@ -17,7 +17,9 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporalio_client::{NamespacedClient, UntypedWorkflow, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowStartOptions};
+use temporalio_client::{
+    NamespacedClient, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowStartOptions,
+};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
@@ -1169,10 +1171,7 @@ async fn long_local_activity_with_update(
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
-    assert_eq!(
-        res,
-        usize::from_json_payload(&replay_res.unwrap()).unwrap()
-    );
+    assert_eq!(res, usize::from_json_payload(&replay_res.unwrap()).unwrap());
 
     // Load histories from pre-fix version and ensure compat
     let replay_worker = init_core_replay_preloaded(
