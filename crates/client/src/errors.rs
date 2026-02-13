@@ -288,8 +288,7 @@ impl AsyncActivityError {
 
 /// Errors that can occur when constructing a [`crate::Client`].
 ///
-/// Currently has no variants, but is `#[non_exhaustive]` so validation or plugin
-/// errors can be added in the future without a breaking change.
+/// Currently has no variants, but may be extended in the future.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientNewError {}
