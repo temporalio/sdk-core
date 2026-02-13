@@ -185,7 +185,7 @@ impl ActivityContext {
 }
 
 /// Various information about a specific activity attempt.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ActivityInfo {
     /// An opaque token representing a specific Activity task.

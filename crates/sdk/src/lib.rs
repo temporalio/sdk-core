@@ -1255,6 +1255,7 @@ impl From<ActivityExecutionError> for WorkflowTermination {
 }
 
 /// Activity functions may return these values when exiting
+#[derive(Debug)]
 pub enum ActExitValue<T> {
     /// Completion requires an asynchronous callback
     WillCompleteAsync,

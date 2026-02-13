@@ -1386,9 +1386,10 @@ where
 }
 
 /// A stub representing an unstarted child workflow.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
+    #[debug(skip)]
     base_ctx: BaseWorkflowContext,
 }
 
@@ -1399,9 +1400,11 @@ pub(crate) struct ChildWfCommon {
 }
 
 /// Child workflow in pending state
+#[derive(derive_more::Debug)]
 pub struct PendingChildWorkflow {
     /// The status of the child workflow start
     pub status: ChildWorkflowStartStatus,
+    #[debug(skip)]
     pub(crate) common: ChildWfCommon,
 }
 
@@ -1420,9 +1423,11 @@ impl PendingChildWorkflow {
 }
 
 /// Child workflow in started state
+#[derive(derive_more::Debug)]
 pub struct StartedChildWorkflow {
     /// Run ID of the child workflow
     pub run_id: String,
+    #[debug(skip)]
     common: ChildWfCommon,
 }
 

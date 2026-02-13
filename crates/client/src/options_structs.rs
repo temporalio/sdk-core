@@ -336,7 +336,7 @@ pub struct WorkflowDescribeOptions {}
 const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration = Duration::from_secs(60 * 60 * 24 * 3);
 
 /// Helper struct for `register_namespace`.
-#[derive(Clone, bon::Builder)]
+#[derive(Clone, Debug, bon::Builder)]
 #[builder(on(String, into))]
 pub struct RegisterNamespaceOptions {
     /// Name (required)
