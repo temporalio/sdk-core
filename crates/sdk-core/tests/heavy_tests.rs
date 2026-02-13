@@ -23,8 +23,8 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    GetWorkflowResultOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowOptions,
+    NamespacedClient, UntypedSignal, UntypedWorkflow, WorkflowExecutionInfo,
+    WorkflowGetResultOptions, WorkflowSignalOptions, WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::RawValue, protos::temporal::api::enums::v1::WorkflowIdConflictPolicy,
@@ -100,7 +100,7 @@ async fn activity_load() {
                 .submit_workflow(
                     ActivityLoadWf::run,
                     tq.clone(),
-                    WorkflowOptions::new(tq, wf_id).build(),
+                    WorkflowStartOptions::new(tq, wf_id).build(),
                 )
                 .await
                 .unwrap();
@@ -190,7 +190,7 @@ async fn chunky_activities_resource_based() {
                 .submit_workflow(
                     ChunkyActivityWf::run,
                     (),
-                    WorkflowOptions::new(tq, wf_id)
+                    WorkflowStartOptions::new(tq, wf_id)
                         .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
                         .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
                         .build(),
@@ -265,7 +265,7 @@ async fn workflow_load() {
             .submit_workflow(
                 WorkflowLoadWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), wfid).build(),
+                WorkflowStartOptions::new(task_queue.clone(), wfid).build(),
             )
             .await
             .unwrap();
@@ -277,13 +277,13 @@ async fn workflow_load() {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     let handle =
-                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                     async move {
                         handle
                             .signal(
                                 UntypedSignal::new(SIGNAME),
                                 RawValue::empty(),
-                                SignalOptions::default(),
+                                WorkflowSignalOptions::default(),
                             )
                             .await
                     }
@@ -323,7 +323,7 @@ async fn evict_while_la_running_no_interference() {
             .submit_workflow(
                 LaProblemWorkflow::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), wf_id.clone()).build(),
+                WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
             )
             .await
             .unwrap();
@@ -333,15 +333,20 @@ async fn evict_while_la_running_no_interference() {
         subfs.push(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             cw.request_workflow_eviction(&run_id);
-            client
-                .get_workflow_handle::<UntypedWorkflow>(wf_id, run_id)
-                .signal(
-                    UntypedSignal::new("whaatever"),
-                    RawValue::empty(),
-                    SignalOptions::default(),
-                )
-                .await
-                .unwrap();
+            WorkflowExecutionInfo {
+                namespace: client.namespace(),
+                workflow_id: wf_id,
+                run_id: Some(run_id),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(client)
+            .signal(
+                UntypedSignal::new("whaatever"),
+                RawValue::empty(),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
         });
     }
     let runf = async {
@@ -383,21 +388,27 @@ async fn can_paginate_long_history() {
         .submit_workflow(
             ManyParallelTimersLonghistWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     let run_id = handle.run_id().unwrap().to_owned();
     let client = starter.get_client().await;
     tokio::spawn(async move {
-        let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_name, run_id);
+        let handle = WorkflowExecutionInfo {
+            namespace: client.namespace(),
+            workflow_id: wf_name.into(),
+            run_id: Some(run_id),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client);
         loop {
             for _ in 0..10 {
                 handle
                     .signal(
                         UntypedSignal::new("sig"),
                         RawValue::empty(),
-                        SignalOptions::default(),
+                        WorkflowSignalOptions::default(),
                     )
                     .await
                     .unwrap();
@@ -480,7 +491,7 @@ async fn poller_autoscaling_basic_loadtest() {
             .submit_workflow(
                 PollerLoadWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), wfid)
+                WorkflowStartOptions::new(task_queue.clone(), wfid)
                     .execution_timeout(Duration::from_secs(120))
                     .build(),
             )
@@ -493,7 +504,7 @@ async fn poller_autoscaling_basic_loadtest() {
     let all_workflows_are_done = async {
         stream::iter(mem::take(&mut workflow_handles))
             .for_each_concurrent(25, |handle| async move {
-                let _ = handle.get_result(GetWorkflowResultOptions::default()).await;
+                let _ = handle.get_result(WorkflowGetResultOptions::default()).await;
             })
             .await;
         ah.abort();
@@ -505,14 +516,14 @@ async fn poller_autoscaling_basic_loadtest() {
             loop {
                 let sends: FuturesUnordered<_> = (0..num_workflows)
                     .map(|i| {
-                        let handle = client
-                            .get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"), "");
+                        let handle =
+                            client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
                         async move {
                             handle
                                 .signal(
                                     UntypedSignal::new(SIGNAME),
                                     RawValue::empty(),
-                                    SignalOptions::default(),
+                                    WorkflowSignalOptions::default(),
                                 )
                                 .await
                         }

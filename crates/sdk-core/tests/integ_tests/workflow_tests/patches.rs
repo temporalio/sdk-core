@@ -7,7 +7,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{SignalOptions, WorkflowOptions};
+use temporalio_client::{WorkflowSignalOptions, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::RawValue,
     protos::{
@@ -290,7 +290,7 @@ async fn deprecated_patch_removal() {
         .submit_workflow(
             DeprecatedPatchRemovalWf::run,
             (),
-            WorkflowOptions::new(wf_id.clone(), wf_id).build(),
+            WorkflowStartOptions::new(wf_id.clone(), wf_id).build(),
         )
         .await
         .unwrap();
@@ -300,7 +300,7 @@ async fn deprecated_patch_removal() {
             .signal(
                 DeprecatedPatchRemovalWf::handle_sig,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap()

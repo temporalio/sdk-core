@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, NAMESPACE, get_integ_connection};
 use std::time::Duration;
-use temporalio_client::{Client, NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_client::{Client, NamespacedClient, WorkflowStartOptions, grpc::WorkflowService};
 use temporalio_common::{
     protos::temporal::api::{
         common::v1::WorkflowType,
@@ -64,7 +64,7 @@ async fn eager_wf_start_different_clients() {
 
     let connection = get_integ_connection(None).await;
     let client_opts = temporalio_client::ClientOptions::new(NAMESPACE).build();
-    let client = Client::new(connection, client_opts);
+    let client = Client::new(connection, client_opts).unwrap();
     let task_queue = starter.get_task_queue().to_string();
     let res = eager_start(
         wf_name,
@@ -85,7 +85,7 @@ pub(crate) async fn eager_start(
     wf_name: impl Into<String>,
     task_queue: String,
     client: &Client,
-    options: WorkflowOptions,
+    options: WorkflowStartOptions,
 ) -> StartWorkflowExecutionResponse {
     assert!(options.enable_eager_workflow_start);
     client
@@ -117,7 +117,7 @@ pub(crate) async fn eager_start(
                 retry_policy: options.retry_policy,
                 links: options.links,
                 completion_callbacks: options.completion_callbacks,
-                priority: options.priority.map(Into::into),
+                priority: Some(options.priority.into()),
                 ..Default::default()
             }
             .into_request(),

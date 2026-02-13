@@ -4,7 +4,7 @@ mod common;
 mod shared_tests;
 
 use common::get_cloud_client;
-use temporalio_client::{NamespacedClient, WorkflowService};
+use temporalio_client::{NamespacedClient, grpc::WorkflowService};
 use temporalio_common::protos::temporal::api::workflowservice::v1::ListWorkflowExecutionsRequest;
 use tonic::IntoRequest;
 

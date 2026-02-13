@@ -295,7 +295,7 @@ among other operations.
 ```rust
 use temporalio_client::{
     Client, ClientOptions, Connection, ConnectionOptions,
-    WorkflowClientTrait, WorkflowOptions, GetWorkflowResultOptions,
+    WorkflowOptions, GetWorkflowResultOptions,
 };
 use temporalio_sdk_core::{Url, CoreRuntime, RuntimeOptions};
 use std::str::FromStr;
@@ -338,7 +338,7 @@ use temporalio_client::{
 use temporalio_common::data_converters::{PayloadConverter, RawValue};
 
 // Get a handle to an existing workflow (or use one from start_workflow)
-let handle = client.get_workflow_handle::<MyWorkflow>("workflow-id", "");
+let handle = client.get_workflow_handle::<MyWorkflow>("workflow-id");
 
 // --- Signals (fire-and-forget messages) ---
 handle.signal(MyWorkflow::push_value, 42, SignalOptions::default()).await?;

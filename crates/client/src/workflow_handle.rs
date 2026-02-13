@@ -1,8 +1,12 @@
 use crate::{
-    CancelWorkflowOptions, DescribeWorkflowOptions, FetchHistoryOptions, GetWorkflowResultOptions,
-    NamespacedClient, QueryOptions, SignalOptions, StartUpdateOptions, TerminateWorkflowOptions,
-    UpdateOptions, WorkflowClientTrait, WorkflowService, WorkflowUpdateWaitStage,
-    errors::{QueryError, UpdateError, WorkflowInteractionError},
+    NamespacedClient, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowExecuteUpdateOptions,
+    WorkflowFetchHistoryOptions, WorkflowGetResultOptions, WorkflowQueryOptions,
+    WorkflowSignalOptions, WorkflowStartUpdateOptions, WorkflowTerminateOptions,
+    WorkflowUpdateWaitStage,
+    errors::{
+        WorkflowGetResultError, WorkflowInteractionError, WorkflowQueryError, WorkflowUpdateError,
+    },
+    grpc::WorkflowService,
 };
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
@@ -43,26 +47,19 @@ pub enum WorkflowExecutionResult<T> {
     /// The workflow finished in failure
     Failed(Failure),
     /// The workflow was cancelled
-    Cancelled(Vec<Payload>),
+    Cancelled {
+        /// Details provided at cancellation time
+        details: Vec<Payload>,
+    },
     /// The workflow was terminated
-    Terminated(Vec<Payload>),
+    Terminated {
+        /// Details provided at termination time
+        details: Vec<Payload>,
+    },
     /// The workflow timed out
     TimedOut,
     /// The workflow continued as new
     ContinuedAsNew,
-}
-
-impl<T> WorkflowExecutionResult<T>
-where
-    T: Debug,
-{
-    /// Unwrap the result, panicking if it was not a success
-    pub fn unwrap_success(self) -> T {
-        match self {
-            Self::Succeeded(t) => t,
-            o => panic!("Expected success, got {o:?}"),
-        }
-    }
 }
 
 /// Description of a workflow execution returned by `WorkflowHandle::describe`.
@@ -279,13 +276,38 @@ where
     /// Await the result of the workflow execution
     pub async fn get_result(
         &self,
-        opts: GetWorkflowResultOptions,
+        opts: WorkflowGetResultOptions,
+    ) -> Result<W::Output, WorkflowGetResultError>
+    where
+        CT: WorkflowService + NamespacedClient + Clone,
+    {
+        let raw = self.get_result_raw(opts).await?;
+        match raw {
+            WorkflowExecutionResult::Succeeded(v) => Ok(v),
+            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(Box::new(f))),
+            WorkflowExecutionResult::Cancelled { details } => {
+                Err(WorkflowGetResultError::Cancelled { details })
+            }
+            WorkflowExecutionResult::Terminated { details } => {
+                Err(WorkflowGetResultError::Terminated { details })
+            }
+            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::TimedOut),
+            WorkflowExecutionResult::ContinuedAsNew => Err(WorkflowGetResultError::ContinuedAsNew),
+        }
+    }
+
+    /// Await the result of the workflow execution, returning the full
+    /// [`WorkflowExecutionResult`] enum for callers that need to inspect non-success outcomes
+    /// directly.
+    async fn get_result_raw(
+        &self,
+        opts: WorkflowGetResultOptions,
     ) -> Result<WorkflowExecutionResult<W::Output>, WorkflowInteractionError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
     {
         let mut run_id = self.info.run_id.clone().unwrap_or_default();
-        let fetch_opts = FetchHistoryOptions::builder()
+        let fetch_opts = WorkflowFetchHistoryOptions::builder()
             .skip_archival(true)
             .wait_new_event(true)
             .event_filter_type(HistoryEventFilterType::CloseEvent)
@@ -330,16 +352,20 @@ where
                         attrs.failure.unwrap_or_default(),
                     ))
                 }
-                Some(Attributes::WorkflowExecutionCanceledEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Cancelled(Vec::from_payloads(attrs.details)),
-                ),
+                Some(Attributes::WorkflowExecutionCanceledEventAttributes(attrs)) => {
+                    Ok(WorkflowExecutionResult::Cancelled {
+                        details: Vec::from_payloads(attrs.details),
+                    })
+                }
                 Some(Attributes::WorkflowExecutionTimedOutEventAttributes(attrs)) => {
                     follow!(attrs);
                     Ok(WorkflowExecutionResult::TimedOut)
                 }
-                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(attrs)) => Ok(
-                    WorkflowExecutionResult::Terminated(Vec::from_payloads(attrs.details)),
-                ),
+                Some(Attributes::WorkflowExecutionTerminatedEventAttributes(attrs)) => {
+                    Ok(WorkflowExecutionResult::Terminated {
+                        details: Vec::from_payloads(attrs.details),
+                    })
+                }
                 Some(Attributes::WorkflowExecutionContinuedAsNewEventAttributes(attrs)) => {
                     if opts.follow_runs {
                         if !attrs.new_execution_run_id.is_empty() {
@@ -371,7 +397,7 @@ where
         &self,
         signal: S,
         input: S::Input,
-        opts: SignalOptions,
+        opts: WorkflowSignalOptions,
     ) -> Result<(), WorkflowInteractionError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
@@ -412,8 +438,8 @@ where
         &self,
         query: Q,
         input: Q::Input,
-        opts: QueryOptions,
-    ) -> Result<Q::Output, QueryError>
+        opts: WorkflowQueryOptions,
+    ) -> Result<Q::Output, WorkflowQueryError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
         Q: QueryDefinition<Workflow = W>,
@@ -444,11 +470,11 @@ where
                 .into_request(),
             )
             .await
-            .map_err(QueryError::from_status)?
+            .map_err(WorkflowQueryError::from_status)?
             .into_inner();
 
         if let Some(rejected) = response.query_rejected {
-            return Err(QueryError::Rejected(rejected));
+            return Err(WorkflowQueryError::Rejected(rejected));
         }
 
         let result_payloads = response
@@ -458,7 +484,7 @@ where
 
         dc.from_payloads(&SerializationContextData::Workflow, result_payloads)
             .await
-            .map_err(QueryError::from)
+            .map_err(WorkflowQueryError::from)
     }
 
     /// Send an update to the workflow and wait for it to complete, returning the result.
@@ -466,10 +492,10 @@ where
         &self,
         update: U,
         input: U::Input,
-        options: UpdateOptions,
-    ) -> Result<U::Output, UpdateError>
+        options: WorkflowExecuteUpdateOptions,
+    ) -> Result<U::Output, WorkflowUpdateError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         U: UpdateDefinition<Workflow = W>,
         U::Input: Send,
         U::Output: 'static,
@@ -478,7 +504,7 @@ where
             .start_update(
                 update,
                 input,
-                StartUpdateOptions::builder()
+                WorkflowStartUpdateOptions::builder()
                     .maybe_update_id(options.update_id)
                     .maybe_header(options.header)
                     .wait_for_stage(WorkflowUpdateWaitStage::Completed)
@@ -494,10 +520,10 @@ where
         &self,
         update: U,
         input: U::Input,
-        options: StartUpdateOptions,
-    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, UpdateError>
+        options: WorkflowStartUpdateOptions,
+    ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
-        CT: WorkflowClientTrait,
+        CT: WorkflowService + NamespacedClient + Clone,
         U: UpdateDefinition<Workflow = W>,
         U::Input: Send,
     {
@@ -543,7 +569,7 @@ where
             .into_request(),
         )
         .await
-        .map_err(UpdateError::from_status)?
+        .map_err(WorkflowUpdateError::from_status)?
         .into_inner();
 
         // Extract run_id from response if available
@@ -566,7 +592,7 @@ where
     }
 
     /// Request cancellation of this workflow.
-    pub async fn cancel(&self, opts: CancelWorkflowOptions) -> Result<(), WorkflowInteractionError>
+    pub async fn cancel(&self, opts: WorkflowCancelOptions) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
     {
@@ -600,7 +626,7 @@ where
     /// Terminate this workflow.
     pub async fn terminate(
         &self,
-        opts: TerminateWorkflowOptions,
+        opts: WorkflowTerminateOptions,
     ) -> Result<(), WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -633,7 +659,7 @@ where
     /// Get workflow execution description/metadata.
     pub async fn describe(
         &self,
-        _opts: DescribeWorkflowOptions,
+        _opts: WorkflowDescribeOptions,
     ) -> Result<WorkflowExecutionDescription, WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -657,7 +683,7 @@ where
     /// Fetch workflow execution history.
     pub async fn fetch_history(
         &self,
-        opts: FetchHistoryOptions,
+        opts: WorkflowFetchHistoryOptions,
     ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -670,7 +696,7 @@ where
     async fn fetch_history_for_run(
         &self,
         run_id: &str,
-        opts: &FetchHistoryOptions,
+        opts: &WorkflowFetchHistoryOptions,
     ) -> Result<WorkflowHistory, WorkflowInteractionError>
     where
         CT: NamespacedClient,
@@ -748,7 +774,7 @@ where
     CT: WorkflowService + NamespacedClient + Clone,
 {
     /// Wait for the update to complete and return the result.
-    pub async fn get_result(&self) -> Result<T, UpdateError>
+    pub async fn get_result(&self) -> Result<T, WorkflowUpdateError>
     where
         T: temporalio_common::data_converters::TemporalDeserializable,
     {
@@ -774,12 +800,12 @@ where
                 .into_request(),
             )
             .await
-            .map_err(UpdateError::from_status)?
+            .map_err(WorkflowUpdateError::from_status)?
             .into_inner();
 
-            response
-                .outcome
-                .ok_or_else(|| UpdateError::Other("Update poll returned no outcome".into()))?
+            response.outcome.ok_or_else(|| {
+                WorkflowUpdateError::Other("Update poll returned no outcome".into())
+            })?
         };
 
         match outcome.value {
@@ -788,11 +814,11 @@ where
                 .data_converter()
                 .from_payloads(&SerializationContextData::Workflow, success.payloads)
                 .await
-                .map_err(UpdateError::from),
+                .map_err(WorkflowUpdateError::from),
             Some(update::v1::outcome::Value::Failure(failure)) => {
-                Err(UpdateError::Failed(Box::new(failure)))
+                Err(WorkflowUpdateError::Failed(Box::new(failure)))
             }
-            None => Err(UpdateError::Other(
+            None => Err(WorkflowUpdateError::Other(
                 "Update returned no outcome value".into(),
             )),
         }

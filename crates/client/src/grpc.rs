@@ -33,7 +33,7 @@ use tonic::{
 };
 
 /// Something that has access to the raw grpc services
-trait RawClientProducer {
+pub(crate) trait RawClientProducer {
     /// Returns information about workers associated with this client. Implementers outside of
     /// core can safely return `None`.
     fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>>;
@@ -57,7 +57,8 @@ trait RawClientProducer {
 /// Any client that can make gRPC calls. The default implementation simply invokes the passed-in
 /// function. Implementers may override this to provide things like retry behavior.
 #[async_trait::async_trait]
-trait RawGrpcCaller: Send + Sync + 'static {
+pub(crate) trait RawGrpcCaller: Send + Sync + 'static {
+    /// Make a gRPC call. The default implementation simply invokes the provided function.
     async fn call<F, Req, Resp>(
         &mut self,
         _call_name: &'static str,
@@ -217,6 +218,104 @@ where
     }
 }
 
+impl RawClientProducer for Connection {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
+        None
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.inner.service.workflow_service()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.inner.service.operator_service()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.inner.service.cloud_service()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.inner.service.test_service()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.inner.service.health_service()
+    }
+}
+
+impl RawClientProducer for TemporalServiceClient {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
+        None
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.workflow_service()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.operator_service()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.cloud_service()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.test_service()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.health_service()
+    }
+}
+
+impl RawGrpcCaller for TemporalServiceClient {}
+
+impl RawClientProducer for Client {
+    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
+        Some(self.connection.workers())
+    }
+
+    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
+        self.connection.workflow_client()
+    }
+
+    fn operator_client(&mut self) -> Box<dyn OperatorService> {
+        self.connection.operator_client()
+    }
+
+    fn cloud_client(&mut self) -> Box<dyn CloudService> {
+        self.connection.cloud_client()
+    }
+
+    fn test_client(&mut self) -> Box<dyn TestService> {
+        self.connection.test_client()
+    }
+
+    fn health_client(&mut self) -> Box<dyn HealthService> {
+        self.connection.health_client()
+    }
+}
+
+#[async_trait::async_trait]
+impl RawGrpcCaller for Client {
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        Resp: Send + 'static,
+        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+        F: Send + Sync + Unpin + 'static,
+    {
+        self.connection.call(call_name, callfn, req).await
+    }
+}
+
 impl<RC> RawClientProducer for SharedReplaceableClient<RC>
 where
     RC: RawClientProducer + Clone + Send + Sync + 'static,
@@ -265,104 +364,6 @@ where
         self.inner_mut_refreshed()
             .call(call_name, callfn, req)
             .await
-    }
-}
-
-impl RawClientProducer for Connection {
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        None
-    }
-
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.inner.service.workflow_svc()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.inner.service.operator_svc()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.inner.service.cloud_svc()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.inner.service.test_svc()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.inner.service.health_svc()
-    }
-}
-
-impl RawClientProducer for TemporalServiceClient {
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        None
-    }
-
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.workflow_svc()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.operator_svc()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.cloud_svc()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.test_svc()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.health_svc()
-    }
-}
-
-impl RawGrpcCaller for TemporalServiceClient {}
-
-impl RawClientProducer for Client {
-    fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        Some(self.connection.workers())
-    }
-
-    fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
-        self.connection.workflow_client()
-    }
-
-    fn operator_client(&mut self) -> Box<dyn OperatorService> {
-        self.connection.operator_client()
-    }
-
-    fn cloud_client(&mut self) -> Box<dyn CloudService> {
-        self.connection.cloud_client()
-    }
-
-    fn test_client(&mut self) -> Box<dyn TestService> {
-        self.connection.test_client()
-    }
-
-    fn health_client(&mut self) -> Box<dyn HealthService> {
-        self.connection.health_client()
-    }
-}
-
-#[async_trait::async_trait]
-impl RawGrpcCaller for Client {
-    async fn call<F, Req, Resp>(
-        &mut self,
-        call_name: &'static str,
-        callfn: F,
-        req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        Resp: Send + 'static,
-        F: FnMut(Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-        F: Send + Sync + Unpin + 'static,
-    {
-        self.connection.call(call_name, callfn, req).await
     }
 }
 
@@ -1709,7 +1710,7 @@ mod tests {
             .client_version("0.0.0")
             .build();
         let connection = Connection::connect(opts).await.unwrap();
-        let mut client = Client::new(connection, ClientOptions::new("default").build());
+        let mut client = Client::new(connection, ClientOptions::new("default").build()).unwrap();
 
         let list_ns_req = ListNamespacesRequest::default();
         let wf_client = client.workflow_client();

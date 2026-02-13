@@ -1,6 +1,6 @@
 //! Handle for completing activities asynchronously via a client.
 
-use crate::{NamespacedClient, WorkflowService, errors::AsyncActivityError};
+use crate::{NamespacedClient, errors::AsyncActivityError, grpc::WorkflowService};
 use temporalio_common::protos::{
     TaskToken,
     temporal::api::{
@@ -221,7 +221,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
     pub async fn heartbeat(
         &self,
         details: Option<Payloads>,
-    ) -> Result<HeartbeatResponse, AsyncActivityError> {
+    ) -> Result<ActivityHeartbeatResponse, AsyncActivityError> {
         match &self.identifier {
             ActivityIdentifier::TaskToken(token) => {
                 let resp = WorkflowService::record_activity_task_heartbeat(
@@ -237,7 +237,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                 .await
                 .map_err(AsyncActivityError::from_status)?
                 .into_inner();
-                Ok(HeartbeatResponse::from(resp))
+                Ok(ActivityHeartbeatResponse::from(resp))
             }
             ActivityIdentifier::ById {
                 workflow_id,
@@ -259,7 +259,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                 .await
                 .map_err(AsyncActivityError::from_status)?
                 .into_inner();
-                Ok(HeartbeatResponse::from(resp))
+                Ok(ActivityHeartbeatResponse::from(resp))
             }
         }
     }
@@ -267,7 +267,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
 
 /// Response from a heartbeat call.
 #[derive(Debug, Clone)]
-pub struct HeartbeatResponse {
+pub struct ActivityHeartbeatResponse {
     /// True if the activity has been asked to cancel itself.
     pub cancel_requested: bool,
     /// True if the activity is paused.
@@ -276,7 +276,7 @@ pub struct HeartbeatResponse {
     pub activity_reset: bool,
 }
 
-impl From<RecordActivityTaskHeartbeatResponse> for HeartbeatResponse {
+impl From<RecordActivityTaskHeartbeatResponse> for ActivityHeartbeatResponse {
     fn from(resp: RecordActivityTaskHeartbeatResponse) -> Self {
         Self {
             cancel_requested: resp.cancel_requested,
@@ -286,7 +286,7 @@ impl From<RecordActivityTaskHeartbeatResponse> for HeartbeatResponse {
     }
 }
 
-impl From<RecordActivityTaskHeartbeatByIdResponse> for HeartbeatResponse {
+impl From<RecordActivityTaskHeartbeatByIdResponse> for ActivityHeartbeatResponse {
     fn from(resp: RecordActivityTaskHeartbeatByIdResponse) -> Self {
         Self {
             cancel_requested: resp.cancel_requested,

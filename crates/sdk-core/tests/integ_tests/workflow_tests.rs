@@ -34,8 +34,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    NamespacedClient, QueryOptions, SignalOptions, UntypedQuery, UntypedSignal, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions, WorkflowService,
+    NamespacedClient, UntypedQuery, UntypedSignal, UntypedWorkflow, WorkflowExecutionInfo,
+    WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
+    errors::WorkflowGetResultError, grpc::WorkflowService,
 };
 use temporalio_common::{
     data_converters::RawValue,
@@ -105,7 +106,7 @@ async fn parallel_workflows_same_queue() {
         core.submit_workflow(
             ParallelWorkflowsWf::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
+            WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
         )
         .await
         .unwrap();
@@ -238,12 +239,18 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id);
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.clone(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     handle
         .signal(
             UntypedSignal::new(signal_id_1),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -251,7 +258,7 @@ async fn signal_workflow() {
         .signal(
             UntypedSignal::new(signal_id_2),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -332,17 +339,21 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             let run_id = res.run_id.clone();
 
             // Send the signal to the server
-            starter
-                .get_client()
-                .await
-                .get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id)
-                .signal(
-                    UntypedSignal::new(signal_id_1),
-                    RawValue::empty(),
-                    SignalOptions::default(),
-                )
-                .await
-                .unwrap();
+            let sig_client = starter.get_client().await;
+            WorkflowExecutionInfo {
+                namespace: sig_client.namespace(),
+                workflow_id: workflow_id.clone(),
+                run_id: Some(res.run_id.clone()),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(sig_client.clone())
+            .signal(
+                UntypedSignal::new(signal_id_1),
+                RawValue::empty(),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
 
             // Send completion - not having seen a poll response with a signal in it yet (unhandled
             // command error will be logged as a warning and an eviction will be issued)
@@ -410,14 +421,20 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Before polling for a task again, we start and complete the activity and send the
     // corresponding signals.
     let ac_task = core.poll_activity_task().await.unwrap();
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(wf_id, &wf_task.run_id);
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_id.to_string(),
+        run_id: Some(wf_task.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
     handle
         .signal(
             UntypedSignal::new(signal_at_start),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -432,7 +449,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .signal(
             UntypedSignal::new(signal_at_complete),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -517,7 +534,7 @@ async fn slow_completes_with_small_cache() {
             .submit_workflow(
                 SlowCompletesWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
+                WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -592,13 +609,19 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     .unwrap();
 
     // Ensure a query on first wft also sees the correct id
-    let query_handle = client.get_workflow_handle::<UntypedWorkflow>(&workflow_id, &res.run_id);
+    let query_handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.clone(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     let query_fut = async {
         query_handle
             .query(
                 UntypedQuery::new("q1"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -686,7 +709,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
             .query(
                 UntypedQuery::new("q2"),
                 RawValue::empty(),
-                QueryOptions::default(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -755,11 +778,11 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     join!(query_fut, complete_fut);
 
     client
-        .get_workflow_handle::<UntypedWorkflow>(&workflow_id, "")
+        .get_workflow_handle::<UntypedWorkflow>(&workflow_id)
         .signal(
             UntypedSignal::new("whatever"),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -887,11 +910,11 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     .await
     .unwrap();
     client
-        .get_workflow_handle::<UntypedWorkflow>(&wf_id, "")
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
         .signal(
             UntypedSignal::new("hi"),
             RawValue::empty(),
-            SignalOptions::default(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -1004,7 +1027,7 @@ async fn history_out_of_order_on_restart() {
         .submit_workflow(
             HistoryOutOfOrderWf1::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name.to_owned())
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned())
                 .execution_timeout(Duration::from_secs(20))
                 .build(),
         )
@@ -1027,9 +1050,9 @@ async fn history_out_of_order_on_restart() {
     let handle = starter
         .get_client()
         .await
-        .get_workflow_handle::<UntypedWorkflow>(wf_name, "");
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Failed(_));
+        .get_workflow_handle::<UntypedWorkflow>(wf_name);
+    let res = handle.get_result(Default::default()).await;
+    assert_matches!(res, Err(WorkflowGetResultError::Failed(_)));
 }
 
 #[tokio::test]
@@ -1080,7 +1103,7 @@ async fn pass_timer_summary_to_metadata() {
         .submit_wf(
             DEFAULT_WORKFLOW_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
+            WorkflowStartOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

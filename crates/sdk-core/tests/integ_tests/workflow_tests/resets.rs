@@ -6,7 +6,10 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{SignalOptions, WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporalio_client::{
+    WorkflowSignalOptions, WorkflowStartOptions, errors::WorkflowGetResultError,
+    grpc::WorkflowService,
+};
 use temporalio_common::protos::temporal::api::{
     common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
 };
@@ -63,7 +66,7 @@ async fn reset_workflow() {
         .submit_workflow(
             ResetMeWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -93,9 +96,9 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain handle.
-        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned(), "");
+        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned());
         handle
-            .signal(ResetMeWf::post_reset, (), SignalOptions::default())
+            .signal(ResetMeWf::post_reset, (), WorkflowSignalOptions::default())
             .await
             .unwrap();
 
@@ -200,7 +203,7 @@ async fn reset_randomseed() {
         .submit_workflow(
             ResetRandomseedWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -210,7 +213,11 @@ async fn reset_randomseed() {
     let client_fur = async {
         notify.notified().await;
         handle
-            .signal(ResetRandomseedWf::post_fail, (), SignalOptions::default())
+            .signal(
+                ResetRandomseedWf::post_fail,
+                (),
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
         notify.notified().await;
@@ -235,13 +242,18 @@ async fn reset_randomseed() {
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain the handle.
         client
-            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned(), "")
-            .signal(ResetRandomseedWf::post_reset, (), SignalOptions::default())
+            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned())
+            .signal(
+                ResetRandomseedWf::post_reset,
+                (),
+                WorkflowSignalOptions::default(),
+            )
             .await
             .unwrap();
 
         // Wait for the now-reset workflow to finish
-        handle.get_result(Default::default()).await.unwrap();
+        let result = handle.get_result(Default::default()).await;
+        assert_matches!(result, Err(WorkflowGetResultError::Terminated { .. }));
         starter.shutdown().await;
     };
     let run_fut = worker.run_until_done();

@@ -14,8 +14,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ActivityIdentifier, DescribeWorkflowOptions, TerminateWorkflowOptions, UntypedWorkflow,
-    WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
+    WorkflowTerminateOptions,
 };
 use temporalio_common::{
     prost_dur,
@@ -97,13 +97,12 @@ async fn one_activity_only() {
         .submit_workflow(
             OneActivityWorkflow::run,
             input.clone(),
-            WorkflowOptions::new(task_queue, wf_name.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    let r = assert_matches!(res, WorkflowExecutionResult::Succeeded(r) => r);
+    let r = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(r, input);
 }
 
@@ -814,8 +813,8 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     starter
         .get_client()
         .await
-        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
-        .terminate(TerminateWorkflowOptions::default())
+        .get_workflow_handle::<UntypedWorkflow>(task_q)
+        .terminate(WorkflowTerminateOptions::default())
         .await
         .unwrap();
 }
@@ -875,8 +874,8 @@ async fn activity_heartbeat_not_flushed_on_success() {
         || async {
             // Verify pending details has the flushed heartbeat
             let details = client
-                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string(), "")
-                .describe(DescribeWorkflowOptions::default())
+                .get_workflow_handle::<UntypedWorkflow>(starter.get_wf_id().to_string())
+                .describe(WorkflowDescribeOptions::default())
                 .await
                 .unwrap();
             let last_deets = details
@@ -896,8 +895,8 @@ async fn activity_heartbeat_not_flushed_on_success() {
     .await
     .unwrap();
     client
-        .get_workflow_handle::<UntypedWorkflow>(task_q, "")
-        .terminate(TerminateWorkflowOptions::default())
+        .get_workflow_handle::<UntypedWorkflow>(task_q)
+        .terminate(WorkflowTerminateOptions::default())
         .await
         .unwrap();
     drain_pollers_and_shutdown(&core).await;
@@ -941,13 +940,12 @@ async fn one_activity_abandon_cancelled_before_started() {
         .submit_workflow(
             OneActivityAbandonCancelledBeforeStarted::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[workflow]
@@ -990,13 +988,12 @@ async fn one_activity_abandon_cancelled_after_complete() {
         .submit_workflow(
             OneActivityAbandonCancelledAfterComplete::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let res = handle.get_result(Default::default()).await.unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[tokio::test]
@@ -1070,7 +1067,7 @@ async fn graceful_shutdown() {
         .submit_workflow(
             GracefulShutdownWorkflow::run,
             (),
-            WorkflowOptions::new(task_queue, wf_name).build(),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
         .await
         .unwrap();
@@ -1084,8 +1081,8 @@ async fn graceful_shutdown() {
         // cancels, otherwise run_until_done will hang since the workflow won't complete.
         let _ = acts_done.acquire_many(10).await;
         client
-            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned(), "")
-            .terminate(TerminateWorkflowOptions::default())
+            .get_workflow_handle::<UntypedWorkflow>(wf_name.to_owned())
+            .terminate(WorkflowTerminateOptions::default())
             .await
             .unwrap();
     };
@@ -1163,7 +1160,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
         .submit_workflow(
             ActivityLocalTimeoutWorkflow::run,
             (),
-            WorkflowOptions::new(task_queue.clone(), task_queue).build(),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
         )
         .await
         .unwrap();
@@ -1292,7 +1289,7 @@ async fn pass_activity_summary_to_metadata() {
         .submit_wf(
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1358,7 +1355,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
         .submit_wf(
             wf_type,
             vec![],
-            WorkflowOptions::new(task_queue, wfid).build(),
+            WorkflowStartOptions::new(task_queue, wfid).build(),
         )
         .await
         .unwrap();

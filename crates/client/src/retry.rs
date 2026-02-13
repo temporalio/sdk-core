@@ -1,6 +1,6 @@
 use crate::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY,
-    raw::IsUserLongPoll,
+    grpc::IsUserLongPoll,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
 use backoff::{

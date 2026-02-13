@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
 use std::time::Duration;
-use temporalio_client::WorkflowOptions;
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     prost_dur,
     protos::{
@@ -48,7 +48,7 @@ async fn timer_workflow_workflow_driver() {
         .submit_workflow(
             TimerWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id).build(),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();

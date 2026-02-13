@@ -14,8 +14,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use temporalio_client::{
-    Client, NamespacedClient, SignalOptions, UntypedWorkflow, WorkflowClientTrait, WorkflowOptions,
-    WorkflowService,
+    Client, NamespacedClient, WorkflowExecutionInfo, WorkflowSignalOptions, WorkflowStartOptions,
+    grpc::WorkflowService,
 };
 use temporalio_common::{
     prost_dur,
@@ -679,16 +679,26 @@ async fn worker_heartbeat_sticky_cache_miss() {
         HISTORY_WF2_ACTIVITY_STARTED.notified().await;
 
         HISTORY_WF1_ACTIVITY_FINISH.notify_one();
-        let handle1 =
-            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf1_id, wf1_run);
+        let handle1 = WorkflowExecutionInfo {
+            namespace: client_for_orchestrator.namespace(),
+            workflow_id: wf1_id,
+            run_id: Some(wf1_run),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client_for_orchestrator.clone());
         handle1
             .get_result(Default::default())
             .await
             .expect("wf1 result");
 
         HISTORY_WF2_ACTIVITY_FINISH.notify_one();
-        let handle2 =
-            client_for_orchestrator.get_workflow_handle::<UntypedWorkflow>(wf2_id, wf2_run);
+        let handle2 = WorkflowExecutionInfo {
+            namespace: client_for_orchestrator.namespace(),
+            workflow_id: wf2_id,
+            run_id: Some(wf2_run),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client_for_orchestrator.clone());
         handle2
             .get_result(Default::default())
             .await
@@ -905,7 +915,7 @@ async fn worker_heartbeat_failure_metrics() {
         .submit_workflow(
             FailureMetricsWf::run,
             (),
-            WorkflowOptions::new(task_queue, workflow_id)
+            WorkflowStartOptions::new(task_queue, workflow_id)
                 .retry_policy(RetryPolicy {
                     maximum_attempts: 2,
                     ..Default::default()
@@ -1007,7 +1017,7 @@ async fn worker_heartbeat_failure_metrics() {
             .signal(
                 FailureMetricsWf::handle_continue_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();

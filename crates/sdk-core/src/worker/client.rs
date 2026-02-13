@@ -11,7 +11,7 @@ use std::{
 };
 use temporalio_client::{
     Connection, Namespace, NamespacedClient, RetryOptions, SharedReplaceableClient,
-    WorkflowService,
+    grpc::WorkflowService,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
     worker::ClientWorkerSet,
 };

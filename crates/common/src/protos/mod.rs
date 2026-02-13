@@ -2145,6 +2145,11 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.enums.v1");
             }
         }
+        pub mod errordetails {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.errordetails.v1");
+            }
+        }
         pub mod failure {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.failure.v1");
@@ -2790,6 +2795,18 @@ pub mod temporal {
                 }
             }
         }
+    }
+}
+
+#[allow(
+    clippy::all,
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls
+)]
+pub mod google {
+    pub mod rpc {
+        tonic::include_proto!("google.rpc");
     }
 }
 

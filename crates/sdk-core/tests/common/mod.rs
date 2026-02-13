@@ -29,11 +29,11 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsOptions, Connection, ConnectionOptions, GetWorkflowResultOptions,
-    NamespacedClient, TlsOptions, UntypedWorkflow, UntypedWorkflowHandle, WorkflowClientTrait,
-    WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle, WorkflowOptions,
-    WorkflowService,
-    errors::{StartWorkflowError, WorkflowInteractionError},
+    Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
+    UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo, WorkflowGetResultOptions,
+    WorkflowHandle, WorkflowStartOptions,
+    errors::{WorkflowGetResultError, WorkflowStartError},
+    grpc::WorkflowService,
 };
 use temporalio_common::{
     WorkflowDefinition,
@@ -232,7 +232,7 @@ pub(crate) async fn get_cloud_client() -> Client {
     let connection = Connection::connect(connection_opts).await.unwrap();
     let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
     let client_opts = temporalio_client::ClientOptions::new(namespace).build();
-    Client::new(connection, client_opts)
+    Client::new(connection, client_opts).unwrap()
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
@@ -242,7 +242,7 @@ pub(crate) struct CoreWfStarter {
     pub sdk_config: WorkerOptions,
     /// Options to use when starting workflow(s). Is initialized with task_queue & workflow_id
     /// to be the same, derived from test name given to `new`.
-    pub workflow_options: WorkflowOptions,
+    pub workflow_options: WorkflowStartOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
     client_override: Option<Client>,
@@ -321,7 +321,7 @@ impl CoreWfStarter {
             task_queue_name: task_queue.clone(),
             sdk_config,
             initted_worker: OnceCell::new(),
-            workflow_options: WorkflowOptions::new(task_queue.clone(), task_queue).build(),
+            workflow_options: WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
             runtime_override: runtime_override.map(Arc::new),
             client_override,
             min_local_server_version: None,
@@ -387,7 +387,7 @@ impl CoreWfStarter {
         worker: &mut TestWorker,
     ) -> UntypedWorkflowHandle<Client> {
         let wf_name = wf_name.into();
-        let run_id = worker
+        worker
             .submit_wf(&wf_name, vec![], self.workflow_options.clone())
             .await
             .unwrap();
@@ -395,7 +395,7 @@ impl CoreWfStarter {
             .get()
             .unwrap()
             .client
-            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name, run_id)
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
     }
 
     pub(crate) async fn start_wf_with_id(&self, workflow_id: String) -> String {
@@ -435,7 +435,7 @@ impl CoreWfStarter {
             .expect("Starter must be initialized")
             .client;
         let events = client
-            .get_workflow_handle::<UntypedWorkflow>(self.get_wf_id(), "")
+            .get_workflow_handle::<UntypedWorkflow>(self.get_wf_id())
             .fetch_history(Default::default())
             .await
             .unwrap()
@@ -445,14 +445,14 @@ impl CoreWfStarter {
 
     pub(crate) async fn wait_for_default_wf_finish(
         &self,
-    ) -> Result<WorkflowExecutionResult<RawValue>, WorkflowInteractionError> {
+    ) -> Result<RawValue, WorkflowGetResultError> {
         self.initted_worker
             .get()
             .unwrap()
             .client
-            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name, "")
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
             .get_result(
-                GetWorkflowResultOptions::builder()
+                WorkflowGetResultOptions::builder()
                     .follow_runs(false)
                     .build(),
             )
@@ -478,7 +478,7 @@ impl CoreWfStarter {
                     let connection = Connection::connect(opts).await.expect("Must connect");
                     let client_opts =
                         temporalio_client::ClientOptions::new(integ_namespace()).build();
-                    let client = Client::new(connection.clone(), client_opts);
+                    let client = Client::new(connection.clone(), client_opts).unwrap();
                     (connection, client)
                 };
                 let mut core_config = self
@@ -570,7 +570,7 @@ impl TestWorker {
         &self,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        mut options: WorkflowOptions,
+        mut options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
         if self.client.is_none() {
             return Ok("fake_run_id".to_string());
@@ -590,8 +590,8 @@ impl TestWorker {
         &self,
         workflow: W,
         input: W::Input,
-        mut options: WorkflowOptions,
-    ) -> Result<WorkflowHandle<Client, W>, StartWorkflowError>
+        mut options: WorkflowStartOptions,
+    ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
     where
         W: WorkflowDefinition,
         W::Input: Send,
@@ -679,7 +679,7 @@ impl TestWorkerSubmitterHandle {
         &self,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        options: WorkflowOptions,
+        options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
         let wfid = options.workflow_id.clone();
         let handle = self
@@ -733,7 +733,11 @@ impl TestWorkerCompletionIceptor {
             future::Either::Left(async move {
                 stream
                     .try_for_each_concurrent(None, |wh| async move {
-                        wh.get_result(Default::default()).await?;
+                        if let Err(e) = wh.get_result(Default::default()).await
+                            && !e.is_workflow_outcome()
+                        {
+                            return Err(e.into());
+                        }
                         Ok::<_, anyhow::Error>(())
                     })
                     .await?;
@@ -804,7 +808,7 @@ pub(crate) async fn get_integ_client(
 ) -> Client {
     let connection = get_integ_connection(meter).await;
     let client_opts = temporalio_client::ClientOptions::new(namespace).build();
-    Client::new(connection, client_opts)
+    Client::new(connection, client_opts).unwrap()
 }
 
 pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {

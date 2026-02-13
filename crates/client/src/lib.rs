@@ -10,12 +10,17 @@ extern crate tracing;
 mod async_activity_handle;
 pub mod callback_based;
 pub mod errors;
+/// gRPC service traits for direct access to Temporal services.
+///
+/// Most users should use the higher-level methods on [`Client`] or [`Connection`] instead.
+/// These traits are useful for advanced scenarios like custom interceptors, testing with mocks,
+/// or making raw gRPC calls not covered by the higher-level API.
+pub mod grpc;
 mod metrics;
 mod options_structs;
 /// Visible only for tests
 #[doc(hidden)]
 pub mod proxy;
-mod raw;
 mod replaceable;
 pub mod request_extensions;
 mod retry;
@@ -26,10 +31,12 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RETRYABLE_ERROR_CODES},
 };
-pub use async_activity_handle::{ActivityIdentifier, AsyncActivityHandle, HeartbeatResponse};
+pub use async_activity_handle::{
+    ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle,
+};
+
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
-pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use tonic;
@@ -40,8 +47,11 @@ pub use workflow_handle::{
 };
 
 use crate::{
+    grpc::{
+        AttachMetricLabels, CloudService, HealthService, OperatorService, TestService,
+        WorkflowService,
+    },
     metrics::{ChannelOrGrpcOverride, GrpcMetricSvc, MetricsContext},
-    raw::AttachMetricLabels,
     request_extensions::RequestExt,
     worker::ClientWorkerSet,
 };
@@ -69,6 +79,7 @@ use temporalio_common::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
             common::v1::{Memo, Payload, SearchAttributes, WorkflowType},
             enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
+            errordetails::v1::WorkflowExecutionAlreadyStartedFailure,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
             taskqueue::v1::TaskQueue,
             testservice::v1::test_service_client::TestServiceClient,
@@ -78,6 +89,7 @@ use temporalio_common::{
                 *,
             },
         },
+        utilities::decode_status_detail,
     },
 };
 use tonic::{
@@ -99,8 +111,10 @@ static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 
+#[doc(hidden)]
 /// Key used to communicate when a GRPC message is too large
 pub static MESSAGE_TOO_LARGE_KEY: &str = "message-too-large";
+#[doc(hidden)]
 /// Key used to indicate a error was returned by the retryer because of the short-circuit predicate
 pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 
@@ -295,9 +309,29 @@ impl Connection {
         self.inner.workers.worker_grouping_key()
     }
 
-    /// Get the underlying cloud service client
-    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
-        self.inner.service.cloud_svc()
+    /// Get the underlying workflow service client for making raw gRPC calls.
+    pub fn workflow_service(&self) -> Box<dyn WorkflowService> {
+        self.inner.service.workflow_service()
+    }
+
+    /// Get the underlying operator service client for making raw gRPC calls.
+    pub fn operator_service(&self) -> Box<dyn OperatorService> {
+        self.inner.service.operator_service()
+    }
+
+    /// Get the underlying cloud service client for making raw gRPC calls.
+    pub fn cloud_service(&self) -> Box<dyn CloudService> {
+        self.inner.service.cloud_service()
+    }
+
+    /// Get the underlying test service client for making raw gRPC calls.
+    pub fn test_service(&self) -> Box<dyn TestService> {
+        self.inner.service.test_service()
+    }
+
+    /// Get the underlying health service client for making raw gRPC calls.
+    pub fn health_service(&self) -> Box<dyn HealthService> {
+        self.inner.service.health_service()
     }
 }
 
@@ -539,23 +573,23 @@ impl TemporalServiceClient {
     }
 
     /// Get the underlying workflow service client
-    pub fn workflow_svc(&self) -> Box<dyn WorkflowService> {
+    pub fn workflow_service(&self) -> Box<dyn WorkflowService> {
         self.workflow_svc_client.clone()
     }
     /// Get the underlying operator service client
-    pub fn operator_svc(&self) -> Box<dyn OperatorService> {
+    pub fn operator_service(&self) -> Box<dyn OperatorService> {
         self.operator_svc_client.clone()
     }
     /// Get the underlying cloud service client
-    pub fn cloud_svc(&self) -> Box<dyn CloudService> {
+    pub fn cloud_service(&self) -> Box<dyn CloudService> {
         self.cloud_svc_client.clone()
     }
     /// Get the underlying test service client
-    pub fn test_svc(&self) -> Box<dyn TestService> {
+    pub fn test_service(&self) -> Box<dyn TestService> {
         self.test_svc_client.clone()
     }
     /// Get the underlying health service client
-    pub fn health_svc(&self) -> Box<dyn HealthService> {
+    pub fn health_service(&self) -> Box<dyn HealthService> {
         self.health_svc_client.clone()
     }
 }
@@ -570,11 +604,14 @@ pub struct Client {
 
 impl Client {
     /// Create a new client from a connection and options.
-    pub fn new(connection: Connection, options: ClientOptions) -> Self {
-        Client {
+    ///
+    /// Currently infallible, but returns a `Result` for future extensibility
+    /// (e.g., interceptor or plugin validation).
+    pub fn new(connection: Connection, options: ClientOptions) -> Result<Self, ClientNewError> {
+        Ok(Client {
             connection,
             options: Arc::new(options),
-        }
+        })
     }
 
     /// Return the options this client was initialized with
@@ -598,6 +635,69 @@ impl Client {
     /// Returns a mutable reference to the underlying connection
     pub fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
+    }
+}
+
+// High-level workflow operations on Client.
+// These forward to the internal WorkflowClientTrait blanket impl which is
+// available because Client implements WorkflowService + NamespacedClient + Clone.
+impl Client {
+    /// Start a workflow execution.
+    ///
+    /// Returns a [`WorkflowHandle`] that can be used to interact with the workflow
+    /// (e.g., get its result, send signals, query, etc.).
+    pub async fn start_workflow<W>(
+        &self,
+        workflow: W,
+        input: W::Input,
+        options: WorkflowStartOptions,
+    ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        WorkflowClientTrait::start_workflow(self, workflow, input, options).await
+    }
+
+    /// Get a handle to an existing workflow.
+    ///
+    /// For untyped access, use `get_workflow_handle::<UntypedWorkflow>(...)`.
+    pub fn get_workflow_handle<W: WorkflowDefinition>(
+        &self,
+        workflow_id: impl Into<String>,
+    ) -> WorkflowHandle<Self, W> {
+        WorkflowClientTrait::get_workflow_handle(self, workflow_id)
+    }
+
+    /// List workflows matching a query.
+    ///
+    /// Returns a stream that lazily paginates through results.
+    /// Use `limit` in options to cap the number of results returned.
+    pub fn list_workflows(
+        &self,
+        query: impl Into<String>,
+        opts: WorkflowListOptions,
+    ) -> ListWorkflowsStream {
+        WorkflowClientTrait::list_workflows(self, query, opts)
+    }
+
+    /// Count workflows matching a query.
+    pub async fn count_workflows(
+        &self,
+        query: impl Into<String>,
+        opts: WorkflowCountOptions,
+    ) -> Result<WorkflowExecutionCount, ClientError> {
+        WorkflowClientTrait::count_workflows(self, query, opts).await
+    }
+
+    /// Get a handle to complete an activity asynchronously.
+    ///
+    /// An activity returning `ActivityError::WillCompleteAsync` can be completed with this handle.
+    pub fn get_async_activity_handle(
+        &self,
+        identifier: ActivityIdentifier,
+    ) -> AsyncActivityHandle<Self> {
+        WorkflowClientTrait::get_async_activity_handle(self, identifier)
     }
 }
 
@@ -637,14 +737,14 @@ impl Namespace {
 
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
-pub trait WorkflowClientTrait: NamespacedClient {
+pub(crate) trait WorkflowClientTrait: NamespacedClient {
     /// Start a workflow execution.
     fn start_workflow<W>(
         &self,
         workflow: W,
         input: W::Input,
-        options: WorkflowOptions,
-    ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, StartWorkflowError>>
+        options: WorkflowStartOptions,
+    ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, WorkflowStartError>>
     where
         Self: Sized,
         W: WorkflowDefinition,
@@ -659,7 +759,6 @@ pub trait WorkflowClientTrait: NamespacedClient {
     fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
     where
         Self: Sized;
@@ -670,14 +769,14 @@ pub trait WorkflowClientTrait: NamespacedClient {
     fn list_workflows(
         &self,
         query: impl Into<String>,
-        opts: ListWorkflowsOptions,
+        opts: WorkflowListOptions,
     ) -> ListWorkflowsStream;
 
     /// Count workflows matching a query.
     fn count_workflows(
         &self,
         query: impl Into<String>,
-        opts: CountWorkflowsOptions,
+        opts: WorkflowCountOptions,
     ) -> impl Future<Output = Result<WorkflowExecutionCount, ClientError>>;
 
     /// Get a handle to complete an activity asynchronously.
@@ -917,8 +1016,8 @@ where
         &self,
         workflow: W,
         input: W::Input,
-        options: WorkflowOptions,
-    ) -> Result<WorkflowHandle<Self, W>, StartWorkflowError>
+        options: WorkflowStartOptions,
+    ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
         W: WorkflowDefinition,
         W::Input: Send,
@@ -960,7 +1059,7 @@ where
                     workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                     search_attributes: options.search_attributes.map(|d| d.into()),
                     cron_schedule: options.cron_schedule.unwrap_or_default(),
-                    header: start_signal.header,
+                    header: options.header.or(start_signal.header),
                     ..Default::default()
                 }
                 .into_request(),
@@ -999,12 +1098,28 @@ where
                         retry_policy: options.retry_policy,
                         links: options.links,
                         completion_callbacks: options.completion_callbacks,
-                        priority: options.priority.map(Into::into),
+                        priority: Some(options.priority.into()),
+                        header: options.header,
                         ..Default::default()
                     }
                     .into_request(),
                 )
-                .await?
+                .await
+                .map_err(|status| {
+                    if status.code() == Code::AlreadyExists {
+                        let run_id =
+                            decode_status_detail::<WorkflowExecutionAlreadyStartedFailure>(
+                                status.details(),
+                            )
+                            .map(|f| f.run_id);
+                        WorkflowStartError::AlreadyStarted {
+                            run_id,
+                            source: status,
+                        }
+                    } else {
+                        WorkflowStartError::Rpc(status)
+                    }
+                })?
                 .into_inner();
             res.run_id
         };
@@ -1023,18 +1138,16 @@ where
     fn get_workflow_handle<W: WorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
     where
         Self: Sized,
     {
-        let rid = run_id.into();
         WorkflowHandle::new(
             self.clone(),
             WorkflowExecutionInfo {
                 namespace: self.namespace(),
                 workflow_id: workflow_id.into(),
-                run_id: if rid.is_empty() { None } else { Some(rid) },
+                run_id: None,
                 first_execution_run_id: None,
             },
         )
@@ -1043,7 +1156,7 @@ where
     fn list_workflows(
         &self,
         query: impl Into<String>,
-        opts: ListWorkflowsOptions,
+        opts: WorkflowListOptions,
     ) -> ListWorkflowsStream {
         let client = self.clone();
         let namespace = self.namespace();
@@ -1119,7 +1232,7 @@ where
     async fn count_workflows(
         &self,
         query: impl Into<String>,
-        _opts: CountWorkflowsOptions,
+        _opts: WorkflowCountOptions,
     ) -> Result<WorkflowExecutionCount, ClientError> {
         let resp = WorkflowService::count_workflow_executions(
             &mut self.clone(),
@@ -1402,7 +1515,7 @@ mod tests {
                 total_workflows: 10,
             };
 
-            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let stream = client.list_workflows("", WorkflowListOptions::default());
             let results: Vec<_> = stream.collect().await;
 
             assert_eq!(results.len(), 10);
@@ -1424,7 +1537,7 @@ mod tests {
                 total_workflows: 10,
             };
 
-            let opts = ListWorkflowsOptions::builder().limit(5).build();
+            let opts = WorkflowListOptions::builder().limit(5).build();
             let stream = client.list_workflows("", opts);
             let results: Vec<_> = stream.collect().await;
 
@@ -1446,7 +1559,7 @@ mod tests {
                 total_workflows: 100,
             };
 
-            let opts = ListWorkflowsOptions::builder().limit(3).build();
+            let opts = WorkflowListOptions::builder().limit(3).build();
             let stream = client.list_workflows("", opts);
             let results: Vec<_> = stream.collect().await;
 
@@ -1464,7 +1577,7 @@ mod tests {
                 total_workflows: 0,
             };
 
-            let stream = client.list_workflows("", ListWorkflowsOptions::default());
+            let stream = client.list_workflows("", WorkflowListOptions::default());
             let results: Vec<_> = stream.collect().await;
 
             assert_eq!(results.len(), 0);

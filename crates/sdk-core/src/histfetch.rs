@@ -6,8 +6,8 @@
 
 use prost::Message;
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions, FetchHistoryOptions, UntypedWorkflow,
-    WorkflowClientTrait,
+    Client, ClientOptions, Connection, ConnectionOptions, NamespacedClient, WorkflowExecutionInfo,
+    WorkflowFetchHistoryOptions,
 };
 use temporalio_common::protos::temporal::api::history::v1::History;
 use url::Url;
@@ -19,14 +19,20 @@ async fn main() -> Result<(), anyhow::Error> {
         .client_version("0.0")
         .build();
     let connection = Connection::connect(copts).await?;
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let client = Client::new(connection, ClientOptions::new("default").build())?;
     let wf_id = std::env::args()
         .nth(1)
         .expect("must provide workflow id as only argument");
-    let run_id = std::env::args().nth(2).unwrap_or_default();
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(&wf_id, &run_id);
+    let run_id = std::env::args().nth(2).filter(|s| !s.is_empty());
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_id.clone(),
+        run_id,
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client);
     let events = handle
-        .fetch_history(FetchHistoryOptions::default())
+        .fetch_history(WorkflowFetchHistoryOptions::default())
         .await?
         .into_events();
     let hist = History { events };

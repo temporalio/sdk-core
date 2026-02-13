@@ -18,7 +18,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{Connection, WorkflowOptions};
+use temporalio_client::{Connection, WorkflowStartOptions};
 use temporalio_common::{
     data_converters::{DataConverter, RawValue},
     protos::{
@@ -117,7 +117,7 @@ async fn worker_handles_unknown_workflow_types_gracefully() {
         .submit_wf(
             "unregistered".to_string(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id).build(),
+            WorkflowStartOptions::new(task_queue, wf_id).build(),
         )
         .await
         .unwrap();
@@ -208,7 +208,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
             .submit_workflow(
                 ResourceBasedNonStickyWf::run,
                 (),
-                WorkflowOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
+                WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -811,7 +811,7 @@ async fn test_custom_slot_supplier_simple() {
         .submit_workflow(
             SlotSupplierWorkflow::run,
             (),
-            WorkflowOptions::new(task_queue, "test-wf".to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, "test-wf".to_owned()).build(),
         )
         .await
         .unwrap();
@@ -970,7 +970,7 @@ async fn shutdown_worker_not_retried() {
     opts.set_skip_get_system_info(true);
     let connection = Connection::connect(opts).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("ns").build();
-    let client = temporalio_client::Client::new(connection, client_opts);
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
 
     let wf_type = "shutdown_worker_not_retried";
     let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));

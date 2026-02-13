@@ -8,7 +8,7 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::WorkflowOptions;
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     protos::{
         TestHistoryBuilder, canned_histories,
@@ -75,7 +75,7 @@ async fn test_determinism_error_then_recovers() {
         .submit_workflow(
             TimerWfNondeterministic::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -131,7 +131,7 @@ async fn task_fail_causes_replay_unset_too_soon() {
         .submit_workflow(
             TaskFailReplayWf::run,
             (),
-            WorkflowOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )
         .await
         .unwrap();
@@ -195,7 +195,7 @@ async fn test_panic_wf_task_rejected_properly() {
         .submit_wf(
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -256,7 +256,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         .submit_wf(
             wf_type.to_owned(),
             vec![],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -360,7 +360,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
         .submit_wf(
             wf_type.to_owned(),
             vec![(id_change, local_act).as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -438,7 +438,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         .submit_wf(
             wf_type.to_owned(),
             vec![id_change.as_json_payload().unwrap()],
-            WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
@@ -491,7 +491,7 @@ async fn repro_channel_missing_because_nondeterminism() {
             .submit_wf(
                 wf_type.to_owned(),
                 vec![],
-                WorkflowOptions::new(task_queue, wf_id.to_owned()).build(),
+                WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
             )
             .await
             .unwrap();

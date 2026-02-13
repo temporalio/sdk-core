@@ -46,7 +46,7 @@
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let connection = Connection::connect(connection_options).await?;
-//!     let client = Client::new(connection, ClientOptions::new("my_namespace").build());
+//!     let client = Client::new(connection, ClientOptions::new("my_namespace").build())?;
 //!
 //!     let worker_options = WorkerOptions::new("task_queue")
 //!         .task_types(WorkerTaskTypes::activity_only())

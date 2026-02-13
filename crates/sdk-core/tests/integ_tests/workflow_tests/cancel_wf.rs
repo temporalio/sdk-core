@@ -1,8 +1,7 @@
 use crate::common::{ActivationAssertionsInterceptor, CoreWfStarter, build_fake_sdk};
 use std::time::Duration;
 use temporalio_client::{
-    CancelWorkflowOptions, DescribeWorkflowOptions, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowOptions,
+    UntypedWorkflow, WorkflowCancelOptions, WorkflowDescribeOptions, WorkflowStartOptions,
 };
 use temporalio_common::{
     protos::{
@@ -57,7 +56,7 @@ async fn cancel_during_timer() {
         .submit_workflow(
             CancelledWf::run,
             (),
-            WorkflowOptions::new(task_queue, wf_id.clone()).build(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
         )
         .await
         .unwrap();
@@ -66,7 +65,7 @@ async fn cancel_during_timer() {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
         wf_handle
-            .cancel(CancelWorkflowOptions::builder().reason("Dieee").build())
+            .cancel(WorkflowCancelOptions::builder().reason("Dieee").build())
             .await
             .unwrap();
     };
@@ -74,8 +73,8 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = client
-        .get_workflow_handle::<UntypedWorkflow>(wf_id, "")
-        .describe(DescribeWorkflowOptions::default())
+        .get_workflow_handle::<UntypedWorkflow>(wf_id)
+        .describe(WorkflowDescribeOptions::default())
         .await
         .unwrap();
 

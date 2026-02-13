@@ -120,9 +120,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/local/temporal/sdk/core/core_interface.proto",
                 "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
                 "./protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
+                "./protos/api_upstream/temporal/api/errordetails/v1/message.proto",
                 "./protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto",
                 "./protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
                 "./protos/grpc/health/v1/health.proto",
+                "./protos/google/rpc/status.proto",
             ],
             &[
                 "./protos/api_upstream",
@@ -130,6 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/local",
                 "./protos/testsrv_upstream",
                 "./protos/grpc",
+                "./protos",
             ],
         )?;
 

@@ -12,8 +12,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    CancelWorkflowOptions, SignalOptions, UntypedSignal, UntypedWorkflow, WorkflowClientTrait,
-    WorkflowOptions,
+    UntypedSignal, UntypedWorkflow, WorkflowCancelOptions, WorkflowSignalOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{
@@ -44,8 +44,7 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     CancellableFuture, NexusOperationOptions, SyncWorkflowContext, WorkflowContext,
-    WorkflowContextView, WorkflowResult,
-    WorkflowTermination,
+    WorkflowContextView, WorkflowResult, WorkflowTermination,
 };
 use temporalio_sdk_core::PollError;
 use tokio::{
@@ -191,14 +190,13 @@ async fn nexus_basic(
     });
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();
-    let res = Result::<NexusOperationResult, Failure>::from_json_payload(
-        res.unwrap_success().payloads.first().unwrap(),
-    )
-    .unwrap();
+    let res =
+        Result::<NexusOperationResult, Failure>::from_json_payload(res.payloads.first().unwrap())
+            .unwrap();
     match outcome {
         Outcome::Succeed => {
             let p = assert_matches!(
@@ -400,7 +398,7 @@ async fn nexus_async(
                 .submit_wf(
                     AsyncCompleter::name(),
                     payloads,
-                    WorkflowOptions::new(task_queue, completer_id.clone())
+                    WorkflowStartOptions::new(task_queue, completer_id.clone())
                         .completion_callbacks(vec![Callback {
                             variant: Some(callback::Variant::Nexus(callback::Nexus {
                                 url: start_req.callback,
@@ -446,10 +444,10 @@ async fn nexus_async(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)
             );
-            let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id, "");
+            let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id);
             handle
                 .cancel(
-                    CancelWorkflowOptions::builder()
+                    WorkflowCancelOptions::builder()
                         .reason("nexus cancel")
                         .build(),
                 )
@@ -480,13 +478,11 @@ async fn nexus_async(
     });
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();
-    let res =
-        NexusOperationResult::from_json_payload(res.unwrap_success().payloads.first().unwrap())
-            .unwrap();
+    let res = NexusOperationResult::from_json_payload(res.payloads.first().unwrap()).unwrap();
     match outcome {
         Outcome::Succeed => {
             let p = assert_matches!(
@@ -866,7 +862,7 @@ async fn nexus_cancellation_types(
             .submit_wf(
                 "async_completer",
                 vec![],
-                WorkflowOptions::new(task_queue, completer_id.clone())
+                WorkflowStartOptions::new(task_queue, completer_id.clone())
                     .completion_callbacks(vec![Callback {
                         variant: Some(callback::Variant::Nexus(callback::Nexus {
                             url: start_req.callback,
@@ -922,11 +918,10 @@ async fn nexus_cancellation_types(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)
             );
-            let handle =
-                client.get_workflow_handle::<UntypedWorkflow>(completer_id.to_string(), "");
+            let handle = client.get_workflow_handle::<UntypedWorkflow>(completer_id.to_string());
             handle
                 .cancel(
-                    CancelWorkflowOptions::builder()
+                    WorkflowCancelOptions::builder()
                         .reason("nexus cancel")
                         .build(),
                 )
@@ -957,11 +952,11 @@ async fn nexus_cancellation_types(
             // Send a signal just to wake up the workflow so it'll check the condition
             // (it may already have completed, so ignore the result)
             let _ = client
-                .get_workflow_handle::<UntypedWorkflow>(completer_id.to_string(), "")
+                .get_workflow_handle::<UntypedWorkflow>(completer_id.to_string())
                 .signal(
                     UntypedSignal::new("wakeupdude"),
                     RawValue::empty(),
-                    SignalOptions::default(),
+                    WorkflowSignalOptions::default(),
                 )
                 .await;
             wf_handle.get_result(Default::default()).await.unwrap();
@@ -993,11 +988,11 @@ async fn nexus_cancellation_types(
             .try_recv()
             .expect("Should have received handler workflow ID");
         client
-            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id, "")
+            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id)
             .signal(
                 AsyncCompleterWf::handle_proceed_signal,
                 (),
-                SignalOptions::default(),
+                WorkflowSignalOptions::default(),
             )
             .await
             .unwrap();
@@ -1033,13 +1028,11 @@ async fn nexus_cancellation_types(
     }
 
     let res = client
-        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned(), "")
+        .get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue().to_owned())
         .get_result(Default::default())
         .await
         .unwrap();
-    let res =
-        NexusOperationResult::from_json_payload(res.unwrap_success().payloads.first().unwrap())
-            .unwrap();
+    let res = NexusOperationResult::from_json_payload(res.payloads.first().unwrap()).unwrap();
 
     match cancellation_type {
         NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {

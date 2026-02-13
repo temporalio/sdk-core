@@ -15,12 +15,14 @@ pub mod envconfig;
 #[doc(hidden)]
 pub mod fsm_trait;
 pub mod payload_visitor;
+mod priority;
 pub mod protos;
 pub mod telemetry;
 pub mod worker;
 mod workflow_definition;
 
 pub use activity_definition::ActivityDefinition;
+pub use priority::Priority;
 pub use workflow_definition::{
     QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
 };

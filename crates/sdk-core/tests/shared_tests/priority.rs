@@ -1,6 +1,6 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{GetWorkflowResultOptions, Priority, UntypedWorkflow, WorkflowClientTrait};
+use temporalio_client::{Priority, UntypedWorkflow, WorkflowGetResultOptions};
 use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
@@ -16,11 +16,11 @@ pub(crate) async fn priority_values_sent_to_server() {
     } else {
         return;
     };
-    starter.workflow_options.priority = Some(Priority {
-        priority_key: 1,
-        fairness_key: "fair-wf".to_string(),
-        fairness_weight: 4.2,
-    });
+    starter.workflow_options.priority = Priority {
+        priority_key: Some(1),
+        fairness_key: Some("fair-wf".to_string()),
+        fairness_weight: Some(4.2),
+    };
     let mut worker = starter.worker().await;
     let child_type = "child-wf";
 
@@ -32,9 +32,9 @@ pub(crate) async fn priority_values_sent_to_server() {
             assert_eq!(
                 ctx.get_info().priority,
                 Priority {
-                    priority_key: 5,
-                    fairness_key: "fair-act".to_string(),
-                    fairness_weight: 1.1
+                    priority_key: Some(5),
+                    fairness_key: Some("fair-act".to_string()),
+                    fairness_weight: Some(1.1)
                 }
             );
             Ok(echo_me)
@@ -55,9 +55,9 @@ pub(crate) async fn priority_values_sent_to_server() {
                 workflow_id: format!("{}-child", ctx.task_queue()),
                 workflow_type: ctx.state(|wf| wf.child_type.clone()),
                 priority: Some(Priority {
-                    priority_key: 4,
-                    fairness_key: "fair-child".to_string(),
-                    fairness_weight: 1.23,
+                    priority_key: Some(4),
+                    fairness_key: Some("fair-child".to_string()),
+                    fairness_weight: Some(1.23),
                 }),
                 ..Default::default()
             });
@@ -73,9 +73,9 @@ pub(crate) async fn priority_values_sent_to_server() {
                 ActivityOptions {
                     start_to_close_timeout: Some(Duration::from_secs(5)),
                     priority: Some(Priority {
-                        priority_key: 5,
-                        fairness_key: "fair-act".to_string(),
-                        fairness_weight: 1.1,
+                        priority_key: Some(5),
+                        fairness_key: Some("fair-act".to_string()),
+                        fairness_weight: Some(1.1),
                     }),
                     do_not_eagerly_execute: true,
                     ..Default::default()
@@ -120,13 +120,11 @@ pub(crate) async fn priority_values_sent_to_server() {
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue(), "");
-    let res = handle
-        .get_result(GetWorkflowResultOptions::default())
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue());
+    handle
+        .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
-    // Expect workflow success
-    res.unwrap_success();
     let events = handle
         .fetch_history(Default::default())
         .await
