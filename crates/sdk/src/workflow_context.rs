@@ -138,7 +138,6 @@ impl<W> Clone for WorkflowContext<W> {
     }
 }
 
-
 /// Read-only view of workflow context for use in init and query handlers.
 ///
 /// This provides access to workflow information but cannot issue commands.
@@ -930,10 +929,7 @@ impl<W> WorkflowContext<W> {
     }
 
     /// Add or create a set of search attributes
-    pub fn upsert_search_attributes(
-        &self,
-        attr_iter: impl IntoIterator<Item = (String, Payload)>,
-    ) {
+    pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
         self.sync.upsert_search_attributes(attr_iter)
     }
 
