@@ -8,7 +8,11 @@
 //!
 //! ```no_run
 //! use std::str::FromStr;
-//! use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
+//! use temporalio_client::{
+//!     Client, ClientOptions, Connection, ConnectionOptions,
+//!     UntypedWorkflow, WorkflowStartOptions,
+//! };
+//! use temporalio_common::data_converters::RawValue;
 //! use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
 //!
 //! #[tokio::main]
@@ -18,8 +22,15 @@
 //!     let connection = Connection::connect(connection_options).await?;
 //!     let client = Client::new(connection, ClientOptions::new("my_namespace").build())?;
 //!
-//!     // Use the client to interact with Temporal
-//!     println!("Connected to namespace: {}", client.options().namespace);
+//!     let handle = client
+//!         .start_workflow(
+//!             UntypedWorkflow::new("my_workflow_type"),
+//!             RawValue::empty(),
+//!             WorkflowStartOptions::new("my_task_queue", "my_workflow_id").build(),
+//!         )
+//!         .await?;
+//!
+//!     let result = handle.get_result(Default::default()).await?;
 //!
 //!     Ok(())
 //! }
