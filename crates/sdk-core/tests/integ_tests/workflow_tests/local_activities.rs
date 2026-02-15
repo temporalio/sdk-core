@@ -915,7 +915,7 @@ async fn repro_nondeterminism_with_timer_bug() {
         run_id: Some(handle.run_id().unwrap().to_string()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await
@@ -1075,7 +1075,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         run_id: Some(handle.run_id().unwrap().to_string()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await

@@ -65,8 +65,8 @@ async fn sends_modify_wf_props() {
         run_id: Some(run_id),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone())
-        .describe(WorkflowDescribeOptions::default())
+    .bind_untyped(client.clone())
+    .describe(WorkflowDescribeOptions::default())
     .await
     .unwrap()
     .raw_description

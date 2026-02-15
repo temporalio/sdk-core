@@ -3,38 +3,6 @@
 //! This crate contains client implementations that can be used to contact the Temporal service.
 //!
 //! It implements auto-retry behavior and metrics collection.
-//!
-//! # Example
-//!
-//! ```no_run
-//! use std::str::FromStr;
-//! use temporalio_client::{
-//!     Client, ClientOptions, Connection, ConnectionOptions,
-//!     UntypedWorkflow, WorkflowStartOptions,
-//! };
-//! use temporalio_common::data_converters::RawValue;
-//! use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     let connection_options =
-//!         ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build();
-//!     let connection = Connection::connect(connection_options).await?;
-//!     let client = Client::new(connection, ClientOptions::new("my_namespace").build())?;
-//!
-//!     let handle = client
-//!         .start_workflow(
-//!             UntypedWorkflow::new("my_workflow_type"),
-//!             RawValue::empty(),
-//!             WorkflowStartOptions::new("my_task_queue", "my_workflow_id").build(),
-//!         )
-//!         .await?;
-//!
-//!     let result = handle.get_result(Default::default()).await?;
-//!
-//!     Ok(())
-//! }
-//! ```
 
 #[macro_use]
 extern crate tracing;

@@ -185,7 +185,7 @@ async fn poller_load_spiky() {
                 run_id: Some(rid),
                 first_execution_run_id: None,
             }
-                .bind_untyped(client.clone()),
+            .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -223,7 +223,7 @@ async fn poller_load_spiky() {
                     run_id: Some(rid),
                     first_execution_run_id: None,
                 }
-                    .bind_untyped(client.clone()),
+                .bind_untyped(client.clone()),
             );
         }
         stream::iter(workflow_handles)
@@ -320,7 +320,7 @@ async fn poller_load_sustained() {
                 run_id: Some(rid),
                 first_execution_run_id: None,
             }
-                .bind_untyped(client.clone()),
+            .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -402,7 +402,7 @@ async fn poller_load_spike_then_sustained() {
                 run_id: Some(rid),
                 first_execution_run_id: None,
             }
-                .bind_untyped(client.clone()),
+            .bind_untyped(client.clone()),
         );
     }
     info!("Done starting workflows");
@@ -439,7 +439,7 @@ async fn poller_load_spike_then_sustained() {
                     run_id: Some(rid),
                     first_execution_run_id: None,
                 }
-                    .bind_untyped(client.clone()),
+                .bind_untyped(client.clone()),
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }

@@ -85,7 +85,7 @@ async fn sends_cancel_to_other_wf() {
         run_id: Some(receiver_run_id),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     let res = String::from_json_payload(
         h.get_result(WorkflowGetResultOptions::default())
             .await

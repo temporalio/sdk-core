@@ -467,8 +467,8 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
             run_id: Some(run_id),
             first_execution_run_id: None,
         }
-            .bind_untyped(client.clone())
-            .query(
+        .bind_untyped(client.clone())
+        .query(
             UntypedQuery::new("fake_query"),
             RawValue::empty(),
             WorkflowQueryOptions::default(),

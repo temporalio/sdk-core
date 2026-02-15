@@ -602,13 +602,12 @@ impl TestWorker {
         }
         let wfid = options.workflow_id.clone();
         let handle = c.start_workflow(workflow, input, options).await?;
-        let info = WorkflowExecutionInfo {
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
             namespace: c.namespace(),
             workflow_id: wfid,
             run_id: handle.info().run_id.clone(),
             first_execution_run_id: None,
-        };
-        self.started_workflows.lock().push(info);
+        });
         Ok(handle)
     }
 
@@ -617,18 +616,16 @@ impl TestWorker {
         wf_id: impl Into<String>,
         run_id: Option<String>,
     ) {
-        let ns = self
-            .client
-            .as_ref()
-            .map(|c| c.namespace())
-            .unwrap_or(NAMESPACE.to_owned());
-        let info = WorkflowExecutionInfo {
-            namespace: ns,
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self
+                .client
+                .as_ref()
+                .map(|c| c.namespace())
+                .unwrap_or(NAMESPACE.to_owned()),
             workflow_id: wf_id.into(),
             run_id,
             first_execution_run_id: None,
-        };
-        self.started_workflows.lock().push(info);
+        });
     }
 
     /// Runs until all expected workflows have completed and then shuts down the worker
@@ -694,14 +691,12 @@ impl TestWorkerSubmitterHandle {
             )
             .await?;
         let run_id = handle.run_id().unwrap().to_string();
-        self.started_workflows
-            .lock()
-            .push(WorkflowExecutionInfo {
-                namespace: self.client.namespace(),
-                workflow_id: wfid,
-                run_id: Some(run_id.clone()),
-                first_execution_run_id: None,
-            });
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self.client.namespace(),
+            workflow_id: wfid,
+            run_id: Some(run_id.clone()),
+            first_execution_run_id: None,
+        });
         Ok(run_id)
     }
 }

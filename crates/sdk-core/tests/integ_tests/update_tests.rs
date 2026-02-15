@@ -169,8 +169,8 @@ async fn reapplied_updates_due_to_reset() {
         run_id: Some(post_reset_run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone())
-        .fetch_history(Default::default())
+    .bind_untyped(client.clone())
+    .fetch_history(Default::default())
     .await
     .unwrap()
     .into_events();
@@ -214,7 +214,7 @@ async fn send_and_handle_update(
         run_id: Some(act.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {
@@ -323,7 +323,7 @@ async fn update_rejection() {
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {
@@ -402,7 +402,7 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let (update_task, stop_wait_update) = future::abortable(async {
@@ -495,7 +495,7 @@ async fn update_complete_after_accept_without_new_task() {
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
 
     // Send the update to the server
     let update_task = async {

@@ -685,7 +685,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
             run_id: Some(wf1_run),
             first_execution_run_id: None,
         }
-            .bind_untyped(client_for_orchestrator.clone());
+        .bind_untyped(client_for_orchestrator.clone());
         handle1
             .get_result(Default::default())
             .await
@@ -698,7 +698,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
             run_id: Some(wf2_run),
             first_execution_run_id: None,
         }
-            .bind_untyped(client_for_orchestrator.clone());
+        .bind_untyped(client_for_orchestrator.clone());
         handle2
             .get_result(Default::default())
             .await

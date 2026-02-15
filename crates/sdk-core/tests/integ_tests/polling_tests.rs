@@ -213,8 +213,8 @@ async fn switching_worker_client_changes_poll() {
             run_id: Some(wf1_run_id.clone()),
             first_execution_run_id: None,
         }
-            .bind_untyped(client1.clone())
-            .get_result(Default::default())
+        .bind_untyped(client1.clone())
+        .get_result(Default::default())
         .await
         .unwrap();
 
@@ -232,8 +232,8 @@ async fn switching_worker_client_changes_poll() {
             run_id: Some(wf2_run_id),
             first_execution_run_id: None,
         }
-            .bind_untyped(client2.clone())
-            .get_result(Default::default())
+        .bind_untyped(client2.clone())
+        .get_result(Default::default())
         .await
         .unwrap();
 

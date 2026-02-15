@@ -245,7 +245,7 @@ async fn signal_workflow() {
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     handle
         .signal(
             UntypedSignal::new(signal_id_1),
@@ -346,8 +346,8 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
                 run_id: Some(res.run_id.clone()),
                 first_execution_run_id: None,
             }
-                .bind_untyped(sig_client.clone())
-                .signal(
+            .bind_untyped(sig_client.clone())
+            .signal(
                 UntypedSignal::new(signal_id_1),
                 RawValue::empty(),
                 WorkflowSignalOptions::default(),
@@ -427,7 +427,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         run_id: Some(wf_task.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
     handle
@@ -615,7 +615,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
         run_id: Some(res.run_id.clone()),
         first_execution_run_id: None,
     }
-        .bind_untyped(client.clone());
+    .bind_untyped(client.clone());
     let query_fut = async {
         query_handle
             .query(

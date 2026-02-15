@@ -339,8 +339,8 @@ async fn evict_while_la_running_no_interference() {
                 run_id: Some(run_id),
                 first_execution_run_id: None,
             }
-                .bind_untyped(client)
-                .signal(
+            .bind_untyped(client)
+            .signal(
                 UntypedSignal::new("whaatever"),
                 RawValue::empty(),
                 WorkflowSignalOptions::default(),
@@ -401,7 +401,7 @@ async fn can_paginate_long_history() {
             run_id: Some(run_id),
             first_execution_run_id: None,
         }
-            .bind_untyped(client);
+        .bind_untyped(client);
         loop {
             for _ in 0..10 {
                 handle

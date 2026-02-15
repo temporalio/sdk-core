@@ -55,14 +55,14 @@ async fn simple_query_legacy() {
             run_id: Some(task.run_id.to_string()),
             first_execution_run_id: None,
         }
-            .bind_untyped(starter.get_client().await.clone())
-            .query(
-                UntypedQuery::new("myquery"),
-                RawValue::empty(),
-                WorkflowQueryOptions::default(),
-            )
-            .await
-            .unwrap()
+        .bind_untyped(starter.get_client().await.clone())
+        .query(
+            UntypedQuery::new("myquery"),
+            RawValue::empty(),
+            WorkflowQueryOptions::default(),
+        )
+        .await
+        .unwrap()
     };
     let workflow_completions_future = async {
         // Give query a beat to get going
@@ -202,8 +202,8 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                 run_id: Some(run_id.to_string()),
                 first_execution_run_id: None,
             }
-                .bind_untyped(gw.clone())
-                .query(
+            .bind_untyped(gw.clone())
+            .query(
                 UntypedQuery::new("myquery"),
                 RawValue::empty(),
                 WorkflowQueryOptions::default(),
@@ -244,14 +244,14 @@ async fn fail_legacy_query(#[case] with_nde: bool) {
             run_id: Some(task.run_id.to_string()),
             first_execution_run_id: None,
         }
-            .bind_untyped(starter.get_client().await.clone())
-            .query(
-                UntypedQuery::new("myquery"),
-                RawValue::empty(),
-                WorkflowQueryOptions::default(),
-            )
-            .await
-            .unwrap_err()
+        .bind_untyped(starter.get_client().await.clone())
+        .query(
+            UntypedQuery::new("myquery"),
+            RawValue::empty(),
+            WorkflowQueryOptions::default(),
+        )
+        .await
+        .unwrap_err()
     };
     let query_responder = async {
         // Have to replay first since we've evicted
@@ -316,8 +316,8 @@ async fn multiple_concurrent_queries_no_new_history() {
             run_id: Some(task.run_id.to_string()),
             first_execution_run_id: None,
         }
-            .bind_untyped(client.clone())
-            .query(
+        .bind_untyped(client.clone())
+        .query(
             UntypedQuery::new("myquery"),
             RawValue::empty(),
             WorkflowQueryOptions::default(),
@@ -386,8 +386,8 @@ async fn queries_handled_before_next_wft() {
             run_id: Some(task.run_id.to_string()),
             first_execution_run_id: None,
         }
-            .bind_untyped(client.clone())
-            .query(
+        .bind_untyped(client.clone())
+        .query(
             UntypedQuery::new("myquery"),
             RawValue::empty(),
             WorkflowQueryOptions::default(),
@@ -411,8 +411,8 @@ async fn queries_handled_before_next_wft() {
             run_id: Some(task.run_id.to_string()),
             first_execution_run_id: None,
         }
-            .bind_untyped(client.clone())
-            .signal(
+        .bind_untyped(client.clone())
+        .signal(
             UntypedSignal::new("blah"),
             RawValue::empty(),
             WorkflowSignalOptions::default(),
