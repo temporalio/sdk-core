@@ -41,8 +41,7 @@
 //!     let telemetry_options = TelemetryOptions::builder().build();
 //!     let runtime_options = RuntimeOptions::builder()
 //!         .telemetry_options(telemetry_options)
-//!         .build()
-//!         .unwrap();
+//!         .build()?;
 //!     let runtime = CoreRuntime::new_assume_tokio(runtime_options)?;
 //!
 //!     let connection = Connection::connect(connection_options).await?;
@@ -894,7 +893,7 @@ impl ActivityHalf {
 
                 tokio::spawn(async move {
                     let act_fut = async move {
-                        if let Some(info) = &ctx.get_info().workflow_execution {
+                        if let Some(info) = &ctx.info().workflow_execution {
                             Span::current()
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
@@ -981,7 +980,7 @@ enum UnblockEvent {
 }
 
 /// Result of awaiting on a timer
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum TimerResult {
     /// The timer was cancelled
     Cancelled,
@@ -990,13 +989,13 @@ pub enum TimerResult {
 }
 
 /// Successful result of sending a signal to an external workflow
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SignalExternalOk;
 /// Result of awaiting on sending a signal to an external workflow
 pub type SignalExternalWfResult = Result<SignalExternalOk, Failure>;
 
 /// Successful result of sending a cancel request to an external workflow
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CancelExternalOk;
 /// Result of awaiting on sending a cancel request to an external workflow
 pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
@@ -1255,6 +1254,7 @@ impl From<ActivityExecutionError> for WorkflowTermination {
 }
 
 /// Activity functions may return these values when exiting
+#[derive(Debug)]
 pub enum ActExitValue<T> {
     /// Completion requires an asynchronous callback
     WillCompleteAsync,

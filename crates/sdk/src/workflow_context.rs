@@ -138,23 +138,11 @@ impl<W> Clone for WorkflowContext<W> {
     }
 }
 
-impl<W> Deref for WorkflowContext<W> {
-    type Target = SyncWorkflowContext<W>;
-    fn deref(&self) -> &SyncWorkflowContext<W> {
-        &self.sync
-    }
-}
-
-impl<W> DerefMut for WorkflowContext<W> {
-    fn deref_mut(&mut self) -> &mut SyncWorkflowContext<W> {
-        &mut self.sync
-    }
-}
-
 /// Read-only view of workflow context for use in init and query handlers.
 ///
 /// This provides access to workflow information but cannot issue commands.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct WorkflowContextView {
     /// The workflow's unique identifier
     pub workflow_id: String,
@@ -200,6 +188,7 @@ pub struct WorkflowContextView {
 
 /// Information about a parent workflow.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ParentWorkflowInfo {
     /// The parent workflow's unique identifier
     pub workflow_id: String,
@@ -211,6 +200,7 @@ pub struct ParentWorkflowInfo {
 
 /// Information about the root workflow in an execution chain.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct RootWorkflowInfo {
     /// The root workflow's unique identifier
     pub workflow_id: String,
@@ -523,11 +513,6 @@ impl<W> SyncWorkflowContext<W> {
         &self.base.inner.task_queue
     }
 
-    /// Get the arguments provided to the workflow upon execution start
-    pub fn get_args(&self) -> &[Payload] {
-        self.base.inner.inital_information.arguments.as_slice()
-    }
-
     /// Return the current time according to the workflow (which is not wall-clock time).
     pub fn workflow_time(&self) -> Option<SystemTime> {
         self.base.inner.shared.borrow().wf_time
@@ -822,6 +807,162 @@ impl<W> WorkflowContext<W> {
     /// Returns a [`SyncWorkflowContext`] extracted from this context.
     pub(crate) fn sync_context(&self) -> SyncWorkflowContext<W> {
         self.sync.clone()
+    }
+
+    // --- Delegated methods from SyncWorkflowContext ---
+
+    /// Return the namespace the workflow is executing in
+    pub fn namespace(&self) -> &str {
+        self.sync.namespace()
+    }
+
+    /// Return the task queue the workflow is executing in
+    pub fn task_queue(&self) -> &str {
+        self.sync.task_queue()
+    }
+
+    /// Return the current time according to the workflow (which is not wall-clock time).
+    pub fn workflow_time(&self) -> Option<SystemTime> {
+        self.sync.workflow_time()
+    }
+
+    /// Return the length of history so far at this point in the workflow
+    pub fn history_length(&self) -> u32 {
+        self.sync.history_length()
+    }
+
+    /// Return the deployment version, if any, as it was when this point in the workflow was first
+    /// reached. If this code is being executed for the first time, return this Worker's deployment
+    /// version if it has one.
+    pub fn current_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
+        self.sync.current_deployment_version()
+    }
+
+    /// Return current values for workflow search attributes
+    pub fn search_attributes(&self) -> impl Deref<Target = SearchAttributes> + '_ {
+        self.sync.search_attributes()
+    }
+
+    /// Return the workflow's randomness seed
+    pub fn random_seed(&self) -> u64 {
+        self.sync.random_seed()
+    }
+
+    /// Returns true if the current workflow task is happening under replay
+    pub fn is_replaying(&self) -> bool {
+        self.sync.is_replaying()
+    }
+
+    /// Returns the headers for the current handler invocation (signal, update, query, etc.).
+    pub fn headers(&self) -> &HashMap<String, Payload> {
+        self.sync.headers()
+    }
+
+    /// Returns the [PayloadConverter] currently used by the worker running this workflow.
+    pub fn payload_converter(&self) -> &PayloadConverter {
+        self.sync.payload_converter()
+    }
+
+    /// Return various information that the workflow was initialized with.
+    pub fn workflow_initial_info(&self) -> &InitializeWorkflow {
+        self.sync.workflow_initial_info()
+    }
+
+    /// A future that resolves if/when the workflow is cancelled, with the user provided cause
+    pub async fn cancelled(&self) -> String {
+        self.sync.cancelled().await
+    }
+
+    /// Request to create a timer
+    pub fn timer<T: Into<TimerOptions>>(&self, opts: T) -> impl CancellableFuture<TimerResult> {
+        self.sync.timer(opts)
+    }
+
+    /// Request to run an activity
+    pub fn start_activity<AD: ActivityDefinition>(
+        &self,
+        activity: AD,
+        input: AD::Input,
+        opts: ActivityOptions,
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
+        self.sync.start_activity(activity, input, opts)
+    }
+
+    /// Request to run a local activity
+    pub fn start_local_activity<AD: ActivityDefinition>(
+        &self,
+        activity: AD,
+        input: AD::Input,
+        opts: LocalActivityOptions,
+    ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
+    where
+        AD::Output: TemporalDeserializable,
+    {
+        self.sync.start_local_activity(activity, input, opts)
+    }
+
+    /// Creates a child workflow stub with the provided options
+    pub fn child_workflow(&self, opts: ChildWorkflowOptions) -> ChildWorkflow {
+        self.sync.child_workflow(opts)
+    }
+
+    /// Check (or record) that this workflow history was created with the provided patch
+    pub fn patched(&self, patch_id: &str) -> bool {
+        self.sync.patched(patch_id)
+    }
+
+    /// Record that this workflow history was created with the provided patch, and it is being
+    /// phased out.
+    pub fn deprecate_patch(&self, patch_id: &str) -> bool {
+        self.sync.deprecate_patch(patch_id)
+    }
+
+    /// Send a signal to an external workflow.
+    pub fn signal_workflow(
+        &self,
+        opts: impl Into<SignalWorkflowOptions>,
+    ) -> impl CancellableFuture<SignalExternalWfResult> {
+        self.sync.signal_workflow(opts)
+    }
+
+    /// Add or create a set of search attributes
+    pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
+        self.sync.upsert_search_attributes(attr_iter)
+    }
+
+    /// Add or create a set of memo fields
+    pub fn upsert_memo(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
+        self.sync.upsert_memo(attr_iter)
+    }
+
+    /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
+    pub fn force_task_fail(&self, with: anyhow::Error) {
+        self.sync.force_task_fail(with)
+    }
+
+    /// Request the cancellation of an external workflow.
+    pub fn cancel_external(
+        &self,
+        target: NamespacedWorkflowExecution,
+        reason: String,
+    ) -> impl Future<Output = CancelExternalWfResult> {
+        self.sync.cancel_external(target, reason)
+    }
+
+    /// Start a nexus operation
+    pub fn start_nexus_operation(
+        &self,
+        opts: NexusOperationOptions,
+    ) -> impl CancellableFuture<NexusStartResult> {
+        self.sync.start_nexus_operation(opts)
+    }
+
+    /// Create a read-only view of this context.
+    pub(crate) fn view(&self) -> WorkflowContextView {
+        self.sync.view()
     }
 
     /// Access workflow state immutably via closure.
@@ -1241,9 +1382,10 @@ where
 }
 
 /// A stub representing an unstarted child workflow.
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
+    #[debug(skip)]
     base_ctx: BaseWorkflowContext,
 }
 
@@ -1254,9 +1396,11 @@ pub(crate) struct ChildWfCommon {
 }
 
 /// Child workflow in pending state
+#[derive(derive_more::Debug)]
 pub struct PendingChildWorkflow {
     /// The status of the child workflow start
     pub status: ChildWorkflowStartStatus,
+    #[debug(skip)]
     pub(crate) common: ChildWfCommon,
 }
 
@@ -1275,9 +1419,11 @@ impl PendingChildWorkflow {
 }
 
 /// Child workflow in started state
+#[derive(derive_more::Debug)]
 pub struct StartedChildWorkflow {
     /// Run ID of the child workflow
     pub run_id: String,
+    #[debug(skip)]
     common: ChildWfCommon,
 }
 

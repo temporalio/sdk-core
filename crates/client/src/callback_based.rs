@@ -15,6 +15,7 @@ use tonic::{Status, metadata::GRPC_CONTENT_TYPE};
 use tower::Service;
 
 /// gRPC request for use by a callback.
+#[derive(Debug)]
 pub struct GrpcRequest {
     /// Fully qualified gRPC service name.
     pub service: String,
@@ -27,6 +28,7 @@ pub struct GrpcRequest {
 }
 
 /// Successful gRPC response returned by a callback.
+#[derive(Debug)]
 pub struct GrpcSuccessResponse {
     /// Response headers.
     pub headers: HeaderMap,

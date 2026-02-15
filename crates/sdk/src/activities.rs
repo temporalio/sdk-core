@@ -159,7 +159,7 @@ impl ActivityContext {
 
     /// Extract heartbeat details from last failed attempt. This is used in combination with retry
     /// policy.
-    pub fn get_heartbeat_details(&self) -> &[Payload] {
+    pub fn heartbeat_details(&self) -> &[Payload] {
         &self.heartbeat_details
     }
 
@@ -173,8 +173,8 @@ impl ActivityContext {
         }
     }
 
-    /// Get activity info of the executing activity
-    pub fn get_info(&self) -> &ActivityInfo {
+    /// Returns activity info of the executing activity
+    pub fn info(&self) -> &ActivityInfo {
         &self.info
     }
 
@@ -185,7 +185,7 @@ impl ActivityContext {
 }
 
 /// Various information about a specific activity attempt.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ActivityInfo {
     /// An opaque token representing a specific Activity task.

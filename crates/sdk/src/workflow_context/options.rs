@@ -288,6 +288,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
 }
 
 /// Options for sending a signal to an external workflow
+#[derive(Debug)]
 pub struct SignalWorkflowOptions {
     /// The workflow's id
     pub workflow_id: String,
@@ -324,6 +325,7 @@ impl SignalWorkflowOptions {
 }
 
 /// Information needed to send a specific signal
+#[derive(Debug)]
 pub struct Signal {
     /// The signal name
     pub signal_name: String,
