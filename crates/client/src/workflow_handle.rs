@@ -38,7 +38,6 @@ use tonic::IntoRequest;
 use uuid::Uuid;
 
 /// Enumerates terminal states for a particular workflow execution
-// TODO: Add non-proto failure types, flesh out details, etc.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum WorkflowExecutionResult<T> {
