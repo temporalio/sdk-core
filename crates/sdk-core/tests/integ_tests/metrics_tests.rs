@@ -769,10 +769,10 @@ async fn docker_metrics_with_prometheus(
                 .unwrap();
 
             // Check if we have metrics available
-            if let Some(data) = response["data"]["result"].as_array() {
-                if !data.is_empty() {
-                    return Ok(data.clone());
-                }
+            if let Some(data) = response["data"]["result"].as_array()
+                && !data.is_empty()
+            {
+                return Ok(data.clone());
             }
             Err(anyhow!("No metrics found yet"))
         },
