@@ -378,7 +378,7 @@ where
                         if let Some(duration) = backoff_duration {
                             // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
                             tokio::select! {
-                                _ = tokio::time::sleep(duration) => (),
+                                _ = tokio::time::sleep(duration) => return,
                                 _ = shutdown_clone.cancelled() => (),
                             };
                         }
