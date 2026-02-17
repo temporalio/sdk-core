@@ -97,7 +97,7 @@ impl ParallelWorkflowsWf {
 async fn parallel_workflows_same_queue() {
     let wf_name = "parallel_workflows_same_queue";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     core.register_workflow::<ParallelWorkflowsWf>();
@@ -579,7 +579,7 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
             default_versioning_behavior: None,
         }
     };
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let core = starter.get_worker().await;
     starter.start_wf().await;
     let client = starter.get_client().await;
@@ -817,7 +817,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = NONDETERMINISM_WF_NAME;
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
         starter.sdk_config.workflow_failure_errors = typeset;

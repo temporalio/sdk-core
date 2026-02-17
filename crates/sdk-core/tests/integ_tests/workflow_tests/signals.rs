@@ -60,7 +60,7 @@ impl SignalSender {
 async fn sends_signal_to_missing_wf() {
     let wf_name = "sends_signal_to_missing_wf";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalSender>();
 
@@ -131,7 +131,7 @@ impl SignalWithCreateWfReceiver {
 #[tokio::test]
 async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalSender>();
     worker.register_workflow::<SignalReceiver>();
@@ -159,7 +159,7 @@ async fn sends_signal_to_other_wf() {
 #[tokio::test]
 async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalWithCreateWfReceiver>();
 
@@ -216,7 +216,7 @@ impl SignalsChild {
 #[tokio::test]
 async fn sends_signal_to_child() {
     let mut starter = CoreWfStarter::new("sends_signal_to_child");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalsChild>();
     worker.register_workflow::<SignalReceiver>();

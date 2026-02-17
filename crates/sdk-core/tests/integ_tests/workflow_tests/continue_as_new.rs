@@ -39,7 +39,7 @@ impl ContinueAsNewWf {
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<ContinueAsNewWf>();
 
@@ -59,7 +59,7 @@ async fn continue_as_new_happy_path() {
 async fn continue_as_new_multiple_concurrent() {
     let wf_name = "continue_as_new_multiple_concurrent";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.sdk_config.max_cached_workflows = 5_usize;
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 1, 1, 1));
     let mut worker = starter.worker().await;

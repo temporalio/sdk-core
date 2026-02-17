@@ -54,7 +54,7 @@ async fn sends_upsert() {
     let wf_name = "sends_upsert_search_attrs";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<SearchAttrUpdater>();

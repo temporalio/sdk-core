@@ -17,7 +17,7 @@ use tokio::sync::Barrier;
 async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.sdk_config.max_cached_workflows = 0_usize;
     let mut worker = starter.worker().await;
     worker.register_workflow::<TimerWf>();
@@ -62,7 +62,7 @@ async fn timer_workflow_timeout_on_sticky() {
     // on a not-sticky queue
     let wf_name = "timer_workflow_timeout_on_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.workflow_options.task_timeout = Some(Duration::from_secs(2));
     let mut worker = starter.worker().await;
 
@@ -102,7 +102,7 @@ impl CacheMissWf {
 async fn cache_miss_ok() {
     let wf_name = "cache_miss_ok";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(2, 1, 1, 1));
     starter.sdk_config.max_cached_workflows = 0_usize;
     starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);

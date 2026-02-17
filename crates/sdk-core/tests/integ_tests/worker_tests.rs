@@ -190,7 +190,7 @@ impl ResourceBasedNonStickyWf {
 async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     let wf_name = "resource_based_few_pollers_guarantees_non_sticky_poll";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
     starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(3_usize);
     // Set the limits to zero so it's essentially unwilling to hand out slots
@@ -224,7 +224,7 @@ async fn oversize_grpc_message() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let runtime = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, runtime);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut core = starter.worker().await;
 
     let has_run = Arc::new(AtomicBool::new(false));

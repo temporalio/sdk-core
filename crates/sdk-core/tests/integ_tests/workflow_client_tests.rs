@@ -28,7 +28,7 @@ impl EmptyWorkflow {
 async fn list_workflows(#[case] limit: Option<usize>) {
     let test_name = "list_workflows_returns_started_workflows";
     let mut starter = CoreWfStarter::new(test_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let client = starter.get_client().await;
     let mut worker = starter.worker().await;
     worker.register_workflow::<EmptyWorkflow>();

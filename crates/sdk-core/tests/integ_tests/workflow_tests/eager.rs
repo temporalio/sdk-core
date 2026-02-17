@@ -30,7 +30,7 @@ impl EagerWf {
 async fn eager_wf_start() {
     let wf_name = "eager_wf_start";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.workflow_options.enable_eager_workflow_start = true;
     // hang the test if eager task dispatch failed
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));
@@ -55,7 +55,7 @@ async fn eager_wf_start() {
 async fn eager_wf_start_different_clients() {
     let wf_name = "eager_wf_start";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.workflow_options.enable_eager_workflow_start = true;
     // hang the test if wf task needs retry
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1500));

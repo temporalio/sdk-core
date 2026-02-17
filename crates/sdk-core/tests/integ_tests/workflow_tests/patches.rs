@@ -71,7 +71,7 @@ impl ChangesWf {
 async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<ChangesWf>();
 
@@ -112,7 +112,7 @@ impl NoChangeThenChangeWf {
 async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_workflow_with_factory(move || NoChangeThenChangeWf {
@@ -146,7 +146,7 @@ impl ReplayWithChangeMarkerWf {
 async fn replaying_with_patch_marker() {
     let wf_name = "replaying_with_patch_marker";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_workflow_with_factory(move || ReplayWithChangeMarkerWf {
@@ -186,7 +186,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     let mut starter = CoreWfStarter::new(wf_name);
     // Disable caching to force replay from beginning
     starter.sdk_config.max_cached_workflows = 0_usize;
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let fail_once = Arc::new(AtomicBool::new(true));
     worker.register_workflow_with_factory(move || TimerPatchedTimerWf {
@@ -227,7 +227,7 @@ impl RemoveDeprecatedPatchNearOtherPatchWf {
 async fn can_remove_deprecated_patch_near_other_patch() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let did_die = Arc::new(AtomicBool::new(false));
     worker.register_workflow_with_factory(move || RemoveDeprecatedPatchNearOtherPatchWf {
@@ -274,7 +274,7 @@ impl DeprecatedPatchRemovalWf {
 async fn deprecated_patch_removal() {
     let wf_name = "deprecated_patch_removal";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     let wf_id = starter.get_task_queue().to_string();
     let did_die = Arc::new(AtomicBool::new(false));

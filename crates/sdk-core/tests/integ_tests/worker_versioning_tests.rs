@@ -38,7 +38,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         use_worker_versioning: true,
         default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
     };
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 

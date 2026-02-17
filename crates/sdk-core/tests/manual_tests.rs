@@ -291,7 +291,7 @@ async fn poller_load_sustained() {
         maximum: 200,
         initial: 5,
     };
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<PollerLoadSustainedWf>();
     let client = starter.get_client().await;

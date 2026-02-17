@@ -55,7 +55,7 @@ impl CancelReceiver {
 #[tokio::test]
 async fn sends_cancel_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_cancel_to_other_wf");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<CancelSender>();
     worker.register_workflow::<CancelReceiver>();

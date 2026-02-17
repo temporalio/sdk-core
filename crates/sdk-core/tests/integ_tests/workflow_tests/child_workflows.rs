@@ -102,7 +102,7 @@ impl HappyParent {
 #[tokio::test]
 async fn child_workflow_happy_path() {
     let mut starter = CoreWfStarter::new("child-workflows");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<HappyParent>();
@@ -168,7 +168,7 @@ impl AbandonedChildBugReproChild {
 #[tokio::test]
 async fn abandoned_child_bug_repro() {
     let mut starter = CoreWfStarter::new("child-workflow-abandon-bug");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     let barr = Arc::new(Barrier::new(2));
@@ -254,7 +254,7 @@ impl AbandonedChildResolvesPostCancelChild {
 #[tokio::test]
 async fn abandoned_child_resolves_post_cancel() {
     let mut starter = CoreWfStarter::new("child-workflow-resolves-post-cancel");
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     let barr = Arc::new(Barrier::new(2));
@@ -334,7 +334,7 @@ impl CancelledChildGetsReasonChild {
 async fn cancelled_child_gets_reason() {
     let wf_name = "cancelled-child-gets-reason";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     worker.register_workflow::<CancelledChildGetsReasonParent>();

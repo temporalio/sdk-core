@@ -126,7 +126,7 @@ impl InteractionWorkflow {
 async fn test_typed_signal() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -167,7 +167,7 @@ async fn test_typed_signal() {
 async fn test_typed_update() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -224,7 +224,7 @@ async fn test_typed_update() {
 async fn test_typed_query() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -291,7 +291,7 @@ async fn test_typed_query() {
 async fn test_update_validation() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -353,7 +353,7 @@ async fn test_update_validation() {
 async fn test_async_signal() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -415,7 +415,7 @@ async fn test_async_signal() {
 async fn test_fallible_query() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 
@@ -482,7 +482,7 @@ async fn test_fallible_query() {
 async fn test_untyped_signal_query_update() {
     let wf_name = InteractionWorkflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
     worker.register_workflow::<InteractionWorkflow>();
 

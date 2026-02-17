@@ -378,7 +378,7 @@ impl ManyParallelTimersLonghistWf {
 async fn can_paginate_long_history() {
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     starter.sdk_config.max_cached_workflows = 0;
 
     let mut worker = starter.worker().await;

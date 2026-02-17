@@ -186,7 +186,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
     let wf_name = MultiArgs2Workflow::name();
     let mut starter = CoreWfStarter::new(wf_name);
     starter.sdk_config.register_workflow::<MultiArgs2Workflow>();
-    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::workflow_only());
     let mut worker = starter.worker().await;
 
     let input = MultiArgs2("hello".to_string(), 42);
@@ -340,7 +340,7 @@ async fn codec_encodes_and_decodes_payloads() {
 
     let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
     starter.sdk_config.register_activities(TestActivities);
-    starter.sdk_config.task_types = WorkerTaskTypes::all();
+    starter.sdk_config.task_types = Some(WorkerTaskTypes::all());
     starter
         .sdk_config
         .register_workflow::<DataConverterTestWorkflow>();

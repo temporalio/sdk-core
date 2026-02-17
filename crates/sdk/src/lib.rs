@@ -12,7 +12,7 @@
 //! use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
 //! use temporalio_common::{
 //!     telemetry::TelemetryOptions,
-//!     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
+//!     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
 //! };
 //! use temporalio_macros::activities;
 //! use temporalio_sdk::{
@@ -48,7 +48,6 @@
 //!     let client = Client::new(connection, ClientOptions::new("my_namespace").build())?;
 //!
 //!     let worker_options = WorkerOptions::new("task_queue")
-//!         .task_types(WorkerTaskTypes::activity_only())
 //!         .deployment_options(WorkerDeploymentOptions {
 //!             version: WorkerDeploymentVersion {
 //!                 deployment_name: "my_deployment".to_owned(),
@@ -212,13 +211,9 @@ pub struct WorkerOptions {
     /// Controls how polling for Nexus tasks will happen on this worker's task queue.
     #[builder(default = PollerBehavior::SimpleMaximum(5))]
     pub nexus_task_poller_behavior: PollerBehavior,
-    // TODO [rust-sdk-branch]: Will go away once workflow registration can only happen in here.
-    //   Then it can be auto-determined.
-    /// Specifies which task types this worker will poll for.
-    ///
-    /// Note: At least one task type must be specified or the worker will fail validation.
-    #[builder(default = WorkerTaskTypes::all())]
-    pub task_types: WorkerTaskTypes,
+    /// Specifies which task types this worker will poll for. When `None`, task types are
+    /// auto-determined from registered workflows and activities.
+    pub task_types: Option<WorkerTaskTypes>,
     /// How long a workflow task is allowed to sit on the sticky queue before it is timed out
     /// and moved to the non-sticky queue where it may be picked up by any worker.
     #[builder(default = Duration::from_secs(10))]
@@ -370,7 +365,12 @@ impl WorkerOptions {
             .workflow_task_poller_behavior(self.workflow_task_poller_behavior)
             .activity_task_poller_behavior(self.activity_task_poller_behavior)
             .nexus_task_poller_behavior(self.nexus_task_poller_behavior)
-            .task_types(self.task_types)
+            .task_types(self.task_types.unwrap_or_else(|| WorkerTaskTypes {
+                enable_workflows: !self.workflows.is_empty(),
+                enable_local_activities: !self.workflows.is_empty(),
+                enable_remote_activities: !self.activities.is_empty(),
+                enable_nexus: false,
+            }))
             .sticky_queue_schedule_to_start_timeout(self.sticky_queue_schedule_to_start_timeout)
             .max_heartbeat_throttle_interval(self.max_heartbeat_throttle_interval)
             .default_heartbeat_throttle_interval(self.default_heartbeat_throttle_interval)
