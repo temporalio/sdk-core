@@ -356,6 +356,8 @@ where
                             None
                         };
                     let poll_task = tokio::spawn(async move {
+                        let shutdown_clone = shutdown.clone();
+
                         // If the interrupt wait is specified, don't resolve the future that would
                         // interrupt the poll until after the wait period.
                         let poll_interruptor = shutdown.cancelled().then(|_| async move {
@@ -375,7 +377,10 @@ where
                         let (should_forward, backoff_duration) = report_handle.poll_result(&r);
                         if let Some(duration) = backoff_duration {
                             // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
-                            tokio::time::sleep(duration).await;
+                            tokio::select! {
+                                _ = tokio::time::sleep(duration) => return,
+                                _ = shutdown_clone.cancelled() => (),
+                            };
                         }
                         drop(active_guard);
                         if should_forward {
@@ -492,8 +497,17 @@ where
             ingested_last_period: Default::default(),
             scale_up_allowed: AtomicBool::new(true),
             last_successful_poll_time,
-            // Use same backoff config as gRPC client's throttle_backoff for ResourceExhausted
-            // (1s initial, 10s max, 2x multiplier, 0.2 randomization, unlimited retries)
+            exponential_backoff: parking_lot::Mutex::new(ExponentialBackoff {
+                // Copied from RetryOptions::task_poll_retry_policy()
+                current_interval: Duration::from_millis(200),
+                initial_interval: Duration::from_millis(200),
+                randomization_factor: 0.2,
+                multiplier: 2.0,
+                max_interval: Duration::from_secs(10),
+                max_elapsed_time: None,
+                clock: SystemClock::default(),
+                start_time: std::time::Instant::now(),
+            }),
             resource_exhausted_backoff: parking_lot::Mutex::new(ExponentialBackoff {
                 // Copied from RetryOptions::throttle_retry_policy()
                 current_interval: Duration::from_secs(1),
@@ -569,6 +583,8 @@ struct PollScalerReportHandle {
     scale_up_allowed: AtomicBool,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
 
+    // Exponential backoff for normal errors and resource exhausted errors
+    exponential_backoff: parking_lot::Mutex<ExponentialBackoff<SystemClock>>,
     resource_exhausted_backoff: parking_lot::Mutex<ExponentialBackoff<SystemClock>>,
 }
 
@@ -586,6 +602,7 @@ impl PollScalerReportHandle {
                     .store(Some(SystemTime::now()));
 
                 // Reset backoff on successful poll
+                self.exponential_backoff.lock().reset();
                 self.resource_exhausted_backoff.lock().reset();
 
                 if let PollerBehavior::SimpleMaximum(_) = self.behavior {
@@ -625,24 +642,12 @@ impl PollScalerReportHandle {
             }
             Err(e) => {
                 if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
-                    // We should only react to errors in autoscaling mode if we saw a scaling
-                    // decision
-                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
-                        debug!("Got error from server while polling: {:?}", e);
-                        if e.code() == Code::ResourceExhausted {
-                            // Scale down significantly for resource exhaustion
-                            self.change_target(usize::saturating_div, 2);
+                    // Follow the same backoff logic as the retry client
+                    let mut backoff_duration = self.exponential_backoff.lock().next_backoff();
+                    if e.code() == Code::ResourceExhausted {
+                        backoff_duration = self.resource_exhausted_backoff.lock().next_backoff();
+                    };
 
-                            let backoff_duration =
-                                self.resource_exhausted_backoff.lock().next_backoff();
-
-                            return (false, backoff_duration);
-                        } else {
-                            // Other codes that would normally have made us back off briefly can
-                            // reclaim this poller
-                            self.change_target(usize::saturating_sub, 1);
-                        }
-                    }
                     // Only propagate errors out if they weren't because of the short-circuiting
                     // logic. IE: We don't want to fail callers because we said we wanted to know
                     // about ResourceExhausted errors, but we haven't seen a scaling decision yet,
@@ -650,7 +655,19 @@ impl PollScalerReportHandle {
                     let should_forward = !e
                         .metadata()
                         .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
-                    return (should_forward, None);
+
+                    // We should only react to errors in autoscaling mode if we saw a scaling decision
+                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
+                        debug!("Got error from server while polling: {:?}", e);
+                        if e.code() == Code::ResourceExhausted {
+                            // Scale down significantly for resource exhaustion
+                            self.change_target(usize::saturating_div, 2);
+                        } else {
+                            // Other codes that would normally have made us back off briefly can reclaim this poller
+                            self.change_target(usize::saturating_sub, 1);
+                        }
+                    }
+                    return (should_forward, backoff_duration);
                 }
             }
         }
@@ -799,6 +816,7 @@ mod tests {
         worker::client::mocks::mock_manual_worker_client,
     };
     use futures_util::FutureExt;
+    use rstest::rstest;
     use std::time::Duration;
     use tokio::{select, sync::Notify};
 
@@ -1008,8 +1026,11 @@ mod tests {
         });
     }
 
+    #[rstest]
+    #[case::resource_exhausted(Code::ResourceExhausted)]
+    #[case::internal(Code::Internal)]
     #[tokio::test]
-    async fn autoscaler_applies_backoff_on_resource_exhausted() {
+    async fn autoscaler_applies_backoff_on_errors(#[case] error_code: Code) {
         use temporalio_common::protos::temporal::api::taskqueue::v1::PollerScalingDecision;
 
         let call_count = Arc::new(AtomicUsize::new(0));
@@ -1031,16 +1052,15 @@ mod tests {
                             task_token: vec![], // Empty poll
                             poller_scaling_decision: Some(PollerScalingDecision {
                                 // Aggressively scale up to max
-                                poll_request_delta_suggestion: 100,
+                                poll_request_delta_suggestion: 0,
                             }),
                             ..Default::default()
                         })
                     } else {
-                        // All subsequent polls: return ResourceExhausted immediately
-                        // This simulates the namespace RPS limit being exceeded
+                        // All subsequent polls fail with a grpc error
                         Err(tonic::Status::new(
-                            Code::ResourceExhausted,
-                            "namespace rate limit exceeded",
+                            error_code,
+                            format!("simulated grpc error {error_code}"),
                         ))
                     }
                 }
