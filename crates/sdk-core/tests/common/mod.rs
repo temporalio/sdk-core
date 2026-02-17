@@ -347,12 +347,7 @@ impl CoreWfStarter {
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let worker = self.get_worker().await;
         let client = self.get_client().await;
-        let sdk = Worker::new_from_core_definitions(
-            worker,
-            client.data_converter().clone(),
-            self.sdk_config.activities(),
-            self.sdk_config.workflows(),
-        );
+        let sdk = Worker::new_from_core_worker(worker, self.sdk_config.clone());
         let mut w = TestWorker::new(sdk);
         w.client = Some(client);
 

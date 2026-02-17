@@ -431,46 +431,25 @@ impl Worker {
     pub fn new(
         runtime: &CoreRuntime,
         client: Client,
-        mut options: WorkerOptions,
+        options: WorkerOptions,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let acts = std::mem::take(&mut options.activities);
-        let wfs = std::mem::take(&mut options.workflows);
         let wc = options
             .to_core_options(client.namespace())
             .map_err(|s| anyhow::anyhow!("{s}"))?;
         let core = init_worker(runtime, wc, client.connection().clone())?;
-        let mut me = Self::new_from_core_definitions(
-            Arc::new(core),
-            client.data_converter().clone(),
-            Default::default(),
-            Default::default(),
-        );
-        me.activity_half.activities = acts;
-        me.workflow_half.workflow_definitions = wfs;
-        Ok(me)
+        Ok(Self::new_from_core_worker(Arc::new(core), options))
     }
 
     #[doc(hidden)]
     pub fn new_from_core_worker(worker: Arc<CoreWorker>, mut options: WorkerOptions) -> Self {
         let activities = std::mem::take(&mut options.activities);
         let workflows = std::mem::take(&mut options.workflows);
-        Self::new_from_core_definitions(worker, DataConverter::default(), activities, workflows)
-    }
-
-    // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
-    #[doc(hidden)]
-    pub fn new_from_core_definitions(
-        worker: Arc<CoreWorker>,
-        data_converter: DataConverter,
-        activities: ActivityDefinitions,
-        workflows: WorkflowDefinitions,
-    ) -> Self {
         Self {
             common: CommonWorker {
                 task_queue: worker.get_config().task_queue.clone(),
                 worker,
                 worker_interceptor: None,
-                data_converter,
+                data_converter: DataConverter::default(),
             },
             workflow_half: WorkflowHalf {
                 workflow_definitions: workflows,
