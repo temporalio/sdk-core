@@ -37,7 +37,7 @@ use temporalio_client::{
 };
 use temporalio_common::{
     WorkflowDefinition,
-    data_converters::{DataConverter, RawValue},
+    data_converters::RawValue,
     protos::{
         coresdk::{
             workflow_activation::WorkflowActivation,
@@ -164,9 +164,9 @@ pub(crate) fn replay_sdk_worker_stream<I>(histories: I) -> Worker
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
-    let core = init_core_replay_stream("replay_worker_test", histories);
-    // TODO [rust-sdk-branch]: Needs DC passed in
-    let mut worker = Worker::new_from_core(Arc::new(core), DataConverter::default());
+    let tq = "replay_worker_test";
+    let core = init_core_replay_stream(tq, histories);
+    let mut worker = Worker::new_from_core_worker(Arc::new(core), WorkerOptions::new(tq).build());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -975,8 +975,11 @@ pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporalio_sdk::Worker {
         c.ignore_evicts_on_shutdown = false;
     });
     let core = mock_worker(mock);
-    let mut worker =
-        temporalio_sdk::Worker::new_from_core(Arc::new(core), DataConverter::default());
+    let tq = core.get_config().task_queue.clone();
+    let mut worker = temporalio_sdk::Worker::new_from_core_worker(
+        Arc::new(core),
+        WorkerOptions::new(tq).build(),
+    );
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -993,9 +996,10 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(temporalio_sdk::Worker::new_from_core(
+    let tq = core.get_config().task_queue.clone();
+    TestWorker::new(temporalio_sdk::Worker::new_from_core_worker(
         Arc::new(core),
-        DataConverter::default(),
+        WorkerOptions::new(tq).build(),
     ))
 }
 

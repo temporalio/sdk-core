@@ -450,15 +450,11 @@ impl Worker {
         Ok(me)
     }
 
-    // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
     #[doc(hidden)]
-    pub fn new_from_core(worker: Arc<CoreWorker>, data_converter: DataConverter) -> Self {
-        Self::new_from_core_definitions(
-            worker,
-            data_converter,
-            Default::default(),
-            Default::default(),
-        )
+    pub fn new_from_core_worker(worker: Arc<CoreWorker>, mut options: WorkerOptions) -> Self {
+        let activities = std::mem::take(&mut options.activities);
+        let workflows = std::mem::take(&mut options.workflows);
+        Self::new_from_core_definitions(worker, DataConverter::default(), activities, workflows)
     }
 
     // TODO [rust-sdk-branch]: Eliminate this constructor in favor of passing in fake connection
