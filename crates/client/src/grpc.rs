@@ -1,6 +1,8 @@
-//! We need a way to trait-ify the raw grpc client because there is no other way to get the
-//! information we need via interceptors. This module contains the necessary stuff to make that
-//! happen.
+//! gRPC service traits for direct access to Temporal services.
+//!
+//! Most users should use the higher-level methods on [`Client`] or [`Connection`] instead.
+//! These traits are useful for advanced scenarios like custom interceptors, testing with mocks,
+//! or making raw gRPC calls not covered by the higher-level API.
 
 use crate::{
     Client, Connection, LONG_POLL_TIMEOUT, RequestExt, SharedReplaceableClient,
