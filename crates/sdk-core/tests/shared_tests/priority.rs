@@ -1,13 +1,12 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{
-    GetWorkflowResultOptions, Priority, WfClientExt, WorkflowClientTrait, WorkflowOptions,
+use temporalio_client::{Priority, UntypedWorkflow, WorkflowGetResultOptions};
+use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
+use temporalio_macros::{activities, workflow, workflow_methods};
+use temporalio_sdk::{
+    ActivityOptions, ChildWorkflowOptions, WorkflowContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
 };
-use temporalio_common::protos::{
-    coresdk::AsJsonPayloadExt,
-    temporal::api::{common, history::v1::history_event::Attributes},
-};
-use temporalio_sdk::{ActContext, ActivityOptions, ChildWorkflowOptions, WfContext};
 
 pub(crate) async fn priority_values_sent_to_server() {
     let mut starter = if let Some(wfs) =
@@ -17,95 +16,121 @@ pub(crate) async fn priority_values_sent_to_server() {
     } else {
         return;
     };
-    starter.workflow_options.priority = Some(Priority {
-        priority_key: 1,
-        fairness_key: "fair-wf".to_string(),
-        fairness_weight: 4.2,
-    });
+    starter.workflow_options.priority = Priority {
+        priority_key: Some(1),
+        fairness_key: Some("fair-wf".to_string()),
+        fairness_weight: Some(4.2),
+    };
     let mut worker = starter.worker().await;
     let child_type = "child-wf";
 
-    worker.register_wf(starter.get_task_queue(), move |ctx: WfContext| async move {
-        let child = ctx.child_workflow(ChildWorkflowOptions {
-            workflow_id: format!("{}-child", ctx.task_queue()),
-            workflow_type: child_type.to_owned(),
-            options: WorkflowOptions {
+    struct PriorityActivities;
+    #[activities]
+    impl PriorityActivities {
+        #[activity]
+        async fn echo(ctx: ActivityContext, echo_me: String) -> Result<String, ActivityError> {
+            assert_eq!(
+                ctx.info().priority,
+                Priority {
+                    priority_key: Some(5),
+                    fairness_key: Some("fair-act".to_string()),
+                    fairness_weight: Some(1.1)
+                }
+            );
+            Ok(echo_me)
+        }
+    }
+
+    #[workflow]
+    #[derive(Default)]
+    struct ParentWf {
+        child_type: String,
+    }
+
+    #[workflow_methods]
+    impl ParentWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let child = ctx.child_workflow(ChildWorkflowOptions {
+                workflow_id: format!("{}-child", ctx.task_queue()),
+                workflow_type: ctx.state(|wf| wf.child_type.clone()),
                 priority: Some(Priority {
-                    priority_key: 4,
-                    fairness_key: "fair-child".to_string(),
-                    fairness_weight: 1.23,
+                    priority_key: Some(4),
+                    fairness_key: Some("fair-child".to_string()),
+                    fairness_weight: Some(1.23),
                 }),
                 ..Default::default()
-            },
-            ..Default::default()
-        });
+            });
 
-        let started = child
-            .start(&ctx)
-            .await
-            .into_started()
-            .expect("Child should start OK");
-        let activity = ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hello".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            priority: Some(Priority {
-                priority_key: 5,
-                fairness_key: "fair-act".to_string(),
-                fairness_weight: 1.1,
-            }),
-            // Currently no priority info attached to eagerly run activities
-            do_not_eagerly_execute: true,
-            ..Default::default()
-        });
-        started.result().await;
-        activity.await.unwrap_ok_payload();
-        Ok(().into())
-    });
-    worker.register_wf(child_type.to_owned(), |ctx: WfContext| async move {
-        assert_eq!(
-            ctx.workflow_initial_info().priority,
-            Some(common::v1::Priority {
-                priority_key: 4,
-                fairness_key: "fair-child".to_string(),
-                fairness_weight: 1.23
-            })
-        );
-        Ok(().into())
-    });
-    worker.register_activity("echo", |ctx: ActContext, echo_me: String| async move {
-        assert_eq!(
-            ctx.get_info().priority,
-            Priority {
-                priority_key: 5,
-                fairness_key: "fair-act".to_string(),
-                fairness_weight: 1.1
-            }
-        );
-        Ok(echo_me)
-    });
+            let started = child
+                .start()
+                .await
+                .into_started()
+                .expect("Child should start OK");
+            let activity = ctx.start_activity(
+                PriorityActivities::echo,
+                "hello".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    priority: Some(Priority {
+                        priority_key: Some(5),
+                        fairness_key: Some("fair-act".to_string()),
+                        fairness_weight: Some(1.1),
+                    }),
+                    do_not_eagerly_execute: true,
+                    ..Default::default()
+                },
+            );
+            started.result().await;
+            let _ = activity.await;
+            Ok(())
+        }
+    }
 
-    starter
-        .start_with_worker(starter.get_task_queue(), &mut worker)
-        .await;
+    #[workflow]
+    #[derive(Default)]
+    struct ChildWf;
+
+    #[workflow_methods]
+    impl ChildWf {
+        #[run(name = "child-wf")]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            assert_eq!(
+                ctx.workflow_initial_info().priority,
+                Some(common::v1::Priority {
+                    priority_key: 4,
+                    fairness_key: "fair-child".to_string(),
+                    fairness_weight: 1.23
+                })
+            );
+            Ok(())
+        }
+    }
+
+    worker.register_activities(PriorityActivities);
+    worker.register_workflow_with_factory::<ParentWf, _>(move || ParentWf {
+        child_type: child_type.to_owned(),
+    });
+    worker.register_workflow::<ChildWf>();
+
+    worker
+        .submit_workflow(ParentWf::run, (), starter.workflow_options.clone())
+        .await
+        .unwrap();
     worker.run_until_done().await.unwrap();
 
     let client = starter.get_client().await;
-    let handle = client.get_untyped_workflow_handle(starter.get_task_queue(), "");
-    let res = handle
-        .get_workflow_result(GetWorkflowResultOptions::default())
+    let handle = client.get_workflow_handle::<UntypedWorkflow>(starter.get_task_queue());
+    handle
+        .get_result(WorkflowGetResultOptions::default())
         .await
         .unwrap();
-    // Expect workflow success
-    res.unwrap_success();
-    let history = client
-        .get_workflow_execution_history(starter.get_task_queue().to_owned(), None, vec![])
+    let events = handle
+        .fetch_history(Default::default())
         .await
         .unwrap()
-        .history
-        .unwrap();
-    let workflow_init_event = history
-        .events
+        .into_events();
+    let workflow_init_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::WorkflowExecutionStartedEventAttributes(e) =
@@ -121,8 +146,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         workflow_init_event.priority.as_ref().unwrap().priority_key,
         1
     );
-    let child_init_event = history
-        .events
+    let child_init_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(e) =
@@ -135,8 +159,7 @@ pub(crate) async fn priority_values_sent_to_server() {
         })
         .unwrap();
     assert_eq!(child_init_event.priority.as_ref().unwrap().priority_key, 4);
-    let activity_sched_event = history
-        .events
+    let activity_sched_event = events
         .iter()
         .find_map(|e| {
             if let Attributes::ActivityTaskScheduledEventAttributes(e) =

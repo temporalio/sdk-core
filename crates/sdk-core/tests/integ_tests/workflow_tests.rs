@@ -1,8 +1,8 @@
 mod activities;
-mod appdata_propagation;
 mod cancel_external;
 mod cancel_wf;
 mod child_workflows;
+mod client_interactions;
 mod continue_as_new;
 mod determinism;
 mod eager;
@@ -11,6 +11,7 @@ mod modify_wf_properties;
 mod nexus;
 mod patches;
 mod priority;
+mod queries;
 mod replay;
 mod resets;
 mod signals;
@@ -20,26 +21,30 @@ mod upsert_search_attrs;
 
 use crate::{
     common::{
-        CoreWfStarter, get_integ_runtime_options, history_from_proto_binary,
-        init_core_and_create_wf, init_core_replay_preloaded, mock_sdk_cfg, prom_metrics,
+        CoreWfStarter, activity_functions::StdActivities, get_integ_runtime_options,
+        history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
+        mock_sdk_cfg, prom_metrics,
     },
-    integ_tests::{activity_functions::echo, metrics_tests},
+    integ_tests::metrics_tests,
 };
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 use temporalio_client::{
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions,
+    NamespacedClient, UntypedQuery, UntypedSignal, UntypedWorkflow, WorkflowExecutionInfo,
+    WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
+    errors::WorkflowGetResultError, grpc::WorkflowService,
 };
 use temporalio_common::{
-    errors::{PollError, WorkflowErrorType},
+    data_converters::RawValue,
     prost_dur,
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            ActivityTaskCompletion, IntoCompletion,
             activity_result::ActivityExecutionResult,
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
             workflow_commands::{
@@ -49,48 +54,59 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
+            common::v1::WorkflowExecution,
             enums::v1::{CommandType, EventType},
             failure::v1::Failure,
             history::v1::history_event,
-            query::v1::WorkflowQuery,
             sdk::v1::UserMetadata,
+            workflowservice::v1::ResetStickyTaskQueueRequest,
         },
         test_utils::schedule_activity_cmd,
     },
-    worker::{
-        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes,
-        WorkerVersioningStrategy,
-    },
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
+use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, LocalActivityOptions, TimerOptions, WfContext, interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, TimerOptions, WorkflowContext, WorkflowResult,
+    interceptors::WorkerInterceptor,
 };
 use temporalio_sdk_core::{
-    CoreRuntime,
+    CoreRuntime, PollError, PollerBehavior, TunerHolder, WorkflowErrorType,
     replay::HistoryForReplay,
     test_help::{MockPollCfg, WorkerTestHelpers, drain_pollers_and_shutdown},
 };
 use tokio::{join, sync::Notify, time::sleep};
+use tonic::IntoRequest;
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
+
+#[workflow]
+#[derive(Default)]
+struct ParallelWorkflowsWf;
+
+#[workflow_methods]
+impl ParallelWorkflowsWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn parallel_workflows_same_queue() {
     let wf_name = "parallel_workflows_same_queue";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut core = starter.worker().await;
 
-    core.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+    core.register_workflow::<ParallelWorkflowsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..25 {
-        core.submit_wf(
-            format!("{wf_name}-{i}"),
-            wf_name,
-            vec![],
-            starter.workflow_options.clone(),
+        core.submit_workflow(
+            ParallelWorkflowsWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
         )
         .await
         .unwrap();
@@ -139,7 +155,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
             attrs.first_execution_run_id = "run2".to_string();
         }
         let hist2 = HistoryForReplay::new(hist_proto, "fake".to_string());
-        init_core_replay_preloaded("fail_wf_task", [hist, hist2])
+        Arc::new(init_core_replay_preloaded("fail_wf_task", [hist, hist2]))
     } else {
         let mut starter = init_core_and_create_wf("fail_wf_task").await;
         starter.get_worker().await
@@ -223,23 +239,26 @@ async fn signal_workflow() {
     .unwrap();
 
     // Send the signals to the server
-    client
-        .signal_workflow_execution(
-            workflow_id.to_string(),
-            res.run_id.to_string(),
-            signal_id_1.to_string(),
-            None,
-            None,
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.clone(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
+    handle
+        .signal(
+            UntypedSignal::new(signal_id_1),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
-    client
-        .signal_workflow_execution(
-            workflow_id.to_string(),
-            res.run_id.to_string(),
-            signal_id_2.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_id_2),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -320,18 +339,21 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             let run_id = res.run_id.clone();
 
             // Send the signal to the server
-            starter
-                .get_client()
-                .await
-                .signal_workflow_execution(
-                    workflow_id.clone(),
-                    res.run_id.to_string(),
-                    signal_id_1.to_string(),
-                    None,
-                    None,
-                )
-                .await
-                .unwrap();
+            let sig_client = starter.get_client().await;
+            WorkflowExecutionInfo {
+                namespace: sig_client.namespace(),
+                workflow_id: workflow_id.clone(),
+                run_id: Some(res.run_id.clone()),
+                first_execution_run_id: None,
+            }
+            .bind_untyped(sig_client.clone())
+            .signal(
+                UntypedSignal::new(signal_id_1),
+                RawValue::empty(),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
 
             // Send completion - not having seen a poll response with a signal in it yet (unhandled
             // command error will be logged as a warning and an eviction will be issued)
@@ -365,9 +387,9 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let signal_at_complete = "at-complete";
     let mut wf_starter = CoreWfStarter::new("wft_timeout_doesnt_create_unsolvable_autocomplete");
     // Test needs eviction on and a short timeout
-    wf_starter.worker_config.max_cached_workflows = 0_usize;
-    wf_starter.worker_config.max_outstanding_workflow_tasks = Some(1_usize);
-    wf_starter.worker_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
+    wf_starter.sdk_config.max_cached_workflows = 0_usize;
+    wf_starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(1, 1, 1, 1));
+    wf_starter.sdk_config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1_usize);
     wf_starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
     let client = wf_starter.get_client().await;
@@ -399,16 +421,20 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Before polling for a task again, we start and complete the activity and send the
     // corresponding signals.
     let ac_task = core.poll_activity_task().await.unwrap();
-    let rid = wf_task.run_id.clone();
+    let handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: wf_id.to_string(),
+        run_id: Some(wf_task.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
-    client
-        .signal_workflow_execution(
-            wf_id.to_string(),
-            rid,
-            signal_at_start.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_at_start),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -419,14 +445,11 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     })
     .await
     .unwrap();
-    let rid = wf_task.run_id.clone();
-    client
-        .signal_workflow_execution(
-            wf_id.to_string(),
-            rid,
-            signal_at_complete.to_string(),
-            None,
-            None,
+    handle
+        .signal(
+            UntypedSignal::new(signal_at_complete),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -469,34 +492,49 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 /// overflow. This test intentionally makes completes slower than polls to evaluate that.
 ///
 /// It's expected that this test may generate some task timeouts.
+#[workflow]
+#[derive(Default)]
+struct SlowCompletesWf;
+
+#[workflow_methods]
+impl SlowCompletesWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        for _ in 0..3 {
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn slow_completes_with_small_cache() {
     let wf_name = "slow_completes_with_small_cache";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.max_outstanding_workflow_tasks = Some(5_usize);
-    starter.worker_config.max_cached_workflows = 5_usize;
+    starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(5, 10, 1, 1));
+    starter.sdk_config.max_cached_workflows = 5_usize;
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        for _ in 0..3 {
-            ctx.activity(ActivityOptions {
-                activity_type: "echo_activity".to_string(),
-                start_to_close_timeout: Some(Duration::from_secs(5)),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                ..Default::default()
-            })
-            .await;
-            ctx.timer(Duration::from_secs(1)).await;
-        }
-        Ok(().into())
-    });
-    worker.register_activity("echo_activity", echo);
+
+    worker.register_activities(StdActivities);
+
+    worker.register_workflow::<SlowCompletesWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
-            .submit_wf(
-                format!("{wf_name}_{i}"),
-                wf_name.to_owned(),
-                vec![],
-                WorkflowOptions::default(),
+            .submit_workflow(
+                SlowCompletesWf::run,
+                (),
+                WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
             .await
             .unwrap();
@@ -522,22 +560,26 @@ async fn slow_completes_with_small_cache() {
 async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_build_id: bool) {
     let wf_type = "deployment_version_correct_in_wf_info";
     let mut starter = CoreWfStarter::new(wf_type);
-    let version_strat = if use_only_build_id {
-        WorkerVersioningStrategy::None {
-            build_id: "1.0".to_owned(),
+    starter.sdk_config.deployment_options = if use_only_build_id {
+        WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_string(),
+                build_id: "1.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
         }
     } else {
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+        WorkerDeploymentOptions {
             version: WorkerDeploymentVersion {
                 deployment_name: "deployment-1".to_string(),
                 build_id: "1.0".to_string(),
             },
             use_worker_versioning: false,
             default_versioning_behavior: None,
-        })
+        }
     };
-    starter.worker_config.versioning_strategy = version_strat;
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let core = starter.get_worker().await;
     starter.start_wf().await;
     let client = starter.get_client().await;
@@ -567,15 +609,19 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     .unwrap();
 
     // Ensure a query on first wft also sees the correct id
+    let query_handle = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: workflow_id.clone(),
+        run_id: Some(res.run_id.clone()),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     let query_fut = async {
-        client
-            .query_workflow_execution(
-                workflow_id.clone(),
-                res.run_id.to_string(),
-                WorkflowQuery {
-                    query_type: "q1".to_string(),
-                    ..Default::default()
-                },
+        query_handle
+            .query(
+                UntypedQuery::new("q1"),
+                RawValue::empty(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -621,39 +667,49 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     };
     join!(query_fut, complete_fut);
     starter.shutdown().await;
-    client
-        .reset_sticky_task_queue(workflow_id.clone(), "".to_string())
-        .await
-        .unwrap();
+    WorkflowService::reset_sticky_task_queue(
+        &mut client.clone(),
+        ResetStickyTaskQueueRequest {
+            namespace: client.namespace(),
+            execution: Some(WorkflowExecution {
+                workflow_id: workflow_id.clone(),
+                run_id: "".to_string(),
+            }),
+        }
+        .into_request(),
+    )
+    .await
+    .unwrap();
 
     let mut starter = starter.clone_no_worker();
-    let version_strat = if use_only_build_id {
-        WorkerVersioningStrategy::None {
-            build_id: "2.0".to_owned(),
+    starter.sdk_config.deployment_options = if use_only_build_id {
+        WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_string(),
+                build_id: "2.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
         }
     } else {
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+        WorkerDeploymentOptions {
             version: WorkerDeploymentVersion {
                 deployment_name: "deployment-1".to_string(),
                 build_id: "2.0".to_string(),
             },
             use_worker_versioning: false,
             default_versioning_behavior: None,
-        })
+        }
     };
-    starter.worker_config.versioning_strategy = version_strat;
 
     let core = starter.get_worker().await;
 
     let query_fut = async {
-        client
-            .query_workflow_execution(
-                workflow_id.clone(),
-                res.run_id.to_string(),
-                WorkflowQuery {
-                    query_type: "q2".to_string(),
-                    ..Default::default()
-                },
+        query_handle
+            .query(
+                UntypedQuery::new("q2"),
+                RawValue::empty(),
+                WorkflowQueryOptions::default(),
             )
             .await
             .unwrap()
@@ -722,12 +778,11 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     join!(query_fut, complete_fut);
 
     client
-        .signal_workflow_execution(
-            workflow_id.clone(),
-            "".to_string(),
-            "whatever".to_string(),
-            None,
-            None,
+        .get_workflow_handle::<UntypedWorkflow>(&workflow_id)
+        .signal(
+            UntypedSignal::new("whatever"),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
         )
         .await
         .unwrap();
@@ -751,6 +806,8 @@ async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_b
     core.complete_execution(&res.run_id).await;
 }
 
+const NONDETERMINISM_WF_NAME: &str = "nondeterminism_errors_fail_workflow_when_configured_to";
+
 #[rstest::rstest]
 #[tokio::test]
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
@@ -758,26 +815,36 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 ) {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
+    let wf_name = NONDETERMINISM_WF_NAME;
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
-        starter.worker_config.workflow_failure_errors = typeset;
+        starter.sdk_config.workflow_failure_errors = typeset;
     } else {
-        starter.worker_config.workflow_types_to_failure_errors =
+        starter.sdk_config.workflow_types_to_failure_errors =
             HashMap::from([(wf_name.to_owned(), typeset)]);
     }
     let wf_id = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
 
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
-        ctx.timer(Duration::from_secs(1000)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct NondeterminismTimerWf;
+
+    #[workflow_methods]
+    impl NondeterminismTimerWf {
+        #[run(name = NONDETERMINISM_WF_NAME)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(Duration::from_secs(1000)).await;
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<NondeterminismTimerWf>();
     let client = starter.get_client().await;
-    let core_worker = worker.core_worker.clone();
+    let core_worker = worker.core_worker();
     starter.start_with_worker(wf_name, &mut worker).await;
 
     let stopper = async {
@@ -802,23 +869,53 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
 
     // Restart the worker with a new, incompatible wf definition which will cause nondeterminism
     let mut starter = starter.clone_no_worker();
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "echo_activity".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
-    });
+
+    #[workflow]
+    #[derive(Default)]
+    struct NondeterminismActivityWf;
+
+    #[workflow_methods]
+    impl NondeterminismActivityWf {
+        #[run(name = NONDETERMINISM_WF_NAME)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi".to_owned(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<NondeterminismActivityWf>();
     // We need to generate a task so that we'll encounter the error (first avoid WFT timeout)
+    WorkflowService::reset_sticky_task_queue(
+        &mut client.clone(),
+        ResetStickyTaskQueueRequest {
+            namespace: client.namespace(),
+            execution: Some(WorkflowExecution {
+                workflow_id: wf_id.clone(),
+                run_id: "".to_string(),
+            }),
+        }
+        .into_request(),
+    )
+    .await
+    .unwrap();
     client
-        .reset_sticky_task_queue(wf_id.clone(), "".to_string())
-        .await
-        .unwrap();
-    client
-        .signal_workflow_execution(wf_id.clone(), "".to_string(), "hi".to_string(), None, None)
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .signal(
+            UntypedSignal::new("hi"),
+            RawValue::empty(),
+            WorkflowSignalOptions::default(),
+        )
         .await
         .unwrap();
     worker.expect_workflow_completion(&wf_id, None);
@@ -834,70 +931,105 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     assert!(body.contains(&match_this));
 }
 
+const HISTORY_OUT_OF_ORDER_WF_NAME: &str = "history_out_of_order_on_restart";
+
 #[tokio::test]
 async fn history_out_of_order_on_restart() {
-    let wf_name = "history_out_of_order_on_restart";
+    let wf_name = HISTORY_OUT_OF_ORDER_WF_NAME;
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.worker_config.workflow_failure_errors =
-        HashSet::from([WorkflowErrorType::Nondeterminism]);
+    starter.sdk_config.workflow_failure_errors = HashSet::from([WorkflowErrorType::Nondeterminism]);
     let mut worker = starter.worker().await;
     let mut starter2 = starter.clone_no_worker();
     let mut worker2 = starter2.worker().await;
 
-    static HIT_SLEEP: Notify = Notify::const_new();
+    let hit_sleep = Arc::new(Notify::new());
+    let hit_sleep_clone1 = hit_sleep.clone();
+    let hit_sleep_clone2 = hit_sleep.clone();
 
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(LocalActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
-        .await;
-        ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
-        .await;
-        // Interrupt this sleep on first go
-        HIT_SLEEP.notify_one();
-        ctx.timer(Duration::from_secs(5)).await;
-        Ok(().into())
-    });
-    worker.register_activity("echo", echo);
+    #[workflow]
+    struct HistoryOutOfOrderWf1 {
+        hit_sleep: Arc<Notify>,
+    }
 
-    worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.local_activity(LocalActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
-        .await;
-        // Timer is added after restarting workflow
-        ctx.timer(Duration::from_secs(1)).await;
-        ctx.activity(ActivityOptions {
-            activity_type: "echo".to_owned(),
-            input: "hi".as_json_payload().unwrap(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            ..Default::default()
-        })
-        .await;
-        ctx.timer(Duration::from_secs(2)).await;
-        Ok(().into())
+    #[workflow_methods(factory_only)]
+    impl HistoryOutOfOrderWf1 {
+        #[run(name = HISTORY_OUT_OF_ORDER_WF_NAME)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_local_activity(
+                StdActivities::echo,
+                "hi".to_string(),
+                LocalActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.state(|wf| wf.hit_sleep.notify_one());
+            ctx.timer(Duration::from_secs(5)).await;
+            Ok(())
+        }
+    }
+
+    #[workflow]
+    #[derive(Default)]
+    struct HistoryOutOfOrderWf2;
+
+    #[workflow_methods]
+    impl HistoryOutOfOrderWf2 {
+        #[run(name = HISTORY_OUT_OF_ORDER_WF_NAME)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.start_local_activity(
+                StdActivities::echo,
+                "hi".to_string(),
+                LocalActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            // Timer is added after restarting workflow
+            ctx.timer(Duration::from_secs(1)).await;
+            ctx.start_activity(
+                StdActivities::echo,
+                "hi".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.timer(Duration::from_secs(2)).await;
+            Ok(())
+        }
+    }
+
+    worker.register_activities(StdActivities);
+    worker2.register_activities(StdActivities);
+    worker.register_workflow_with_factory(move || HistoryOutOfOrderWf1 {
+        hit_sleep: hit_sleep_clone1.clone(),
     });
-    worker2.register_activity("echo", echo);
+    worker2.register_workflow::<HistoryOutOfOrderWf2>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions {
-                execution_timeout: Some(Duration::from_secs(20)),
-                ..Default::default()
-            },
+        .submit_workflow(
+            HistoryOutOfOrderWf1::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned())
+                .execution_timeout(Duration::from_secs(20))
+                .build(),
         )
         .await
         .unwrap();
@@ -907,7 +1039,7 @@ async fn history_out_of_order_on_restart() {
     };
     let w2 = async {
         // wait to hit sleep
-        HIT_SLEEP.notified().await;
+        hit_sleep_clone2.notified().await;
         starter.shutdown().await;
         // start new worker
         worker2.expect_workflow_completion(wf_name, None);
@@ -918,12 +1050,9 @@ async fn history_out_of_order_on_restart() {
     let handle = starter
         .get_client()
         .await
-        .get_untyped_workflow_handle(wf_name, "");
-    let res = handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
-    assert_matches!(res, WorkflowExecutionResult::Failed(_));
+        .get_workflow_handle::<UntypedWorkflow>(wf_name);
+    let res = handle.get_result(Default::default()).await;
+    assert_matches!(res, Err(WorkflowGetResultError::Failed(_)));
 }
 
 #[tokio::test]
@@ -931,7 +1060,6 @@ async fn pass_timer_summary_to_metadata() {
     let t = canned_histories::single_timer("1");
     let mut mock_cfg = MockPollCfg::from_hist_builder(t);
     let wf_id = mock_cfg.hists[0].wf_id.clone();
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
     let expected_user_metadata = Some(UserMetadata {
         summary: Some(b"timer summary".into()),
         details: None,
@@ -952,21 +1080,30 @@ async fn pass_timer_summary_to_metadata() {
             });
     });
 
+    #[workflow]
+    #[derive(Default)]
+    struct PassTimerSummaryWf;
+
+    #[workflow_methods]
+    impl PassTimerSummaryWf {
+        #[run(name = DEFAULT_WORKFLOW_TYPE)]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(TimerOptions {
+                duration: Duration::from_secs(1),
+                summary: Some("timer summary".to_string()),
+            })
+            .await;
+            Ok(())
+        }
+    }
+
     let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
-    worker.register_wf(wf_type, |ctx: WfContext| async move {
-        ctx.timer(TimerOptions {
-            duration: Duration::from_secs(1),
-            summary: Some("timer summary".to_string()),
-        })
-        .await;
-        Ok(().into())
-    });
+    worker.register_workflow::<PassTimerSummaryWf>();
     worker
         .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowStartOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
         )
         .await
         .unwrap();

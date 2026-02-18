@@ -1,11 +1,11 @@
 use crate::{
-    PollError, prost_dur,
+    CompleteNexusError, PollError, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
         WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
     },
     worker::{
-        self,
+        self, PollerBehavior,
         client::{
             MockWorkerClient,
             mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_worker_client},
@@ -15,8 +15,6 @@ use crate::{
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, collections::HashMap, time::Duration};
 use temporalio_common::{
-    Worker,
-    errors::CompleteNexusError,
     protos::{
         canned_histories,
         coresdk::{
@@ -51,7 +49,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::{PollerBehavior, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use tokio::sync::{Barrier, watch};
 use uuid::Uuid;

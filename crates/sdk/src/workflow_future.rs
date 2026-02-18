@@ -1,12 +1,12 @@
 use crate::{
-    CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, UpdateContext,
-    UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
-    panic_formatter,
+    BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
+    WorkflowTermination, panic_formatter,
+    workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
-use futures_util::{FutureExt, future::BoxFuture};
+use futures_util::{FutureExt, future::LocalBoxFuture};
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     future::Future,
     panic,
     panic::AssertUnwindSafe,
@@ -14,74 +14,103 @@ use std::{
     sync::mpsc::Receiver,
     task::{Context, Poll},
 };
-use temporalio_common::protos::{
-    coresdk::{
-        workflow_activation::{
-            FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
-            WorkflowActivationJob, workflow_activation_job::Variant,
+use temporalio_common::{
+    data_converters::PayloadConverter,
+    protos::{
+        coresdk::{
+            workflow_activation::{
+                FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,
+                ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
+                WorkflowActivation, WorkflowActivationJob, workflow_activation_job::Variant,
+            },
+            workflow_commands::{
+                CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
+                CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
+                QueryResult, QuerySuccess, RequestCancelActivity,
+                RequestCancelExternalWorkflowExecution, RequestCancelLocalActivity,
+                RequestCancelNexusOperation, ScheduleActivity, ScheduleLocalActivity, StartTimer,
+                UpdateResponse, WorkflowCommand, query_result, update_response, workflow_command,
+            },
+            workflow_completion,
+            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
         },
-        workflow_commands::{
-            CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
-            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
-            RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-            RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
-            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand, update_response,
-            workflow_command,
+        temporal::api::{
+            common::v1::{Payload, Payloads},
+            enums::v1::VersioningBehavior,
+            failure::v1::Failure,
         },
-        workflow_completion,
-        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
+        utilities::TryIntoOrNone,
     },
-    temporal::api::{common::v1::Payload, enums::v1::VersioningBehavior, failure::v1::Failure},
-    utilities::TryIntoOrNone,
 };
 use tokio::sync::{
     mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot, watch,
 };
-use tracing::Instrument;
+
+pub(crate) struct WorkflowFunction {
+    factory: WorkflowExecutionFactory,
+}
 
 impl WorkflowFunction {
+    pub(crate) fn from_invocation(factory: WorkflowExecutionFactory) -> Self {
+        WorkflowFunction { factory }
+    }
+
     /// Start a workflow function, returning a future that will resolve when the workflow does,
     /// and a channel that can be used to send it activations.
     pub(crate) fn start_workflow(
         &self,
         namespace: String,
         task_queue: String,
+        run_id: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
-    ) -> (
-        impl Future<Output = WorkflowResult<Payload>> + use<>,
-        UnboundedSender<WorkflowActivation>,
-    ) {
+        payload_converter: PayloadConverter,
+    ) -> Result<
+        (
+            impl Future<Output = WorkflowResult<Payload>> + use<>,
+            UnboundedSender<WorkflowActivation>,
+        ),
+        anyhow::Error,
+    > {
         let (cancel_tx, cancel_rx) = watch::channel(None);
         let span = info_span!(
             "RunWorkflow",
             "otel.name" = format!("RunWorkflow:{}", &init_workflow_job.workflow_type),
             "otel.kind" = "server"
         );
-        let (wf_context, cmd_receiver) =
-            WfContext::new(namespace, task_queue, init_workflow_job, cancel_rx);
+
+        let input = init_workflow_job.arguments.clone();
+        let (base_ctx, cmd_receiver) = BaseWorkflowContext::new(
+            namespace,
+            task_queue,
+            run_id,
+            init_workflow_job,
+            cancel_rx,
+            payload_converter.clone(),
+        );
+
+        // Create the workflow execution using the factory
+        let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
+            .context("Failed to create workflow execution")?;
+
         let (tx, incoming_activations) = unbounded_channel();
-        let inner_fut = (self.wf_func)(wf_context.clone()).instrument(span);
-        (
+        Ok((
             WorkflowFuture {
-                wf_ctx: wf_context,
-                // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
-                // an artificial limit on how many commands we can unblock in one poll round.
-                // TODO: Now we *need* deadlock detection or we could hose the whole system
-                inner: tokio::task::unconstrained(inner_fut).fuse().boxed(),
+                base_ctx,
+                execution,
+                span,
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
                 incoming_activations,
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
-                sig_chans: Default::default(),
-                updates: Default::default(),
+                payload_converter,
                 update_futures: Default::default(),
+                signal_futures: Default::default(),
             },
             tx,
-        )
+        ))
     }
 }
 
@@ -89,18 +118,11 @@ struct WFCommandFutInfo {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-// Allows the workflow to receive signals even though the signal handler may not yet be registered.
-// TODO: Either make this go away by requiring all signals to be registered up-front in a more
-//   production-ready SDK design, or if desired to allow dynamic signal registration, prevent this
-//   from growing unbounded if being sent lots of unhandled signals.
-enum SigChanOrBuffer {
-    Chan(UnboundedSender<SignalData>),
-    Buffer(Vec<SignalData>),
-}
-
 pub(crate) struct WorkflowFuture {
-    /// Future produced by calling the workflow function
-    inner: BoxFuture<'static, WorkflowResult<Payload>>,
+    /// The workflow execution instance
+    execution: Box<dyn DynWorkflowExecution>,
+    /// The tracing span for this workflow
+    span: tracing::Span,
     /// Commands produced inside user's wf code
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
@@ -111,14 +133,17 @@ pub(crate) struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<Option<String>>,
-    /// Copy of the workflow context
-    wf_ctx: WfContext,
-    /// Maps signal IDs to channels to send down when they are signaled
-    sig_chans: HashMap<String, SigChanOrBuffer>,
-    /// Maps update handlers by name to implementations
-    updates: HashMap<String, UpdateFunctions>,
+    /// Base workflow context for sending commands
+    base_ctx: BaseWorkflowContext,
+    /// Payload converter for serialization/deserialization
+    payload_converter: PayloadConverter,
     /// Stores in-progress update futures
-    update_futures: Vec<(String, BoxFuture<'static, Result<Payload, Error>>)>,
+    update_futures: Vec<(
+        String,
+        LocalBoxFuture<'static, Result<Payload, crate::workflows::WorkflowError>>,
+    )>,
+    /// Stores in-progress signal futures
+    signal_futures: Vec<LocalBoxFuture<'static, Result<(), crate::workflows::WorkflowError>>>,
 }
 
 impl WorkflowFuture {
@@ -169,15 +194,18 @@ impl WorkflowFuture {
 
     /// Handle a particular workflow activation job.
     ///
-    /// Returns Ok(true) if the workflow should be evicted. Returns an error in the event that
-    /// the workflow task should be failed.
+    /// Returns `Ok(should_poll_wf)` where `should_poll_wf` indicates whether the workflow future
+    /// should be polled after this job. Query jobs return false since an activation containing
+    /// _only_ queries must not advance the workflow.
+    ///
+    /// Returns an error in the event that the workflow task should be failed.
     ///
     /// Panics if internal assumptions are violated
     fn handle_job(
         &mut self,
         variant: Option<Variant>,
         outgoing_cmds: &mut Vec<WorkflowCommand>,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         if let Some(v) = variant {
             match v {
                 Variant::InitializeWorkflow(_) => {
@@ -207,13 +235,54 @@ impl WorkflowFuture {
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
                 Variant::UpdateRandomSeed(rs) => {
-                    self.wf_ctx.shared.write().random_seed = rs.randomness_seed;
+                    self.base_ctx.shared_mut().random_seed = rs.randomness_seed;
                 }
                 Variant::QueryWorkflow(q) => {
-                    error!(
-                        "Queries are not implemented in the Rust SDK. Got query '{}'",
-                        q.query_type
+                    debug!(query_type = %q.query_type, "Query received");
+                    let query_type = q.query_type;
+                    let query_id = q.query_id;
+                    let data = DispatchData {
+                        payloads: Payloads {
+                            payloads: q.arguments,
+                        },
+                        headers: q.headers,
+                        converter: &self.payload_converter,
+                    };
+
+                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
+                        self.execution.dispatch_query(&query_type, data)
+                    })) {
+                        Ok(r) => r,
+                        Err(e) => Some(Err(anyhow!(
+                            "Panic in query handler: {}",
+                            panic_formatter(e)
+                        )
+                        .into())),
+                    };
+
+                    let response = match dispatch_result {
+                        Some(Ok(payload)) => query_result::Variant::Succeeded(QuerySuccess {
+                            response: Some(payload),
+                        }),
+                        // TODO [rust-sdk-branch]: Return list of known queries in error
+                        None => query_result::Variant::Failed(Failure {
+                            message: format!("No query handler for '{}'", query_type),
+                            ..Default::default()
+                        }),
+                        Some(Err(e)) => query_result::Variant::Failed(Failure {
+                            message: e.to_string(),
+                            ..Default::default()
+                        }),
+                    };
+
+                    outgoing_cmds.push(
+                        workflow_command::Variant::RespondToQuery(QueryResult {
+                            query_id,
+                            variant: Some(response),
+                        })
+                        .into(),
                     );
+                    return Ok(false);
                 }
                 Variant::CancelWorkflow(c) => {
                     // TODO: Cancel pending futures, etc
@@ -222,22 +291,31 @@ impl WorkflowFuture {
                         .expect("Cancel rx not dropped");
                 }
                 Variant::SignalWorkflow(sig) => {
-                    let mut dat = SignalData::new(sig.input);
-                    dat.headers = sig.headers;
-                    match self.sig_chans.entry(sig.signal_name) {
-                        Entry::Occupied(mut o) => match o.get_mut() {
-                            SigChanOrBuffer::Chan(chan) => {
-                                let _ = chan.send(dat);
-                            }
-                            SigChanOrBuffer::Buffer(buf) => buf.push(dat),
+                    debug!(signal_name = %sig.signal_name, "Signal received");
+                    let data = DispatchData {
+                        payloads: Payloads {
+                            payloads: sig.input,
                         },
-                        Entry::Vacant(v) => {
-                            v.insert(SigChanOrBuffer::Buffer(vec![dat]));
+                        headers: sig.headers,
+                        converter: &self.payload_converter,
+                    };
+
+                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
+                        self.execution.dispatch_signal(&sig.signal_name, data)
+                    })) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            bail!("Panic in signal handler: {}", panic_formatter(e));
                         }
+                    };
+
+                    if let Some(fut) = dispatch_result {
+                        self.signal_futures.push(fut);
                     }
+                    // TODO [rust-sdk-branch]: Buffer signals w/ no handler
                 }
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
-                    self.wf_ctx.shared.write().changes.insert(patch_id, true);
+                    self.base_ctx.shared_mut().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?;
@@ -246,61 +324,65 @@ impl WorkflowFuture {
                     self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?;
                 }
                 Variant::DoUpdate(u) => {
-                    if let Some(impls) = self.updates.get_mut(&u.name) {
-                        let info = UpdateInfo {
-                            update_id: u.id,
-                            headers: u.headers,
-                        };
-                        let defp = Payload::default();
-                        let val_res = if u.run_validator {
-                            match panic::catch_unwind(AssertUnwindSafe(|| {
-                                (impls.validator)(&info, u.input.first().unwrap_or(&defp))
-                            })) {
-                                Ok(r) => r,
-                                Err(e) => {
-                                    bail!("Panic in update validator {}", panic_formatter(e));
-                                }
+                    let protocol_instance_id = u.protocol_instance_id;
+                    let name = u.name;
+                    let data = DispatchData {
+                        payloads: Payloads { payloads: u.input },
+                        headers: u.headers,
+                        converter: &self.payload_converter,
+                    };
+
+                    let trait_val_result = if u.run_validator {
+                        match panic::catch_unwind(AssertUnwindSafe(|| {
+                            self.execution.validate_update(&name, &data)
+                        })) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                bail!("Panic in update validator {}", panic_formatter(e));
                             }
-                        } else {
-                            Ok(())
-                        };
-                        match val_res {
-                            Ok(_) => {
+                        }
+                    } else {
+                        Some(Ok(()))
+                    };
+
+                    let mut not_found = false;
+                    match trait_val_result {
+                        Some(Ok(())) => {
+                            if let Some(fut) = self.execution.start_update(&name, data) {
                                 outgoing_cmds.push(
                                     update_response(
-                                        u.protocol_instance_id.clone(),
+                                        protocol_instance_id.clone(),
                                         update_response::Response::Accepted(()),
                                     )
                                     .into(),
                                 );
-                                let handler_fut = (impls.handler)(
-                                    UpdateContext {
-                                        wf_ctx: self.wf_ctx.clone(),
-                                        info,
-                                    },
-                                    u.input.first().unwrap_or(&defp),
-                                );
                                 self.update_futures
-                                    .push((u.protocol_instance_id, handler_fut));
-                            }
-                            Err(e) => {
-                                outgoing_cmds.push(
-                                    update_response(
-                                        u.protocol_instance_id,
-                                        update_response::Response::Rejected(e.into()),
-                                    )
-                                    .into(),
-                                );
+                                    .push((protocol_instance_id.clone(), fut));
+                            } else {
+                                not_found = true;
                             }
                         }
-                    } else {
+                        Some(Err(e)) => {
+                            outgoing_cmds.push(
+                                update_response(
+                                    protocol_instance_id.clone(),
+                                    update_response::Response::Rejected(anyhow!(e).into()),
+                                )
+                                .into(),
+                            );
+                        }
+                        None => {
+                            not_found = true;
+                        }
+                    }
+                    if not_found {
                         outgoing_cmds.push(
                             update_response(
-                                u.protocol_instance_id,
+                                protocol_instance_id,
                                 update_response::Response::Rejected(
                                     format!(
                                         "No update handler registered for update name {}",
-                                        u.name
+                                        name
                                     )
                                     .into(),
                                 ),
@@ -333,7 +415,7 @@ impl WorkflowFuture {
             bail!("Empty activation job variant");
         }
 
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -347,9 +429,9 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
-                        return Poll::Ready(Err(anyhow!(
+                        return Poll::Ready(Err(WorkflowTermination::failed(anyhow!(
                             "Workflow future's activation channel was lost!"
-                        )));
+                        ))));
                     }
                 },
                 Poll::Pending => return Poll::Pending,
@@ -358,7 +440,7 @@ impl Future for WorkflowFuture {
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             {
-                let mut wlock = self.wf_ctx.shared.write();
+                let mut wlock = self.base_ctx.shared_mut();
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
@@ -368,51 +450,53 @@ impl Future for WorkflowFuture {
             }
 
             let mut activation_cmds = vec![];
-            let mut init_activation_cmds = vec![];
-            // Lame hack to avoid hitting "unregistered" update handlers in a situation where
-            // the history has no commands until an update is accepted. Will go away w/ SDK redesign
-            if activation
-                .jobs
-                .iter()
-                .any(|j| matches!(j.variant, Some(Variant::InitializeWorkflow(_))))
-                && activation.jobs.iter().all(|j| {
-                    matches!(
-                        j.variant,
-                        Some(Variant::InitializeWorkflow(_) | Variant::DoUpdate(_))
-                    )
-                })
-            {
-                // Poll the workflow future once to get things registered
-                if self.poll_wf_future(cx, &run_id, &mut init_activation_cmds)? {
-                    continue;
-                }
-            }
 
             if is_only_eviction {
                 // No need to do anything with the workflow code in this case
                 self.outgoing_completions
                     .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
                     .expect("Completion channel intact");
-                return Ok(WfExitValue::Evicted).into();
+                return Err(WorkflowTermination::Evicted).into();
             }
 
+            let mut should_poll_wf = false;
             for WorkflowActivationJob { variant } in activation.jobs {
-                if let Err(e) = self.handle_job(variant, &mut activation_cmds) {
-                    self.fail_wft(run_id, e);
+                match self.handle_job(variant, &mut activation_cmds) {
+                    Ok(should_poll) => should_poll_wf |= should_poll,
+                    Err(e) => {
+                        self.fail_wft(run_id, e);
+                        continue 'activations;
+                    }
+                }
+            }
+
+            // Handle signals first
+            let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
+                .into_iter()
+                .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
+                    Poll::Ready(Ok(())) => None,
+                    Poll::Ready(Err(e)) => Some(Err(e)),
+                    Poll::Pending => Some(Ok(sig_fut)),
+                })
+                .collect();
+            match signal_result {
+                Ok(remaining) => self.signal_futures = remaining,
+                Err(e) => {
+                    self.fail_wft(run_id, anyhow!("Signal handler error: {}", e));
                     continue 'activations;
                 }
             }
 
-            // Drive update functions
+            // Then updates
             self.update_futures = std::mem::take(&mut self.update_futures)
                 .into_iter()
                 .filter_map(
                     |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
                         Poll::Ready(v) => {
                             // Push into the command channel here rather than activation_cmds
-                            // directly to avoid completing and update before any final un-awaited
+                            // directly to avoid completing an update before any final un-awaited
                             // commands started from within it.
-                            self.wf_ctx.send(
+                            self.base_ctx.send(
                                 update_response(
                                     instance_id,
                                     match v {
@@ -429,13 +513,7 @@ impl Future for WorkflowFuture {
                 )
                 .collect();
 
-            // The commands from the initial activation should go _after_ the updates run. This
-            // is still a bit of hacky nonsense, as the first poll of the WF future should be able
-            // to observe any state changed by the update handlers - but that's impossible to do
-            // with current handler registration. In the real SDK, this will be obviated by them
-            // being functions on a struct.
-            activation_cmds.extend(init_activation_cmds);
-            if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
+            if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                 continue;
             }
 
@@ -463,29 +541,31 @@ impl WorkflowFuture {
         run_id: &str,
         activation_cmds: &mut Vec<WorkflowCommand>,
     ) -> Result<bool, Error> {
-        // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
-        let mut res = match AssertUnwindSafe(&mut self.inner)
-            .catch_unwind()
-            .poll_unpin(cx)
-        {
-            Poll::Ready(Err(e)) => {
-                let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
-                warn!("{}", errmsg);
-                self.outgoing_completions
-                    .send(WorkflowActivationCompletion::fail(
-                        run_id,
-                        Failure {
-                            message: errmsg,
-                            ..Default::default()
-                        },
-                        None,
-                    ))
-                    .expect("Completion channel intact");
-                // Loop back up because we're about to get evicted
-                return Ok(true);
+        // SAFETY: AssertUnwindSafe is safe here because:
+        // 1. Workflows run in a single-threaded LocalSet - no data races possible
+        // 2. Workflow state uses closure-scoped borrows (RefCell guards released on unwind)
+        // 3. Core sends eviction after WFT failure, discarding all workflow state
+        let mut res = {
+            let _guard = self.span.enter();
+            match panic::catch_unwind(AssertUnwindSafe(|| self.execution.poll_run(cx))) {
+                Ok(r) => r,
+                Err(e) => {
+                    let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
+                    warn!("{}", errmsg);
+                    self.outgoing_completions
+                        .send(WorkflowActivationCompletion::fail(
+                            run_id,
+                            Failure {
+                                message: errmsg,
+                                ..Default::default()
+                            },
+                            None,
+                        ))
+                        .expect("Completion channel intact");
+                    // Loop back up because we're about to get evicted
+                    return Ok(true);
+                }
             }
-            Poll::Ready(Ok(r)) => Poll::Ready(r),
-            Poll::Pending => Poll::Pending,
         };
 
         while let Ok(cmd) = self.incoming_commands.try_recv() {
@@ -495,7 +575,7 @@ impl WorkflowFuture {
                         CancellableID::Timer(seq) => {
                             self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
                             // Re-poll wf future since a timer is now unblocked
-                            res = self.inner.poll_unpin(cx);
+                            res = self.execution.poll_run(cx);
                             workflow_command::Variant::CancelTimer(CancelTimer { seq })
                         }
                         CancellableID::Activity(seq) => {
@@ -581,9 +661,7 @@ impl WorkflowFuture {
                         },
                     );
                 }
-                RustWfCmd::NewNonblockingCmd(cmd) => {
-                    activation_cmds.push(cmd.into());
-                }
+                RustWfCmd::NewNonblockingCmd(cmd) => activation_cmds.push(cmd.into()),
                 RustWfCmd::SubscribeChildWorkflowCompletion(sub) => {
                     self.command_status.insert(
                         CommandID::ChildWorkflowComplete(sub.seq),
@@ -592,24 +670,9 @@ impl WorkflowFuture {
                         },
                     );
                 }
-                RustWfCmd::SubscribeSignal(signame, chan) => {
-                    // Deal with any buffered signal inputs for signals that were not yet
-                    // registered
-                    if let Some(SigChanOrBuffer::Buffer(buf)) = self.sig_chans.remove(&signame) {
-                        for input in buf {
-                            let _ = chan.send(input);
-                        }
-                        // Re-poll wf future since signals may be unblocked
-                        res = self.inner.poll_unpin(cx);
-                    }
-                    self.sig_chans.insert(signame, SigChanOrBuffer::Chan(chan));
-                }
                 RustWfCmd::ForceWFTFailure(err) => {
                     self.fail_wft(run_id.to_string(), err);
                     return Ok(true);
-                }
-                RustWfCmd::RegisterUpdate(name, impls) => {
-                    self.updates.insert(name, impls);
                 }
                 RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker } => {
                     self.command_status.insert(
@@ -621,33 +684,33 @@ impl WorkflowFuture {
         }
 
         if let Poll::Ready(res) = res {
-            // TODO: Auto reply with cancel when cancelled (instead of normal exit value)
             let cmd = match res {
-                Ok(exit_val) => match exit_val {
-                    // TODO: Generic values
-                    WfExitValue::Normal(result) => {
-                        workflow_command::Variant::CompleteWorkflowExecution(
-                            CompleteWorkflowExecution {
-                                result: Some(result),
-                            },
-                        )
-                    }
-                    WfExitValue::ContinueAsNew(cmd) => {
+                Ok(result) => workflow_command::Variant::CompleteWorkflowExecution(
+                    CompleteWorkflowExecution {
+                        result: Some(result),
+                    },
+                ),
+                Err(termination) => match termination {
+                    WorkflowTermination::ContinueAsNew(cmd) => {
                         workflow_command::Variant::ContinueAsNewWorkflowExecution(*cmd)
                     }
-                    WfExitValue::Cancelled => workflow_command::Variant::CancelWorkflowExecution(
-                        CancelWorkflowExecution {},
-                    ),
-                    WfExitValue::Evicted => {
-                        panic!("Don't explicitly return this")
+                    WorkflowTermination::Cancelled => {
+                        workflow_command::Variant::CancelWorkflowExecution(
+                            CancelWorkflowExecution {},
+                        )
+                    }
+                    WorkflowTermination::Evicted => {
+                        panic!("Don't explicitly return WorkflowTermination::Evicted")
+                    }
+                    WorkflowTermination::Failed(e) => {
+                        workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
+                            failure: Some(Failure {
+                                message: format!("Workflow execution error: {e}"),
+                                ..Default::default()
+                            }),
+                        })
                     }
                 },
-                Err(e) => workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                    failure: Some(Failure {
-                        message: e.to_string(),
-                        ..Default::default()
-                    }),
-                }),
             };
             activation_cmds.push(cmd.into())
         }

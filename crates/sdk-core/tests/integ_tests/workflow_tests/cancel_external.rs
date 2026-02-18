@@ -1,101 +1,127 @@
 use crate::common::{CoreWfStarter, build_fake_sdk};
-use temporalio_client::{GetWorkflowResultOptions, WfClientExt, WorkflowOptions};
+use temporalio_client::{
+    NamespacedClient, WorkflowExecutionInfo, WorkflowGetResultOptions, WorkflowStartOptions,
+};
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
-        coresdk::{FromJsonPayloadExt, common::NamespacedWorkflowExecution},
+        coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, common::NamespacedWorkflowExecution},
         temporal::api::enums::v1::{CommandType, EventType},
     },
     worker::WorkerTaskTypes,
 };
-use temporalio_sdk::{WfContext, WorkflowResult};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 
-async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
-    let run_id = std::str::from_utf8(&ctx.get_args()[0].data)?.to_owned();
-    let sigres = ctx
-        .cancel_external(
-            NamespacedWorkflowExecution {
-                workflow_id: RECEIVER_WFID.to_string(),
-                run_id,
-                namespace: ctx.namespace().to_string(),
-            },
-            "cancel-reason".to_string(),
-        )
-        .await;
-    if ctx.get_args().get(1).is_some() {
-        // We expect failure
-        assert!(sigres.is_err());
-    } else {
+#[workflow]
+#[derive(Default)]
+struct CancelSender;
+
+#[workflow_methods]
+impl CancelSender {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, run_id: String) -> WorkflowResult<()> {
+        let sigres = ctx
+            .cancel_external(
+                NamespacedWorkflowExecution {
+                    workflow_id: RECEIVER_WFID.to_string(),
+                    run_id,
+                    namespace: ctx.namespace().to_string(),
+                },
+                "cancel-reason".to_string(),
+            )
+            .await;
         sigres.unwrap();
+        Ok(())
     }
-    Ok(().into())
 }
 
-async fn cancel_receiver(ctx: WfContext) -> WorkflowResult<String> {
-    let r = ctx.cancelled().await;
-    Ok(r.into())
+#[workflow]
+#[derive(Default)]
+struct CancelReceiver;
+
+#[workflow_methods]
+impl CancelReceiver {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        let r = ctx.cancelled().await;
+        Ok(r)
+    }
 }
 
 #[tokio::test]
 async fn sends_cancel_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_cancel_to_other_wf");
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
-    worker.register_wf("sender", cancel_sender);
-    worker.register_wf("receiver", cancel_receiver);
+    worker.register_workflow::<CancelSender>();
+    worker.register_workflow::<CancelReceiver>();
 
+    let task_queue = starter.get_task_queue().to_owned();
     let receiver_run_id = worker
         .submit_wf(
-            RECEIVER_WFID,
-            "receiver",
-            vec![],
-            WorkflowOptions::default(),
+            "CancelReceiver",
+            vec![().as_json_payload().unwrap()],
+            WorkflowStartOptions::new(task_queue.clone(), RECEIVER_WFID).build(),
         )
         .await
         .unwrap();
     worker
         .submit_wf(
-            "sends-cancel-sender",
-            "sender",
-            vec![receiver_run_id.clone().into()],
-            WorkflowOptions::default(),
+            "CancelSender",
+            vec![receiver_run_id.clone().as_json_payload().unwrap()],
+            WorkflowStartOptions::new(task_queue, "sends-cancel-sender").build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let h = starter
-        .get_client()
-        .await
-        .get_untyped_workflow_handle(RECEIVER_WFID, receiver_run_id);
+    let client = starter.get_client().await;
+    let h = WorkflowExecutionInfo {
+        namespace: client.namespace(),
+        workflow_id: RECEIVER_WFID.into(),
+        run_id: Some(receiver_run_id),
+        first_execution_run_id: None,
+    }
+    .bind_untyped(client.clone());
     let res = String::from_json_payload(
-        &h.get_workflow_result(GetWorkflowResultOptions::default())
+        h.get_result(WorkflowGetResultOptions::default())
             .await
             .unwrap()
-            .unwrap_success()[0],
+            .payloads
+            .first()
+            .unwrap(),
     )
     .unwrap();
     assert!(res.contains("Cancel requested by workflow"));
     assert!(res.contains("cancel-reason"));
 }
 
-async fn cancel_sender_canned(ctx: WfContext) -> WorkflowResult<()> {
-    let res = ctx
-        .cancel_external(
-            NamespacedWorkflowExecution {
-                namespace: "some_namespace".to_string(),
-                workflow_id: "fake_wid".to_string(),
-                run_id: "fake_rid".to_string(),
-            },
-            "cancel reason".to_string(),
-        )
-        .await;
-    if res.is_err() {
-        Err(anyhow::anyhow!("Cancel fail!"))
-    } else {
-        Ok(().into())
+#[workflow]
+#[derive(Default)]
+struct CancelSenderCanned;
+
+#[workflow_methods]
+impl CancelSenderCanned {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let res = ctx
+            .cancel_external(
+                NamespacedWorkflowExecution {
+                    namespace: "some_namespace".to_string(),
+                    workflow_id: "fake_wid".to_string(),
+                    run_id: "fake_rid".to_string(),
+                },
+                "cancel reason".to_string(),
+            )
+            .await;
+        if res.is_err() {
+            Err(anyhow::anyhow!("Cancel fail!").into())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -148,6 +174,6 @@ async fn sends_cancel_canned(#[case] fails: bool) {
             });
     });
     let mut worker = build_fake_sdk(mock_cfg);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, cancel_sender_canned);
+    worker.register_workflow::<CancelSenderCanned>();
     worker.run().await.unwrap();
 }

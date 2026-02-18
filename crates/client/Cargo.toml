@@ -12,6 +12,7 @@ categories = ["development-tools"]
 
 [features]
 telemetry = ["dep:opentelemetry"]
+core-based-sdk = []
 
 [dependencies]
 anyhow = "1.0"
@@ -42,6 +43,7 @@ rand = "0.9.2"
 
 [dependencies.temporalio-common]
 path = "../common"
+version = "0.1"
 
 [dev-dependencies]
 assert_matches = "1"

@@ -1,0 +1,5 @@
+error: #[query] methods must use `&self` as the receiver (not `&mut self`) - queries are read-only
+  --> tests/workflows_trybuild/mut_query_fail.rs:15:22
+   |
+15 |     pub fn get_value(&mut self, _ctx: &WorkflowContextView) -> u32 {
+   |                      ^^^^^^^^^

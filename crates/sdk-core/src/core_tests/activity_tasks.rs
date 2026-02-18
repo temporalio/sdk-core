@@ -1,12 +1,15 @@
 use crate::{
-    ActivityHeartbeat, Worker, advance_fut, job_assert, prost_dur,
+    ActivityHeartbeat, CompleteActivityError, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, WorkerExt,
         WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, fanout_tasks,
         gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg,
     },
-    worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
+    worker::{
+        PollerBehavior,
+        client::mocks::{mock_manual_worker_client, mock_worker_client},
+    },
 };
 use futures_util::FutureExt;
 use itertools::Itertools;
@@ -22,8 +25,6 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_common::{
-    Worker as WorkerTrait,
-    errors::CompleteActivityError,
     protos::{
         TestHistoryBuilder, canned_histories,
         coresdk::{
@@ -53,7 +54,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::{PollerBehavior, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use tokio::{join, time::sleep};
 use tokio_util::sync::CancellationToken;

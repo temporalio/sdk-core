@@ -1,8 +1,8 @@
-use std::{marker::PhantomData, sync::Arc};
-use temporalio_common::worker::{
+use crate::worker::{
     SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
     SlotSupplierPermit,
 };
+use std::{marker::PhantomData, sync::Arc};
 use tokio::sync::Semaphore;
 
 /// Implements [SlotSupplier] with a fixed number of slots

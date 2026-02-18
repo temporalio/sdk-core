@@ -3,9 +3,11 @@
 //! that will match the generated structs in this module.
 
 pub mod constants;
+/// Utility functions for working with protobuf types.
 pub mod utilities;
 
 #[cfg(feature = "test-utilities")]
+/// Pre-built test histories for common workflow patterns.
 pub mod canned_histories;
 #[cfg(feature = "history_builders")]
 mod history_builder;
@@ -14,6 +16,8 @@ mod history_info;
 mod task_token;
 #[cfg(feature = "test-utilities")]
 pub mod test_utils;
+
+use std::time::Duration;
 
 #[cfg(feature = "history_builders")]
 pub use history_builder::{
@@ -24,8 +28,11 @@ pub use history_builder::{
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
+/// Payload metadata key that identifies the encoding format.
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
+/// The metadata value for JSON-encoded payloads.
 pub static JSON_ENCODING_VAL: &str = "json/plain";
+/// The details key used in patched marker payloads.
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 /// The search attribute key used when registering change versions
 pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
@@ -78,7 +85,7 @@ pub mod coresdk {
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
-        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::fmt_tt};
+        use crate::protos::{coresdk::ActivityTaskCompletion, task_token::format_task_token};
         use std::fmt::{Display, Formatter};
         tonic::include_proto!("coresdk.activity_task");
 
@@ -127,7 +134,7 @@ pub mod coresdk {
                 write!(
                     f,
                     "ActivityTaskCompletion(token: {}",
-                    fmt_tt(&self.task_token),
+                    format_task_token(&self.task_token),
                 )?;
                 if let Some(r) = self.result.as_ref().and_then(|r| r.status.as_ref()) {
                     write!(f, ", {r}")?;
@@ -278,9 +285,7 @@ pub mod coresdk {
                 match self.status {
                     Some(activity_resolution::Status::Failed(Failure {
                         failure: Some(ref f),
-                    })) => f
-                        .is_timeout()
-                        .or_else(|| f.cause.as_ref().and_then(|c| c.is_timeout())),
+                    })) => f.is_timeout(),
                     _ => None,
                 }
             }
@@ -969,11 +974,12 @@ pub mod coresdk {
 
         impl Display for UpsertWorkflowSearchAttributes {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(
-                    f,
-                    "UpsertWorkflowSearchAttributes({:?})",
-                    self.search_attributes.keys()
-                )
+                let keys: Vec<_> = self
+                    .search_attributes
+                    .as_ref()
+                    .map(|sa| sa.indexed_fields.keys().collect())
+                    .unwrap_or_default();
+                write!(f, "UpsertWorkflowSearchAttributes({:?})", keys)
             }
         }
 
@@ -1341,7 +1347,13 @@ pub mod coresdk {
         pub fn is_timeout(&self) -> Option<crate::protos::temporal::api::enums::v1::TimeoutType> {
             match &self.failure_info {
                 Some(FailureInfo::TimeoutFailureInfo(ti)) => Some(ti.timeout_type()),
-                _ => None,
+                _ => {
+                    if let Some(c) = &self.cause {
+                        c.is_timeout()
+                    } else {
+                        None
+                    }
+                }
             }
         }
 
@@ -1807,7 +1819,7 @@ pub mod temporal {
                     fn from(s: workflow_commands::UpsertWorkflowSearchAttributes) -> Self {
                         Self::UpsertWorkflowSearchAttributesCommandAttributes(
                             UpsertWorkflowSearchAttributesCommandAttributes {
-                                search_attributes: Some(s.search_attributes.into()),
+                                search_attributes: s.search_attributes,
                             },
                         )
                     }
@@ -1872,7 +1884,7 @@ pub mod temporal {
                             task_queue: Some(s.task_queue.into()),
                             header: Some(s.headers.into()),
                             memo: Some(s.memo.into()),
-                            search_attributes: Some(s.search_attributes.into()),
+                            search_attributes: s.search_attributes,
                             input: s.input.into_payloads(),
                             workflow_id_reuse_policy: s.workflow_id_reuse_policy,
                             workflow_execution_timeout: s.workflow_execution_timeout,
@@ -1930,11 +1942,7 @@ pub mod temporal {
                                 Some(c.headers.into())
                             },
                             retry_policy: c.retry_policy,
-                            search_attributes: if c.search_attributes.is_empty() {
-                                None
-                            } else {
-                                Some(c.search_attributes.into())
-                            },
+                            search_attributes: c.search_attributes,
                             inherit_build_id,
                             initial_versioning_behavior: c.initial_versioning_behavior,
                             ..Default::default()
@@ -2168,6 +2176,11 @@ pub mod temporal {
         pub mod enums {
             pub mod v1 {
                 include_proto_with_serde!("temporal.api.enums.v1");
+            }
+        }
+        pub mod errordetails {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.errordetails.v1");
             }
         }
         pub mod failure {
@@ -2860,6 +2873,18 @@ pub mod temporal {
     rustdoc::broken_intra_doc_links,
     rustdoc::bare_urls
 )]
+pub mod google {
+    pub mod rpc {
+        tonic::include_proto!("google.rpc");
+    }
+}
+
+#[allow(
+    clippy::all,
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls
+)]
 pub mod grpc {
     pub mod health {
         pub mod v1 {
@@ -2885,6 +2910,12 @@ pub fn camel_case_to_screaming_snake(val: &str) -> String {
         }
     }
     out
+}
+
+/// Convert a protobuf [`prost_types::Timestamp`] to a [`std::time::SystemTime`].
+pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time::SystemTime> {
+    std::time::SystemTime::UNIX_EPOCH
+        .checked_add(Duration::from_secs(ts.seconds as u64) + Duration::from_nanos(ts.nanos as u64))
 }
 
 #[cfg(test)]

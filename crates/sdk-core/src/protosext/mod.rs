@@ -1,10 +1,10 @@
 pub(crate) mod protocol_messages;
 
 use crate::{
-    CompleteActivityError, TaskToken,
+    TaskToken,
     protosext::protocol_messages::IncomingProtocolMessage,
     retry_logic::ValidatedRetryPolicy,
-    worker::{LEGACY_QUERY_ID, LocalActivityExecutionResult},
+    worker::{CompleteActivityError, LEGACY_QUERY_ID, LocalActivityExecutionResult},
 };
 use anyhow::anyhow;
 use itertools::Itertools;

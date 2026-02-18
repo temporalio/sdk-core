@@ -1,11 +1,12 @@
 use crate::{
     common::{
-        ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
-        get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, prom_metrics,
+        ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API, eventually,
+        get_integ_client, get_integ_connection, get_integ_runtime_options,
+        get_integ_server_options, get_integ_telem_options, prom_metrics,
     },
     integ_tests::mk_nexus_endpoint,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use assert_matches::assert_matches;
 use std::{
     collections::HashMap,
@@ -15,15 +16,15 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
+    Connection, NamespacedClient, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
+    WorkflowExecutionInfo, WorkflowQueryOptions, WorkflowStartOptions, grpc::WorkflowService,
 };
 use temporalio_common::{
-    Worker,
-    errors::PollError,
+    data_converters::RawValue,
     prost_dur,
     protos::{
         coresdk::{
-            ActivityTaskCompletion, AsJsonPayloadExt,
+            ActivityTaskCompletion,
             activity_result::ActivityExecutionResult,
             nexus::{NexusTaskCompletion, nexus_task, nexus_task_completion},
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
@@ -36,42 +37,43 @@ use temporalio_common::{
         },
         temporal::api::{
             common::v1::RetryPolicy,
-            enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowIdReusePolicy},
-            failure::v1::Failure,
-            nexus,
-            nexus::v1::{
-                HandlerError, StartOperationResponse, UnsuccessfulOperationError, request::Variant,
-                start_operation_response,
+            enums::v1::{
+                NexusHandlerErrorRetryBehavior, WorkflowIdConflictPolicy, WorkflowIdReusePolicy,
             },
-            query::v1::WorkflowQuery,
+            failure::v1::Failure,
+            nexus::{
+                self,
+                v1::{
+                    HandlerError, StartOperationResponse, UnsuccessfulOperationError,
+                    request::Variant, start_operation_response,
+                },
+            },
             workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
         },
     },
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
-        TaskQueueLabelStrategy, TelemetryOptions,
+        TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
-            MetricParameters, NewAttributes,
+            MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
-    },
-    worker::{
-        PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerConfig, WorkerTaskTypes, WorkerVersioningStrategy,
-        WorkflowSlotKind,
-    },
-};
-use temporalio_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    NexusOperationOptions, WfContext,
-};
-use temporalio_sdk_core::{
-    CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
-    replay::TestHistoryBuilder,
-    telemetry::{
-        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter,
         start_prometheus_metric_exporter,
     },
+    worker::WorkerTaskTypes,
+};
+use temporalio_macros::{activities, workflow, workflow_methods};
+use temporalio_sdk::{
+    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions,
+    WorkflowContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
+};
+use temporalio_sdk_core::{
+    CoreRuntime, FixedSizeSlotSupplier, PollError, PollerBehavior, SlotKind, SlotMarkUsedContext,
+    SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    TokioRuntimeBuilder, TunerBuilder, WorkerConfig, WorkerVersioningStrategy, WorkflowSlotKind,
+    init_worker,
+    replay::TestHistoryBuilder,
     test_help::{
         MockPollCfg, ResponseType, TemporalMeter, WorkerExt, WorkerTestHelpers, build_mock_pollers,
         mock_worker, mock_worker_client,
@@ -109,14 +111,12 @@ async fn prometheus_metrics_exported(
         .build();
     let (telemopts, addr, _aborter) = prom_metrics(Some(opts));
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let opts = get_integ_server_options();
-    let mut raw_client = opts
-        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
-    assert!(raw_client.get_client().capabilities().is_some());
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+    let mut connection = Connection::connect(opts).await.unwrap();
+    assert!(connection.capabilities().is_some());
 
-    let _ = raw_client
+    let _ = connection
         .list_namespaces(ListNamespacesRequest::default().into_request())
         .await
         .unwrap();
@@ -148,8 +148,8 @@ async fn prometheus_metrics_exported(
     assert!(body.contains("temporal_request{"));
     // Verify non-temporal metrics meter does not prefix
     let mm = rt.telemetry().get_metric_meter().unwrap();
-    let g = mm.inner.gauge(MetricParameters::from("mygauge"));
-    let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
+    let g = mm.gauge(MetricParameters::from("mygauge"));
+    let attrs = mm.new_attributes(NewAttributes::new(vec![]));
     g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains("\nmygauge{global=\"hi!\"} 42"));
@@ -178,13 +178,9 @@ async fn one_slot_worker_reports_available_slot() {
         .build()
         .unwrap();
 
-    let client = Arc::new(
-        get_integ_server_options()
-            .connect(worker_cfg.namespace.clone(), None)
-            .await
-            .expect("Must connect"),
-    );
-    let worker = init_worker(&rt, worker_cfg, client.clone()).expect("Worker inits cleanly");
+    let connection = get_integ_connection(None).await;
+    let client = Arc::new(get_integ_client(worker_cfg.namespace.clone(), None).await);
+    let worker = init_worker(&rt, worker_cfg, connection).expect("Worker inits cleanly");
     let wf_task_barr = Barrier::new(2);
     let act_task_barr = Barrier::new(2);
 
@@ -283,17 +279,13 @@ async fn one_slot_worker_reports_available_slot() {
         // Start a workflow so that a task will get delivered
         client
             .start_workflow(
-                vec![],
-                tq.to_owned(),
-                "one_slot_metric_test".to_owned(),
-                "whatever".to_string(),
-                None,
-                WorkflowOptions {
-                    #[allow(deprecated)]
-                    id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
-                    execution_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                UntypedWorkflow::new("whatever"),
+                RawValue::default(),
+                WorkflowStartOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
+                    .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
+                    .id_reuse_policy(WorkflowIdReusePolicy::AllowDuplicate)
+                    .execution_timeout(Duration::from_secs(5))
+                    .build(),
             )
             .await
             .unwrap();
@@ -418,7 +410,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
     // Disable cache to ensure replay happens completely
-    starter.worker_config.max_cached_workflows = 0_usize;
+    starter.sdk_config.max_cached_workflows = 0_usize;
     let worker = starter.get_worker().await;
     let run_id = starter.start_wf().await;
     let task = worker.poll_workflow_activation().await.unwrap();
@@ -475,18 +467,20 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     // Query the now-closed workflow
     let client = starter.get_client().await;
     let queryer = async {
-        client
-            .query_workflow_execution(
-                starter.get_wf_id().to_string(),
-                run_id,
-                WorkflowQuery {
-                    query_type: "fake_query".to_string(),
-                    query_args: None,
-                    header: None,
-                },
-            )
-            .await
-            .unwrap();
+        WorkflowExecutionInfo {
+            namespace: client.namespace(),
+            workflow_id: starter.get_wf_id().to_string(),
+            run_id: Some(run_id),
+            first_execution_run_id: None,
+        }
+        .bind_untyped(client.clone())
+        .query(
+            UntypedQuery::new("fake_query"),
+            RawValue::empty(),
+            WorkflowQueryOptions::default(),
+        )
+        .await
+        .unwrap();
     };
     let query_reply = async {
         // Need to re-complete b/c replay
@@ -546,13 +540,11 @@ fn runtime_new() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
         .attach_late_init_metrics(telemopts.metrics.unwrap());
-    let opts = get_integ_server_options();
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
     handle.block_on(async {
-        let mut raw_client = opts
-            .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-            .await
-            .unwrap();
-        assert!(raw_client.get_client().capabilities().is_some());
+        let mut raw_client = Connection::connect(opts).await.unwrap();
+        assert!(raw_client.capabilities().is_some());
         let _ = raw_client
             .list_namespaces(ListNamespacesRequest::default().into_request())
             .await
@@ -640,11 +632,11 @@ async fn latency_metrics(
 async fn request_fail_codes() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
-    let opts = get_integ_server_options();
-    let mut client = opts
-        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
+    let mut client = get_integ_client(
+        NAMESPACE.to_string(),
+        rt.telemetry().get_temporal_metric_meter(),
+    )
+    .await;
 
     // Describe namespace w/ invalid argument (unset namespace field)
     WorkflowService::describe_namespace(
@@ -682,11 +674,11 @@ async fn request_fail_codes_otel() {
     let exporter = Arc::new(exporter);
     let telemopts = TelemetryOptions::builder().metrics(exporter as Arc<dyn CoreMeter>);
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts.build())).unwrap();
-    let opts = get_integ_server_options();
-    let mut client = opts
-        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
+    let mut client = get_integ_client(
+        NAMESPACE.to_string(),
+        rt.telemetry().get_temporal_metric_meter(),
+    )
+    .await;
 
     for _ in 0..10 {
         // Describe namespace w/ invalid argument (unset namespace field)
@@ -749,38 +741,48 @@ async fn docker_metrics_with_prometheus(
         .unwrap();
 
     let client = starter.get_client().await;
-    client.list_namespaces().await.unwrap();
+    WorkflowService::list_namespaces(
+        &mut client.clone(),
+        ListNamespacesRequest::default().into_request(),
+    )
+    .await
+    .unwrap();
 
-    // Give Prometheus time to scrape metrics
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    eventually(
+        || async {
+            // Query Prometheus API for metrics
+            let client = reqwest::Client::new();
+            let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
+            let response = client
+                .get(PROMETHEUS_QUERY_API)
+                .query(&[("query", query.clone())])
+                .send()
+                .await?
+                .json::<serde_json::Value>()
+                .await?;
 
-    // Query Prometheus API for metrics
-    let client = reqwest::Client::new();
-    let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
-    let response = client
-        .get(PROMETHEUS_QUERY_API)
-        .query(&[("query", query)])
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
-
-    // Validate the Prometheus response
-    if let Some(data) = response["data"]["result"].as_array() {
-        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
-        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
-        assert_eq!(data[0]["metric"]["job"], "otel-collector");
-        assert!(
-            data[0]["metric"]["task_queue"]
-                .as_str()
-                .unwrap()
-                .starts_with(test_name)
-        );
-    } else {
-        panic!("Invalid Prometheus response: {response:?}");
-    }
+            // Validate the Prometheus response
+            if let Some(data) = response["data"]["result"].as_array() {
+                if data.is_empty() {
+                    bail!("No metrics found for query: {query}");
+                }
+                assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+                assert_eq!(data[0]["metric"]["job"], "otel-collector");
+                assert!(
+                    data[0]["metric"]["task_queue"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with(test_name)
+                );
+            } else {
+                bail!("Invalid Prometheus response: {response:?}");
+            }
+            Ok(())
+        },
+        Duration::from_secs(45),
+    )
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -789,84 +791,110 @@ async fn activity_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.graceful_shutdown_period = Some(Duration::from_secs(1));
-    let task_queue = starter.get_task_queue().to_owned();
+    starter.sdk_config.graceful_shutdown_period = Some(Duration::from_secs(1));
+
+    struct PassFailActivities;
+    #[activities]
+    impl PassFailActivities {
+        #[activity(name = "pass_fail_act")]
+        async fn pass_fail_act(ctx: ActivityContext, i: String) -> Result<String, ActivityError> {
+            match i.as_str() {
+                "pass" => Ok("pass".to_string()),
+                "cancel" => {
+                    ctx.cancelled().await;
+                    Err(ActivityError::cancelled())
+                }
+                _ => Err(anyhow!("fail").into()),
+            }
+        }
+    }
+
+    starter.sdk_config.register_activities(PassFailActivities);
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        let normal_act_pass = ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            ..Default::default()
-        });
-        let normal_act_fail = ctx.activity(ActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "fail".as_json_payload().expect("serializes fine"),
-            start_to_close_timeout: Some(Duration::from_secs(1)),
-            retry_policy: Some(RetryPolicy {
-                maximum_attempts: 1,
-                ..Default::default()
-            }),
-            ..Default::default()
-        });
-        join!(normal_act_pass, normal_act_fail);
-        let local_act_pass = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "pass".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        });
-        let local_act_fail = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "fail".as_json_payload().expect("serializes fine"),
-            retry_policy: RetryPolicy {
-                maximum_attempts: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        let local_act_cancel = ctx.local_activity(LocalActivityOptions {
-            activity_type: "pass_fail_act".to_string(),
-            input: "cancel".as_json_payload().expect("serializes fine"),
-            retry_policy: RetryPolicy {
-                maximum_attempts: 1,
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        join!(local_act_pass, local_act_fail);
-        // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
-        local_act_cancel.cancel(&ctx);
-        local_act_cancel.await;
-        Ok(().into())
-    });
-    worker.register_activity("pass_fail_act", |ctx: ActContext, i: String| async move {
-        match i.as_str() {
-            "pass" => Ok("pass"),
-            "cancel" => {
-                ctx.cancelled().await;
-                Err(ActivityError::cancelled())
-            }
-            _ => Err(anyhow!("fail").into()),
-        }
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct ActivityMetricsWf;
 
+    #[workflow_methods]
+    impl ActivityMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let normal_act_pass = ctx.start_activity(
+                PassFailActivities::pass_fail_act,
+                "pass".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    ..Default::default()
+                },
+            );
+            let normal_act_fail = ctx.start_activity(
+                PassFailActivities::pass_fail_act,
+                "fail".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            );
+            let _ = join!(normal_act_pass, normal_act_fail);
+            let local_act_pass = ctx.start_local_activity(
+                PassFailActivities::pass_fail_act,
+                "pass".to_string(),
+                LocalActivityOptions::default(),
+            );
+            let local_act_fail = ctx.start_local_activity(
+                PassFailActivities::pass_fail_act,
+                "fail".to_string(),
+                LocalActivityOptions {
+                    retry_policy: RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let local_act_cancel = ctx.start_local_activity(
+                PassFailActivities::pass_fail_act,
+                "cancel".to_string(),
+                LocalActivityOptions {
+                    retry_policy: RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+            let _ = join!(local_act_pass, local_act_fail);
+            // TODO: Currently takes a WFT b/c of https://github.com/temporalio/sdk-core/issues/856
+            local_act_cancel.cancel();
+            let _ = local_act_cancel.await;
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<ActivityMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+        .submit_workflow(
+            ActivityMetricsWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    let wf_type = ActivityMetricsWf::name();
     assert!(body.contains(&format!(
         "temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_activity_schedule_to_start_latency_count{{\
@@ -876,42 +904,42 @@ async fn activity_metrics() {
     assert!(body.contains(&format!(
         "temporal_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 2"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 2"
     )));
     assert!(body.contains(&format!(
         "temporal_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
-             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_type}\"}} 1"
     )));
 
     assert!(body.contains(&format!(
         "temporal_local_activity_total{{activity_type=\"pass_fail_act\",namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 3"
+             workflow_type=\"{wf_type}\"}} 3"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_cancelled{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 3"
+             workflow_type=\"{wf_type}\"}} 3"
     )));
     assert!(body.contains(&format!(
         "temporal_local_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
-             workflow_type=\"{wf_name}\"}} 1"
+             workflow_type=\"{wf_type}\"}} 1"
     )));
 }
 
@@ -921,25 +949,30 @@ async fn nexus_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "nexus_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types = WorkerTaskTypes {
+    starter.sdk_config.task_types = WorkerTaskTypes {
         enable_workflows: true,
         enable_local_activities: false,
         enable_remote_activities: false,
         enable_nexus: true,
     };
-    let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;
 
-    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
-        let partial_op = NexusOperationOptions {
-            endpoint: endpoint.clone(),
-            service: "mysvc".to_string(),
-            operation: "myop".to_string(),
-            ..Default::default()
-        };
-        async move {
+    #[workflow]
+    #[derive(Default)]
+    struct NexusMetricsWf;
+
+    #[workflow_methods]
+    impl NexusMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>, endpoint: String) -> WorkflowResult<()> {
+            let partial_op = NexusOperationOptions {
+                endpoint: endpoint.clone(),
+                service: "mysvc".to_string(),
+                operation: "myop".to_string(),
+                ..Default::default()
+            };
             join!(
                 async {
                     ctx.start_nexus_operation(partial_op.clone())
@@ -974,11 +1007,21 @@ async fn nexus_metrics() {
                         .await;
                 }
             );
-            Ok(().into())
+            Ok(())
         }
-    });
+    }
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.register_workflow::<NexusMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
+    worker
+        .submit_workflow(
+            NexusMetricsWf::run,
+            endpoint,
+            WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
+        )
+        .await
+        .unwrap();
 
     let nexus_polling = async {
         for _ in 0..5 {
@@ -1106,20 +1149,29 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        wf_name.to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    #[workflow]
+    #[derive(Default)]
+    struct EvictOnCompleteWf;
 
+    #[workflow_methods]
+    impl EvictOnCompleteWf {
+        #[run]
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<EvictOnCompleteWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+        .submit_workflow(
+            EvictOnCompleteWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();
@@ -1189,30 +1241,34 @@ async fn metrics_available_from_custom_slot_supplier() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("metrics_available_from_custom_slot_supplier", rt);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
         inner: FixedSizeSlotSupplier::new(5),
         metrics: OnceLock::new(),
     }));
-    starter.worker_config.tuner = Some(Arc::new(tb.build()));
+    starter.sdk_config.tuner = Arc::new(tb.build());
     let mut worker = starter.worker().await;
 
-    worker.register_wf(
-        "s_wf".to_string(),
-        |_: WfContext| async move { Ok(().into()) },
-    );
+    #[workflow]
+    #[derive(Default)]
+    struct CustomSlotSupplierWf;
 
+    #[workflow_methods]
+    impl CustomSlotSupplierWf {
+        #[run]
+        async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<CustomSlotSupplierWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_wf(
-            "s_wf".to_owned(),
-            "s_wf".to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+        .submit_workflow(
+            CustomSlotSupplierWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, "s_wf".to_owned()).build(),
         )
         .await
         .unwrap();
@@ -1353,24 +1409,32 @@ async fn sticky_queue_label_strategy(
     let wf_name = format!("sticky_queue_label_strategy_{strategy:?}");
     let mut starter = CoreWfStarter::new_with_runtime(&wf_name, rt);
     // Enable sticky queues by setting a reasonable cache size
-    starter.worker_config.max_cached_workflows = 10_usize;
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
-    let task_queue = starter.get_task_queue().to_owned();
+    starter.sdk_config.max_cached_workflows = 10_usize;
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.clone(), |ctx: WfContext| async move {
-        ctx.timer(Duration::from_millis(1)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct StickyQueueLabelStrategyWf;
+
+    #[workflow_methods]
+    impl StickyQueueLabelStrategyWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(Duration::from_millis(1)).await;
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<StickyQueueLabelStrategyWf>();
+    let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_wf(
-            wf_name.clone(),
-            wf_name,
-            vec![],
-            WorkflowOptions {
-                enable_eager_workflow_start: false,
-                ..Default::default()
-            },
+        .submit_workflow(
+            StickyQueueLabelStrategyWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), wf_name.clone())
+                .enable_eager_workflow_start(false)
+                .build(),
         )
         .await
         .unwrap();
@@ -1430,29 +1494,34 @@ async fn resource_based_tuner_metrics() {
     let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
     let wf_name = "resource_based_tuner_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
-    starter.worker_config.max_outstanding_workflow_tasks = None;
-    starter.worker_config.max_outstanding_local_activities = None;
-    starter.worker_config.max_outstanding_activities = None;
-    starter.worker_config.max_outstanding_nexus_tasks = None;
-
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     // Create a resource-based tuner with reasonable thresholds
     let tuner = ResourceBasedTuner::new(0.8, 0.8);
-    starter.worker_config.tuner = Some(Arc::new(tuner));
+    starter.sdk_config.tuner = Arc::new(tuner);
 
     let mut worker = starter.worker().await;
 
-    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
-        ctx.timer(Duration::from_millis(100)).await;
-        Ok(().into())
-    });
+    #[workflow]
+    #[derive(Default)]
+    struct ResourceBasedTunerMetricsWf;
 
+    #[workflow_methods]
+    impl ResourceBasedTunerMetricsWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.timer(Duration::from_millis(100)).await;
+            Ok(())
+        }
+    }
+
+    worker.register_workflow::<ResourceBasedTunerMetricsWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let workflow_id = wf_name.to_owned();
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+        .submit_workflow(
+            ResourceBasedTunerMetricsWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
         .await
         .unwrap();

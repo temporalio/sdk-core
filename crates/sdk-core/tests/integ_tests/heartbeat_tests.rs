@@ -1,13 +1,13 @@
-use crate::common::{CoreWfStarter, init_core_and_create_wf};
+use crate::common::{CoreWfStarter, activity_functions::StdActivities, init_core_and_create_wf};
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporalio_client::{WfClientExt, WorkflowOptions};
+use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     prost_dur,
     protos::{
         DEFAULT_ACTIVITY_TYPE,
         coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion,
             activity_result::{
                 self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
             },
@@ -25,9 +25,43 @@ use temporalio_common::{
         test_utils::schedule_activity_cmd,
     },
 };
-use temporalio_sdk::{ActContext, ActivityOptions, WfContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
+
+#[workflow]
+#[derive(Default)]
+struct ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf;
+
+#[workflow_methods]
+impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let res: Result<(), ActivityExecutionError> = ctx
+            .start_activity(
+                StdActivities::delay,
+                Duration::from_secs(4),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(10)),
+                    heartbeat_timeout: Some(Duration::from_secs(2)),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await;
+        let err = res.unwrap_err();
+        if let ActivityExecutionError::Failed(f) = &err {
+            assert_eq!(f.is_timeout(), Some(TimeoutType::Heartbeat));
+        } else {
+            panic!("expected Failed, got {err:?}");
+        }
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn activity_heartbeat() {
@@ -184,46 +218,20 @@ async fn many_act_fails_with_heartbeats() {
 async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let wf_name = "activity_doesnt_heartbeat_hits_timeout_then_completes";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
-            sleep(Duration::from_secs(4)).await;
-            Ok(echo_me)
-        },
-    );
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let res = ctx
-            .activity(ActivityOptions {
-                activity_type: "echo_activity".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
-                start_to_close_timeout: Some(Duration::from_secs(10)),
-                heartbeat_timeout: Some(Duration::from_secs(2)),
-                retry_policy: Some(RetryPolicy {
-                    maximum_attempts: 1,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
-            .await;
-        assert_eq!(res.timed_out(), Some(TimeoutType::Heartbeat));
-        Ok(().into())
-    });
 
-    let run_id = worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
+    worker.register_workflow::<ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
-    handle
-        .get_workflow_result(Default::default())
-        .await
-        .unwrap();
+    handle.get_result(Default::default()).await.unwrap();
 }

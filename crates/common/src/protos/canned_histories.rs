@@ -30,6 +30,7 @@ pub fn single_timer(timer_id: &str) -> TestHistoryBuilder {
     t
 }
 
+/// Like [`single_timer`] but also completes the workflow.
 pub fn single_timer_wf_completes(timer_id: &str) -> TestHistoryBuilder {
     let mut t = single_timer(timer_id);
     t.add_workflow_task_completed();
@@ -974,12 +975,14 @@ pub fn timer_then_continue_as_new(timer_id: &str) -> TestHistoryBuilder {
 pub fn timer_wf_cancel_req_cancelled(timer_id: &str) -> TestHistoryBuilder {
     timer_cancel_req_then(timer_id, TestHistoryBuilder::add_cancelled)
 }
+/// Timer with cancel request followed by workflow execution completed.
 pub fn timer_wf_cancel_req_completed(timer_id: &str) -> TestHistoryBuilder {
     timer_cancel_req_then(
         timer_id,
         TestHistoryBuilder::add_workflow_execution_completed,
     )
 }
+/// Timer with cancel request followed by workflow execution failed.
 pub fn timer_wf_cancel_req_failed(timer_id: &str) -> TestHistoryBuilder {
     timer_cancel_req_then(timer_id, TestHistoryBuilder::add_workflow_execution_failed)
 }

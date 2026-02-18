@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use temporalio_client::{Priority, WorkflowOptions};
+use temporalio_client::Priority;
 use temporalio_common::protos::{
     coresdk::{
         AsJsonPayloadExt,
@@ -12,8 +12,8 @@ use temporalio_common::protos::{
         },
     },
     temporal::api::{
-        common::v1::{Payload, RetryPolicy},
-        enums::v1::ParentClosePolicy,
+        common::v1::{Payload, RetryPolicy, SearchAttributes},
+        enums::v1::{ParentClosePolicy, WorkflowIdReusePolicy},
         sdk::v1::UserMetadata,
     },
 };
@@ -33,10 +33,6 @@ pub struct ActivityOptions {
     ///
     /// If `None` use the context's sequence number
     pub activity_id: Option<String>,
-    /// Type of activity to schedule
-    pub activity_type: String,
-    /// Input to the activity
-    pub input: Payload,
     /// Task queue to schedule the activity in
     ///
     /// If `None`, use the same task queue as the parent workflow.
@@ -76,8 +72,13 @@ pub struct ActivityOptions {
     pub do_not_eagerly_execute: bool,
 }
 
-impl IntoWorkflowCommand for ActivityOptions {
-    fn into_command(self, seq: u32) -> WorkflowCommand {
+impl ActivityOptions {
+    pub(crate) fn into_command(
+        self,
+        activity_type: String,
+        arguments: Vec<Payload>,
+        seq: u32,
+    ) -> WorkflowCommand {
         WorkflowCommand {
             variant: Some(
                 ScheduleActivity {
@@ -86,7 +87,7 @@ impl IntoWorkflowCommand for ActivityOptions {
                         None => seq.to_string(),
                         Some(aid) => aid,
                     },
-                    activity_type: self.activity_type,
+                    activity_type,
                     task_queue: self.task_queue.unwrap_or_default(),
                     schedule_to_close_timeout: self
                         .schedule_to_close_timeout
@@ -99,7 +100,7 @@ impl IntoWorkflowCommand for ActivityOptions {
                         .and_then(|d| d.try_into().ok()),
                     heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
                     cancellation_type: self.cancellation_type as i32,
-                    arguments: vec![self.input],
+                    arguments,
                     retry_policy: self.retry_policy,
                     priority: self.priority.map(Into::into),
                     do_not_eagerly_execute: self.do_not_eagerly_execute,
@@ -124,11 +125,6 @@ pub struct LocalActivityOptions {
     ///
     /// If `None` use the context's sequence number
     pub activity_id: Option<String>,
-    /// Type of activity to schedule
-    pub activity_type: String,
-    /// Input to the activity
-    // TODO: Make optional
-    pub input: Payload,
     /// Retry policy
     pub retry_policy: RetryPolicy,
     /// Override attempt number rather than using 1.
@@ -160,8 +156,13 @@ pub struct LocalActivityOptions {
     pub summary: Option<String>,
 }
 
-impl IntoWorkflowCommand for LocalActivityOptions {
-    fn into_command(mut self, seq: u32) -> WorkflowCommand {
+impl LocalActivityOptions {
+    pub(crate) fn into_command(
+        mut self,
+        activity_type: String,
+        arguments: Vec<Payload>,
+        seq: u32,
+    ) -> WorkflowCommand {
         // Allow tests to avoid extra verbosity when they don't care about timeouts
         // TODO: Builderize LA options
         self.schedule_to_close_timeout
@@ -177,8 +178,8 @@ impl IntoWorkflowCommand for LocalActivityOptions {
                         None => seq.to_string(),
                         Some(aid) => aid,
                     },
-                    activity_type: self.activity_type,
-                    arguments: vec![self.input],
+                    activity_type,
+                    arguments,
                     retry_policy: Some(self.retry_policy),
                     local_retry_threshold: self
                         .timer_backoff_threshold
@@ -223,14 +224,26 @@ pub struct ChildWorkflowOptions {
     pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
     pub cancel_type: ChildWorkflowCancellationType,
-    /// Common options
-    pub options: WorkflowOptions,
     /// How to respond to parent workflow ending
     pub parent_close_policy: ParentClosePolicy,
     /// Static summary of the child workflow
     pub static_summary: Option<String>,
     /// Static details of the child workflow
     pub static_details: Option<String>,
+    /// Set the policy for reusing the workflow id
+    pub id_reuse_policy: WorkflowIdReusePolicy,
+    /// Optionally set the execution timeout for the workflow
+    pub execution_timeout: Option<Duration>,
+    /// Optionally indicates the default run timeout for a workflow run
+    pub run_timeout: Option<Duration>,
+    /// Optionally indicates the default task timeout for a workflow run
+    pub task_timeout: Option<Duration>,
+    /// Optionally set a cron schedule for the workflow
+    pub cron_schedule: Option<String>,
+    /// Optionally associate extra search attributes with a workflow
+    pub search_attributes: Option<HashMap<String, Payload>>,
+    /// Priority for the workflow
+    pub priority: Option<Priority>,
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
@@ -252,23 +265,18 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                     task_queue: self.task_queue.unwrap_or_default(),
                     input: self.input,
                     cancellation_type: self.cancel_type as i32,
-                    workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
+                    workflow_id_reuse_policy: self.id_reuse_policy as i32,
                     workflow_execution_timeout: self
-                        .options
                         .execution_timeout
                         .and_then(|d| d.try_into().ok()),
-                    workflow_run_timeout: self
-                        .options
-                        .execution_timeout
-                        .and_then(|d| d.try_into().ok()),
-                    workflow_task_timeout: self
-                        .options
-                        .task_timeout
-                        .and_then(|d| d.try_into().ok()),
-                    search_attributes: self.options.search_attributes.unwrap_or_default(),
-                    cron_schedule: self.options.cron_schedule.unwrap_or_default(),
+                    workflow_run_timeout: self.execution_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: self.task_timeout.and_then(|d| d.try_into().ok()),
+                    search_attributes: self
+                        .search_attributes
+                        .map(|sa| SearchAttributes { indexed_fields: sa }),
+                    cron_schedule: self.cron_schedule.unwrap_or_default(),
                     parent_close_policy: self.parent_close_policy as i32,
-                    priority: self.options.priority.map(Into::into),
+                    priority: self.priority.map(Into::into),
                     ..Default::default()
                 }
                 .into(),
@@ -279,6 +287,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
 }
 
 /// Options for sending a signal to an external workflow
+#[derive(Debug)]
 pub struct SignalWorkflowOptions {
     /// The workflow's id
     pub workflow_id: String,
@@ -315,6 +324,7 @@ impl SignalWorkflowOptions {
 }
 
 /// Information needed to send a specific signal
+#[derive(Debug)]
 pub struct Signal {
     /// The signal name
     pub signal_name: String,

@@ -1,5 +1,5 @@
 use crate::{
-    PollWorkflowOptions, Worker, advance_fut,
+    PollError, PollWorkflowOptions, Worker, advance_fut,
     internal_flags::CoreInternalFlags,
     job_assert,
     replay::TestHistoryBuilder,
@@ -11,7 +11,8 @@ use crate::{
         poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, test_worker_cfg,
     },
     worker::{
-        TunerBuilder,
+        PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
+        SlotSupplier, SlotSupplierPermit, TunerBuilder, WorkflowSlotKind,
         client::mocks::{mock_manual_worker_client, mock_worker_client},
     },
 };
@@ -29,8 +30,6 @@ use std::{
 };
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::{
-    Worker as WorkerTrait,
-    errors::PollError,
     protos::{
         canned_histories,
         coresdk::{
@@ -64,10 +63,7 @@ use temporalio_common::{
         },
         test_utils::start_timer_cmd,
     },
-    worker::{
-        PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerTaskTypes, WorkflowSlotKind,
-    },
+    worker::WorkerTaskTypes,
 };
 use tokio::{
     join,

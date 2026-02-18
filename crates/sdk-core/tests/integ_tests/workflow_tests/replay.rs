@@ -3,17 +3,17 @@ use crate::{
         ActivationAssertionsInterceptor, build_fake_sdk, history_from_proto_binary,
         init_core_replay_preloaded, replay_sdk_worker, replay_sdk_worker_stream,
     },
-    integ_tests::workflow_tests::patches::changes_wf,
+    integ_tests::workflow_tests::patches::ChangesWf,
 };
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use temporalio_common::{
-    errors::PollError,
     prost_dur,
     protos::{
         DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
+            AsJsonPayloadExt,
             workflow_activation::remove_from_cache::EvictionReason,
             workflow_commands::{ScheduleActivity, StartTimer},
             workflow_completion::WorkflowActivationCompletion,
@@ -21,34 +21,50 @@ use temporalio_common::{
         temporal::api::enums::v1::EventType,
     },
 };
-use temporalio_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{
+    Worker, WorkflowContext, WorkflowContextView, WorkflowResult, interceptors::WorkerInterceptor,
+};
 use temporalio_sdk_core::{
+    PollError,
     replay::{HistoryFeeder, HistoryForReplay},
     test_help::{MockPollCfg, ResponseType, WorkerTestHelpers},
 };
 use tokio::join;
 
 fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
-    let hi = t.get_full_history_info().unwrap().into();
+    let hi = t.get_full_history_info().unwrap();
     HistoryForReplay::new(hi, "fake".to_string())
 }
 
-fn timers_wf(num_timers: u32) -> WorkflowFunction {
-    WorkflowFunction::new(move |ctx: WfContext| async move {
+#[workflow]
+struct TimersWf {
+    num_timers: u32,
+}
+
+#[workflow_methods]
+impl TimersWf {
+    #[init]
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
+        Self { num_timers }
+    }
+
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let num_timers = ctx.state(|wf| wf.num_timers);
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
-    })
+        Ok(())
+    }
 }
 
 #[fixture(num_timers = 1)]
 fn fire_happy_hist(num_timers: u32) -> Worker {
-    let func = timers_wf(num_timers);
-    // Add 1 b/c history takes # wf tasks, not timers
-    let t = canned_histories::long_sequential_timers(num_timers as usize);
+    let mut t = canned_histories::long_sequential_timers(num_timers as usize);
+    t.set_wf_input(num_timers.as_json_payload().unwrap());
     let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
     worker
 }
 
@@ -72,11 +88,10 @@ async fn replay_flag_is_correct(#[case] mut worker: Worker, #[case] num_timers: 
 
 #[tokio::test(flavor = "multi_thread")]
 async fn replay_flag_is_correct_partial_history() {
-    let func = timers_wf(1);
-    // Add 1 b/c history takes # wf tasks, not timers
-    let t = canned_histories::long_sequential_timers(2);
+    let mut t = canned_histories::long_sequential_timers(2);
+    t.set_wf_input(1u32.as_json_payload().unwrap());
     let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [1]));
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
 
     let mut aai = ActivationAssertionsInterceptor::default();
     aai.then(|a| assert!(!a.is_replaying));
@@ -184,11 +199,11 @@ async fn workflow_nondeterministic_replay() {
 
 #[tokio::test]
 async fn replay_using_wf_function() {
-    let num_timers = 10;
-    let t = canned_histories::long_sequential_timers(num_timers as usize);
-    let func = timers_wf(num_timers);
+    let num_timers = 10u32;
+    let mut t = canned_histories::long_sequential_timers(num_timers as usize);
+    t.set_wf_input(num_timers.as_json_payload().unwrap());
     let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
     worker.run().await.unwrap();
 }
 
@@ -203,16 +218,16 @@ async fn replay_ending_wft_complete_with_commands_but_no_scheduled_started() {
         t.add_timer_fired(timer_started_event_id, i.to_string());
         t.add_full_wf_task();
     }
-    let func = timers_wf(3);
+    t.set_wf_input(3u32.as_json_payload().unwrap());
     let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
     worker.run().await.unwrap();
 }
 
-async fn replay_abrupt_ending(t: TestHistoryBuilder) {
-    let func = timers_wf(1);
+async fn replay_abrupt_ending(mut t: TestHistoryBuilder) {
+    t.set_wf_input(1u32.as_json_payload().unwrap());
     let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
     worker.run().await.unwrap();
 }
 #[tokio::test]
@@ -230,10 +245,10 @@ async fn replay_ok_ending_with_timed_out() {
 
 #[tokio::test]
 async fn replay_shutdown_worker() {
-    let t = canned_histories::single_timer("1");
-    let func = timers_wf(1);
+    let mut t = canned_histories::single_timer("1");
+    t.set_wf_input(1u32.as_json_payload().unwrap());
     let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.register_workflow::<TimersWf>();
     let shutdown_ctr_i = UniqueShutdownWorker::default();
     let shutdown_ctr = shutdown_ctr_i.runs.clone();
     worker.set_worker_interceptor(shutdown_ctr_i);
@@ -241,16 +256,60 @@ async fn replay_shutdown_worker() {
     assert_eq!(shutdown_ctr.lock().len(), 1);
 }
 
+#[workflow]
+struct OneTimerWf {
+    num_timers: u32,
+}
+
+#[workflow_methods]
+impl OneTimerWf {
+    #[init]
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
+        Self { num_timers }
+    }
+
+    #[run(name = "onetimer")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let num_timers = ctx.state(|wf| wf.num_timers);
+        for _ in 1..=num_timers {
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(())
+    }
+}
+
+#[workflow]
+struct SeqTimerWf {
+    num_timers: u32,
+}
+
+#[workflow_methods]
+impl SeqTimerWf {
+    #[init]
+    fn new(_ctx: &WorkflowContextView, num_timers: u32) -> Self {
+        Self { num_timers }
+    }
+
+    #[run(name = "seqtimer")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let num_timers = ctx.state(|wf| wf.num_timers);
+        for _ in 1..=num_timers {
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(())
+    }
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
-    let num_timers = 10;
-    let seq_timer_wf = timers_wf(num_timers);
-    let one_timer_wf = timers_wf(1);
+    let num_timers = 10u32;
     let mut one_timer_hist = canned_histories::single_timer("1");
     one_timer_hist.set_wf_type("onetimer");
+    one_timer_hist.set_wf_input(1u32.as_json_payload().unwrap());
     let mut seq_timer_hist = canned_histories::long_sequential_timers(num_timers as usize);
     seq_timer_hist.set_wf_type("seqtimer");
+    seq_timer_hist.set_wf_input(num_timers.as_json_payload().unwrap());
     let (feeder, stream) = HistoryFeeder::new(1);
     let mut worker = if use_feeder {
         replay_sdk_worker_stream(stream)
@@ -263,8 +322,8 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     let runs_ctr_i = UniqueRunsCounter::default();
     let runs_ctr = runs_ctr_i.runs.clone();
     worker.set_worker_interceptor(runs_ctr_i);
-    worker.register_wf("onetimer", one_timer_wf);
-    worker.register_wf("seqtimer", seq_timer_wf);
+    worker.register_workflow::<OneTimerWf>();
+    worker.register_workflow::<SeqTimerWf>();
 
     if use_feeder {
         let feed_fut = async move {
@@ -289,16 +348,17 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
 async fn multiple_histories_can_handle_dupe_run_ids() {
     let mut hist1 = canned_histories::single_timer("1");
     hist1.set_wf_type("onetimer");
+    hist1.set_wf_input(1u32.as_json_payload().unwrap());
     let mut worker = replay_sdk_worker([
         test_hist_to_replay(hist1.clone()),
         test_hist_to_replay(hist1.clone()),
         test_hist_to_replay(hist1),
     ]);
-    worker.register_wf("onetimer", timers_wf(1));
+    worker.register_workflow::<OneTimerWf>();
     worker.run().await.unwrap();
 }
 
-// Verifies SDK can decode patch markers before changing them to use json encoding
+// Verifies SDK can decode patch markers before changing them to use json encoding.
 #[tokio::test]
 async fn replay_old_patch_format() {
     let mut worker = replay_sdk_worker([HistoryForReplay::new(
@@ -307,7 +367,7 @@ async fn replay_old_patch_format() {
             .unwrap(),
         "fake".to_owned(),
     )]);
-    worker.register_wf("writes_change_markers", changes_wf);
+    worker.register_workflow::<ChangesWf>();
     worker.run().await.unwrap();
 }
 

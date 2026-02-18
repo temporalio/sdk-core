@@ -1,13 +1,10 @@
-use crate::{
-    common::{CoreWfStarter, eventually},
-    integ_tests::activity_functions::echo,
-};
+use crate::common::{CoreWfStarter, activity_functions::StdActivities, eventually};
 use std::time::Duration;
-use temporalio_client::{NamespacedClient, WorkflowOptions, WorkflowService};
+use temporalio_client::{NamespacedClient, WorkflowStartOptions, grpc::WorkflowService};
 use temporalio_common::{
     protos::{
         coresdk::{
-            AsJsonPayloadExt, workflow_commands::CompleteWorkflowExecution, workflow_completion,
+            workflow_commands::CompleteWorkflowExecution, workflow_completion,
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
@@ -18,11 +15,10 @@ use temporalio_common::{
             },
         },
     },
-    worker::{
-        WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes, WorkerVersioningStrategy,
-    },
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
-use temporalio_sdk::{ActivityOptions, WfContext};
+use temporalio_macros::{workflow, workflow_methods};
+use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::WorkerTestHelpers;
 use tokio::join;
 use tonic::IntoRequest;
@@ -37,13 +33,12 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         deployment_name: deploy_name.clone(),
         build_id: "1.0".to_string(),
     };
-    starter.worker_config.versioning_strategy =
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
-            version: version.clone(),
-            use_worker_versioning: true,
-            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
-        });
-    starter.worker_config.task_types = WorkerTaskTypes::workflow_only();
+    starter.sdk_config.deployment_options = WorkerDeploymentOptions {
+        version: version.clone(),
+        use_worker_versioning: true,
+        default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+    };
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 
@@ -74,7 +69,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         let desc_resp = eventually(
             async || {
                 client
-                    .get_client()
+                    .connection()
                     .clone()
                     .describe_worker_deployment(
                         DescribeWorkerDeploymentRequest {
@@ -93,7 +88,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
 
         #[allow(deprecated)]
         client
-            .get_client()
+            .connection()
             .clone()
             .set_worker_deployment_current_version(
                 SetWorkerDeploymentCurrentVersionRequest {
@@ -150,28 +145,19 @@ async fn activity_has_deployment_stamp() {
     let wf_name = "activity_has_deployment_stamp";
     let mut starter = CoreWfStarter::new(wf_name);
     let deploy_name = format!("deployment-{}", starter.get_task_queue());
-    starter.worker_config.versioning_strategy =
-        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
-            version: WorkerDeploymentVersion {
-                deployment_name: deploy_name.clone(),
-                build_id: "1.0".to_string(),
-            },
-            use_worker_versioning: true,
-            default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
-        });
+    starter.sdk_config.deployment_options = WorkerDeploymentOptions {
+        version: WorkerDeploymentVersion {
+            deployment_name: deploy_name.clone(),
+            build_id: "1.0".to_string(),
+        },
+        use_worker_versioning: true,
+        default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
+    };
+    starter.sdk_config.register_activities(StdActivities);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "echo_activity".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(5)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
-    });
-    worker.register_activity("echo_activity", echo);
+
+    worker.register_workflow::<ActivityHasDeploymentStampWf>();
     let submitter = worker.get_submitter_handle();
     let shutdown_handle = worker.inner_mut().shutdown_handle();
 
@@ -179,7 +165,7 @@ async fn activity_has_deployment_stamp() {
         let desc_resp = eventually(
             async || {
                 client
-                    .get_client()
+                    .connection()
                     .clone()
                     .describe_worker_deployment(
                         DescribeWorkerDeploymentRequest {
@@ -198,7 +184,7 @@ async fn activity_has_deployment_stamp() {
 
         #[allow(deprecated)]
         client
-            .get_client()
+            .connection()
             .clone()
             .set_worker_deployment_current_version(
                 SetWorkerDeploymentCurrentVersionRequest {
@@ -213,12 +199,13 @@ async fn activity_has_deployment_stamp() {
             .await
             .unwrap();
 
+        let task_queue = starter.get_task_queue().to_owned();
+        let workflow_id = starter.get_wf_id();
         submitter
             .submit_wf(
-                starter.get_wf_id(),
                 wf_name.to_owned(),
                 vec![],
-                WorkflowOptions::default(),
+                WorkflowStartOptions::new(task_queue, workflow_id).build(),
             )
             .await
             .unwrap();
@@ -245,4 +232,26 @@ async fn activity_has_deployment_stamp() {
         .unwrap();
     // TODO: Can't actually verify this at the moment as the deployment options are not transferred
     //   to the event.
+}
+
+#[workflow]
+#[derive(Default)]
+struct ActivityHasDeploymentStampWf;
+
+#[workflow_methods]
+impl ActivityHasDeploymentStampWf {
+    #[run(name = "activity_has_deployment_stamp")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let _ = ctx
+            .start_activity(
+                StdActivities::echo,
+                "hi!".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await;
+        Ok(())
+    }
 }

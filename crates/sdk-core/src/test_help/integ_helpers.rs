@@ -8,7 +8,8 @@ pub use crate::{
 };
 
 use crate::{
-    TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
+    PollError, PollerBehavior, TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
+    WorkerVersioningStrategy,
     pollers::{BoxedPoller, MockManualPoller},
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
@@ -16,6 +17,7 @@ use crate::{
     worker::{
         TaskPollers, WorkerTelemetry,
         client::{LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion},
+        worker_config_builder,
     },
 };
 use assert_matches::assert_matches;
@@ -38,8 +40,6 @@ use std::{
 };
 pub use temporalio_common::telemetry::metrics::TemporalMeter;
 use temporalio_common::{
-    Worker as WorkerTrait,
-    errors::PollError,
     protos::{
         coresdk::{
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
@@ -59,7 +59,7 @@ use temporalio_common::{
         },
         utilities::pack_any,
     },
-    worker::{PollerBehavior, WorkerTaskTypes, WorkerVersioningStrategy, worker_config_builder},
+    worker::WorkerTaskTypes,
 };
 use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -69,7 +69,7 @@ use uuid::Uuid;
 pub const NAMESPACE: &str = "default";
 
 /// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
-pub async fn drain_pollers_and_shutdown(worker: &dyn WorkerTrait) {
+pub async fn drain_pollers_and_shutdown(worker: &Worker) {
     worker.initiate_shutdown();
     tokio::join!(
         async {
@@ -1037,10 +1037,7 @@ pub trait WorkerTestHelpers {
 }
 
 #[async_trait::async_trait]
-impl<T> WorkerTestHelpers for T
-where
-    T: WorkerTrait + ?Sized,
-{
+impl WorkerTestHelpers for Worker {
     async fn complete_execution(&self, run_id: &str) {
         self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             run_id.to_string(),

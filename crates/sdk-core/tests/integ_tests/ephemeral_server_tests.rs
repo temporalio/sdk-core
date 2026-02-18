@@ -1,7 +1,10 @@
 use crate::common::{INTEG_CLIENT_IDENTITY, INTEG_CLIENT_NAME, INTEG_CLIENT_VERSION, NAMESPACE};
 use futures_util::{TryStreamExt, stream};
 use std::time::{SystemTime, UNIX_EPOCH};
-use temporalio_client::{ClientOptions, TestService, WorkflowService};
+use temporalio_client::{
+    Connection, ConnectionOptions,
+    grpc::{TestService, WorkflowService},
+};
 use temporalio_common::protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporalio_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfig,
@@ -132,16 +135,14 @@ fn fixed_cached_download(version: &str) -> EphemeralExe {
 
 async fn assert_ephemeral_server(server: &EphemeralServer) {
     // Connect and describe namespace
-    let mut client = ClientOptions::builder()
-        .identity(INTEG_CLIENT_IDENTITY.to_string())
-        .target_url(Url::try_from(&*format!("http://{}", server.target)).unwrap())
-        .client_name(INTEG_CLIENT_NAME.to_string())
-        .client_version(INTEG_CLIENT_VERSION.to_string())
-        .build()
-        .connect_no_namespace(None)
-        .await
-        .unwrap();
-    let resp = client
+    let connection_opts =
+        ConnectionOptions::new(Url::try_from(&*format!("http://{}", server.target)).unwrap())
+            .identity(INTEG_CLIENT_IDENTITY.to_string())
+            .client_name(INTEG_CLIENT_NAME.to_string())
+            .client_version(INTEG_CLIENT_VERSION.to_string())
+            .build();
+    let mut connection = Connection::connect(connection_opts).await.unwrap();
+    let resp = connection
         .describe_namespace(
             DescribeNamespaceRequest {
                 namespace: NAMESPACE.to_string(),
@@ -155,7 +156,10 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
 
     // If it has test service, make sure we can use it too
     if server.has_test_service {
-        let resp = client.get_current_time(().into_request()).await.unwrap();
+        let resp = connection
+            .get_current_time(().into_request())
+            .await
+            .unwrap();
         // Make sure it's within 5 mins of now
         let resp_seconds = resp.get_ref().time.as_ref().unwrap().seconds as u64;
         let curr_seconds = SystemTime::now()

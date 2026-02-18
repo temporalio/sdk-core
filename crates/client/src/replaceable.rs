@@ -20,8 +20,8 @@ where
     C: Clone + Send + Sync,
 {
     shared_data: Arc<SharedClientData<C>>,
-    cloned_client: C,
-    cloned_generation: u32,
+    pub(crate) cloned_client: C,
+    pub(crate) cloned_generation: u32,
 }
 
 #[derive(Debug)]
@@ -83,6 +83,7 @@ where
     }
 
     /// Returns a clone of the underlying client.
+    #[allow(dead_code)]
     pub fn inner_clone(&self) -> C {
         self.inner_cow().into_owned()
     }
@@ -105,7 +106,8 @@ where
     ///
     /// While this method allows mutable access to the underlying client, any configuration changes
     /// will not be shared with other instances, and will be lost if the client gets replaced from
-    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client) instead.
+    /// anywhere. To make configuration changes, use [`replace_client()`](Self::replace_client)
+    /// instead.
     pub fn inner_mut_refreshed(&mut self) -> &mut C {
         if let Some((client, generation)) =
             self.shared_data.fetch_newer_than(self.cloned_generation)
@@ -152,7 +154,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NamespacedClient;
     use std::borrow::Cow;
 
     #[derive(Debug, Clone)]

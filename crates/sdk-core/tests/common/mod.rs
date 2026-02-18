@@ -1,11 +1,12 @@
 //! Common integration testing utilities
 //! These utilities are specific to integration tests and depend on the full temporal-client stack.
 
+pub(crate) mod activity_functions;
 pub(crate) mod fake_grpc_server;
 pub(crate) mod http_proxy;
 pub(crate) mod workflows;
 
-use anyhow::{Context, Error, bail};
+use anyhow::bail;
 use futures_util::{
     Future, StreamExt, future, stream,
     stream::{Stream, TryStreamExt},
@@ -28,42 +29,45 @@ use std::{
     time::{Duration, Instant},
 };
 use temporalio_client::{
-    Client, ClientTlsOptions, GetWorkflowResultOptions, NamespacedClient, RetryClient, TlsOptions,
-    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
-    WorkflowHandle, WorkflowOptions,
+    Client, ClientTlsOptions, Connection, ConnectionOptions, NamespacedClient, TlsOptions,
+    UntypedWorkflow, UntypedWorkflowHandle, WorkflowExecutionInfo, WorkflowGetResultOptions,
+    WorkflowHandle, WorkflowStartOptions,
+    errors::{WorkflowGetResultError, WorkflowStartError},
+    grpc::WorkflowService,
 };
 use temporalio_common::{
-    Worker as CoreWorker,
+    WorkflowDefinition,
+    data_converters::{DataConverter, RawValue},
     protos::{
         coresdk::{
-            FromPayloadsExt, workflow_activation::WorkflowActivation,
+            workflow_activation::WorkflowActivation,
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            common::v1::Payload,
-            history::v1::History,
-            workflowservice::v1::{GetClusterInfoRequest, StartWorkflowExecutionResponse},
+            common::v1::Payload, history::v1::History, workflowservice::v1::GetClusterInfoRequest,
         },
     },
     telemetry::{
         Logger, OtelCollectorOptions, PrometheusExporterOptions, TelemetryOptions,
-        metrics::CoreMeter,
+        build_otlp_metric_exporter, metrics::CoreMeter, start_prometheus_metric_exporter,
     },
-    worker::{WorkerTaskTypes, WorkerVersioningStrategy},
+    worker::{WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerTaskTypes},
 };
 use temporalio_sdk::{
-    IntoActivityFunc, Worker, WorkflowFunction,
+    Worker, WorkerOptions,
+    activities::ActivityImplementer,
     interceptors::{
         FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
         WorkerInterceptor,
     },
+    workflows::{WorkflowImplementation, WorkflowImplementer},
 };
 #[cfg(any(feature = "test-utilities", test))]
 pub(crate) use temporalio_sdk_core::test_help::NAMESPACE;
 use temporalio_sdk_core::{
-    ClientOptions, CoreRuntime, RuntimeOptions, WorkerConfig, init_replay_worker, init_worker,
+    CoreRuntime, RuntimeOptions, Worker as CoreWorker, WorkerConfig, WorkerVersioningStrategy,
+    init_replay_worker, init_worker,
     replay::{HistoryForReplay, ReplayWorkerInput},
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     test_help::{MockPollCfg, build_mock_pollers, mock_worker},
 };
 use tokio::{sync::OnceCell, task::AbortHandle};
@@ -99,9 +103,13 @@ pub(crate) async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
+pub(crate) fn integ_namespace() -> String {
+    env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string())
+}
+
 pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
     WorkerConfig::builder()
-        .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
+        .namespace(integ_namespace())
         .task_queue(tq)
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
@@ -115,23 +123,35 @@ pub(crate) fn integ_worker_config(tq: &str) -> WorkerConfig {
         .expect("Configuration options construct properly")
 }
 
+pub(crate) fn integ_sdk_config(tq: &str) -> WorkerOptions {
+    WorkerOptions::new(tq)
+        .deployment_options(WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "".to_owned(),
+                build_id: "test_build_id".to_owned(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
+        })
+        .build()
+}
+
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
-pub(crate) fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> CoreWorker
 where
     I: IntoIterator<Item = HistoryForReplay> + 'static,
     <I as IntoIterator>::IntoIter: Send,
 {
     init_core_replay_stream(test_name, stream::iter(histories))
 }
-pub(crate) fn init_core_replay_stream<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
+pub(crate) fn init_core_replay_stream<I>(test_name: &str, histories: I) -> CoreWorker
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     init_integ_telem();
     let worker_cfg = integ_worker_config(test_name);
-    let worker = init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
-        .expect("Replay worker must init properly");
-    Arc::new(worker)
+    init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
+        .expect("Replay worker must init properly")
 }
 pub(crate) fn replay_sdk_worker<I>(histories: I) -> Worker
 where
@@ -145,7 +165,8 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     let core = init_core_replay_stream("replay_worker_test", histories);
-    let mut worker = Worker::new_from_core(core, "replay_q".to_string());
+    // TODO [rust-sdk-branch]: Needs DC passed in
+    let mut worker = Worker::new_from_core(Arc::new(core), DataConverter::default());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -187,7 +208,7 @@ pub(crate) fn init_integ_telem() -> Option<&'static CoreRuntime> {
     }))
 }
 
-pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
+pub(crate) async fn get_cloud_client() -> Client {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
     let cloud_key = env::var("TEMPORAL_CLIENT_KEY").unwrap();
 
@@ -196,8 +217,7 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
         .replace("\\n", "\n")
         .into_bytes();
     let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-    let sgo = ClientOptions::builder()
-        .target_url(Url::from_str(&cloud_addr).unwrap())
+    let connection_opts = ConnectionOptions::new(Url::from_str(&cloud_addr).unwrap())
         .client_name("sdk-core-integ-tests")
         .client_version("clientver")
         .identity("sdk-test-client")
@@ -209,29 +229,31 @@ pub(crate) async fn get_cloud_client() -> RetryClient<Client> {
             ..Default::default()
         })
         .build();
-    sgo.connect(
-        env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
-        None,
-    )
-    .await
-    .unwrap()
+    let connection = Connection::connect(connection_opts).await.unwrap();
+    let namespace = env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set");
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
+    Client::new(connection, client_opts).unwrap()
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub(crate) struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    pub worker_config: WorkerConfig,
-    /// Options to use when starting workflow(s)
-    pub workflow_options: WorkflowOptions,
+    pub sdk_config: WorkerOptions,
+    /// Options to use when starting workflow(s). Is initialized with task_queue & workflow_id
+    /// to be the same, derived from test name given to `new`.
+    pub workflow_options: WorkflowStartOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
-    client_override: Option<Arc<RetryClient<Client>>>,
+    client_override: Option<Client>,
     min_local_server_version: Option<String>,
+    /// Run when initializing, allows for altering the config used to init the core worker
+    #[allow(clippy::type_complexity)] // It's not tho
+    core_config_mutator: Option<Arc<dyn Fn(&mut WorkerConfig)>>,
 }
 struct InitializedWorker {
-    worker: Arc<dyn CoreWorker>,
-    client: Arc<RetryClient<Client>>,
+    worker: Arc<CoreWorker>,
+    client: Client,
 }
 
 impl CoreWfStarter {
@@ -260,10 +282,9 @@ impl CoreWfStarter {
         let mut s = Self::new_with_overrides(test_name, None, client);
 
         if check_mlsv && !version_req.is_empty() {
-            let clustinfo = (*s.get_client().await)
+            let clustinfo = s
                 .get_client()
-                .inner()
-                .workflow_svc()
+                .await
                 .get_cluster_info(GetClusterInfoRequest::default().into_request())
                 .await;
             let srv_ver = semver::Version::parse(
@@ -291,20 +312,20 @@ impl CoreWfStarter {
     pub(crate) fn new_with_overrides(
         test_name: &str,
         runtime_override: Option<CoreRuntime>,
-        client_override: Option<RetryClient<Client>>,
+        client_override: Option<Client>,
     ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
-        let mut worker_config = integ_worker_config(&task_queue);
-        worker_config.max_cached_workflows = 1000_usize;
+        let sdk_config = integ_sdk_config(&task_queue);
         Self {
-            task_queue_name: task_queue,
-            worker_config,
+            task_queue_name: task_queue.clone(),
+            sdk_config,
             initted_worker: OnceCell::new(),
-            workflow_options: Default::default(),
+            workflow_options: WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
             runtime_override: runtime_override.map(Arc::new),
-            client_override: client_override.map(Arc::new),
+            client_override,
             min_local_server_version: None,
+            core_config_mutator: None,
         }
     }
 
@@ -313,32 +334,44 @@ impl CoreWfStarter {
     pub(crate) fn clone_no_worker(&self) -> Self {
         Self {
             task_queue_name: self.task_queue_name.clone(),
-            worker_config: self.worker_config.clone(),
+            sdk_config: self.sdk_config.clone(),
             workflow_options: self.workflow_options.clone(),
             runtime_override: self.runtime_override.clone(),
             client_override: self.client_override.clone(),
             min_local_server_version: self.min_local_server_version.clone(),
             initted_worker: Default::default(),
+            core_config_mutator: self.core_config_mutator.clone(),
         }
     }
 
     pub(crate) async fn worker(&mut self) -> TestWorker {
-        let w = self.get_worker().await;
-        let mut w = TestWorker::new(w);
-        w.client = Some(self.get_client().await);
+        let worker = self.get_worker().await;
+        let client = self.get_client().await;
+        let sdk = Worker::new_from_core_definitions(
+            worker,
+            client.data_converter().clone(),
+            self.sdk_config.activities(),
+            self.sdk_config.workflows(),
+        );
+        let mut w = TestWorker::new(sdk);
+        w.client = Some(client);
 
         w
+    }
+
+    pub(crate) fn set_core_cfg_mutator(&mut self, mutator: impl Fn(&mut WorkerConfig) + 'static) {
+        self.core_config_mutator = Some(Arc::new(mutator))
     }
 
     pub(crate) async fn shutdown(&mut self) {
         self.get_worker().await.shutdown().await;
     }
 
-    pub(crate) async fn get_worker(&mut self) -> Arc<dyn CoreWorker> {
+    pub(crate) async fn get_worker(&mut self) -> Arc<CoreWorker> {
         self.get_or_init().await.worker.clone()
     }
 
-    pub(crate) async fn get_client(&mut self) -> Arc<RetryClient<Client>> {
+    pub(crate) async fn get_client(&mut self) -> Client {
         self.get_or_init().await.client.clone()
     }
 
@@ -352,38 +385,17 @@ impl CoreWfStarter {
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
-    ) -> WorkflowHandle<RetryClient<Client>, Vec<Payload>> {
-        let run_id = worker
-            .submit_wf(
-                self.task_queue_name.clone(),
-                wf_name.into(),
-                vec![],
-                self.workflow_options.clone(),
-            )
+    ) -> UntypedWorkflowHandle<Client> {
+        let wf_name = wf_name.into();
+        worker
+            .submit_wf(&wf_name, vec![], self.workflow_options.clone())
             .await
             .unwrap();
         self.initted_worker
             .get()
             .unwrap()
             .client
-            .get_untyped_workflow_handle(&self.task_queue_name, run_id)
-    }
-
-    pub(crate) async fn eager_start_with_worker(
-        &self,
-        wf_name: impl Into<String>,
-        worker: &mut TestWorker,
-    ) -> StartWorkflowExecutionResponse {
-        assert!(self.workflow_options.enable_eager_workflow_start);
-        worker
-            .eager_submit_wf(
-                self.task_queue_name.clone(),
-                wf_name.into(),
-                vec![],
-                self.workflow_options.clone(),
-            )
-            .await
-            .unwrap()
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
     }
 
     pub(crate) async fn start_wf_with_id(&self, workflow_id: String) -> String {
@@ -391,18 +403,19 @@ impl CoreWfStarter {
             "Worker must be initted before starting a workflow.\
                              Tests must call `get_worker` first.",
         );
+        let mut options = self.workflow_options.clone();
+        options.workflow_id = workflow_id;
         iw.client
             .start_workflow(
-                vec![],
-                iw.worker.get_config().task_queue.clone(),
-                workflow_id,
-                self.task_queue_name.clone(),
-                None,
-                self.workflow_options.clone(),
+                UntypedWorkflow::new(&self.task_queue_name),
+                RawValue::empty(),
+                options,
             )
             .await
             .unwrap()
-            .run_id
+            .run_id()
+            .unwrap()
+            .to_string()
     }
 
     pub(crate) fn get_task_queue(&self) -> &str {
@@ -416,26 +429,33 @@ impl CoreWfStarter {
     /// Fetch the history of the default workflow for this starter. IE: The one that would
     /// be started by [CoreWfStarter::start_wf].
     pub(crate) async fn get_history(&self) -> History {
-        self.initted_worker
+        let client = &self
+            .initted_worker
             .get()
             .expect("Starter must be initialized")
-            .client
-            .get_workflow_execution_history(self.get_wf_id().to_string(), None, vec![])
+            .client;
+        let events = client
+            .get_workflow_handle::<UntypedWorkflow>(self.get_wf_id())
+            .fetch_history(Default::default())
             .await
             .unwrap()
-            .history
-            .unwrap()
+            .into_events();
+        History { events }
     }
 
     pub(crate) async fn wait_for_default_wf_finish(
         &self,
-    ) -> Result<WorkflowExecutionResult<Vec<Payload>>, Error> {
+    ) -> Result<RawValue, WorkflowGetResultError> {
         self.initted_worker
             .get()
             .unwrap()
             .client
-            .get_untyped_workflow_handle(self.get_wf_id().to_string(), "")
-            .get_workflow_result(GetWorkflowResultOptions { follow_runs: false })
+            .get_workflow_handle::<UntypedWorkflow>(&self.task_queue_name)
+            .get_result(
+                WorkflowGetResultOptions::builder()
+                    .follow_runs(false)
+                    .build(),
+            )
             .await
     }
 
@@ -447,21 +467,29 @@ impl CoreWfStarter {
                 } else {
                     init_integ_telem().unwrap()
                 };
-                let cfg = self.worker_config.clone();
-                let client = if let Some(client) = self.client_override.take() {
-                    client
+                let (connection, client) = if let Some(client) = self.client_override.take() {
+                    // Extract the connection from the client to pass to init_worker
+                    let connection = client.connection().clone();
+                    (connection, client)
                 } else {
-                    Arc::new(
-                        get_integ_server_options()
-                            .connect(
-                                cfg.namespace.clone(),
-                                rt.telemetry().get_temporal_metric_meter(),
-                            )
-                            .await
-                            .expect("Must connect"),
-                    )
+                    // Create connection and client
+                    let mut opts = get_integ_server_options();
+                    opts.metrics_meter = rt.telemetry().get_temporal_metric_meter();
+                    let connection = Connection::connect(opts).await.expect("Must connect");
+                    let client_opts =
+                        temporalio_client::ClientOptions::new(integ_namespace()).build();
+                    let client = Client::new(connection.clone(), client_opts).unwrap();
+                    (connection, client)
                 };
-                let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
+                let mut core_config = self
+                    .sdk_config
+                    .to_core_options(client.namespace())
+                    .expect("sdk config converts to core config");
+                if let Some(ref ccm) = self.core_config_mutator {
+                    ccm(&mut core_config);
+                }
+                let worker =
+                    init_worker(rt, core_config, connection).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
@@ -474,8 +502,7 @@ impl CoreWfStarter {
 /// Provides conveniences for running integ tests with the SDK (against real server or mocks)
 pub(crate) struct TestWorker {
     inner: Worker,
-    pub core_worker: Arc<dyn CoreWorker>,
-    client: Option<Arc<RetryClient<Client>>>,
+    client: Option<Client>,
     pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
@@ -483,14 +510,9 @@ pub(crate) struct TestWorker {
 }
 impl TestWorker {
     /// Create a new test worker
-    pub(crate) fn new(core_worker: Arc<dyn CoreWorker>) -> Self {
-        let inner = Worker::new_from_core(
-            core_worker.clone(),
-            core_worker.get_config().task_queue.clone(),
-        );
+    pub(crate) fn new(sdk: Worker) -> Self {
         Self {
-            inner,
-            core_worker,
+            inner: sdk,
             client: None,
             started_workflows: Arc::new(Mutex::new(vec![])),
             fetch_results: true,
@@ -502,24 +524,31 @@ impl TestWorker {
     }
 
     pub(crate) fn worker_instance_key(&self) -> Uuid {
-        self.core_worker.worker_instance_key()
+        self.inner.worker_instance_key()
     }
 
-    // TODO: Maybe trait-ify?
-    pub(crate) fn register_wf<F: Into<WorkflowFunction>>(
+    pub(crate) fn register_activities<AI: ActivityImplementer>(
         &mut self,
-        workflow_type: impl Into<String>,
-        wf_function: F,
-    ) {
-        self.inner.register_wf(workflow_type, wf_function)
+        instance: AI,
+    ) -> &mut Self {
+        self.inner.register_activities::<AI>(instance);
+        self
     }
 
-    pub(crate) fn register_activity<A, R, O>(
-        &mut self,
-        activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
-    ) {
-        self.inner.register_activity(activity_type, act_function)
+    #[allow(unused)]
+    pub(crate) fn register_workflow<WI: WorkflowImplementer>(&mut self) -> &mut Self {
+        self.inner.register_workflow::<WI>();
+        self
+    }
+
+    pub(crate) fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.inner.register_workflow_with_factory::<W, F>(factory);
+        self
     }
 
     /// Create a handle that can be used to submit workflows. Useful when workflows need to be
@@ -527,7 +556,6 @@ impl TestWorker {
     pub(crate) fn get_submitter_handle(&self) -> TestWorkerSubmitterHandle {
         TestWorkerSubmitterHandle {
             client: self.client.clone().expect("client must be set"),
-            tq: self.inner.task_queue().to_string(),
             started_workflows: self.started_workflows.clone(),
         }
     }
@@ -540,10 +568,9 @@ impl TestWorker {
     /// Returns the run id of the started workflow (if no client has initialized returns a fake id)
     pub(crate) async fn submit_wf(
         &self,
-        workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        mut options: WorkflowOptions,
+        mut options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
         if self.client.is_none() {
             return Ok("fake_run_id".to_string());
@@ -554,41 +581,34 @@ impl TestWorker {
             options.execution_timeout = Some(Duration::from_secs(60 * 5));
         }
         self.get_submitter_handle()
-            .submit_wf(workflow_id, workflow_type, input, options)
+            .submit_wf(workflow_type, input, options)
             .await
     }
 
-    /// Similar to `submit_wf` but checking that the server returns the first
-    /// workflow task in the client response.
-    /// Note that this does not guarantee that the worker will execute this task eagerly.
-    pub(crate) async fn eager_submit_wf(
+    /// Start a workflow returning a handle to the started workflow.
+    pub(crate) async fn submit_workflow<W>(
         &self,
-        workflow_id: impl Into<String>,
-        workflow_type: impl Into<String>,
-        input: Vec<Payload>,
-        options: WorkflowOptions,
-    ) -> Result<StartWorkflowExecutionResponse, anyhow::Error> {
-        let c = self.client.as_ref().context("client needed for eager wf")?;
-        let wfid = workflow_id.into();
-        let res = c
-            .start_workflow(
-                input,
-                self.inner.task_queue().to_string(),
-                wfid.clone(),
-                workflow_type.into(),
-                None,
-                options,
-            )
-            .await?;
-        res.eager_workflow_task
-            .as_ref()
-            .context("no eager workflow task")?;
+        workflow: W,
+        input: W::Input,
+        mut options: WorkflowStartOptions,
+    ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
+    where
+        W: WorkflowDefinition,
+        W::Input: Send,
+    {
+        let c = self.client.as_ref().expect("client must be set");
+        if options.execution_timeout.is_none() {
+            options.execution_timeout = Some(Duration::from_secs(60 * 5));
+        }
+        let wfid = options.workflow_id.clone();
+        let handle = c.start_workflow(workflow, input, options).await?;
         self.started_workflows.lock().push(WorkflowExecutionInfo {
-            namespace: c.namespace().to_string(),
+            namespace: c.namespace(),
             workflow_id: wfid,
-            run_id: Some(res.run_id.clone()),
+            run_id: handle.info().run_id.clone(),
+            first_execution_run_id: None,
         });
-        Ok(res)
+        Ok(handle)
     }
 
     pub(crate) fn expect_workflow_completion(
@@ -604,6 +624,7 @@ impl TestWorker {
                 .unwrap_or(NAMESPACE.to_owned()),
             workflow_id: wf_id.into(),
             run_id,
+            first_execution_run_id: None,
         });
     }
 
@@ -637,11 +658,14 @@ impl TestWorker {
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
         Ok(())
     }
+
+    pub(crate) fn core_worker(&self) -> Arc<temporalio_sdk_core::Worker> {
+        self.inner.core_worker()
+    }
 }
 
 pub(crate) struct TestWorkerSubmitterHandle {
-    client: Arc<RetryClient<Client>>,
-    tq: String,
+    client: Client,
     started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
 }
 impl TestWorkerSubmitterHandle {
@@ -653,34 +677,32 @@ impl TestWorkerSubmitterHandle {
     /// Returns the run id of the started workflow
     pub(crate) async fn submit_wf(
         &self,
-        workflow_id: impl Into<String>,
         workflow_type: impl Into<String>,
         input: Vec<Payload>,
-        options: WorkflowOptions,
+        options: WorkflowStartOptions,
     ) -> Result<String, anyhow::Error> {
-        let wfid = workflow_id.into();
-        let res = self
+        let wfid = options.workflow_id.clone();
+        let handle = self
             .client
             .start_workflow(
-                input,
-                self.tq.clone(),
-                wfid.clone(),
-                workflow_type.into(),
-                None,
+                UntypedWorkflow::new(workflow_type.into()),
+                RawValue::new(input),
                 options,
             )
             .await?;
+        let run_id = handle.run_id().unwrap().to_string();
         self.started_workflows.lock().push(WorkflowExecutionInfo {
-            namespace: self.client.namespace().to_string(),
+            namespace: self.client.namespace(),
             workflow_id: wfid,
-            run_id: Some(res.run_id.clone()),
+            run_id: Some(run_id.clone()),
+            first_execution_run_id: None,
         });
-        Ok(res.run_id)
+        Ok(run_id)
     }
 }
 
 pub(crate) enum TestWorkerShutdownCond {
-    GetResults(Vec<WorkflowExecutionInfo>, Arc<RetryClient<Client>>),
+    GetResults(Vec<WorkflowExecutionInfo>, Client),
     NoAutoShutdown,
 }
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
@@ -702,7 +724,7 @@ impl TestWorkerCompletionIceptor {
         if let TestWorkerShutdownCond::GetResults(ref mut wfs, ref client) = self.condition {
             let wfs = std::mem::take(wfs);
             let shutdown_h = self.shutdown_handle.clone();
-            let client = (**client).clone();
+            let client = client.clone();
             let stream = stream::iter(
                 wfs.into_iter()
                     .map(move |info| info.bind_untyped(client.clone())),
@@ -711,7 +733,11 @@ impl TestWorkerCompletionIceptor {
             future::Either::Left(async move {
                 stream
                     .try_for_each_concurrent(None, |wh| async move {
-                        wh.get_workflow_result(Default::default()).await?;
+                        if let Err(e) = wh.get_result(Default::default()).await
+                            && !e.is_workflow_outcome()
+                        {
+                            return Err(e.into());
+                        }
                         Ok::<_, anyhow::Error>(())
                     })
                     .await?;
@@ -747,8 +773,8 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
     }
 }
 
-/// Returns the client options used to connect to the server used for integration tests.
-pub(crate) fn get_integ_server_options() -> ClientOptions {
+/// Returns the connection options used to connect to the server used for integration tests.
+pub(crate) fn get_integ_server_options() -> ConnectionOptions {
     let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
         .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
@@ -757,14 +783,32 @@ pub(crate) fn get_integ_server_options() -> ClientOptions {
         .map(|key_file| std::fs::read_to_string(key_file).unwrap());
     let tls_cfg = get_integ_tls_config();
 
-    ClientOptions::builder()
+    ConnectionOptions::new(url)
         .identity(INTEG_CLIENT_IDENTITY.to_string())
-        .target_url(url)
         .client_name(INTEG_CLIENT_NAME.to_string())
         .client_version(INTEG_CLIENT_VERSION.to_string())
         .maybe_api_key(api_key)
         .maybe_tls_options(tls_cfg)
         .build()
+}
+
+/// Helper to create a connection using the default integ test options
+pub(crate) async fn get_integ_connection(
+    meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
+) -> Connection {
+    let mut opts = get_integ_server_options();
+    opts.metrics_meter = meter;
+    Connection::connect(opts).await.expect("Must connect")
+}
+
+/// Helper to create a namespaced client using the default integ test options
+pub(crate) async fn get_integ_client(
+    namespace: String,
+    meter: Option<temporalio_common::telemetry::metrics::TemporalMeter>,
+) -> Client {
+    let connection = get_integ_connection(meter).await;
+    let client_opts = temporalio_client::ClientOptions::new(namespace).build();
+    Client::new(connection, client_opts).unwrap()
 }
 
 pub(crate) fn get_integ_tls_config() -> Option<TlsOptions> {
@@ -841,27 +885,21 @@ pub(crate) trait WorkflowHandleExt {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<R> WorkflowHandleExt for WorkflowHandle<RetryClient<Client>, R>
+impl<W> WorkflowHandleExt for WorkflowHandle<Client, W>
 where
-    R: FromPayloadsExt,
+    W: WorkflowDefinition,
 {
     async fn fetch_history_and_replay(
         &self,
         worker: &mut Worker,
     ) -> Result<Option<Payload>, anyhow::Error> {
         let wf_id = self.info().workflow_id.clone();
-        let run_id = self.info().run_id.clone();
-        let history = self
-            .client()
-            .get_workflow_execution_history(wf_id.clone(), run_id, vec![])
-            .await?
-            .history
-            .expect("history field must be populated");
-        let with_id = HistoryForReplay::new(history, wf_id);
+        let events = self.fetch_history(Default::default()).await?.into_events();
+        let with_id = HistoryForReplay::new(events, wf_id);
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
-        worker.with_new_core_worker(replay_worker);
+        worker.with_new_core_worker(Arc::new(replay_worker));
         let retval_icept = ReturnWorkflowExitValueInterceptor::default();
-        let retval_handle = retval_icept.get_result_handle();
+        let retval_handle = retval_icept.result_handle();
         let mut top_icept = InterceptorWithNext::new(Box::new(FailOnNondeterminismInterceptor {}));
         top_icept.set_next(Box::new(retval_icept));
         worker.set_worker_interceptor(top_icept);
@@ -910,9 +948,12 @@ impl Drop for AbortOnDrop {
     }
 }
 
-pub(crate) async fn eventually<F, Fut, T, E>(func: F, timeout: Duration) -> Result<T, anyhow::Error>
+pub(crate) async fn eventually<F, Fut, T, E>(
+    mut func: F,
+    timeout: Duration,
+) -> Result<T, anyhow::Error>
 where
-    F: Fn() -> Fut,
+    F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
 {
     let start = Instant::now();
@@ -934,7 +975,8 @@ pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporalio_sdk::Worker {
         c.ignore_evicts_on_shutdown = false;
     });
     let core = mock_worker(mock);
-    let mut worker = temporalio_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    let mut worker =
+        temporalio_sdk::Worker::new_from_core(Arc::new(core), DataConverter::default());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
@@ -951,7 +993,10 @@ pub(crate) fn mock_sdk_cfg(
     let mut mock = build_mock_pollers(poll_cfg);
     mock.worker_cfg(mutator);
     let core = mock_worker(mock);
-    TestWorker::new(Arc::new(core))
+    TestWorker::new(temporalio_sdk::Worker::new_from_core(
+        Arc::new(core),
+        DataConverter::default(),
+    ))
 }
 
 #[derive(Default)]

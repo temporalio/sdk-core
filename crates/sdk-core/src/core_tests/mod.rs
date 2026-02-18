@@ -7,28 +7,26 @@ mod workflow_cancels;
 mod workflow_tasks;
 
 use crate::{
-    Worker,
-    errors::PollError,
+    PollError, Worker,
     test_help::{
         MockPollCfg, build_mock_pollers, mock_worker, single_hist_mock_sg, test_worker_cfg,
     },
-    worker::client::mocks::{mock_manual_worker_client, mock_worker_client},
+    worker::{
+        PollerBehavior,
+        client::mocks::{mock_manual_worker_client, mock_worker_client},
+    },
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
-use temporalio_common::{
-    Worker as WorkerTrait,
-    protos::{
-        TestHistoryBuilder, canned_histories,
-        coresdk::{
-            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-            workflow_completion::WorkflowActivationCompletion,
-        },
-        temporal::api::{
-            enums::v1::EventType, history::v1::WorkflowExecutionOptionsUpdatedEventAttributes,
-        },
+use temporalio_common::protos::{
+    TestHistoryBuilder, canned_histories,
+    coresdk::{
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+        workflow_completion::WorkflowActivationCompletion,
     },
-    worker::PollerBehavior,
+    temporal::api::{
+        enums::v1::EventType, history::v1::WorkflowExecutionOptionsUpdatedEventAttributes,
+    },
 };
 use tokio::{sync::Barrier, time::sleep};
 

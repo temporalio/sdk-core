@@ -9,7 +9,10 @@ use std::{
 };
 use temporalio_common::protos::{
     coresdk::workflow_activation::{WorkflowActivationJob, start_workflow_from_attribs},
-    temporal::api::{common::v1::Payload, history::v1::WorkflowExecutionStartedEventAttributes},
+    temporal::api::{
+        common::v1::{Payload, SearchAttributes},
+        history::v1::WorkflowExecutionStartedEventAttributes,
+    },
     utilities::TryIntoOrNone,
 };
 
@@ -97,8 +100,11 @@ impl DrivenWorkflow {
     }
 
     /// Lang sent us an SA upsert command - use it to update our current view of search attributes.
-    pub(crate) fn search_attributes_update(&mut self, update: HashMap<String, Payload>) {
-        self.search_attribute_modifications.extend(update);
+    pub(crate) fn search_attributes_update(&mut self, update: Option<SearchAttributes>) {
+        if let Some(sa) = update {
+            self.search_attribute_modifications
+                .extend(sa.indexed_fields);
+        }
     }
 
     /// Return a view of the "current" state of search attributes. IE: The initial attributes

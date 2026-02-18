@@ -3,9 +3,9 @@
 //! users during testing.
 
 use crate::{
-    Worker,
+    Worker, WorkerConfig,
     worker::{
-        PostActivateHookData,
+        PollerBehavior, PostActivateHookData,
         client::mocks::{MockManualWorkerClient, mock_manual_worker_client},
     },
 };
@@ -30,7 +30,7 @@ use temporalio_common::{
             },
         },
     },
-    worker::{PollerBehavior, WorkerConfig, WorkerTaskTypes},
+    worker::WorkerTaskTypes,
 };
 use tokio::sync::{Mutex as TokioMutex, mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -126,10 +126,19 @@ where
 
 /// A history which will be used during replay verification. Since histories do not include the
 /// workflow id, it must be manually attached.
-#[derive(Debug, Clone, derive_more::Constructor)]
+#[derive(Debug, Clone)]
 pub struct HistoryForReplay {
     hist: History,
     workflow_id: String,
+}
+impl HistoryForReplay {
+    /// Create a new history from replay from something that looks like a history and a workflow id.
+    pub fn new(history: impl Into<History>, workflow_id: impl Into<String>) -> Self {
+        Self {
+            hist: history.into(),
+            workflow_id: workflow_id.into(),
+        }
+    }
 }
 impl From<TestHistoryBuilder> for HistoryForReplay {
     fn from(thb: TestHistoryBuilder) -> Self {
@@ -138,7 +147,7 @@ impl From<TestHistoryBuilder> for HistoryForReplay {
 }
 impl From<HistoryInfo> for HistoryForReplay {
     fn from(histinfo: HistoryInfo) -> Self {
-        HistoryForReplay::new(histinfo.into(), "fake".to_owned())
+        HistoryForReplay::new(histinfo, "fake".to_owned())
     }
 }
 

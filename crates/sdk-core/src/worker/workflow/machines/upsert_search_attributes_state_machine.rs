@@ -50,11 +50,11 @@ pub(super) fn upsert_search_attrs(
     let has_flag = internal_flags
         .borrow_mut()
         .try_use(CoreInternalFlags::UpsertSearchAttributeOnPatch, !replaying);
-    if has_flag
-        && attribs
-            .search_attributes
-            .contains_key(VERSION_SEARCH_ATTR_KEY)
-    {
+    let contains_version_key = attribs
+        .search_attributes
+        .as_ref()
+        .is_some_and(|sa| sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY));
+    if has_flag && contains_version_key {
         warn!(
             "Upserting the {VERSION_SEARCH_ATTR_KEY} search attribute directly from workflow code \
              is not permitted and has no effect!"
@@ -63,7 +63,7 @@ pub(super) fn upsert_search_attrs(
         // this.
         create_new(Default::default())
     } else {
-        create_new(attribs.search_attributes.into())
+        create_new(attribs.search_attributes.unwrap_or_default())
     }
 }
 
@@ -186,21 +186,18 @@ mod tests {
         worker::client::mocks::mock_worker_client,
     };
     use std::collections::HashMap;
-    use temporalio_common::{
-        Worker,
-        protos::{
-            coresdk::{
-                AsJsonPayloadExt,
-                workflow_activation::{WorkflowActivationJob, workflow_activation_job},
-                workflow_commands::SetPatchMarker,
-                workflow_completion::WorkflowActivationCompletion,
-            },
-            temporal::api::{
-                command::v1::command::Attributes,
-                common::v1::Payload,
-                enums::v1::EventType,
-                history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
-            },
+    use temporalio_common::protos::{
+        coresdk::{
+            AsJsonPayloadExt,
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+            workflow_commands::SetPatchMarker,
+            workflow_completion::WorkflowActivationCompletion,
+        },
+        temporal::api::{
+            command::v1::command::Attributes,
+            common::v1::Payload,
+            enums::v1::EventType,
+            history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
     };
 
@@ -318,7 +315,9 @@ mod tests {
         };
         cmds.push(
             UpsertWorkflowSearchAttributes {
-                search_attributes: ver_upsert,
+                search_attributes: Some(SearchAttributes {
+                    indexed_fields: ver_upsert,
+                }),
             }
             .into(),
         );

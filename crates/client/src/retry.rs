@@ -1,13 +1,21 @@
 use crate::{
-    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY, NamespacedClient, Result,
-    RetryOptions,
-    raw::IsUserLongPoll,
+    ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, MESSAGE_TOO_LARGE_KEY,
+    grpc::IsUserLongPoll,
     request_extensions::{IsWorkerTaskLongPoll, NoRetryOnMatching, RetryConfigForCall},
 };
-use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
+use backoff::{
+    Clock, SystemClock,
+    backoff::Backoff,
+    exponential::{self, ExponentialBackoff},
+};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
-use tonic::{Code, Request};
+use std::{
+    error::Error,
+    fmt::Debug,
+    future::Future,
+    time::{Duration, Instant},
+};
+use tonic::Code;
 
 /// List of gRPC error codes that client will retry.
 #[doc(hidden)]
@@ -22,44 +30,77 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 ];
 const LONG_POLL_FATAL_GRACE: Duration = Duration::from_secs(60);
 
-/// A wrapper for a [crate::WorkflowClientTrait] or [crate::WorkflowService] implementor which
-/// performs auto-retries
-#[derive(Debug, Clone)]
-pub struct RetryClient<SG> {
-    client: SG,
-    retry_config: Arc<RetryOptions>,
+/// Configuration for retrying requests to the server
+#[derive(Clone, Debug, PartialEq)]
+pub struct RetryOptions {
+    /// initial wait time before the first retry.
+    pub initial_interval: Duration,
+    /// randomization jitter that is used as a multiplier for the current retry interval
+    /// and is added or subtracted from the interval length.
+    pub randomization_factor: f64,
+    /// rate at which retry time should be increased, until it reaches max_interval.
+    pub multiplier: f64,
+    /// maximum amount of time to wait between retries.
+    pub max_interval: Duration,
+    /// maximum total amount of time requests should be retried for, if None is set then no limit
+    /// will be used.
+    pub max_elapsed_time: Option<Duration>,
+    /// maximum number of retry attempts.
+    pub max_retries: usize,
 }
 
-impl<SG> RetryClient<SG> {
-    /// Use the provided retry config with the provided client
-    pub fn new(client: SG, retry_config: RetryOptions) -> Self {
+impl Default for RetryOptions {
+    fn default() -> Self {
         Self {
-            client,
-            retry_config: Arc::new(retry_config),
+            initial_interval: Duration::from_millis(100), // 100 ms wait by default.
+            randomization_factor: 0.2,                    // +-20% jitter.
+            multiplier: 1.7, // each next retry delay will increase by 70%
+            max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
+            max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
+            max_retries: 10,
         }
     }
 }
 
-impl<SG> RetryClient<SG> {
-    /// Return the inner client type
-    pub fn get_client(&self) -> &SG {
-        &self.client
+impl RetryOptions {
+    pub(crate) const fn task_poll_retry_policy() -> Self {
+        Self {
+            initial_interval: Duration::from_millis(200),
+            randomization_factor: 0.2,
+            multiplier: 2.0,
+            max_interval: Duration::from_secs(10),
+            max_elapsed_time: None,
+            max_retries: 0,
+        }
     }
 
-    /// Return the inner client type mutably
-    pub fn get_client_mut(&mut self) -> &mut SG {
-        &mut self.client
+    pub(crate) const fn throttle_retry_policy() -> Self {
+        Self {
+            initial_interval: Duration::from_secs(1),
+            randomization_factor: 0.2,
+            multiplier: 2.0,
+            max_interval: Duration::from_secs(10),
+            max_elapsed_time: None,
+            max_retries: 0,
+        }
     }
 
-    /// Disable retry and return the inner client type
-    pub fn into_inner(self) -> SG {
-        self.client
+    /// A retry policy that never retires
+    pub const fn no_retries() -> Self {
+        Self {
+            initial_interval: Duration::from_secs(0),
+            randomization_factor: 0.0,
+            multiplier: 1.0,
+            max_interval: Duration::from_secs(0),
+            max_elapsed_time: None,
+            max_retries: 1,
+        }
     }
 
     pub(crate) fn get_call_info<R>(
         &self,
         call_name: &'static str,
-        request: Option<&Request<R>>,
+        request: Option<&tonic::Request<R>>,
     ) -> CallInfo {
         let mut call_type = CallType::Normal;
         let mut retry_short_circuit = None;
@@ -80,7 +121,7 @@ impl<SG> RetryClient<SG> {
         } else if call_type == CallType::TaskLongPoll {
             RetryOptions::task_poll_retry_policy()
         } else {
-            (*self.retry_config).clone()
+            self.clone()
         };
         CallInfo {
             call_type,
@@ -90,32 +131,38 @@ impl<SG> RetryClient<SG> {
         }
     }
 
-    pub(crate) fn make_future_retry<R, F, Fut>(
-        info: CallInfo,
-        factory: F,
-    ) -> FutureRetry<F, TonicErrorHandler<SystemClock>>
-    where
-        F: FnMut() -> Fut + Unpin,
-        Fut: Future<Output = Result<R>>,
-    {
-        FutureRetry::new(
-            factory,
-            TonicErrorHandler::new(info, RetryOptions::throttle_retry_policy()),
-        )
+    pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
+        exponential::ExponentialBackoff {
+            current_interval: self.initial_interval,
+            initial_interval: self.initial_interval,
+            randomization_factor: self.randomization_factor,
+            multiplier: self.multiplier,
+            max_interval: self.max_interval,
+            max_elapsed_time: self.max_elapsed_time,
+            clock,
+            start_time: Instant::now(),
+        }
     }
 }
 
-impl<SG> NamespacedClient for RetryClient<SG>
-where
-    SG: NamespacedClient,
-{
-    fn namespace(&self) -> String {
-        self.client.namespace()
+impl From<RetryOptions> for backoff::ExponentialBackoff {
+    fn from(c: RetryOptions) -> Self {
+        c.into_exp_backoff(SystemClock::default())
     }
+}
 
-    fn identity(&self) -> String {
-        self.client.identity()
-    }
+pub(crate) fn make_future_retry<R, F, Fut>(
+    info: CallInfo,
+    factory: F,
+) -> FutureRetry<F, TonicErrorHandler<SystemClock>>
+where
+    F: FnMut() -> Fut + Unpin,
+    Fut: Future<Output = Result<R, tonic::Status>>,
+{
+    FutureRetry::new(
+        factory,
+        TonicErrorHandler::new(info, RetryOptions::throttle_retry_policy()),
+    )
 }
 
 #[derive(Debug)]
@@ -525,12 +572,11 @@ mod tests {
     ) {
         // A bit odd, but we don't need a real client to test the retry client passes through the
         // correct retry config
-        let fake_retry = RetryClient::new((), TEST_RETRY_CONFIG);
         let mut req = req.into_request();
         req.extensions_mut().insert(IsWorkerTaskLongPoll);
         for i in 1..=50 {
             let mut err_handler = TonicErrorHandler::new(
-                fake_retry.get_call_info::<R>(call_name, Some(&req)),
+                TEST_RETRY_CONFIG.get_call_info::<R>(call_name, Some(&req)),
                 RetryOptions::throttle_retry_policy(),
             );
             let result = err_handler.handle(i, Status::new(Code::Unknown, "Ahh"));
@@ -557,13 +603,12 @@ mod tests {
         )]
         (call_name, req): (&'static str, R),
     ) {
-        let fake_retry = RetryClient::new((), TEST_RETRY_CONFIG);
         let mut req = req.into_request();
         req.extensions_mut().insert(IsWorkerTaskLongPoll);
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
             let mut err_handler = TonicErrorHandler::new(
-                fake_retry.get_call_info::<R>(call_name, Some(&req)),
+                TEST_RETRY_CONFIG.get_call_info::<R>(call_name, Some(&req)),
                 RetryOptions::throttle_retry_policy(),
             );
             for i in 1..=5 {
