@@ -1,6 +1,6 @@
 //! Contains tracing/logging and metrics related functionality
 
-/// Metric instrument types and the [`CoreMeter`](metrics::CoreMeter) trait.
+/// Metric instrument types and the [`CoreMeter`] trait.
 pub mod metrics;
 
 #[cfg(feature = "core-based-sdk")]
