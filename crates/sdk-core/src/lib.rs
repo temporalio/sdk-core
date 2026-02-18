@@ -97,10 +97,12 @@ pub fn init_worker(
     }
     let sticky_q = sticky_q_name_for_worker(&client_ident, worker_config.max_cached_workflows);
 
+    let worker_instance_key = uuid::Uuid::new_v4();
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         namespace.clone(),
         worker_config.versioning_strategy.clone(),
+        worker_instance_key,
     ));
 
     Worker::new(

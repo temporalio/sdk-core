@@ -54,6 +54,7 @@ use temporalio_common::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
         TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
+        start_prometheus_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
             MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
@@ -72,6 +73,11 @@ use temporalio_sdk_core::{
     SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
     TokioRuntimeBuilder, TunerBuilder, WorkerConfig, WorkerVersioningStrategy, WorkflowSlotKind,
     init_worker,
+    replay::TestHistoryBuilder,
+    test_help::{
+        MockPollCfg, ResponseType, TemporalMeter, WorkerExt, WorkerTestHelpers, build_mock_pollers,
+        mock_worker, mock_worker_client,
+    },
 };
 use tokio::{join, sync::Barrier};
 use tonic::IntoRequest;
@@ -1048,6 +1054,7 @@ async fn nexus_metrics() {
                                 variant: Some(nexus::v1::response::Variant::StartOperation(
                                     StartOperationResponse {
                                         variant: Some(
+                                            #[allow(deprecated)]
                                             start_operation_response::Variant::OperationError(
                                                 UnsuccessfulOperationError {
                                                     operation_state: "failed".to_string(),
@@ -1062,7 +1069,9 @@ async fn nexus_metrics() {
                                 )),
                             })
                         }
-                        Some(p) if p == "handler-fail".into() => {
+                        Some(p) if p == "handler-fail".into() =>
+                        {
+                            #[allow(deprecated)]
                             nexus_task_completion::Status::Error(HandlerError {
                                 error_type: "BAD_REQUEST".to_string(),
                                 failure: Some(nexus::v1::Failure {
@@ -1541,4 +1550,87 @@ async fn resource_based_tuner_metrics() {
         body.contains("temporal_resource_slots_cpu_pid_output"),
         "CPU PID output metric should be present"
     );
+}
+
+#[tokio::test]
+async fn terminal_metric_not_recorded_on_rejected_completion() {
+    let prom_info = start_prometheus_metric_exporter(
+        PrometheusExporterOptions::builder()
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .build(),
+    )
+    .unwrap();
+    let addr = prom_info.bound_addr;
+    let _abort = prom_info.abort_handle;
+    let meter = TemporalMeter::new(
+        prom_info.meter as Arc<dyn CoreMeter>,
+        NewAttributes { attributes: vec![] },
+        TaskQueueLabelStrategy::UseNormal,
+    );
+
+    // Build a simple workflow history: start + WFT
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(
+        temporalio_common::protos::temporal::api::enums::v1::EventType::WorkflowExecutionStarted,
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    // First WFT completion is rejected by server, second succeeds
+    let mut call_count = 0;
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock_worker_client(),
+    );
+    mh.completion_mock_fn = Some(Box::new(move |_| {
+        call_count += 1;
+        if call_count == 1 {
+            Err(tonic::Status::not_found("Workflow task not found"))
+        } else {
+            Ok(Default::default())
+        }
+    }));
+
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    mock.set_temporal_meter(meter);
+    let core = mock_worker(mock);
+
+    // First attempt: get WFT activation and complete the workflow
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&act.run_id).await;
+
+    // Handle eviction (triggered by NotFound error from server)
+    core.handle_eviction().await;
+
+    // Second attempt (replay after eviction): complete workflow again
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&act.run_id).await;
+
+    core.drain_pollers_and_shutdown().await;
+
+    // The workflow_completed metric should be recorded exactly once — only for
+    // the successful server response, not for the rejected first attempt.
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    let matching_line = body.lines().find(|l| l.starts_with("workflow_completed{"));
+    match matching_line {
+        Some(line) => {
+            assert!(
+                line.ends_with(" 1"),
+                "Expected workflow_completed count of 1, got: {line}"
+            );
+            assert!(
+                line.contains("workflow_type=\"default_wf_type\""),
+                "Expected workflow_type label on metric, got: {line}"
+            );
+        }
+        None => panic!(
+            "workflow_completed metric not found. Available metrics:\n{}",
+            body.lines()
+                .filter(|l| l.contains("workflow"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
+    }
 }

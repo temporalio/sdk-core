@@ -1107,6 +1107,15 @@ proxier! {
         }
     );
     (
+        count_schedules,
+        CountSchedulesRequest,
+        CountSchedulesResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         update_worker_build_id_compatibility,
         UpdateWorkerBuildIdCompatibilityRequest,
         UpdateWorkerBuildIdCompatibilityResponse,

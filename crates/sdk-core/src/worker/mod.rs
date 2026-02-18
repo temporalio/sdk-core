@@ -437,6 +437,16 @@ pub(crate) struct WorkerTelemetry {
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
 }
 
+impl WorkerTelemetry {
+    pub(crate) fn from_meter(meter: TemporalMeter) -> Self {
+        Self {
+            temporal_metric_meter: Some(meter),
+            trace_subscriber: None,
+        }
+    }
+}
+
+
 impl Worker {
     /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional
     /// telemetry.
@@ -777,7 +787,7 @@ impl Worker {
             external_wft_tx,
             deployment_options,
         );
-        let worker_instance_key = Uuid::new_v4();
+        let worker_instance_key = client.worker_instance_key();
         let worker_status = Arc::new(RwLock::new(WorkerStatus::Running));
 
         let sdk_name_and_ver = client.sdk_name_and_version();
@@ -913,7 +923,17 @@ impl Worker {
             .and_then(|wf| wf.get_sticky_queue_name())
             .unwrap_or_default();
         // This is a best effort call and we can still shutdown the worker if it fails
-        match self.client.shutdown_worker(sticky_name, heartbeat).await {
+        let task_queue_types = self.config.task_types.to_task_queue_types();
+        match self
+            .client
+            .shutdown_worker(
+                sticky_name,
+                self.config.task_queue.clone(),
+                task_queue_types,
+                heartbeat,
+            )
+            .await
+        {
             Err(err)
                 if !matches!(
                     err.code(),

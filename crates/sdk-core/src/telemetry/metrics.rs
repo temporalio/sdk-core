@@ -882,7 +882,9 @@ where
     }
 
     fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
-        HistogramF64::new(Arc::new(self.new_instrument(params, MetricKind::Histogram)))
+        HistogramF64::new(Arc::new(
+            self.new_instrument(params, MetricKind::HistogramF64),
+        ))
     }
 
     fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration {
@@ -896,7 +898,7 @@ where
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
-        GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::Gauge)))
+        GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::GaugeF64)))
     }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>

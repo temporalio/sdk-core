@@ -39,7 +39,6 @@ use temporalio_common::protos::{
         workflow_completion,
     },
     temporal::api::{
-        command::v1::command::Attributes as CmdAttribs,
         enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
         failure::v1::Failure,
     },
@@ -439,6 +438,7 @@ impl ManagedRun {
                     action: ActivationAction::RespondLegacyQuery {
                         result: Box::new(qr),
                     },
+                    metrics: self.metrics.clone(),
                 }),
                 resp_chan,
             );
@@ -1126,27 +1126,6 @@ impl ManagedRun {
                 )
             };
 
-            // Record metrics for any outgoing terminal commands
-            for cmd in commands.iter() {
-                match cmd.attributes.as_ref() {
-                    Some(CmdAttribs::CompleteWorkflowExecutionCommandAttributes(_)) => {
-                        self.metrics.wf_completed();
-                    }
-                    Some(CmdAttribs::FailWorkflowExecutionCommandAttributes(attrs)) => {
-                        if metrics::should_record_failure_metric(&attrs.failure) {
-                            self.metrics.wf_failed();
-                        }
-                    }
-                    Some(CmdAttribs::ContinueAsNewWorkflowExecutionCommandAttributes(_)) => {
-                        self.metrics.wf_continued_as_new();
-                    }
-                    Some(CmdAttribs::CancelWorkflowExecutionCommandAttributes(_)) => {
-                        self.metrics.wf_canceled();
-                    }
-                    _ => (),
-                }
-            }
-
             let attempt = self.wft.as_ref().map(|t| t.info.attempt).unwrap_or(1);
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,
@@ -1159,6 +1138,7 @@ impl ManagedRun {
                     versioning_behavior: data.versioning_behavior,
                     attempt,
                 },
+                metrics: self.metrics.clone(),
             })
         } else {
             ActivationCompleteOutcome::DoNothing

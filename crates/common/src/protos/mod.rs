@@ -37,6 +37,14 @@ pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 /// The search attribute key used when registering change versions
 pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
 
+macro_rules! include_proto_with_serde {
+    ($pkg:tt) => {
+        tonic::include_proto!($pkg);
+
+        include!(concat!(env!("OUT_DIR"), concat!("/", $pkg, ".serde.rs")));
+    };
+}
+
 #[allow(
     clippy::large_enum_variant,
     clippy::derive_partial_eq_without_eq,
@@ -826,14 +834,33 @@ pub mod coresdk {
                     nexus_task_completion::Status::Completed(c) => {
                         write!(f, "{c}")
                     }
-                    nexus_task_completion::Status::Error(e) => {
-                        write!(f, "{e}")
-                    }
                     nexus_task_completion::Status::AckCancel(_) => {
                         write!(f, "AckCancel")
                     }
+                    #[allow(deprecated)]
+                    nexus_task_completion::Status::Error(error) => {
+                        write!(f, "Error({error:?})")
+                    }
+                    nexus_task_completion::Status::Failure(failure) => {
+                        write!(f, "{failure}")
+                    }
                 }?;
                 write!(f, ")")
+            }
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum NexusOperationErrorState {
+            Failed,
+            Canceled,
+        }
+
+        impl Display for NexusOperationErrorState {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    Self::Failed => write!(f, "failed"),
+                    Self::Canceled => write!(f, "canceled"),
+                }
             }
         }
     }
@@ -1917,6 +1944,7 @@ pub mod temporal {
                             retry_policy: c.retry_policy,
                             search_attributes: c.search_attributes,
                             inherit_build_id,
+                            initial_versioning_behavior: c.initial_versioning_behavior,
                             ..Default::default()
                         },
                     )
@@ -2014,7 +2042,7 @@ pub mod temporal {
                     collections::HashMap,
                     fmt::{Display, Formatter},
                 };
-                tonic::include_proto!("temporal.api.common.v1");
+                include_proto_with_serde!("temporal.api.common.v1");
 
                 impl<T> From<T> for Payload
                 where
@@ -2147,7 +2175,7 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.enums.v1");
+                include_proto_with_serde!("temporal.api.enums.v1");
             }
         }
         pub mod errordetails {
@@ -2157,7 +2185,7 @@ pub mod temporal {
         }
         pub mod failure {
             pub mod v1 {
-                tonic::include_proto!("temporal.api.failure.v1");
+                include_proto_with_serde!("temporal.api.failure.v1");
             }
         }
         pub mod filter {
@@ -2564,13 +2592,20 @@ pub mod temporal {
                 use crate::protos::{
                     camel_case_to_screaming_snake,
                     temporal::api::{
-                        common,
-                        common::v1::link::{WorkflowEvent, workflow_event},
+                        common::{
+                            self,
+                            v1::link::{WorkflowEvent, workflow_event},
+                        },
                         enums::v1::EventType,
+                        failure,
                     },
                 };
                 use anyhow::{anyhow, bail};
-                use std::fmt::{Display, Formatter};
+                use prost::Name;
+                use std::{
+                    collections::HashMap,
+                    fmt::{Display, Formatter},
+                };
                 use tonic::transport::Uri;
 
                 tonic::include_proto!("temporal.api.nexus.v1");
@@ -2605,6 +2640,11 @@ pub mod temporal {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                         write!(f, "HandlerError")
                     }
+                }
+
+                pub enum NexusTaskFailure {
+                    Legacy(HandlerError),
+                    Temporal(failure::v1::Failure),
                 }
 
                 static SCHEME_PREFIX: &str = "temporal://";
@@ -2687,6 +2727,30 @@ pub mod temporal {
                             reference,
                         })),
                     })
+                }
+
+                impl TryFrom<failure::v1::Failure> for Failure {
+                    type Error = serde_json::Error;
+
+                    fn try_from(mut f: failure::v1::Failure) -> Result<Self, Self::Error> {
+                        // 1. Remove message from failure
+                        let message = std::mem::take(&mut f.message);
+
+                        // 2. Serialize Failure as JSON
+                        let details = serde_json::to_vec(&f)?;
+
+                        // 3. Package Temporal Failure as Nexus Failure
+                        Ok(Failure {
+                            message,
+                            stack_trace: f.stack_trace,
+                            metadata: HashMap::from([(
+                                "type".to_string(),
+                                failure::v1::Failure::full_name().into(),
+                            )]),
+                            details,
+                            cause: None,
+                        })
+                    }
                 }
             }
         }

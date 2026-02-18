@@ -572,6 +572,7 @@ async fn call_workflow_service(
         "CountActivityExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_activity_executions)
         }
+        "CountSchedules" => rpc_call_on_trait!(client, call, WorkflowService, count_schedules),
         "CountWorkflowExecutions" => {
             rpc_call_on_trait!(client, call, WorkflowService, count_workflow_executions)
         }
