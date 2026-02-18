@@ -386,17 +386,18 @@ impl BaseWorkflowContext {
     pub fn start_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         mut opts: ActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
         AD::Output: TemporalDeserializable,
     {
+        let input = input.into();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: &self.inner.payload_converter,
         };
-        let payload = match self.inner.payload_converter.to_payload(&ctx, &input) {
+        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
@@ -410,7 +411,7 @@ impl BaseWorkflowContext {
         }
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(AD::name().to_string(), payload, seq),
+                cmd: opts.into_command(AD::name().to_string(), payloads, seq),
                 unblocker,
             }
             .into(),
@@ -422,24 +423,25 @@ impl BaseWorkflowContext {
     pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
         _activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
         AD::Output: TemporalDeserializable,
     {
+        let input = input.into();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
             converter: &self.inner.payload_converter,
         };
-        let payload = match self.inner.payload_converter.to_payload(&ctx, &input) {
+        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ActivityFut::eager(e.into());
             }
         };
         ActivityFut::running(
-            LATimerBackoffFut::new(AD::name().to_string(), payload, opts, self.clone()),
+            LATimerBackoffFut::new(AD::name().to_string(), payloads, opts, self.clone()),
             self.inner.payload_converter.clone(),
         )
     }
@@ -448,7 +450,7 @@ impl BaseWorkflowContext {
     fn local_activity_no_timer_retry(
         self,
         activity_type: String,
-        input: Payload,
+        arguments: Vec<Payload>,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         let seq = self.inner.seq_nums.borrow_mut().next_activity_seq();
@@ -458,7 +460,7 @@ impl BaseWorkflowContext {
             .chan
             .send(
                 CommandCreateRequest {
-                    cmd: opts.into_command(activity_type, input, seq),
+                    cmd: opts.into_command(activity_type, arguments, seq),
                     unblocker,
                 }
                 .into(),
@@ -599,7 +601,7 @@ impl<W> SyncWorkflowContext<W> {
     pub fn start_activity<AD: ActivityDefinition>(
         &self,
         activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         opts: ActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
@@ -612,7 +614,7 @@ impl<W> SyncWorkflowContext<W> {
     pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
         activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
@@ -882,7 +884,7 @@ impl<W> WorkflowContext<W> {
     pub fn start_activity<AD: ActivityDefinition>(
         &self,
         activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         opts: ActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
@@ -895,7 +897,7 @@ impl<W> WorkflowContext<W> {
     pub fn start_local_activity<AD: ActivityDefinition>(
         &self,
         activity: AD,
-        input: AD::Input,
+        input: impl Into<AD::Input>,
         opts: LocalActivityOptions,
     ) -> impl CancellableFuture<Result<AD::Output, ActivityExecutionError>>
     where
@@ -1175,7 +1177,7 @@ where
 struct LATimerBackoffFut {
     la_opts: LocalActivityOptions,
     activity_type: String,
-    input: Payload,
+    arguments: Vec<Payload>,
     current_fut: Pin<Box<dyn CancellableFuture<ActivityResolution> + Unpin>>,
     timer_fut: Option<Pin<Box<dyn CancellableFuture<TimerResult> + Unpin>>>,
     base_ctx: BaseWorkflowContext,
@@ -1186,19 +1188,19 @@ struct LATimerBackoffFut {
 impl LATimerBackoffFut {
     pub(crate) fn new(
         activity_type: String,
-        input: Payload,
+        arguments: Vec<Payload>,
         opts: LocalActivityOptions,
         base_ctx: BaseWorkflowContext,
     ) -> Self {
         let current_fut = Box::pin(base_ctx.clone().local_activity_no_timer_retry(
             activity_type.clone(),
-            input.clone(),
+            arguments.clone(),
             opts.clone(),
         ));
         Self {
             la_opts: opts,
             activity_type,
-            input,
+            arguments,
             current_fut,
             timer_fut: None,
             base_ctx,
@@ -1227,7 +1229,7 @@ impl Future for LATimerBackoffFut {
                         self.current_fut =
                             Box::pin(self.base_ctx.clone().local_activity_no_timer_retry(
                                 self.activity_type.clone(),
-                                self.input.clone(),
+                                self.arguments.clone(),
                                 opts,
                             ));
                         Poll::Pending

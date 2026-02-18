@@ -43,4 +43,13 @@ impl StdActivities {
     pub(crate) async fn always_fail(_ctx: ActivityContext) -> Result<(), ActivityError> {
         Err(anyhow::anyhow!("Oh no I failed!").into())
     }
+
+    #[activity]
+    pub(crate) async fn concat(
+        _ctx: ActivityContext,
+        a: String,
+        b: String,
+    ) -> Result<String, ActivityError> {
+        Ok(format!("{a}{b}"))
+    }
 }

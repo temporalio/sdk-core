@@ -26,7 +26,7 @@ struct ActivityMethod {
     attributes: ActivityAttributes,
     is_async: bool,
     is_static: bool,
-    input_type: Option<Type>,
+    input_types: Vec<Type>,
     output_type: Option<Type>,
 }
 
@@ -78,7 +78,7 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
         Some(FnArg::Typed(_)) | None => true,
     };
 
-    let input_type = extract_input_type(&method.sig)?;
+    let input_types = extract_input_types(&method.sig)?;
     let output_type = extract_output_type(&method.sig);
 
     Ok(ActivityMethod {
@@ -86,7 +86,7 @@ fn parse_activity_method(method: &syn::ImplItemFn) -> syn::Result<ActivityMethod
         attributes,
         is_async,
         is_static,
-        input_type,
+        input_types,
         output_type,
     })
 }
@@ -131,15 +131,14 @@ fn validate_arc_self_type(ty: &Type) -> syn::Result<()> {
     ))
 }
 
-fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
-    // Find the parameter after ActivityContext, if any
+fn extract_input_types(sig: &syn::Signature) -> syn::Result<Vec<Type>> {
     let mut found_ctx = false;
+    let mut types = Vec::new();
     for arg in &sig.inputs {
         if let FnArg::Typed(pat_type) = arg {
             if found_ctx {
-                return Ok(Some((*pat_type.ty).clone()));
-            }
-            if let Type::Path(type_path) = &*pat_type.ty
+                types.push((*pat_type.ty).clone());
+            } else if let Type::Path(type_path) = &*pat_type.ty
                 && type_path
                     .path
                     .segments
@@ -158,7 +157,13 @@ fn extract_input_type(sig: &syn::Signature) -> syn::Result<Option<Type>> {
              parameter, or the second after `self: Arc<Self>`.",
         ));
     }
-    Ok(None)
+    if types.len() > 6 {
+        return Err(syn::Error::new(
+            sig.inputs.span(),
+            "Activity functions support at most 6 input parameters (after ActivityContext).",
+        ));
+    }
+    Ok(types)
 }
 
 fn extract_output_type(sig: &syn::Signature) -> Option<Type> {
@@ -177,6 +182,45 @@ fn extract_output_type(sig: &syn::Signature) -> Option<Type> {
             Some((**ty).clone())
         }
         ReturnType::Default => None,
+    }
+}
+
+/// Returns the token stream for the `Input` associated type given the list of input types.
+fn multi_args_input_type(types: &[Type]) -> TokenStream2 {
+    match types.len() {
+        0 => quote! { () },
+        1 => {
+            let t = &types[0];
+            quote! { #t }
+        }
+        n => {
+            let multi_args = format_ident!("MultiArgs{}", n);
+            let types = types.iter();
+            quote! { ::temporalio_common::data_converters::#multi_args<#(#types),*> }
+        }
+    }
+}
+
+/// Returns the destructuring statement for multi-arg input, or nothing for 0/1 args.
+fn multi_args_destructure(types: &[Type]) -> TokenStream2 {
+    let n = types.len();
+    if n <= 1 {
+        return quote! {};
+    }
+    let multi_args = format_ident!("MultiArgs{}", n);
+    let idents = multi_args_idents(n);
+    quote! {
+        let ::temporalio_common::data_converters::#multi_args(#(#idents),*) = input;
+    }
+}
+
+/// Returns identifiers `__arg0`, `__arg1`, ... for N arguments.
+/// For single-arg, returns `input` to preserve backward compatibility.
+fn multi_args_idents(n: usize) -> Vec<syn::Ident> {
+    if n == 1 {
+        vec![format_ident!("input")]
+    } else {
+        (0..n).map(|i| format_ident!("__arg{}", i)).collect()
     }
 }
 
@@ -307,38 +351,46 @@ impl ActivitiesDefinition {
         let struct_ident = format_ident!("{}", struct_name);
         let prefixed_method = format_ident!("__{}", activity.method.sig.ident);
 
-        let input_type = activity
-            .input_type
-            .as_ref()
-            .map(|t| quote! { #t })
-            .unwrap_or(quote! { () });
+        let input_type = multi_args_input_type(&activity.input_types);
         let output_type = activity
             .output_type
             .as_ref()
             .map(|t| quote! { #t })
             .unwrap_or(quote! { () });
 
+        let has_input = !activity.input_types.is_empty();
+
         // Build the parameters and call based on static vs instance and input
         let (params, method_call) = if activity.is_static {
-            let params = if activity.input_type.is_some() {
+            let params = if has_input {
                 quote! { self, ctx: ::temporalio_sdk::activities::ActivityContext, input: #input_type }
             } else {
                 quote! { self, ctx: ::temporalio_sdk::activities::ActivityContext }
             };
-            let call = if activity.input_type.is_some() {
-                quote! { #impl_type::#prefixed_method(ctx, input) }
+            let call = if has_input {
+                let destructure = multi_args_destructure(&activity.input_types);
+                let arg_idents = multi_args_idents(activity.input_types.len());
+                quote! {
+                    #destructure
+                    #impl_type::#prefixed_method(ctx, #(#arg_idents),*)
+                }
             } else {
                 quote! { #impl_type::#prefixed_method(ctx) }
             };
             (params, call)
         } else {
-            let params = if activity.input_type.is_some() {
+            let params = if has_input {
                 quote! { self, instance: ::std::sync::Arc<#impl_type>, ctx: ::temporalio_sdk::activities::ActivityContext, input: #input_type }
             } else {
                 quote! { self, instance: ::std::sync::Arc<#impl_type>, ctx: ::temporalio_sdk::activities::ActivityContext }
             };
-            let call = if activity.input_type.is_some() {
-                quote! { #impl_type::#prefixed_method(instance, ctx, input) }
+            let call = if has_input {
+                let destructure = multi_args_destructure(&activity.input_types);
+                let arg_idents = multi_args_idents(activity.input_types.len());
+                quote! {
+                    #destructure
+                    #impl_type::#prefixed_method(instance, ctx, #(#arg_idents),*)
+                }
             } else {
                 quote! { #impl_type::#prefixed_method(instance, ctx) }
             };
@@ -397,16 +449,14 @@ impl ActivitiesDefinition {
         let struct_ident = format_ident!("{}", struct_name);
         let prefixed_method = format_ident!("__{}", activity.method.sig.ident);
 
-        let input_type = activity
-            .input_type
-            .as_ref()
-            .map(|t| quote! { #t })
-            .unwrap_or(quote! { () });
+        let input_type = multi_args_input_type(&activity.input_types);
         let output_type = &activity
             .output_type
             .as_ref()
             .map(|t| quote! { #t })
             .unwrap_or(quote! { () });
+
+        let has_input = !activity.input_types.is_empty();
 
         let activity_name = if let Some(ref name_expr) = activity.attributes.name_override {
             quote! { #name_expr }
@@ -421,11 +471,19 @@ impl ActivitiesDefinition {
             quote! { receiver }
         };
 
-        let method_call = if activity.input_type.is_some() {
+        let method_call = if has_input {
+            let destructure = multi_args_destructure(&activity.input_types);
+            let arg_idents = multi_args_idents(activity.input_types.len());
             if activity.is_static {
-                quote! { #impl_type::#prefixed_method(ctx, input) }
+                quote! {
+                    #destructure
+                    #impl_type::#prefixed_method(ctx, #(#arg_idents),*)
+                }
             } else {
-                quote! { #impl_type::#prefixed_method(receiver.unwrap(), ctx, input) }
+                quote! {
+                    #destructure
+                    #impl_type::#prefixed_method(receiver.unwrap(), ctx, #(#arg_idents),*)
+                }
             }
         } else if activity.is_static {
             quote! { #impl_type::#prefixed_method(ctx) }
@@ -433,8 +491,7 @@ impl ActivitiesDefinition {
             quote! { #impl_type::#prefixed_method(receiver.unwrap(), ctx) }
         };
 
-        // Add input parameter to execute signature only if needed
-        let input_param = if activity.input_type.is_some() {
+        let input_param = if has_input {
             quote! { input: Self::Input, }
         } else {
             quote! { _input: Self::Input, }

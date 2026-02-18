@@ -81,6 +81,54 @@ impl OneActivityWorkflow {
     }
 }
 
+#[workflow]
+#[derive(Default)]
+struct MultiArgActivityWorkflow;
+
+#[workflow_methods]
+impl MultiArgActivityWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, input: String) -> WorkflowResult<String> {
+        let r = ctx
+            .start_activity(
+                StdActivities::concat,
+                (input, " world".to_string()),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+        Ok(r)
+    }
+}
+
+#[tokio::test]
+async fn multi_arg_activity() {
+    let wf_name = MultiArgActivityWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
+    starter
+        .sdk_config
+        .register_workflow::<MultiArgActivityWorkflow>();
+    let mut worker = starter.worker().await;
+
+    let input = "hello".to_string();
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            MultiArgActivityWorkflow::run,
+            input,
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    let r = handle.get_result(Default::default()).await.unwrap();
+    assert_eq!(r, "hello world");
+}
+
 #[tokio::test]
 async fn one_activity_only() {
     let wf_name = OneActivityWorkflow::name();

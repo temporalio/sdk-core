@@ -76,7 +76,7 @@ impl ActivityOptions {
     pub(crate) fn into_command(
         self,
         activity_type: String,
-        input: Payload,
+        arguments: Vec<Payload>,
         seq: u32,
     ) -> WorkflowCommand {
         WorkflowCommand {
@@ -100,8 +100,7 @@ impl ActivityOptions {
                         .and_then(|d| d.try_into().ok()),
                     heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
                     cancellation_type: self.cancellation_type as i32,
-                    // TODO [rust-sdk-branch]: Handle multi-args
-                    arguments: vec![input],
+                    arguments,
                     retry_policy: self.retry_policy,
                     priority: self.priority.map(Into::into),
                     do_not_eagerly_execute: self.do_not_eagerly_execute,
@@ -161,7 +160,7 @@ impl LocalActivityOptions {
     pub(crate) fn into_command(
         mut self,
         activity_type: String,
-        input: Payload,
+        arguments: Vec<Payload>,
         seq: u32,
     ) -> WorkflowCommand {
         // Allow tests to avoid extra verbosity when they don't care about timeouts
@@ -180,7 +179,7 @@ impl LocalActivityOptions {
                         Some(aid) => aid,
                     },
                     activity_type,
-                    arguments: vec![input],
+                    arguments,
                     retry_policy: Some(self.retry_policy),
                     local_retry_threshold: self
                         .timer_backoff_threshold

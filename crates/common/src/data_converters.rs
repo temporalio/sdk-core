@@ -646,6 +646,13 @@ macro_rules! impl_multi_args {
             }
         }
 
+        #[allow(non_snake_case)]
+        impl<$($ty),+> From<($($ty),+,)> for $name<$($ty),+> {
+            fn from(t: ($($ty),+,)) -> Self {
+                $name($(t.$idx),+)
+            }
+        }
+
         impl<$($ty),+> TemporalDeserializable for $name<$($ty),+>
         where
             $($ty: TemporalDeserializable + 'static),+
@@ -691,5 +698,27 @@ mod tests {
         let result: Result<(), _> = converter.from_payloads(&ctx, empty_payloads);
 
         assert!(result.is_ok(), "Empty payloads should deserialize as ()");
+    }
+
+    #[test]
+    fn multi_args_round_trip() {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let args = MultiArgs2("hello".to_string(), 42i32);
+        let payloads = converter.to_payloads(&ctx, &args).unwrap();
+        assert_eq!(payloads.len(), 2);
+
+        let result: MultiArgs2<String, i32> = converter.from_payloads(&ctx, payloads).unwrap();
+        assert_eq!(result, args);
+    }
+
+    #[test]
+    fn multi_args_from_tuple() {
+        let args: MultiArgs2<String, i32> = ("hello".to_string(), 42i32).into();
+        assert_eq!(args, MultiArgs2("hello".to_string(), 42));
     }
 }
