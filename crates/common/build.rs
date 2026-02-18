@@ -1,7 +1,7 @@
 use prost::Message;
 use prost_types::{
-    field_descriptor_proto::{Label, Type},
     DescriptorProto, FieldDescriptorProto, FileDescriptorSet, MessageOptions,
+    field_descriptor_proto::{Label, Type},
 };
 use std::{
     collections::{HashMap, HashSet},

@@ -446,7 +446,6 @@ impl WorkerTelemetry {
     }
 }
 
-
 impl Worker {
     /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional
     /// telemetry.

@@ -358,8 +358,10 @@ impl CoreMeter for Arc<dyn CoreMeter> {
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub enum MetricAttributes {
+    /// OpenTelemetry-backed attributes with key-value pairs.
     #[cfg(feature = "otel")]
     OTel {
+        /// The OpenTelemetry key-value pairs for this attribute set.
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
     /// Prometheus-backed attributes with ordered labels.
@@ -367,8 +369,10 @@ pub enum MetricAttributes {
         /// The ordered label set.
         labels: Arc<OrderedPromLabelSet>,
     },
+    /// Buffered attributes used by core-based SDKs for deferred metric initialization.
     #[cfg(feature = "core-based-sdk")]
     Buffer(core::BufferAttributes),
+    /// Dynamic attributes backed by a lang-side custom implementation.
     #[cfg(feature = "core-based-sdk")]
     Dynamic(Arc<dyn core::CustomMetricAttributes>),
     /// No-op attributes that store labels but do not record.

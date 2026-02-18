@@ -84,6 +84,7 @@ impl WorkerTaskTypes {
             || (self.enable_nexus && other.enable_nexus)
     }
 
+    /// Converts the enabled task types into the corresponding [`TaskQueueType`] values.
     pub fn to_task_queue_types(&self) -> Vec<TaskQueueType> {
         let mut types = Vec::new();
         if self.enable_workflows {

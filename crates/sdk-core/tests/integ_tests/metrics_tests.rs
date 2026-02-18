@@ -54,11 +54,11 @@ use temporalio_common::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptions, OtlpProtocol, PrometheusExporterOptions,
         TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
-        start_prometheus_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
             MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
+        start_prometheus_metric_exporter,
     },
     worker::WorkerTaskTypes,
 };
