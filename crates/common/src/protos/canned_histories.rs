@@ -1321,7 +1321,8 @@ pub fn single_child_workflow_try_cancelled(child_wf_id: &str) -> TestHistoryBuil
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  7: EVENT_TYPE_MARKER_RECORDED (la result)
-///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
 pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1333,6 +1334,24 @@ pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
         start_time.seconds += 1;
     }
     t.add_local_activity_result_marker_with_time(2, "2", b"hi2".into(), start_time);
+    t.add_workflow_task_scheduled_and_started();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_MARKER_RECORDED (LA 2 result)
+///  7: EVENT_TYPE_MARKER_RECORDED (LA 1 result)
+///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
+pub fn parallel_las_job_order_hist() -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_result_marker(2, "2", b"hi2".into());
+    t.add_local_activity_result_marker(1, "1", b"hi1".into());
     t.add_workflow_task_scheduled_and_started();
     t
 }
