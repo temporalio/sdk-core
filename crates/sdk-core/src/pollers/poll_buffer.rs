@@ -1102,8 +1102,7 @@ mod tests {
         // With exponential backoff, I'm getting exactly 10 (initial poller count).
         assert!(
             hot_loop_calls == 10,
-            "Expected proper backoff with == 10 polls in 100ms, but got {} polls.",
-            hot_loop_calls
+            "Expected proper backoff with == 10 polls in 100ms, but got {hot_loop_calls} polls."
         );
 
         Arc::try_unwrap(pb)

@@ -751,36 +751,50 @@ async fn docker_metrics_with_prometheus(
     let client = starter.get_client().await;
     client.list_namespaces().await.unwrap();
 
-    // Give Prometheus time to scrape metrics
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    // Query Prometheus API for metrics
-    let client = reqwest::Client::new();
+    // Poll Prometheus API until metrics appear
+    let http_client = reqwest::Client::new();
     let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
-    let response = client
-        .get(PROMETHEUS_QUERY_API)
-        .query(&[("query", query)])
-        .send()
-        .await
-        .unwrap()
-        .json::<serde_json::Value>()
-        .await
-        .unwrap();
+    let timeout = Duration::from_secs(10);
+
+    let data = crate::common::eventually(
+        || async {
+            let response = http_client
+                .get(PROMETHEUS_QUERY_API)
+                .query(&[("query", &query)])
+                .send()
+                .await
+                .unwrap()
+                .json::<serde_json::Value>()
+                .await
+                .unwrap();
+
+            // Check if we have metrics available
+            if let Some(data) = response["data"]["result"].as_array()
+                && !data.is_empty()
+            {
+                return Ok(data.clone());
+            }
+            Err(anyhow!("No metrics found yet"))
+        },
+        timeout,
+    )
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "No metrics found for query: {test_uid} after {} seconds",
+            timeout.as_secs()
+        )
+    });
 
     // Validate the Prometheus response
-    if let Some(data) = response["data"]["result"].as_array() {
-        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
-        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
-        assert_eq!(data[0]["metric"]["job"], "otel-collector");
-        assert!(
-            data[0]["metric"]["task_queue"]
-                .as_str()
-                .unwrap()
-                .starts_with(test_name)
-        );
-    } else {
-        panic!("Invalid Prometheus response: {response:?}");
-    }
+    assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+    assert_eq!(data[0]["metric"]["job"], "otel-collector");
+    assert!(
+        data[0]["metric"]["task_queue"]
+            .as_str()
+            .unwrap()
+            .starts_with(test_name)
+    );
 }
 
 #[tokio::test]
