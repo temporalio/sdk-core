@@ -1,5 +1,4 @@
-// TODO [rust-sdk-branch]: Enable
-//#![warn(missing_docs)] // error if there are missing docs
+#![warn(missing_docs)] // error if there are missing docs
 
 //! This crate contains base-level functionality needed by the other crates in the Temporal Core and
 //! Rust SDK.

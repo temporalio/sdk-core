@@ -131,10 +131,12 @@ impl HistoryInfo {
         self.events.drain(0..last_complete_ix);
     }
 
+    /// Returns a slice of all events in this history.
     pub fn events(&self) -> &[HistoryEvent] {
         &self.events
     }
 
+    /// Consumes this instance and returns the underlying events.
     pub fn into_events(self) -> Vec<HistoryEvent> {
         self.events
     }

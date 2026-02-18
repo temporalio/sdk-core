@@ -120,6 +120,7 @@ pub trait CoreMeter: Send + Sync + Debug {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes;
+    /// Create a new counter instrument.
     fn counter(&self, params: MetricParameters) -> Counter;
 
     /// Create a counter with in-memory tracking for worker heartbeating reporting
@@ -133,7 +134,9 @@ pub trait CoreMeter: Send + Sync + Debug {
         Counter::new_with_in_memory(primary_counter.primary.metric.clone(), in_memory_counter)
     }
 
+    /// Create a new histogram instrument recording `u64` values.
     fn histogram(&self, params: MetricParameters) -> Histogram;
+    /// Create a new histogram instrument recording `f64` values.
     fn histogram_f64(&self, params: MetricParameters) -> HistogramF64;
     /// Create a histogram which records Durations. Implementations should choose to emit in
     /// either milliseconds or seconds depending on how they have been configured.
@@ -151,6 +154,7 @@ pub trait CoreMeter: Send + Sync + Debug {
 
         HistogramDuration::new_with_in_memory(primary_hist.primary.metric.clone(), in_memory_hist)
     }
+    /// Create a new gauge instrument recording `u64` values.
     fn gauge(&self, params: MetricParameters) -> Gauge;
 
     /// Create a gauge with in-memory tracking for worker heartbeating reporting
@@ -163,6 +167,7 @@ pub trait CoreMeter: Send + Sync + Debug {
         Gauge::new_with_in_memory(primary_gauge.primary.metric.clone(), in_memory_metrics)
     }
 
+    /// Create a new gauge instrument recording `f64` values.
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64;
 }
 
@@ -171,9 +176,13 @@ pub trait CoreMeter: Send + Sync + Debug {
 /// that vary by a set of labels for the same metric.
 #[derive(Clone, Debug)]
 pub enum HeartbeatMetricType {
+    /// A single counter shared across all label values.
     Individual(Arc<AtomicU64>),
+    /// Per-label-value counters, keyed by a specific label.
     WithLabel {
+        /// The label key to match against metric attributes.
         label_key: String,
+        /// Map from label value to its atomic counter.
         metrics: HashMap<String, Arc<AtomicU64>>,
     },
 }
@@ -230,6 +239,7 @@ fn label_value_from_attributes(attributes: &MetricAttributes, key: &str) -> Opti
     }
 }
 
+/// Parameters used when creating a new metric instrument (name, description, unit).
 #[derive(Debug, Clone, bon::Builder)]
 pub struct MetricParameters {
     /// The name for the new metric/instrument
@@ -352,23 +362,29 @@ pub enum MetricAttributes {
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
+    /// Prometheus-backed attributes with ordered labels.
     Prometheus {
+        /// The ordered label set.
         labels: Arc<OrderedPromLabelSet>,
     },
     #[cfg(feature = "core-based-sdk")]
     Buffer(core::BufferAttributes),
     #[cfg(feature = "core-based-sdk")]
     Dynamic(Arc<dyn core::CustomMetricAttributes>),
+    /// No-op attributes that store labels but do not record.
     NoOp(Arc<HashMap<String, String>>),
+    /// Empty placeholder attributes.
     Empty,
 }
 
 /// Options that are attached to metrics on a per-call basis
 #[derive(Clone, Debug, Default, derive_more::Constructor)]
 pub struct NewAttributes {
+    /// The key-value pairs for this attribute set.
     pub attributes: Vec<MetricKeyValue>,
 }
 impl NewAttributes {
+    /// Append additional key-value pairs to this attribute set.
     pub fn extend(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
         self.attributes.extend(new_kvs)
     }
@@ -397,10 +413,13 @@ impl From<NewAttributes> for HashMap<String, String> {
 /// A K/V pair that can be used to label a specific recording of a metric
 #[derive(Clone, Debug, PartialEq)]
 pub struct MetricKeyValue {
+    /// The label key.
     pub key: String,
+    /// The label value.
     pub value: MetricValue,
 }
 impl MetricKeyValue {
+    /// Create a new key-value pair.
     pub fn new(key: impl Into<String>, value: impl Into<MetricValue>) -> Self {
         Self {
             key: key.into(),
@@ -412,9 +431,13 @@ impl MetricKeyValue {
 /// Values metric labels may assume
 #[derive(Clone, Debug, PartialEq, derive_more::From)]
 pub enum MetricValue {
+    /// A string label value.
     String(String),
+    /// An integer label value.
     Int(i64),
+    /// A floating-point label value.
     Float(f64),
+    /// A boolean label value.
     Bool(bool),
     // can add array if needed
 }
@@ -434,6 +457,7 @@ impl Display for MetricValue {
     }
 }
 
+/// Trait for metric instruments that can be bound to a set of attributes.
 pub trait MetricAttributable<Base> {
     /// Replace any existing attributes on this metric with new ones, and return a new copy
     /// of the metric, or a base version, which can be used to record values.
@@ -450,6 +474,7 @@ pub trait MetricAttributable<Base> {
     ) -> Result<Base, Box<dyn std::error::Error>>;
 }
 
+/// A metric that lazily binds to its attributes on first use, caching the result.
 #[derive(Clone)]
 pub struct LazyBoundMetric<T, B> {
     metric: T,
@@ -457,27 +482,33 @@ pub struct LazyBoundMetric<T, B> {
     bound_cache: OnceLock<B>,
 }
 impl<T, B> LazyBoundMetric<T, B> {
+    /// Replace the attributes and invalidate the cached binding.
     pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
         self.attributes = new_attributes;
         self.bound_cache = OnceLock::new();
     }
 }
 
+/// Base trait for counter implementations.
 pub trait CounterBase: Send + Sync {
+    /// Increment the counter by `value`.
     fn adds(&self, value: u64);
 }
 
+/// The lazy-bound inner type for [`Counter`].
 pub type CounterImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
     Arc<dyn CounterBase>,
 >;
 
+/// A counter metric instrument that optionally tracks values in memory for heartbeating.
 #[derive(Clone)]
 pub struct Counter {
     primary: CounterImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl Counter {
+    /// Create a new counter from an attributable metric source.
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>) -> Self {
         Self {
             primary: LazyBoundMetric {
@@ -489,6 +520,7 @@ impl Counter {
         }
     }
 
+    /// Create a new counter with an additional in-memory tracker for heartbeat reporting.
     pub fn new_with_in_memory(
         primary: Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
         in_memory: HeartbeatMetricType,
@@ -503,6 +535,7 @@ impl Counter {
         }
     }
 
+    /// Increment the counter by `value` with the given attributes.
     pub fn add(&self, value: u64, attributes: &MetricAttributes) {
         match self.primary.metric.with_attributes(attributes) {
             Ok(base) => base.adds(value),
@@ -516,6 +549,7 @@ impl Counter {
         }
     }
 
+    /// Replace the attributes on the primary metric.
     pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
         self.primary.update_attributes(new_attributes.clone());
     }
@@ -559,14 +593,18 @@ impl MetricAttributable<Counter> for Counter {
     }
 }
 
+/// Base trait for `u64` histogram implementations.
 pub trait HistogramBase: Send + Sync {
+    /// Record a `u64` observation.
     fn records(&self, value: u64);
 }
+/// A `u64` histogram metric instrument.
 pub type Histogram = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn HistogramBase>> + Send + Sync>,
     Arc<dyn HistogramBase>,
 >;
 impl Histogram {
+    /// Create a new histogram from an attributable metric source.
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn HistogramBase>> + Send + Sync>) -> Self {
         Self {
             metric: inner,
@@ -574,6 +612,7 @@ impl Histogram {
             bound_cache: OnceLock::new(),
         }
     }
+    /// Record a `u64` value with the given attributes.
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
         match self.metric.with_attributes(attributes) {
             Ok(base) => {
@@ -612,14 +651,18 @@ impl MetricAttributable<Histogram> for Histogram {
     }
 }
 
+/// Base trait for `f64` histogram implementations.
 pub trait HistogramF64Base: Send + Sync {
+    /// Record an `f64` observation.
     fn records(&self, value: f64);
 }
+/// An `f64` histogram metric instrument.
 pub type HistogramF64 = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn HistogramF64Base>> + Send + Sync>,
     Arc<dyn HistogramF64Base>,
 >;
 impl HistogramF64 {
+    /// Create a new `f64` histogram from an attributable metric source.
     pub fn new(
         inner: Arc<dyn MetricAttributable<Box<dyn HistogramF64Base>> + Send + Sync>,
     ) -> Self {
@@ -629,6 +672,7 @@ impl HistogramF64 {
             bound_cache: OnceLock::new(),
         }
     }
+    /// Record an `f64` value with the given attributes.
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
         match self.metric.with_attributes(attributes) {
             Ok(base) => {
@@ -667,21 +711,26 @@ impl MetricAttributable<HistogramF64> for HistogramF64 {
     }
 }
 
+/// Base trait for duration histogram implementations.
 pub trait HistogramDurationBase: Send + Sync {
+    /// Record a duration observation.
     fn records(&self, value: Duration);
 }
 
+/// The lazy-bound inner type for [`HistogramDuration`].
 pub type HistogramDurationImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
     Arc<dyn HistogramDurationBase>,
 >;
 
+/// A histogram that records [`Duration`] values, optionally tracking in memory for heartbeating.
 #[derive(Clone)]
 pub struct HistogramDuration {
     primary: HistogramDurationImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl HistogramDuration {
+    /// Create a new duration histogram from an attributable metric source.
     pub fn new(
         inner: Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
     ) -> Self {
@@ -694,6 +743,7 @@ impl HistogramDuration {
             in_memory: None,
         }
     }
+    /// Create a new duration histogram with an additional in-memory tracker for heartbeat reporting.
     pub fn new_with_in_memory(
         primary: Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
         in_memory: HeartbeatMetricType,
@@ -707,6 +757,7 @@ impl HistogramDuration {
             in_memory: Some(in_memory),
         }
     }
+    /// Record a duration value with the given attributes.
     pub fn record(&self, value: Duration, attributes: &MetricAttributes) {
         match self.primary.metric.with_attributes(attributes) {
             Ok(base) => {
@@ -722,6 +773,7 @@ impl HistogramDuration {
         }
     }
 
+    /// Replace the attributes on the primary metric.
     pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
         self.primary.update_attributes(new_attributes.clone());
     }
@@ -763,21 +815,26 @@ impl MetricAttributable<HistogramDuration> for HistogramDuration {
     }
 }
 
+/// Base trait for `u64` gauge implementations.
 pub trait GaugeBase: Send + Sync {
+    /// Record a `u64` gauge value.
     fn records(&self, value: u64);
 }
 
+/// The lazy-bound inner type for [`Gauge`].
 pub type GaugeImpl = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
     Arc<dyn GaugeBase>,
 >;
 
+/// A gauge metric instrument that optionally tracks values in memory for heartbeating.
 #[derive(Clone)]
 pub struct Gauge {
     primary: GaugeImpl,
     in_memory: Option<HeartbeatMetricType>,
 }
 impl Gauge {
+    /// Create a new gauge from an attributable metric source.
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>) -> Self {
         Self {
             primary: LazyBoundMetric {
@@ -789,6 +846,7 @@ impl Gauge {
         }
     }
 
+    /// Create a new gauge with an additional in-memory tracker for heartbeat reporting.
     pub fn new_with_in_memory(
         primary: Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
         in_memory: HeartbeatMetricType,
@@ -803,6 +861,7 @@ impl Gauge {
         }
     }
 
+    /// Record a `u64` gauge value with the given attributes.
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
         match self.primary.metric.with_attributes(attributes) {
             Ok(base) => base.records(value),
@@ -816,6 +875,7 @@ impl Gauge {
         }
     }
 
+    /// Replace the attributes on the primary metric.
     pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
         self.primary.update_attributes(new_attributes.clone());
     }
@@ -857,14 +917,18 @@ impl MetricAttributable<Gauge> for Gauge {
     }
 }
 
+/// Base trait for `f64` gauge implementations.
 pub trait GaugeF64Base: Send + Sync {
+    /// Record an `f64` gauge value.
     fn records(&self, value: f64);
 }
+/// An `f64` gauge metric instrument.
 pub type GaugeF64 = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn GaugeF64Base>> + Send + Sync>,
     Arc<dyn GaugeF64Base>,
 >;
 impl GaugeF64 {
+    /// Create a new `f64` gauge from an attributable metric source.
     pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn GaugeF64Base>> + Send + Sync>) -> Self {
         Self {
             metric: inner,
@@ -872,6 +936,7 @@ impl GaugeF64 {
             bound_cache: OnceLock::new(),
         }
     }
+    /// Record an `f64` gauge value with the given attributes.
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
         match self.metric.with_attributes(attributes) {
             Ok(base) => {
@@ -910,6 +975,7 @@ impl MetricAttributable<GaugeF64> for GaugeF64 {
     }
 }
 
+/// A [`CoreMeter`] implementation that discards all metric recordings.
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
@@ -970,6 +1036,7 @@ macro_rules! impl_metric_attributable {
     };
 }
 
+/// A no-op metric instrument that discards all recordings.
 pub struct NoOpInstrument;
 macro_rules! impl_no_op {
     ($base_trait:ident, $value_type:ty) => {
@@ -1176,14 +1243,17 @@ pub struct OrderedPromLabelSet {
 }
 
 impl OrderedPromLabelSet {
+    /// Create an empty label set.
     pub const fn new() -> Self {
         Self {
             attributes: BTreeMap::new(),
         }
     }
+    /// Iterate over label keys in sorted order.
     pub fn keys_ordered(&self) -> impl Iterator<Item = &str> {
         self.attributes.keys().map(|s| s.as_str())
     }
+    /// Return a map of label keys to their string values, suitable for Prometheus.
     pub fn as_prom_labels(&self) -> HashMap<&str, String> {
         let mut labels = HashMap::new();
         for (k, v) in self.attributes.iter() {
@@ -1191,6 +1261,7 @@ impl OrderedPromLabelSet {
         }
         labels
     }
+    /// Insert a key-value pair, replacing dashes with underscores per Prometheus conventions.
     pub fn add_kv(&mut self, kv: MetricKeyValue) {
         // Replace '-' with '_' per Prom naming requirements
         self.attributes.insert(kv.key.replace('-', "_"), kv.value);

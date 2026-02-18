@@ -1,5 +1,6 @@
 //! Contains tracing/logging and metrics related functionality
 
+/// Metric instrument types and the [`CoreMeter`](metrics::CoreMeter) trait.
 pub mod metrics;
 
 #[cfg(feature = "core-based-sdk")]
@@ -40,6 +41,7 @@ pub use otel::build_otlp_metric_exporter;
 #[cfg(feature = "prometheus")]
 pub use prometheus_server::start_prometheus_metric_exporter;
 
+/// The default prefix applied to all Temporal metric names.
 pub static METRIC_PREFIX: &str = "temporal_";
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
@@ -155,8 +157,9 @@ pub struct OtelCollectorOptions {
 /// Options for exporting metrics to Prometheus
 #[derive(Debug, Clone, bon::Builder)]
 pub struct PrometheusExporterOptions {
+    /// The address the Prometheus exporter HTTP server will bind to.
     pub socket_addr: SocketAddr,
-    // A map of tags to be applied to all metrics
+    /// A map of tags to be applied to all metrics
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
     /// If set true, all counters will include a "_total" suffix

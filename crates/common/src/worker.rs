@@ -14,9 +14,13 @@ use std::{
 /// Workers can be configured to handle any combination of workflows, activities, and nexus operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorkerTaskTypes {
+    /// Whether workflow tasks are enabled.
     pub enable_workflows: bool,
+    /// Whether local activity tasks are enabled.
     pub enable_local_activities: bool,
+    /// Whether remote activity tasks are enabled.
     pub enable_remote_activities: bool,
+    /// Whether nexus tasks are enabled.
     pub enable_nexus: bool,
 }
 
@@ -69,6 +73,7 @@ impl WorkerTaskTypes {
         }
     }
 
+    /// Returns true if any task type is enabled in both configs.
     pub fn overlaps_with(&self, other: &WorkerTaskTypes) -> bool {
         (self.enable_workflows && other.enable_workflows)
             || (self.enable_local_activities && other.enable_local_activities)
@@ -77,6 +82,7 @@ impl WorkerTaskTypes {
     }
 }
 
+/// Configuration for worker deployment versioning.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct WorkerDeploymentOptions {
     /// The deployment version of this worker.
@@ -90,6 +96,7 @@ pub struct WorkerDeploymentOptions {
 }
 
 impl WorkerDeploymentOptions {
+    /// Create deployment options from just a build ID, without opting into worker versioning.
     pub fn from_build_id(build_id: String) -> Self {
         Self {
             version: WorkerDeploymentVersion {
@@ -102,6 +109,7 @@ impl WorkerDeploymentOptions {
     }
 }
 
+/// Identifies a specific version of a worker deployment.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct WorkerDeploymentVersion {
     /// Name of the deployment
@@ -111,6 +119,7 @@ pub struct WorkerDeploymentVersion {
 }
 
 impl WorkerDeploymentVersion {
+    /// Returns true if both the deployment name and build ID are empty.
     pub fn is_empty(&self) -> bool {
         self.deployment_name.is_empty() && self.build_id.is_empty()
     }

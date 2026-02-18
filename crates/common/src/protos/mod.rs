@@ -3,9 +3,11 @@
 //! that will match the generated structs in this module.
 
 pub mod constants;
+/// Utility functions for working with protobuf types.
 pub mod utilities;
 
 #[cfg(feature = "test-utilities")]
+/// Pre-built test histories for common workflow patterns.
 pub mod canned_histories;
 #[cfg(feature = "history_builders")]
 mod history_builder;
@@ -26,8 +28,11 @@ pub use history_builder::{
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
+/// Payload metadata key that identifies the encoding format.
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
+/// The metadata value for JSON-encoded payloads.
 pub static JSON_ENCODING_VAL: &str = "json/plain";
+/// The details key used in patched marker payloads.
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 /// The search attribute key used when registering change versions
 pub static VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
@@ -2843,6 +2848,7 @@ pub fn camel_case_to_screaming_snake(val: &str) -> String {
     out
 }
 
+/// Convert a protobuf [`prost_types::Timestamp`] to a [`std::time::SystemTime`].
 pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time::SystemTime> {
     std::time::SystemTime::UNIX_EPOCH
         .checked_add(Duration::from_secs(ts.seconds as u64) + Duration::from_nanos(ts.nanos as u64))

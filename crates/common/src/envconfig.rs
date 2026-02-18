@@ -62,12 +62,15 @@ pub const DEFAULT_CONFIG_FILE: &str = "temporal.toml";
 /// Errors that can occur during configuration loading
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    /// The requested profile was not found in the configuration.
     #[error("Profile '{0}' not found")]
     ProfileNotFound(String),
 
+    /// The configuration is invalid (e.g. conflicting options).
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
+    /// An I/O or parsing error occurred while loading configuration.
     #[error("Configuration loading error: {0}")]
     LoadError(Box<dyn std::error::Error>),
 }
@@ -99,7 +102,9 @@ impl From<toml::ser::Error> for ConfigError {
 /// A source for configuration or a TLS certificate/key, from a path or raw data.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DataSource {
+    /// A filesystem path to the data.
     Path(String),
+    /// The raw data bytes.
     Data(Vec<u8>),
 }
 

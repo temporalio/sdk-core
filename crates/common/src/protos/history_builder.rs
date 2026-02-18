@@ -30,11 +30,14 @@ use std::{
 };
 use uuid::Uuid;
 
+/// The workflow type name used by default in test histories.
 pub static DEFAULT_WORKFLOW_TYPE: &str = "default_wf_type";
+/// The activity type name used by default in test histories.
 pub static DEFAULT_ACTIVITY_TYPE: &str = "default_act_type";
 
 type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
 
+/// Builder for constructing synthetic workflow histories for testing.
 #[derive(Default, Clone, Debug)]
 pub struct TestHistoryBuilder {
     events: Vec<HistoryEvent>,
@@ -48,6 +51,7 @@ pub struct TestHistoryBuilder {
 }
 
 impl TestHistoryBuilder {
+    /// Construct from a pre-existing list of history events.
     pub fn from_history(events: Vec<HistoryEvent>) -> Self {
         let find_matching_id = |etype: EventType| {
             events
@@ -96,15 +100,18 @@ impl TestHistoryBuilder {
         self.add_workflow_task_completed();
     }
 
+    /// Add workflow task scheduled and started events.
     pub fn add_workflow_task_scheduled_and_started(&mut self) {
         self.add_workflow_task_scheduled();
         self.add_workflow_task_started();
     }
 
+    /// Add a workflow task scheduled event.
     pub fn add_workflow_task_scheduled(&mut self) {
         self.workflow_task_scheduled_event_id = self.add_by_type(EventType::WorkflowTaskScheduled);
     }
 
+    /// Add a workflow task started event.
     pub fn add_workflow_task_started(&mut self) {
         self.final_workflow_task_started_event_id = self.add(WorkflowTaskStartedEventAttributes {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
@@ -113,6 +120,7 @@ impl TestHistoryBuilder {
         });
     }
 
+    /// Add a workflow task completed event.
     pub fn add_workflow_task_completed(&mut self) {
         let id = self.add(WorkflowTaskCompletedEventAttributes {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
@@ -121,6 +129,7 @@ impl TestHistoryBuilder {
         self.previous_task_completed_id = id;
     }
 
+    /// Add a workflow task timed out event.
     pub fn add_workflow_task_timed_out(&mut self) {
         let attrs = WorkflowTaskTimedOutEventAttributes {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
@@ -129,6 +138,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskTimedOut, attrs.into());
     }
 
+    /// Add a workflow execution completed event.
     pub fn add_workflow_execution_completed(&mut self) {
         let attrs = WorkflowExecutionCompletedEventAttributes {
             workflow_task_completed_event_id: self.previous_task_completed_id,
@@ -137,6 +147,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
     }
 
+    /// Add a workflow execution terminated event.
     pub fn add_workflow_execution_terminated(&mut self) {
         let attrs = WorkflowExecutionTerminatedEventAttributes {
             ..Default::default()
@@ -144,6 +155,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionTerminated, attrs.into());
     }
 
+    /// Add a workflow execution timed out event.
     pub fn add_workflow_execution_timed_out(&mut self) {
         let attrs = WorkflowExecutionTimedOutEventAttributes {
             ..Default::default()
@@ -151,6 +163,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionTimedOut, attrs.into());
     }
 
+    /// Add a workflow execution failed event.
     pub fn add_workflow_execution_failed(&mut self) {
         let attrs = WorkflowExecutionFailedEventAttributes {
             workflow_task_completed_event_id: self.previous_task_completed_id,
@@ -159,21 +172,25 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionFailed, attrs.into());
     }
 
+    /// Add a workflow execution continued-as-new event.
     pub fn add_continued_as_new(&mut self) {
         let attrs = WorkflowExecutionContinuedAsNewEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionContinuedAsNew, attrs.into());
     }
 
+    /// Add a workflow execution cancel-requested event.
     pub fn add_cancel_requested(&mut self) {
         let attrs = WorkflowExecutionCancelRequestedEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionCancelRequested, attrs.into());
     }
 
+    /// Add a workflow execution canceled event.
     pub fn add_cancelled(&mut self) {
         let attrs = WorkflowExecutionCanceledEventAttributes::default();
         self.build_and_push_event(EventType::WorkflowExecutionCanceled, attrs.into());
     }
 
+    /// Add an activity task scheduled event, returning the event ID.
     pub fn add_activity_task_scheduled(&mut self, activity_id: impl Into<String>) -> i64 {
         self.add(ActivityTaskScheduledEventAttributes {
             activity_id: activity_id.into(),
@@ -184,6 +201,7 @@ impl TestHistoryBuilder {
         })
     }
 
+    /// Add an activity task started event, returning the event ID.
     pub fn add_activity_task_started(&mut self, scheduled_event_id: i64) -> i64 {
         self.add(Attributes::ActivityTaskStartedEventAttributes(
             ActivityTaskStartedEventAttributes {
@@ -193,6 +211,7 @@ impl TestHistoryBuilder {
         ))
     }
 
+    /// Add an activity task completed event.
     pub fn add_activity_task_completed(
         &mut self,
         scheduled_event_id: i64,
@@ -207,6 +226,7 @@ impl TestHistoryBuilder {
         });
     }
 
+    /// Add an activity task cancel-requested event.
     pub fn add_activity_task_cancel_requested(&mut self, scheduled_event_id: i64) {
         let attrs = ActivityTaskCancelRequestedEventAttributes {
             scheduled_event_id,
@@ -215,6 +235,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::ActivityTaskCancelRequested, attrs.into());
     }
 
+    /// Add a workflow task failed event with a specific failure.
     pub fn add_workflow_task_failed_with_failure(
         &mut self,
         cause: WorkflowTaskFailedCause,
@@ -229,6 +250,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
+    /// Add a workflow task failed event with a new run ID.
     pub fn add_workflow_task_failed_new_id(
         &mut self,
         cause: WorkflowTaskFailedCause,
@@ -243,6 +265,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
+    /// Add a timer started event, returning the event ID.
     pub fn add_timer_started(&mut self, timer_id: String) -> i64 {
         self.add(TimerStartedEventAttributes {
             timer_id,
@@ -251,6 +274,7 @@ impl TestHistoryBuilder {
         })
     }
 
+    /// Add a timer fired event.
     pub fn add_timer_fired(&mut self, timer_started_evt_id: i64, timer_id: String) {
         self.add(TimerFiredEventAttributes {
             started_event_id: timer_started_evt_id,
@@ -258,6 +282,7 @@ impl TestHistoryBuilder {
         });
     }
 
+    /// Add a workflow execution signaled event.
     pub fn add_we_signaled(&mut self, signal_name: &str, payloads: Vec<Payload>) {
         let attrs = WorkflowExecutionSignaledEventAttributes {
             signal_name: signal_name.to_string(),
@@ -267,6 +292,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionSignaled, attrs.into());
     }
 
+    /// Add a patch (has-change) marker event.
     pub fn add_has_change_marker(&mut self, patch_id: &str, deprecated: bool) {
         let attrs = MarkerRecordedEventAttributes {
             marker_name: PATCH_MARKER_NAME.to_string(),
@@ -277,6 +303,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
+    /// Add a local activity marker event with optional payload/failure.
     pub fn add_local_activity_marker(
         &mut self,
         seq: u32,
@@ -305,6 +332,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
+    /// Add a local activity result marker with a successful payload.
     pub fn add_local_activity_result_marker(
         &mut self,
         seq: u32,
@@ -314,6 +342,7 @@ impl TestHistoryBuilder {
         self.add_local_activity_marker(seq, activity_id, Some(payload), None, |_| {});
     }
 
+    /// Add a local activity result marker with a specific completion time.
     pub fn add_local_activity_result_marker_with_time(
         &mut self,
         seq: u32,
@@ -326,6 +355,7 @@ impl TestHistoryBuilder {
         });
     }
 
+    /// Add a local activity failure marker.
     pub fn add_local_activity_fail_marker(
         &mut self,
         seq: u32,
@@ -335,6 +365,7 @@ impl TestHistoryBuilder {
         self.add_local_activity_marker(seq, activity_id, None, Some(failure), |_| {});
     }
 
+    /// Add a local activity cancellation marker.
     pub fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
         self.add_local_activity_marker(
             seq,
@@ -354,6 +385,7 @@ impl TestHistoryBuilder {
         );
     }
 
+    /// Add an external signal workflow initiation event, returning the event ID.
     pub fn add_signal_wf(
         &mut self,
         signal_name: impl Into<String>,
@@ -371,6 +403,7 @@ impl TestHistoryBuilder {
         })
     }
 
+    /// Add an external workflow execution signaled event.
     pub fn add_external_signal_completed(&mut self, initiated_id: i64) {
         let attrs = ExternalWorkflowExecutionSignaledEventAttributes {
             initiated_event_id: initiated_id,
@@ -379,6 +412,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::ExternalWorkflowExecutionSignaled, attrs.into());
     }
 
+    /// Add a signal external workflow execution failed event.
     pub fn add_external_signal_failed(&mut self, initiated_id: i64) {
         let attrs = SignalExternalWorkflowExecutionFailedEventAttributes {
             initiated_event_id: initiated_id,
@@ -390,6 +424,7 @@ impl TestHistoryBuilder {
         );
     }
 
+    /// Add a cancel external workflow initiation event, returning the event ID.
     pub fn add_cancel_external_wf(&mut self, execution: NamespacedWorkflowExecution) -> i64 {
         self.add(
             RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
@@ -404,6 +439,7 @@ impl TestHistoryBuilder {
         )
     }
 
+    /// Add a cancel external workflow completed event.
     pub fn add_cancel_external_wf_completed(&mut self, initiated_id: i64) {
         let attrs = ExternalWorkflowExecutionCancelRequestedEventAttributes {
             initiated_event_id: initiated_id,
@@ -415,6 +451,7 @@ impl TestHistoryBuilder {
         );
     }
 
+    /// Add a cancel external workflow failed event.
     pub fn add_cancel_external_wf_failed(&mut self, initiated_id: i64) {
         let attrs = RequestCancelExternalWorkflowExecutionFailedEventAttributes {
             initiated_event_id: initiated_id,
@@ -426,12 +463,14 @@ impl TestHistoryBuilder {
         );
     }
 
+    /// Add a workflow execution started event with a custom workflow task timeout.
     pub fn add_wfe_started_with_wft_timeout(&mut self, dur: Duration) {
         let mut wesattrs = default_wes_attribs();
         wesattrs.workflow_task_timeout = Some(dur.try_into().unwrap());
         self.add(wesattrs);
     }
 
+    /// Add an upsert search attributes event for a patch marker.
     pub fn add_upsert_search_attrs_for_patch(&mut self, attribs: &[String]) {
         let mut indexed_fields = HashMap::new();
         indexed_fields.insert(
@@ -445,6 +484,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::UpsertWorkflowSearchAttributes, attrs.into());
     }
 
+    /// Add a workflow execution update accepted event, returning the event ID.
     pub fn add_update_accepted(
         &mut self,
         instance_id: impl Into<String>,
@@ -482,6 +522,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionUpdateAccepted, attrs.into())
     }
 
+    /// Add a workflow execution update completed event.
     pub fn add_update_completed(&mut self, accepted_event_id: i64) {
         let attrs = WorkflowExecutionUpdateCompletedEventAttributes {
             meta: None,
@@ -493,6 +534,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionUpdateCompleted, attrs.into());
     }
 
+    /// Returns the original run ID from the workflow execution started event.
     pub fn get_orig_run_id(&self) -> &str {
         &self.original_run_id
     }
@@ -509,6 +551,7 @@ impl TestHistoryBuilder {
         HistoryInfo::new_from_history(&self.events.clone().into(), None)
     }
 
+    /// Returns a single incremental workflow task's worth of history.
     pub fn get_one_wft(&self, from_wft_number: usize) -> Result<HistoryInfo, anyhow::Error> {
         let mut histinfo =
             HistoryInfo::new_from_history(&self.events.clone().into(), Some(from_wft_number))?;
@@ -625,6 +668,7 @@ fn default_attribs(et: EventType) -> Result<Attributes> {
     })
 }
 
+/// Returns default workflow execution started attributes for testing.
 pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
     WorkflowExecutionStartedEventAttributes {
         original_execution_run_id: Uuid::new_v4().to_string(),
@@ -645,6 +689,7 @@ pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
     }
 }
 
+/// Returns a default schedule-activity command for testing.
 pub fn default_act_sched() -> ScheduleActivity {
     ScheduleActivity {
         activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),

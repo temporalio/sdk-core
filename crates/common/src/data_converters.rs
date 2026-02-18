@@ -5,6 +5,8 @@ use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
+/// Combines a [`PayloadConverter`], [`FailureConverter`], and [`PayloadCodec`] to handle all
+/// serialization needs for communicating with the Temporal server.
 #[derive(Clone)]
 pub struct DataConverter {
     payload_converter: PayloadConverter,
@@ -34,6 +36,7 @@ impl DataConverter {
         }
     }
 
+    /// Serialize a value into a single payload, applying the codec.
     pub async fn to_payload<T: TemporalSerializable + 'static>(
         &self,
         data: &SerializationContextData,
@@ -51,6 +54,7 @@ impl DataConverter {
             .ok_or(PayloadConversionError::WrongEncoding)
     }
 
+    /// Deserialize a value from a single payload, applying the codec.
     pub async fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
         data: &SerializationContextData,
@@ -68,6 +72,7 @@ impl DataConverter {
         self.payload_converter.from_payload(&context, payload)
     }
 
+    /// Serialize a value into multiple payloads (e.g. for multi-arg support), applying the codec.
     pub async fn to_payloads<T: TemporalSerializable + 'static>(
         &self,
         data: &SerializationContextData,
@@ -81,6 +86,7 @@ impl DataConverter {
         Ok(self.codec.encode(data, payloads).await)
     }
 
+    /// Deserialize a value from multiple payloads (e.g. for multi-arg support), applying the codec.
     pub async fn from_payloads<T: TemporalDeserializable + 'static>(
         &self,
         data: &SerializationContextData,
@@ -108,9 +114,13 @@ impl DataConverter {
 /// Data about the serialization context, indicating where the serialization is occurring.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SerializationContextData {
+    /// Serialization is occurring in a workflow context.
     Workflow,
+    /// Serialization is occurring in an activity context.
     Activity,
+    /// Serialization is occurring in a nexus context.
     Nexus,
+    /// No specific serialization context.
     None,
 }
 
@@ -118,15 +128,19 @@ pub enum SerializationContextData {
 /// payload converter for nested serialization.
 #[derive(Clone, Copy)]
 pub struct SerializationContext<'a> {
+    /// The kind of serialization context (workflow, activity, etc.).
     pub data: &'a SerializationContextData,
     /// Allows nested types to serialize their contents using the same converter.
     pub converter: &'a PayloadConverter,
 }
+/// Converts values to and from [`Payload`]s using different encoding strategies.
 #[derive(Clone)]
 pub enum PayloadConverter {
+    /// Uses a serde-based converter for encoding/decoding.
     Serde(Arc<dyn ErasedSerdePayloadConverter>),
     /// This variant signals the user wants to delegate to wrapper types
     UseWrappers,
+    /// Tries multiple converters in order until one succeeds.
     Composite(Arc<CompositePayloadConverter>),
 }
 
@@ -140,6 +154,7 @@ impl std::fmt::Debug for PayloadConverter {
     }
 }
 impl PayloadConverter {
+    /// Create a payload converter that uses JSON serialization via serde.
     pub fn serde_json() -> Self {
         Self::Serde(Arc::new(SerdeJsonPayloadConverter))
     }
@@ -154,9 +169,12 @@ impl Default for PayloadConverter {
     }
 }
 
+/// Errors that can occur during payload conversion.
 #[derive(Debug)]
 pub enum PayloadConversionError {
+    /// The payload's encoding does not match what the converter expects.
     WrongEncoding,
+    /// An error occurred during encoding or decoding.
     EncodingError(Box<dyn std::error::Error + Send + Sync>),
 }
 
@@ -178,7 +196,9 @@ impl std::error::Error for PayloadConversionError {
     }
 }
 
+/// Converts between Rust errors and Temporal [`Failure`] protobufs.
 pub trait FailureConverter {
+    /// Convert an error into a Temporal failure protobuf.
     fn to_failure(
         &self,
         error: Box<dyn std::error::Error>,
@@ -186,6 +206,7 @@ pub trait FailureConverter {
         context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError>;
 
+    /// Convert a Temporal failure protobuf back into a Rust error.
     fn to_error(
         &self,
         failure: Failure,
@@ -193,13 +214,17 @@ pub trait FailureConverter {
         context: &SerializationContextData,
     ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
 }
+/// Default (currently unimplemented) failure converter.
 pub struct DefaultFailureConverter;
+/// Encodes and decodes payloads, enabling encryption or compression.
 pub trait PayloadCodec {
+    /// Encode payloads before they are sent to the server.
     fn encode(
         &self,
         context: &SerializationContextData,
         payloads: Vec<Payload>,
     ) -> BoxFuture<'static, Vec<Payload>>;
+    /// Decode payloads after they are received from the server.
     fn decode(
         &self,
         context: &SerializationContextData,
@@ -224,6 +249,7 @@ impl<T: PayloadCodec> PayloadCodec for Arc<T> {
     }
 }
 
+/// A no-op codec that passes payloads through unchanged.
 pub struct DefaultPayloadCodec;
 
 /// Indicates some type can be serialized for use with Temporal.
@@ -231,9 +257,11 @@ pub struct DefaultPayloadCodec;
 /// You don't need to implement this unless you are using a non-serde-compatible custom converter,
 /// in which case you should implement the to/from_payload functions on some wrapper type.
 pub trait TemporalSerializable {
+    /// Return a reference to this value as a serde-serializable trait object.
     fn as_serde(&self) -> Result<&dyn erased_serde::Serialize, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
     }
+    /// Convert this value into a single [`Payload`].
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
     }
@@ -251,6 +279,7 @@ pub trait TemporalSerializable {
 /// You don't need to implement this unless you are using a non-serde-compatible custom converter,
 /// in which case you should implement the to/from_payload functions on some wrapper type.
 pub trait TemporalDeserializable: Sized {
+    /// Deserialize from a serde-based payload converter.
     fn from_serde(
         _: &dyn ErasedSerdePayloadConverter,
         _ctx: &SerializationContext<'_>,
@@ -258,6 +287,7 @@ pub trait TemporalDeserializable: Sized {
     ) -> Result<Self, PayloadConversionError> {
         Err(PayloadConversionError::WrongEncoding)
     }
+    /// Deserialize from a single [`Payload`].
     fn from_payload(
         ctx: &SerializationContext<'_>,
         payload: Payload,
@@ -277,8 +307,10 @@ pub trait TemporalDeserializable: Sized {
     }
 }
 
+/// An unconverted set of payloads, used when the caller wants to defer deserialization.
 #[derive(Clone, Debug, Default)]
 pub struct RawValue {
+    /// The underlying payloads.
     pub payloads: Vec<Payload>,
 }
 impl RawValue {
@@ -295,6 +327,7 @@ impl RawValue {
         Self { payloads }
     }
 
+    /// Create a [`RawValue`] by serializing a value with the given converter.
     pub fn from_value<T: TemporalSerializable + 'static>(
         value: &T,
         converter: &PayloadConverter,
@@ -312,6 +345,7 @@ impl RawValue {
         ])
     }
 
+    /// Deserialize this [`RawValue`] into a typed value using the given converter.
     pub fn to_value<T: TemporalDeserializable + 'static>(self, converter: &PayloadConverter) -> T {
         converter
             .from_payload(
@@ -352,18 +386,22 @@ impl TemporalDeserializable for RawValue {
     }
 }
 
+/// Generic interface for converting between typed values and [`Payload`]s.
 pub trait GenericPayloadConverter {
+    /// Serialize a value into a single [`Payload`].
     fn to_payload<T: TemporalSerializable + 'static>(
         &self,
         context: &SerializationContext<'_>,
         val: &T,
     ) -> Result<Payload, PayloadConversionError>;
+    /// Deserialize a value from a single [`Payload`].
     #[allow(clippy::wrong_self_convention)]
     fn from_payload<T: TemporalDeserializable + 'static>(
         &self,
         context: &SerializationContext<'_>,
         payload: Payload,
     ) -> Result<T, PayloadConversionError>;
+    /// Serialize a value into multiple [`Payload`]s.
     fn to_payloads<T: TemporalSerializable + 'static>(
         &self,
         context: &SerializationContext<'_>,
@@ -371,6 +409,7 @@ pub trait GenericPayloadConverter {
     ) -> Result<Vec<Payload>, PayloadConversionError> {
         Ok(vec![self.to_payload(context, val)?])
     }
+    /// Deserialize a value from multiple [`Payload`]s.
     #[allow(clippy::wrong_self_convention)]
     fn from_payloads<T: TemporalDeserializable + 'static>(
         &self,
@@ -520,12 +559,15 @@ impl ErasedSerdePayloadConverter for SerdeJsonPayloadConverter {
         Ok(Box::new(<dyn erased_serde::Deserializer>::erase(json_v)))
     }
 }
+/// Type-erased serde-based payload converter for use behind `dyn` trait objects.
 pub trait ErasedSerdePayloadConverter: Send + Sync {
+    /// Serialize a type-erased serde value into a [`Payload`].
     fn to_payload(
         &self,
         context: &SerializationContextData,
         value: &dyn erased_serde::Serialize,
     ) -> Result<Payload, PayloadConversionError>;
+    /// Deserialize a [`Payload`] into a type-erased serde deserializer.
     #[allow(clippy::wrong_self_convention)]
     fn from_payload(
         &self,
@@ -536,6 +578,8 @@ pub trait ErasedSerdePayloadConverter: Send + Sync {
 
 // TODO [rust-sdk-branch]: All prost things should be behind a compile flag
 
+/// Wrapper for protobuf messages that implements [`TemporalSerializable`]/[`TemporalDeserializable`]
+/// using `binary/protobuf` encoding.
 pub struct ProstSerializable<T: prost::Message>(pub T);
 impl<T> TemporalSerializable for ProstSerializable<T>
 where
@@ -575,6 +619,7 @@ where
     }
 }
 
+/// A payload converter that delegates to an ordered list of inner converters.
 #[derive(Clone)]
 pub struct CompositePayloadConverter {
     converters: Vec<PayloadConverter>,
@@ -628,6 +673,7 @@ impl PayloadCodec for DefaultPayloadCodec {
 /// Use this when interoperating with other language SDKs that allow multiple arguments.
 macro_rules! impl_multi_args {
     ($name:ident; $count:expr; $($idx:tt: $ty:ident),+) => {
+        #[doc = concat!("Wrapper for ", stringify!($count), " typed arguments, enabling multi-arg serialization.")]
         #[derive(Clone, Debug, PartialEq, Eq)]
         pub struct $name<$($ty),+>($(pub $ty),+);
 

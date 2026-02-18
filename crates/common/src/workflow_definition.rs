@@ -20,9 +20,12 @@ pub trait WorkflowDefinition {
 pub trait QueryDefinition {
     /// The workflow type this query belongs to
     type Workflow: WorkflowDefinition;
+    /// Type of the input argument to the query.
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
+    /// Type of the output of the query.
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
+    /// The workflow type name.
     fn name(&self) -> &str;
 }
 
@@ -33,8 +36,10 @@ pub trait QueryDefinition {
 pub trait SignalDefinition {
     /// The workflow type this signal belongs to
     type Workflow: WorkflowDefinition;
+    /// Type of the input argument to the signal.
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
 
+    /// The workflow type name.
     fn name(&self) -> &str;
 }
 
@@ -45,8 +50,11 @@ pub trait SignalDefinition {
 pub trait UpdateDefinition {
     /// The workflow type this update belongs to
     type Workflow: WorkflowDefinition;
+    /// Type of the input argument to the update.
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
+    /// Type of the output of the update.
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
+    /// The workflow type name.
     fn name(&self) -> &str;
 }

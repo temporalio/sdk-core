@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use prost::{EncodeError, Message};
 
+/// Extension trait for converting `Option<F>` to `Option<T>`, returning `None` on failure.
 pub trait TryIntoOrNone<F, T> {
     /// Turn an option of something into an option of another thing, trying to convert along the way
     /// and returning `None` if that conversion fails
