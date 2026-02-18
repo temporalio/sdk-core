@@ -28,13 +28,19 @@ use temporalio_common::{
         coresdk::{
             NexusSlotInfo,
             nexus::{
-                CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task,
-                nexus_task_completion,
+                CancelNexusTask, NexusOperationErrorState, NexusTask, NexusTaskCancelReason,
+                nexus_task, nexus_task_completion,
             },
         },
-        temporal::api::nexus::{
-            self,
-            v1::{request::Variant, response, start_operation_response},
+        temporal::api::{
+            failure::v1::failure::FailureInfo,
+            nexus::{
+                self,
+                v1::{
+                    NexusTaskFailure, UnsuccessfulOperationError, request::Variant, response,
+                    start_operation_response,
+                },
+            },
         },
         utilities::normalize_http_headers,
     },
@@ -125,20 +131,78 @@ impl NexusManager {
                 .nexus_task_execution_latency(task_info.start_time.elapsed());
             task_info.timeout_task.inspect(|jh| jh.abort());
             let (did_send, maybe_net_err) = match status {
-                nexus_task_completion::Status::Completed(c) => {
+                nexus_task_completion::Status::Completed(mut c) => {
                     // Server doesn't provide obvious errors for this validation, so it's done
                     // here to make life easier for lang implementors.
-                    match &c.variant {
+                    match &mut c.variant {
                         Some(response::Variant::StartOperation(so)) => {
+                            #[allow(deprecated)]
                             if let Some(start_operation_response::Variant::OperationError(oe)) =
                                 so.variant.as_ref()
                             {
+                                // Deprecated branch left for SDKs that have not yet started using Temporal failures
                                 self.metrics
                                     .with_new_attrs([metrics::failure_reason(
                                         FailureReason::NexusOperation(oe.operation_state.clone()),
                                     )])
                                     .nexus_task_execution_failed();
-                            };
+                            } else if let Some(start_operation_response::Variant::Failure(f)) =
+                                &mut so.variant
+                            {
+                                let operation_state = match &f.failure_info {
+                                    Some(FailureInfo::ApplicationFailureInfo(_)) => {
+                                        NexusOperationErrorState::Failed
+                                    }
+                                    Some(FailureInfo::CanceledFailureInfo(_)) => {
+                                        NexusOperationErrorState::Canceled
+                                    }
+                                    _ => {
+                                        return Err(CompleteNexusError::MalformedNexusCompletion {
+                                            reason: "Nexus StartOperationResponse with a failure must contain ApplicationFailureInfo or CanceledFailureInfo"
+                                                .to_string(),
+                                        });
+                                    }
+                                };
+
+                                let use_temporal_failures = task_info
+                                    .capabilities
+                                    .as_ref()
+                                    .map(|c| c.temporal_failure_responses)
+                                    .unwrap_or_default();
+
+                                if !use_temporal_failures {
+                                    // Take the failure from the StartOperationResponse variant
+                                    let failure = std::mem::take(f);
+
+                                    // Convert the failure to an UnsuccessfulOperationError
+                                    let failure =
+                                        nexus::v1::Failure::try_from(failure)
+                                        .map_err(|err| CompleteNexusError::MalformedNexusCompletion {
+                                            reason: format!(
+                                                "error converting temporal failure to nexus failure: {:?}",
+                                                err
+                                            ),
+                                        })?;
+
+                                    // Set StartOperationResponse variant to new UnsuccessfulOperationError
+                                    so.variant = Some(
+                                        #[allow(deprecated)]
+                                        start_operation_response::Variant::OperationError(
+                                            UnsuccessfulOperationError {
+                                                operation_state: operation_state.to_string(),
+                                                failure: Some(failure),
+                                            },
+                                        ),
+                                    )
+                                }
+
+                                self.metrics
+                                    .with_new_attrs([metrics::failure_reason(
+                                        FailureReason::NexusOperation(operation_state.to_string()),
+                                    )])
+                                    .nexus_task_execution_failed();
+                            }
+
                             if task_info.request_kind != RequestKind::Start {
                                 return Err(CompleteNexusError::MalformedNexusCompletion {
                                     reason: "Nexus response was StartOperation but request was not"
@@ -164,19 +228,76 @@ impl NexusManager {
                     }
                     (true, client.complete_nexus_task(tt, c).await.err())
                 }
+
                 nexus_task_completion::Status::AckCancel(_) => {
                     self.metrics
                         .with_new_attrs([metrics::failure_reason(FailureReason::Timeout)])
                         .nexus_task_execution_failed();
                     (false, None)
                 }
+
+                #[allow(deprecated)]
                 nexus_task_completion::Status::Error(e) => {
+                    // Deprecated branch left for SDKs that have not yet started using Temporal failures
                     self.metrics
                         .with_new_attrs([metrics::failure_reason(
                             FailureReason::NexusHandlerError(e.error_type.clone()),
                         )])
                         .nexus_task_execution_failed();
-                    (true, client.fail_nexus_task(tt, e).await.err())
+                    let maybe_net_err = client
+                        .fail_nexus_task(tt, NexusTaskFailure::Legacy(e))
+                        .await
+                        .err();
+                    (true, maybe_net_err)
+                }
+
+                nexus_task_completion::Status::Failure(f) => {
+                    let use_temporal_failures = task_info
+                        .capabilities
+                        .as_ref()
+                        .map(|c| c.temporal_failure_responses)
+                        .unwrap_or_default();
+
+                    let failure_info = match &f.failure_info {
+                        Some(FailureInfo::NexusHandlerFailureInfo(failure_info)) => {
+                            failure_info.clone()
+                        }
+                        _ => {
+                            return Err(CompleteNexusError::MalformedNexusCompletion {
+                            reason: "Nexus completions with a failure must contain a NexusHandlerFailureInfo".to_string(),
+                        });
+                        }
+                    };
+
+                    self.metrics
+                        .with_new_attrs([metrics::failure_reason(
+                            FailureReason::NexusHandlerError(failure_info.r#type.clone()),
+                        )])
+                        .nexus_task_execution_failed();
+
+                    let task_failure = if use_temporal_failures {
+                        NexusTaskFailure::Temporal(f)
+                    } else {
+                        let failure = nexus::v1::Failure::try_from(f).map_err(|err| {
+                            CompleteNexusError::MalformedNexusCompletion {
+                                reason: format!(
+                                    "error converting temporal failure to nexus failure: {:?}",
+                                    err
+                                ),
+                            }
+                        })?;
+
+                        let h = nexus::v1::HandlerError {
+                            error_type: failure_info.r#type,
+                            failure: Some(failure),
+                            //NexusHandlerFailureInfo and HandlerError both use enums::v1::NexusHandlerErrorRetryBehavior
+                            retry_behavior: failure_info.retry_behavior,
+                        };
+                        NexusTaskFailure::Legacy(h)
+                    };
+
+                    let maybe_net_err = client.fail_nexus_task(tt, task_failure).await.err();
+                    (true, maybe_net_err)
                 }
             };
 
@@ -317,6 +438,12 @@ where
                                     ),
                                 })
                                 .unwrap_or_default();
+
+                            let capabilities = t
+                                .resp
+                                .request
+                                .as_ref()
+                                .and_then(|r| r.capabilities);
                             self.outstanding_task_map.lock().insert(
                                 tt,
                                 NexusInFlightTask {
@@ -330,6 +457,7 @@ where
                                         .and_then(|t| t.try_into().ok()),
                                     start_time: Instant::now(),
                                     _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
+                                    capabilities,
                                 },
                             );
                             Some(Ok(NexusTask {
@@ -387,6 +515,7 @@ struct NexusInFlightTask {
     scheduled_time: Option<SystemTime>,
     start_time: Instant,
     _permit: UsedMeteredSemPermit<NexusSlotKind>,
+    capabilities: Option<nexus::v1::request::Capabilities>,
 }
 
 #[derive(Eq, PartialEq, Copy, Clone, Default)]

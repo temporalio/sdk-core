@@ -66,6 +66,7 @@ message ChildWorkflowExecutionFailureInfo {
     temporal.api.enums.v1.RetryState retry_state = 6;
 }
 
+// Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers.
 message NexusOperationFailureInfo {
     // The NexusOperationScheduled event ID.
     int64 scheduled_event_id = 1;

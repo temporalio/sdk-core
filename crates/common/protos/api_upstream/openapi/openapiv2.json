@@ -1434,6 +1434,44 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/schedule-count": {
+      "get": {
+        "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
+        "operationId": "CountSchedules2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/schedules": {
       "get": {
         "summary": "List all schedules in a namespace.",
@@ -3731,6 +3769,53 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/pause": {
+      "post": {
+        "summary": "Note: This is an experimental API and the behavior may change in a future release.\nPauseWorkflowExecution pauses the workflow execution specified in the request. Pausing a workflow execution results in\n- The workflow execution status changes to `PAUSED` and a new WORKFLOW_EXECUTION_PAUSED event is added to the history\n- No new workflow tasks or activity tasks are dispatched.\n  - Any workflow task currently executing on the worker will be allowed to complete.\n  - Any activity task currently executing will be paused.\n- All server-side events will continue to be processed by the server.\n- Queries & Updates on a paused workflow will be rejected.",
+        "operationId": "PauseWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PauseWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow to pause.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "ID of the workflow execution to be paused. Required.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServicePauseWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}": {
       "post": {
         "summary": "SignalWithStartWorkflowExecution is used to ensure a signal is sent to a workflow, even if\nit isn't yet started.",
@@ -3776,6 +3861,53 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceSignalWithStartWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/unpause": {
+      "post": {
+        "summary": "Note: This is an experimental API and the behavior may change in a future release.\nUnpauseWorkflowExecution unpauses a previously paused workflow execution specified in the request.\nUnpausing a workflow execution results in\n- The workflow execution status changes to `RUNNING` and a new WORKFLOW_EXECUTION_UNPAUSED event is added to the history\n- Workflow tasks and activity tasks are resumed.",
+        "operationId": "UnpauseWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnpauseWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow to unpause.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "ID of the workflow execution to be paused. Required.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUnpauseWorkflowExecutionBody"
             }
           }
         ],
@@ -5660,6 +5792,44 @@
             "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
             "in": "path",
             "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/schedule-count": {
+      "get": {
+        "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
+        "operationId": "CountSchedules",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -11411,6 +11581,40 @@
         }
       }
     },
+    "v1CountSchedulesResponse": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "description": "If `query` is not grouping by any field, the count is an approximate number\nof schedules that match the query.\nIf `query` is grouping by a field, the count is simply the sum of the counts\nof the groups returned in the response. This number can be smaller than the\ntotal number of schedules matching the query."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1CountSchedulesResponseAggregationGroup"
+          },
+          "description": "Contains the groups if the request is grouping by a field.\nThe list might not be complete, and the counts of each group is approximate."
+        }
+      }
+    },
+    "v1CountSchedulesResponseAggregationGroup": {
+      "type": "object",
+      "properties": {
+        "groupValues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Payload"
+          }
+        },
+        "count": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
     "v1CountWorkflowExecutionsResponse": {
       "type": "object",
       "properties": {
@@ -13454,7 +13658,8 @@
           "type": "string",
           "description": "Operation token - may be empty if the operation completed synchronously."
         }
-      }
+      },
+      "description": "Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers."
     },
     "v1NexusOperationScheduledEventAttributes": {
       "type": "object",
@@ -16289,7 +16494,7 @@
       "properties": {
         "deploymentName": {
           "type": "string",
-          "description": "Required. Worker Deployment name."
+          "description": "Required when `worker_versioning_mode==VERSIONED`."
         },
         "buildId": {
           "type": "string",
