@@ -41,9 +41,12 @@ tracing = "0.1"
 tracing-core = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
+pbjson = { workspace = true }
+pbjson-types = { workspace = true }
 
 [build-dependencies]
 tonic-prost-build = { workspace = true }
+pbjson-build = { workspace = true }
 
 [lints]
 workspace = true

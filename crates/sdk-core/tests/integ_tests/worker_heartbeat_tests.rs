@@ -699,8 +699,8 @@ async fn worker_heartbeat_multiple_workers() {
     assert!(keys.contains(&worker_a_key));
     assert!(keys.contains(&worker_b_key));
 
-    // Verify both heartbeats contain the same shared process_key
-    let process_keys: HashSet<_> = all
+    // Verify both heartbeats contain the same shared worker_grouping_key
+    let worker_grouping_keys: HashSet<_> = all
         .iter()
         .filter_map(|hb| {
             hb.host_info
@@ -708,7 +708,7 @@ async fn worker_heartbeat_multiple_workers() {
                 .map(|info| info.worker_grouping_key.clone())
         })
         .collect();
-    assert!(process_keys.len() > starting_hb_len);
+    assert!(worker_grouping_keys.len() > starting_hb_len);
 
     let filtered =
         list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_a_key}\"")).await;

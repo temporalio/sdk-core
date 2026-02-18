@@ -30,6 +30,9 @@ tonic-prost-build = "0.14"
 opentelemetry = { version = "0.31", features = ["metrics"] }
 prost = "0.14"
 prost-types = { version = "0.7", package = "prost-wkt-types" }
+pbjson = "0.9"
+pbjson-types = "0.9"
+pbjson-build = "0.9"
 
 [workspace.lints.rust]
 unreachable_pub = "warn"
