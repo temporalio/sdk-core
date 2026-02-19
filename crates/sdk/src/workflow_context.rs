@@ -24,7 +24,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
     },
-    task::Poll,
+    task::{Poll, Waker},
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
@@ -127,6 +127,10 @@ pub struct WorkflowContext<W> {
     sync: SyncWorkflowContext<W>,
     /// The workflow instance
     workflow_state: Rc<RefCell<W>>,
+    /// Wakers registered by `wait_condition` futures. Drained and woken on
+    /// every `state_mut` call so that waker-based combinators (e.g.
+    /// `FuturesOrdered`) re-poll the condition after state changes.
+    condition_wakers: Rc<RefCell<Vec<Waker>>>,
 }
 
 impl<W> Clone for WorkflowContext<W> {
@@ -134,6 +138,7 @@ impl<W> Clone for WorkflowContext<W> {
         Self {
             sync: self.sync.clone(),
             workflow_state: self.workflow_state.clone(),
+            condition_wakers: self.condition_wakers.clone(),
         }
     }
 }
@@ -789,6 +794,7 @@ impl<W> WorkflowContext<W> {
                 _phantom: PhantomData,
             },
             workflow_state,
+            condition_wakers: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -801,6 +807,7 @@ impl<W> WorkflowContext<W> {
                 _phantom: PhantomData,
             },
             workflow_state: self.workflow_state.clone(),
+            condition_wakers: self.condition_wakers.clone(),
         }
     }
 
@@ -977,8 +984,16 @@ impl<W> WorkflowContext<W> {
     ///
     /// The borrow is scoped to the closure and cannot escape, preventing
     /// borrows from being held across await points.
+    ///
+    /// After the mutation, all wakers registered by pending `wait_condition`
+    /// futures are woken so that waker-based combinators (e.g.
+    /// `FuturesOrdered`) re-poll them on the next pass.
     pub fn state_mut<R>(&self, f: impl FnOnce(&mut W) -> R) -> R {
-        f(&mut *self.workflow_state.borrow_mut())
+        let result = f(&mut *self.workflow_state.borrow_mut());
+        for waker in self.condition_wakers.borrow_mut().drain(..) {
+            waker.wake();
+        }
+        result
     }
 
     /// Wait for some condition on workflow state to become true, yielding the workflow if not.
@@ -989,10 +1004,11 @@ impl<W> WorkflowContext<W> {
         &'a self,
         mut condition: impl FnMut(&W) -> bool + 'a,
     ) -> impl Future<Output = ()> + 'a {
-        future::poll_fn(move |_cx: &mut Context<'_>| {
+        future::poll_fn(move |cx: &mut Context<'_>| {
             if condition(&*self.workflow_state.borrow()) {
                 Poll::Ready(())
             } else {
+                self.condition_wakers.borrow_mut().push(cx.waker().clone());
                 Poll::Pending
             }
         })
