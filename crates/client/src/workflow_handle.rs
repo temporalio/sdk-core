@@ -104,6 +104,7 @@ impl WorkflowHistory {
 
 /// A workflow handle which can refer to a specific workflow run, or a chain of workflow runs with
 /// the same workflow id.
+#[derive(Clone)]
 pub struct WorkflowHandle<ClientT, W> {
     client: ClientT,
     info: WorkflowExecutionInfo,
