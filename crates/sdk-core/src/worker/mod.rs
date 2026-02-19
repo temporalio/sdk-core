@@ -415,6 +415,9 @@ pub struct Worker {
     client_worker_registrator: Arc<ClientWorkerRegistrator>,
     /// Status of the worker
     status: Arc<RwLock<WorkerStatus>>,
+    /// Set during validate() when server supports graceful poll cancellation on shutdown.
+    /// Shared with pollers so they can decide per-poll whether to hard-kill or wait.
+    graceful_poll_shutdown: Arc<AtomicBool>,
 }
 
 struct AllPermitsTracker {
@@ -480,12 +483,19 @@ impl Worker {
     pub async fn validate(&self) -> Result<NamespaceInfo, WorkerValidationError> {
         match self.client.describe_namespace().await {
             Ok(info) => {
-                let limits = info.namespace_info.and_then(|ns_info| {
+                let ns_info = info.namespace_info;
+                let limits = ns_info.as_ref().and_then(|ns_info| {
                     ns_info.limits.map(|api_limits| namespace_info::Limits {
                         blob_size_limit_error: api_limits.blob_size_limit_error,
                         memo_size_limit_error: api_limits.memo_size_limit_error,
                     })
                 });
+                if ns_info
+                    .and_then(|ns| ns.capabilities)
+                    .is_some_and(|caps| caps.worker_poll_complete_on_shutdown)
+                {
+                    self.graceful_poll_shutdown.store(true, Ordering::Relaxed);
+                }
                 Ok(NamespaceInfo { limits })
             }
             Err(e) if e.code() == tonic::Code::Unimplemented => {
@@ -606,6 +616,7 @@ impl Worker {
         let wf_sticky_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let act_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
+        let graceful_poll_shutdown = Arc::new(AtomicBool::new(false));
 
         let nexus_slots = MeteredPermitDealer::new(
             tuner.nexus_task_slot_supplier(),
@@ -626,6 +637,7 @@ impl Worker {
                         &wft_slots,
                         wf_last_suc_poll_time.clone(),
                         wf_sticky_last_suc_poll_time.clone(),
+                        graceful_poll_shutdown.clone(),
                     )
                     .boxed();
                     let stream = if !client.is_mock() {
@@ -655,6 +667,7 @@ impl Worker {
                             max_tps: config.max_task_queue_activities_per_second,
                         },
                         act_last_suc_poll_time.clone(),
+                        graceful_poll_shutdown.clone(),
                     );
                     Some(Box::from(ap) as BoxedActPoller)
                 } else {
@@ -672,6 +685,7 @@ impl Worker {
                         Some(move |np| np_metrics.record_num_pollers(np)),
                         nexus_last_suc_poll_time.clone(),
                         shared_namespace_worker,
+                        graceful_poll_shutdown.clone(),
                     )) as BoxedNexusPoller)
                 } else {
                     None
@@ -891,6 +905,7 @@ impl Worker {
             nexus_mgr,
             client_worker_registrator,
             status: worker_status,
+            graceful_poll_shutdown,
         })
     }
 

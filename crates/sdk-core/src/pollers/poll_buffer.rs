@@ -77,6 +77,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: WorkflowTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+        graceful_poll_shutdown: Arc<AtomicBool>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
         let poll_scaler = PollScaler::new(
@@ -139,6 +140,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             poll_scaler,
             pre_permit_delay,
             post_poll_fn,
+            graceful_poll_shutdown,
         )
     }
 }
@@ -154,6 +156,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         options: ActivityTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+        graceful_poll_shutdown: Arc<AtomicBool>,
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
@@ -206,6 +209,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             poll_scaler,
             pre_permit_delay,
             None::<fn(&PollActivityTaskQueueResponse)>,
+            graceful_poll_shutdown,
         )
     }
 }
@@ -221,6 +225,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         send_heartbeat: bool,
+        graceful_poll_shutdown: Arc<AtomicBool>,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -257,17 +262,9 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
+            graceful_poll_shutdown,
         )
     }
-}
-
-// Simple way to test this w/o plumbing options through. This will be removed after
-// the proper server implementation for teminating polls on worker shutdown exists.
-#[cfg(test)]
-use std::cell::RefCell;
-#[cfg(test)]
-thread_local! {
-    static POLL_SHUTDOWN_INTERRUPT: RefCell<Option<Duration>> = RefCell::default();
 }
 
 impl<T, SK> LongPollBuffer<T, SK>
@@ -282,6 +279,7 @@ where
         mut poll_scaler: PollScaler<F>,
         pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
         post_poll_fn: Option<impl Fn(&T) + Send + Sync + 'static>,
+        graceful_shutdown: Arc<AtomicBool>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
@@ -293,14 +291,6 @@ where
         let pf = Arc::new(poll_fn);
         let post_pf = Arc::new(post_poll_fn);
         let shutdown_clone = shutdown.clone();
-        #[cfg(test)]
-        let poll_shutdown_interrupt_wait = POLL_SHUTDOWN_INTERRUPT.with(|v| *v.borrow());
-        #[cfg(not(test))]
-        let poll_shutdown_interrupt_wait =
-            std::env::var("TEMPORAL_POLL_SHUTDOWN_INTERRUPT_WAIT_MS")
-                .ok()
-                .and_then(|s| s.parse::<u64>().ok())
-                .map(Duration::from_millis);
 
         let poller_task = tokio::spawn(
             async move {
@@ -352,19 +342,17 @@ where
                         } else {
                             None
                         };
+                    let graceful_shutdown = graceful_shutdown.clone();
                     let poll_task = tokio::spawn(async move {
                         let shutdown_clone = shutdown.clone();
 
-                        // If the interrupt wait is specified, don't resolve the future that would
-                        // interrupt the poll until after the wait period.
-                        let poll_interruptor = shutdown.cancelled().then(|_| async move {
-                            if let Some(w) = poll_shutdown_interrupt_wait {
-                                tokio::time::sleep(w).await;
+                        let r = if graceful_shutdown.load(Ordering::Relaxed) {
+                            pf(timeout_override).await
+                        } else {
+                            tokio::select! {
+                                r = pf(timeout_override) => r,
+                                _ = shutdown.cancelled() => return,
                             }
-                        });
-                        let r = tokio::select! {
-                            r = pf(timeout_override) => r,
-                            _ = poll_interruptor => return,
                         };
                         if let Ok(r) = &r
                             && let Some(ppf) = post_pf.as_ref()
@@ -843,6 +831,7 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
@@ -899,128 +888,12 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         // Should not see error, unwraps should get empty response
         pb.poll().await.unwrap().unwrap();
         pb.shutdown().await;
-    }
-
-    #[tokio::test]
-    async fn poll_shutdown_waits_interrupt_period_before_cancelling() {
-        POLL_SHUTDOWN_INTERRUPT.with(|v| {
-            *v.borrow_mut() = Some(Duration::from_millis(200));
-        });
-
-        let mut mock_client = mock_manual_worker_client();
-        let call_count = Arc::new(AtomicUsize::new(0));
-        let call_count_clone = call_count.clone();
-
-        let second_task_complete = Arc::new(Notify::new());
-        let second_task_complete_clone = second_task_complete.clone();
-        let third_task_complete = Arc::new(Notify::new());
-        let third_task_complete_clone = third_task_complete.clone();
-
-        let second_started = Arc::new(Notify::new());
-        let second_started_clone = second_started.clone();
-        let third_started = Arc::new(Notify::new());
-        let third_started_clone = third_started.clone();
-
-        mock_client
-            .expect_poll_workflow_task()
-            .returning(move |_, _| {
-                let count = call_count_clone.fetch_add(1, Ordering::SeqCst);
-                let second_complete = second_task_complete_clone.clone();
-                let third_complete = third_task_complete_clone.clone();
-                let second_started = second_started_clone.clone();
-                let third_started = third_started_clone.clone();
-
-                async move {
-                    match count {
-                        0 => Ok(PollWorkflowTaskQueueResponse {
-                            task_token: vec![1],
-                            ..Default::default()
-                        }),
-                        1 => {
-                            second_started.notify_one();
-                            second_complete.notified().await;
-                            Ok(PollWorkflowTaskQueueResponse {
-                                task_token: vec![2],
-                                ..Default::default()
-                            })
-                        }
-                        _ => {
-                            third_started.notify_one();
-                            third_complete.notified().await;
-                            Ok(PollWorkflowTaskQueueResponse {
-                                task_token: vec![3],
-                                ..Default::default()
-                            })
-                        }
-                    }
-                }
-                .boxed()
-            });
-
-        let shutdown_token = CancellationToken::new();
-        let pb = LongPollBuffer::new_workflow_task(
-            Arc::new(mock_client),
-            "sometq".to_string(),
-            None,
-            PollerBehavior::SimpleMaximum(3),
-            fixed_size_permit_dealer(10),
-            shutdown_token.clone(),
-            None::<fn(usize)>,
-            WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
-            },
-            Arc::new(AtomicCell::new(None)),
-        );
-
-        let first_task = pb.poll().await.expect("Should get first task");
-        assert!(first_task.is_ok());
-        assert_eq!(first_task.unwrap().0.task_token, vec![1]);
-
-        // Wait for both second and third polls to start
-        second_started.notified().await;
-        third_started.notified().await;
-
-        // Now both polls 2 and 3 are in progress. Trigger shutdown.
-        let shutdown_time = std::time::Instant::now();
-        shutdown_token.cancel();
-
-        // Immediately unlock the second task so it completes quickly (within interrupt wait)
-        second_task_complete.notify_one();
-
-        // Second task should be received because it completes within the interrupt wait period
-        let (task, _) = pb.poll().await.unwrap().unwrap();
-        assert_eq!(task.task_token, vec![2]);
-
-        // Don't notify third_task_complete - the third poll will wait for the interrupt period
-        // and then be interrupted. Should return None.
-        let third_task_result = pb.poll().await;
-        let elapsed = shutdown_time.elapsed();
-
-        assert!(
-            third_task_result.is_none(),
-            "Third task should not be received - poll should be interrupted after interrupt period"
-        );
-
-        // Total elapsed time should be at least the interrupt wait (200ms), but not significantly
-        // longer.
-        assert!(
-            elapsed >= Duration::from_millis(200),
-            "Should wait at least the interrupt period. Elapsed: {elapsed:?}",
-        );
-        assert!(
-            elapsed < Duration::from_secs(1),
-            "Should not wait too long. Elapsed: {elapsed:?}",
-        );
-
-        // Clean up
-        POLL_SHUTDOWN_INTERRUPT.with(|v| {
-            *v.borrow_mut() = None;
-        });
     }
 
     #[rstest]
@@ -1080,6 +953,7 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         ));
 
         // Trigger the first poll to initialize and get the scaling decision
@@ -1107,5 +981,93 @@ mod tests {
             .unwrap_or_else(|_| panic!("Failed to unwrap Arc"))
             .shutdown()
             .await;
+    }
+
+    #[rstest]
+    #[case::graceful(true)]
+    #[case::legacy(false)]
+    #[tokio::test]
+    async fn inflight_poll_survives_shutdown_only_when_graceful(#[case] graceful: bool) {
+        let mut mock_client = mock_manual_worker_client();
+        let task_started = Arc::new(Notify::new());
+        let task_started_clone = task_started.clone();
+        let task_complete = Arc::new(Notify::new());
+        let task_complete_clone = task_complete.clone();
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let call_count_clone = call_count.clone();
+
+        mock_client
+            .expect_poll_workflow_task()
+            .returning(move |_, _| {
+                let count = call_count_clone.fetch_add(1, Ordering::SeqCst);
+                let started = task_started_clone.clone();
+                let complete = task_complete_clone.clone();
+                async move {
+                    match count {
+                        0 => Ok(PollWorkflowTaskQueueResponse {
+                            task_token: vec![1],
+                            ..Default::default()
+                        }),
+                        _ => {
+                            started.notify_one();
+                            complete.notified().await;
+                            Ok(PollWorkflowTaskQueueResponse {
+                                task_token: vec![2],
+                                ..Default::default()
+                            })
+                        }
+                    }
+                }
+                .boxed()
+            });
+
+        let shutdown_token = CancellationToken::new();
+        let pb = LongPollBuffer::new_workflow_task(
+            Arc::new(mock_client),
+            "sometq".to_string(),
+            None,
+            PollerBehavior::SimpleMaximum(1),
+            fixed_size_permit_dealer(10),
+            shutdown_token.clone(),
+            None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: None,
+            },
+            Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(graceful)),
+        );
+
+        let first = pb.poll().await.unwrap().unwrap();
+        assert_eq!(first.0.task_token, vec![1]);
+
+        // Wait for second poll to be in-flight
+        task_started.notified().await;
+
+        shutdown_token.cancel();
+
+        if graceful {
+            // Release the poll — simulates server returning empty after ShutdownWorker
+            task_complete.notify_one();
+
+            // Graceful: in-flight poll survives, second task is received
+            let second = tokio::time::timeout(Duration::from_secs(2), pb.poll())
+                .await
+                .expect("graceful poll should complete")
+                .unwrap()
+                .unwrap();
+            assert_eq!(second.0.task_token, vec![2]);
+        } else {
+            // Don't release — the poll should be killed by shutdown token before completing.
+            // Buffer drains to None because the killed poll sends no result.
+            let result = tokio::time::timeout(Duration::from_secs(2), pb.poll())
+                .await
+                .expect("legacy poll should resolve quickly");
+            assert!(
+                result.is_none(),
+                "Legacy shutdown should kill in-flight poll, buffer returns None"
+            );
+        }
+
+        pb.shutdown().await;
     }
 }

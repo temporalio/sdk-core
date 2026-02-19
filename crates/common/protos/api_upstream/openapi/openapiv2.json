@@ -211,327 +211,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/cancel": {
-      "post": {
-        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
-        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskCanceled2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCanceledResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/cancel-by-id": {
-      "post": {
-        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskCanceledById2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/complete": {
-      "post": {
-        "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
-        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskCompleted2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCompletedResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/complete-by-id": {
-      "post": {
-        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskCompletedById2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/fail": {
-      "post": {
-        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
-        "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskFailed2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskFailedResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/fail-by-id": {
-      "post": {
-        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskFailedById2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/heartbeat": {
-      "post": {
-        "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
-        "description": "If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen the current attempt times out. Depending on RetryPolicy, this may trigger a retry or\ntime out the activity.\n\nFor workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow\nhistory. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,\nin that event, the SDK should request cancellation of the activity.\n\nThe request may contain response `details` which will be persisted by the server and may be\nused by the activity to checkpoint progress. The `cancel_requested` field in the response\nindicates whether cancellation has been requested for the activity.",
-        "operationId": "RecordActivityTaskHeartbeat2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/heartbeat-by-id": {
-      "post": {
-        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RecordActivityTaskHeartbeatById2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/api/v1/namespaces/{namespace}/activities/pause": {
+    "/api/v1/namespaces/{namespace}/activities-deprecated/pause": {
       "post": {
         "summary": "PauseActivity pauses the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be paused",
         "description": "Pausing an activity means:\n- If the activity is currently waiting for a retry or is running and subsequently fails,\n  it will not be rescheduled until it is unpaused.\n- If the activity is already paused, calling this method will have no effect.\n- If the activity is running and finishes successfully, the activity will be completed.\n- If the activity is running and finishes with failure:\n  * if there is no retry left - the activity will be completed.\n  * if there are more retries left - the activity will be paused.\nFor long-running activities:\n- activities in paused state will send a cancellation with \"activity_paused\" set to 'true' in response to 'RecordActivityTaskHeartbeat'.\n- The activity should respond to the cancellation accordingly.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type\nThis API will be deprecated soon and replaced with a newer PauseActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -572,7 +252,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/reset": {
+    "/api/v1/namespaces/{namespace}/activities-deprecated/reset": {
       "post": {
         "summary": "ResetActivity resets the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be reset.",
         "description": "Resetting an activity means:\n* number of attempts will be reset to 0.\n* activity timeouts will be reset.\n* if the activity is waiting for retry, and it is not paused or 'keep_paused' is not provided:\n   it will be scheduled immediately (* see 'jitter' flag),\n\nFlags:\n\n'jitter': the activity will be scheduled at a random time within the jitter duration.\nIf the activity currently paused it will be unpaused, unless 'keep_paused' flag is provided.\n'reset_heartbeats': the activity heartbeat timer and heartbeats will be reset.\n'keep_paused': if the activity is paused, it will remain paused.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type.\nThis API will be deprecated soon and replaced with a newer ResetActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -613,7 +293,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/unpause": {
+    "/api/v1/namespaces/{namespace}/activities-deprecated/unpause": {
       "post": {
         "summary": "UnpauseActivity unpauses the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be unpaused.",
         "description": "If activity is not paused, this call will have no effect.\nIf the activity was paused while waiting for retry, it will be scheduled immediately (* see 'jitter' flag).\nOnce the activity is unpaused, all timeout timers will be regenerated.\n\nFlags:\n'jitter': the activity will be scheduled at a random time within the jitter duration.\n'reset_attempts': the number of attempts will be reset.\n'reset_heartbeat': the activity heartbeat timer and heartbeats will be reset.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type\nThis API will be deprecated soon and replaced with a newer UnpauseActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -654,7 +334,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/update-options": {
+    "/api/v1/namespaces/{namespace}/activities-deprecated/update-options": {
       "post": {
         "summary": "UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be updated.\nThis API will be deprecated soon and replaced with a newer UpdateActivityExecutionOptions that is better named and\nstructured to work well for standalone activities.",
         "operationId": "UpdateActivityOptions2",
@@ -851,6 +531,147 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/activities/{activityId}/complete": {
+      "post": {
+        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCompletedById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to complete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/{activityId}/fail": {
+      "post": {
+        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskFailedById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to fail",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/{activityId}/heartbeat": {
+      "post": {
+        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RecordActivityTaskHeartbeatById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity we're heartbeating",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/activities/{activityId}/outcome": {
       "get": {
         "summary": "PollActivityExecution long-polls for an activity execution to complete and returns the\noutcome (result or failure).",
@@ -888,6 +709,53 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/{activityId}/resolve-as-canceled": {
+      "post": {
+        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCanceledById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to confirm is cancelled",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
+            }
           }
         ],
         "tags": [
@@ -941,6 +809,46 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/activity-complete": {
+      "post": {
+        "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
+        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCompleted2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/activity-count": {
       "get": {
         "summary": "CountActivityExecutions is a visibility API to count activity executions in a specific namespace.",
@@ -972,6 +880,126 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activity-fail": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskFailed2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activity-heartbeat": {
+      "post": {
+        "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
+        "description": "If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen the current attempt times out. Depending on RetryPolicy, this may trigger a retry or\ntime out the activity.\n\nFor workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow\nhistory. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,\nin that event, the SDK should request cancellation of the activity.\n\nThe request may contain response `details` which will be persisted by the server and may be\nused by the activity to checkpoint progress. The `cancel_requested` field in the response\nindicates whether cancellation has been requested for the activity.",
+        "operationId": "RecordActivityTaskHeartbeat2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activity-resolve-as-canceled": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCanceled2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledBody"
+            }
           }
         ],
         "tags": [
@@ -3114,46 +3142,6 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/execute-multi-operation": {
-      "post": {
-        "summary": "ExecuteMultiOperation executes multiple operations within a single workflow.",
-        "description": "Operations are started atomically, meaning if *any* operation fails to be started, none are,\nand the request fails. Upon start, the API returns only when *all* operations have a response.\n\nUpon failure, it returns `MultiOperationExecutionFailure` where the status code\nequals the status code of the *first* operation that failed to be started.\n\nNOTE: Experimental API.",
-        "operationId": "ExecuteMultiOperation2",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1ExecuteMultiOperationResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceExecuteMultiOperationBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
     "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}": {
       "get": {
         "summary": "DescribeWorkflowExecution returns information about the specified workflow execution.",
@@ -3761,6 +3749,222 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceStartWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/complete": {
+      "post": {
+        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCompletedById4",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to complete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/fail": {
+      "post": {
+        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskFailedById4",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to fail",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/heartbeat": {
+      "post": {
+        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RecordActivityTaskHeartbeatById4",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity we're heartbeating",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/resolve-as-canceled": {
+      "post": {
+        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCanceledById4",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to confirm is cancelled",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
             }
           }
         ],
@@ -4577,327 +4781,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/activities/cancel": {
-      "post": {
-        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
-        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskCanceled",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCanceledResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/cancel-by-id": {
-      "post": {
-        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskCanceledById",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/complete": {
-      "post": {
-        "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
-        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskCompleted",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCompletedResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/complete-by-id": {
-      "post": {
-        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskCompletedById",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/fail": {
-      "post": {
-        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
-        "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
-        "operationId": "RespondActivityTaskFailed",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskFailedResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/fail-by-id": {
-      "post": {
-        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RespondActivityTaskFailedById",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/heartbeat": {
-      "post": {
-        "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
-        "description": "If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen the current attempt times out. Depending on RetryPolicy, this may trigger a retry or\ntime out the activity.\n\nFor workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow\nhistory. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,\nin that event, the SDK should request cancellation of the activity.\n\nThe request may contain response `details` which will be persisted by the server and may be\nused by the activity to checkpoint progress. The `cancel_requested` field in the response\nindicates whether cancellation has been requested for the activity.",
-        "operationId": "RecordActivityTaskHeartbeat",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/heartbeat-by-id": {
-      "post": {
-        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
-        "operationId": "RecordActivityTaskHeartbeatById",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "description": "Namespace of the workflow which scheduled this activity",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/activities/pause": {
+    "/namespaces/{namespace}/activities-deprecated/pause": {
       "post": {
         "summary": "PauseActivity pauses the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be paused",
         "description": "Pausing an activity means:\n- If the activity is currently waiting for a retry or is running and subsequently fails,\n  it will not be rescheduled until it is unpaused.\n- If the activity is already paused, calling this method will have no effect.\n- If the activity is running and finishes successfully, the activity will be completed.\n- If the activity is running and finishes with failure:\n  * if there is no retry left - the activity will be completed.\n  * if there are more retries left - the activity will be paused.\nFor long-running activities:\n- activities in paused state will send a cancellation with \"activity_paused\" set to 'true' in response to 'RecordActivityTaskHeartbeat'.\n- The activity should respond to the cancellation accordingly.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type\nThis API will be deprecated soon and replaced with a newer PauseActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -4938,7 +4822,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/activities/reset": {
+    "/namespaces/{namespace}/activities-deprecated/reset": {
       "post": {
         "summary": "ResetActivity resets the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be reset.",
         "description": "Resetting an activity means:\n* number of attempts will be reset to 0.\n* activity timeouts will be reset.\n* if the activity is waiting for retry, and it is not paused or 'keep_paused' is not provided:\n   it will be scheduled immediately (* see 'jitter' flag),\n\nFlags:\n\n'jitter': the activity will be scheduled at a random time within the jitter duration.\nIf the activity currently paused it will be unpaused, unless 'keep_paused' flag is provided.\n'reset_heartbeats': the activity heartbeat timer and heartbeats will be reset.\n'keep_paused': if the activity is paused, it will remain paused.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type.\nThis API will be deprecated soon and replaced with a newer ResetActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -4979,7 +4863,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/activities/unpause": {
+    "/namespaces/{namespace}/activities-deprecated/unpause": {
       "post": {
         "summary": "UnpauseActivity unpauses the execution of an activity specified by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be unpaused.",
         "description": "If activity is not paused, this call will have no effect.\nIf the activity was paused while waiting for retry, it will be scheduled immediately (* see 'jitter' flag).\nOnce the activity is unpaused, all timeout timers will be regenerated.\n\nFlags:\n'jitter': the activity will be scheduled at a random time within the jitter duration.\n'reset_attempts': the number of attempts will be reset.\n'reset_heartbeat': the activity heartbeat timer and heartbeats will be reset.\n\nReturns a `NotFound` error if there is no pending activity with the provided ID or type\nThis API will be deprecated soon and replaced with a newer UnpauseActivityExecution that is better named and\nstructured to work well for standalone activities.",
@@ -5020,7 +4904,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/activities/update-options": {
+    "/namespaces/{namespace}/activities-deprecated/update-options": {
       "post": {
         "summary": "UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.\nIf there are multiple pending activities of the provided type - all of them will be updated.\nThis API will be deprecated soon and replaced with a newer UpdateActivityExecutionOptions that is better named and\nstructured to work well for standalone activities.",
         "operationId": "UpdateActivityOptions",
@@ -5217,6 +5101,147 @@
         ]
       }
     },
+    "/namespaces/{namespace}/activities/{activityId}/complete": {
+      "post": {
+        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCompletedById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to complete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/{activityId}/fail": {
+      "post": {
+        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskFailedById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to fail",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/{activityId}/heartbeat": {
+      "post": {
+        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RecordActivityTaskHeartbeatById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity we're heartbeating",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/activities/{activityId}/outcome": {
       "get": {
         "summary": "PollActivityExecution long-polls for an activity execution to complete and returns the\noutcome (result or failure).",
@@ -5254,6 +5279,53 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/{activityId}/resolve-as-canceled": {
+      "post": {
+        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCanceledById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to confirm is cancelled",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
+            }
           }
         ],
         "tags": [
@@ -5307,6 +5379,46 @@
         ]
       }
     },
+    "/namespaces/{namespace}/activity-complete": {
+      "post": {
+        "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
+        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCompleted",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/activity-count": {
       "get": {
         "summary": "CountActivityExecutions is a visibility API to count activity executions in a specific namespace.",
@@ -5338,6 +5450,126 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activity-fail": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskFailed",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activity-heartbeat": {
+      "post": {
+        "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
+        "description": "If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen the current attempt times out. Depending on RetryPolicy, this may trigger a retry or\ntime out the activity.\n\nFor workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow\nhistory. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,\nin that event, the SDK should request cancellation of the activity.\n\nThe request may contain response `details` which will be persisted by the server and may be\nused by the activity to checkpoint progress. The `cancel_requested` field in the response\nindicates whether cancellation has been requested for the activity.",
+        "operationId": "RecordActivityTaskHeartbeat",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activity-resolve-as-canceled": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCanceled",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledBody"
+            }
           }
         ],
         "tags": [
@@ -7410,46 +7642,6 @@
         ]
       }
     },
-    "/namespaces/{namespace}/workflows/execute-multi-operation": {
-      "post": {
-        "summary": "ExecuteMultiOperation executes multiple operations within a single workflow.",
-        "description": "Operations are started atomically, meaning if *any* operation fails to be started, none are,\nand the request fails. Upon start, the API returns only when *all* operations have a response.\n\nUpon failure, it returns `MultiOperationExecutionFailure` where the status code\nequals the status code of the *first* operation that failed to be started.\n\nNOTE: Experimental API.",
-        "operationId": "ExecuteMultiOperation",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1ExecuteMultiOperationResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceExecuteMultiOperationBody"
-            }
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
     "/namespaces/{namespace}/workflows/{execution.workflowId}": {
       "get": {
         "summary": "DescribeWorkflowExecution returns information about the specified workflow execution.",
@@ -8065,6 +8257,222 @@
         ]
       }
     },
+    "/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/complete": {
+      "post": {
+        "summary": "See `RespondActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCompletedById3",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to complete",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/fail": {
+      "post": {
+        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskFailedById3",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to fail",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/heartbeat": {
+      "post": {
+        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RecordActivityTaskHeartbeatById3",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity we're heartbeating",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/resolve-as-canceled": {
+      "post": {
+        "summary": "See `RespondActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCanceledById3",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "description": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "activityId",
+            "description": "Id of the activity to confirm is cancelled",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/workflows/{workflowId}/pause": {
       "post": {
         "summary": "Note: This is an experimental API and the behavior may change in a future release.\nPauseWorkflowExecution pauses the workflow execution specified in the request. Pausing a workflow execution results in\n- The workflow execution status changes to `PAUSED` and a new WORKFLOW_EXECUTION_PAUSED event is added to the history\n- No new workflow tasks or activity tasks are dispatched.\n  - Any workflow task currently executing on the worker will be allowed to complete.\n  - Any activity task currently executing will be paused.\n- All server-side events will continue to be processed by the server.\n- Queries & Updates on a paused workflow will be rejected.",
@@ -8351,30 +8759,6 @@
         }
       },
       "description": "Target a worker polling on a Nexus task queue in a specific namespace."
-    },
-    "ExecuteMultiOperationRequestOperation": {
-      "type": "object",
-      "properties": {
-        "startWorkflow": {
-          "$ref": "#/definitions/v1StartWorkflowExecutionRequest",
-          "title": "Additional restrictions:\n- setting `cron_schedule` is invalid\n- setting `request_eager_execution` is invalid\n- setting `workflow_start_delay` is invalid"
-        },
-        "updateWorkflow": {
-          "$ref": "#/definitions/v1UpdateWorkflowExecutionRequest",
-          "title": "Additional restrictions:\n- setting `first_execution_run_id` is invalid\n- setting `workflow_execution.run_id` is invalid"
-        }
-      }
-    },
-    "ExecuteMultiOperationResponseResponse": {
-      "type": "object",
-      "properties": {
-        "startWorkflow": {
-          "$ref": "#/definitions/v1StartWorkflowExecutionResponse"
-        },
-        "updateWorkflow": {
-          "$ref": "#/definitions/v1UpdateWorkflowExecutionResponse"
-        }
-      }
     },
     "LinkBatchJob": {
       "type": "object",
@@ -8785,19 +9169,6 @@
         }
       }
     },
-    "WorkflowServiceExecuteMultiOperationBody": {
-      "type": "object",
-      "properties": {
-        "operations": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/ExecuteMultiOperationRequestOperation"
-          },
-          "description": "List of operations to execute within a single workflow.\n\nPreconditions:\n- The list of operations must not be empty.\n- The workflow ids must match across operations.\n- The only valid list of operations at this time is [StartWorkflow, UpdateWorkflow], in this order.\n\nNote that additional operation-specific restrictions have to be considered."
-        }
-      }
-    },
     "WorkflowServiceFetchWorkerConfigBody": {
       "type": "object",
       "properties": {
@@ -8931,17 +9302,9 @@
     "WorkflowServiceRecordActivityTaskHeartbeatByIdBody": {
       "type": "object",
       "properties": {
-        "workflowId": {
-          "type": "string",
-          "title": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity"
-        },
         "runId": {
           "type": "string",
           "description": "For a workflow activity - the run ID of the workflow which scheduled this activity.\nFor a standalone activity - the run ID of the activity."
-        },
-        "activityId": {
-          "type": "string",
-          "title": "Id of the activity we're heartbeating"
         },
         "details": {
           "$ref": "#/definitions/v1Payloads",
@@ -9152,17 +9515,9 @@
     "WorkflowServiceRespondActivityTaskCanceledByIdBody": {
       "type": "object",
       "properties": {
-        "workflowId": {
-          "type": "string",
-          "title": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity"
-        },
         "runId": {
           "type": "string",
           "description": "For a workflow activity - the run ID of the workflow which scheduled this activity.\nFor a standalone activity - the run ID of the activity."
-        },
-        "activityId": {
-          "type": "string",
-          "title": "Id of the activity to confirm is cancelled"
         },
         "details": {
           "$ref": "#/definitions/v1Payloads",
@@ -9211,17 +9566,9 @@
     "WorkflowServiceRespondActivityTaskCompletedByIdBody": {
       "type": "object",
       "properties": {
-        "workflowId": {
-          "type": "string",
-          "title": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity"
-        },
         "runId": {
           "type": "string",
           "description": "For a workflow activity - the run ID of the workflow which scheduled this activity.\nFor a standalone activity - the run ID of the activity."
-        },
-        "activityId": {
-          "type": "string",
-          "title": "Id of the activity to complete"
         },
         "result": {
           "$ref": "#/definitions/v1Payloads",
@@ -9270,17 +9617,9 @@
     "WorkflowServiceRespondActivityTaskFailedByIdBody": {
       "type": "object",
       "properties": {
-        "workflowId": {
-          "type": "string",
-          "title": "Id of the workflow which scheduled this activity, leave empty to target a standalone activity"
-        },
         "runId": {
           "type": "string",
           "description": "For a workflow activity - the run ID of the workflow which scheduled this activity.\nFor a standalone activity - the run ID of the activity."
-        },
-        "activityId": {
-          "type": "string",
-          "title": "Id of the activity to fail"
         },
         "failure": {
           "$ref": "#/definitions/apiFailureV1Failure",
@@ -12237,19 +12576,6 @@
       "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED: A cancellation request for a Nexus operation was successfully delivered to the Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED: A cancellation request for a Nexus operation resulted in an error.\n - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED: An event that indicates that the workflow execution has been paused.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED: An event that indicates that the previously paused workflow execution has been unpaused.",
       "title": "Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering"
     },
-    "v1ExecuteMultiOperationResponse": {
-      "type": "object",
-      "properties": {
-        "responses": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/ExecuteMultiOperationResponseResponse"
-          }
-        }
-      },
-      "description": "IMPORTANT: For [StartWorkflow, UpdateWorkflow] combination (\"Update-with-Start\") when both\n  1. the workflow update for the requested update ID has already completed, and\n  2. the workflow for the requested workflow ID has already been closed,\nthen you'll receive\n  - an update response containing the update's outcome, and\n  - a start response with a `status` field that reflects the workflow's current state."
-    },
     "v1ExternalWorkflowExecutionCancelRequestedEventAttributes": {
       "type": "object",
       "properties": {
@@ -13344,6 +13670,10 @@
         "standaloneActivities": {
           "type": "boolean",
           "title": "True if the namespace supports standalone activities"
+        },
+        "workerPollCompleteOnShutdown": {
+          "type": "boolean",
+          "description": "True if the namespace supports server-side completion of outstanding worker polls on shutdown.\nWhen enabled, the server will complete polls for workers that send WorkerInstanceKey in their\npoll requests and call ShutdownWorker with the same WorkerInstanceKey. The poll will return\nan empty response. When this flag is true, workers should allow polls to return gracefully\nrather than terminating any open polls on shutdown."
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -15506,123 +15836,6 @@
         }
       }
     },
-    "v1StartWorkflowExecutionRequest": {
-      "type": "object",
-      "properties": {
-        "namespace": {
-          "type": "string"
-        },
-        "workflowId": {
-          "type": "string"
-        },
-        "workflowType": {
-          "$ref": "#/definitions/v1WorkflowType"
-        },
-        "taskQueue": {
-          "$ref": "#/definitions/v1TaskQueue"
-        },
-        "input": {
-          "$ref": "#/definitions/v1Payloads",
-          "description": "Serialized arguments to the workflow. These are passed as arguments to the workflow function."
-        },
-        "workflowExecutionTimeout": {
-          "type": "string",
-          "description": "Total workflow execution timeout including retries and continue as new."
-        },
-        "workflowRunTimeout": {
-          "type": "string",
-          "description": "Timeout of a single workflow run."
-        },
-        "workflowTaskTimeout": {
-          "type": "string",
-          "description": "Timeout of a single workflow task."
-        },
-        "identity": {
-          "type": "string",
-          "title": "The identity of the client who initiated this request"
-        },
-        "requestId": {
-          "type": "string",
-          "description": "A unique identifier for this start request. Typically UUIDv4."
-        },
-        "workflowIdReusePolicy": {
-          "$ref": "#/definitions/v1WorkflowIdReusePolicy",
-          "description": "Defines whether to allow re-using the workflow id from a previously *closed* workflow.\nThe default policy is WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.\n\nSee `workflow_id_conflict_policy` for handling a workflow id duplication with a *running* workflow."
-        },
-        "workflowIdConflictPolicy": {
-          "$ref": "#/definitions/v1WorkflowIdConflictPolicy",
-          "description": "Defines how to resolve a workflow id conflict with a *running* workflow.\nThe default policy is WORKFLOW_ID_CONFLICT_POLICY_FAIL.\n\nSee `workflow_id_reuse_policy` for handling a workflow id duplication with a *closed* workflow."
-        },
-        "retryPolicy": {
-          "$ref": "#/definitions/v1RetryPolicy",
-          "description": "The retry policy for the workflow. Will never exceed `workflow_execution_timeout`."
-        },
-        "cronSchedule": {
-          "type": "string",
-          "title": "See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/"
-        },
-        "memo": {
-          "$ref": "#/definitions/v1Memo"
-        },
-        "searchAttributes": {
-          "$ref": "#/definitions/v1SearchAttributes"
-        },
-        "header": {
-          "$ref": "#/definitions/v1Header"
-        },
-        "requestEagerExecution": {
-          "type": "boolean",
-          "description": "Request to get the first workflow task inline in the response bypassing matching service and worker polling.\nIf set to `true` the caller is expected to have a worker available and capable of processing the task.\nThe returned task will be marked as started and is expected to be completed by the specified\n`workflow_task_timeout`."
-        },
-        "continuedFailure": {
-          "$ref": "#/definitions/v1Failure",
-          "description": "These values will be available as ContinuedFailure and LastCompletionResult in the\nWorkflowExecutionStarted event and through SDKs. The are currently only used by the\nserver itself (for the schedules feature) and are not intended to be exposed in\nStartWorkflowExecution."
-        },
-        "lastCompletionResult": {
-          "$ref": "#/definitions/v1Payloads"
-        },
-        "workflowStartDelay": {
-          "type": "string",
-          "description": "Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.\nIf the workflow gets a signal before the delay, a workflow task will be dispatched and the rest\nof the delay will be ignored."
-        },
-        "completionCallbacks": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1Callback"
-          },
-          "description": "Callbacks to be called by the server when this workflow reaches a terminal state.\nIf the workflow continues-as-new, these callbacks will be carried over to the new execution.\nCallback addresses must be whitelisted in the server's dynamic configuration."
-        },
-        "userMetadata": {
-          "$ref": "#/definitions/v1UserMetadata",
-          "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
-        },
-        "links": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "$ref": "#/definitions/v1Link"
-          },
-          "description": "Links to be associated with the workflow."
-        },
-        "versioningOverride": {
-          "$ref": "#/definitions/v1VersioningOverride",
-          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.\nTo unset the override after the workflow is running, use UpdateWorkflowExecutionOptions."
-        },
-        "onConflictOptions": {
-          "$ref": "#/definitions/v1OnConflictOptions",
-          "description": "Defines actions to be done to the existing running workflow when the conflict policy\nWORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING is used. If not set (ie., nil value) or set to a\nempty object (ie., all options with default value), it won't do anything to the existing\nrunning workflow. If set, it will add a history event to the running workflow."
-        },
-        "priority": {
-          "$ref": "#/definitions/v1Priority",
-          "title": "Priority metadata"
-        },
-        "eagerWorkerDeploymentOptions": {
-          "$ref": "#/definitions/v1WorkerDeploymentOptions",
-          "description": "Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`."
-        }
-      }
-    },
     "v1StartWorkflowExecutionResponse": {
       "type": "object",
       "properties": {
@@ -15723,11 +15936,10 @@
         "SUGGEST_CONTINUE_AS_NEW_REASON_UNSPECIFIED",
         "SUGGEST_CONTINUE_AS_NEW_REASON_HISTORY_SIZE_TOO_LARGE",
         "SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_HISTORY_EVENTS",
-        "SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES",
-        "SUGGEST_CONTINUE_AS_NEW_REASON_TARGET_WORKER_DEPLOYMENT_VERSION_CHANGED"
+        "SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES"
       ],
       "default": "SUGGEST_CONTINUE_AS_NEW_REASON_UNSPECIFIED",
-      "description": "SuggestContinueAsNewReason specifies why SuggestContinueAsNew is true.\n\n - SUGGEST_CONTINUE_AS_NEW_REASON_HISTORY_SIZE_TOO_LARGE: Workflow History size is getting too large.\n - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_HISTORY_EVENTS: Workflow History event count is getting too large.\n - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES: Workflow's count of completed plus in-flight updates is too large.\n - SUGGEST_CONTINUE_AS_NEW_REASON_TARGET_WORKER_DEPLOYMENT_VERSION_CHANGED: Workflow's Target Worker Deployment Version is different from its\nCurrent Version and the workflow is versioned."
+      "description": "SuggestContinueAsNewReason specifies why SuggestContinueAsNew is true.\n\n - SUGGEST_CONTINUE_AS_NEW_REASON_HISTORY_SIZE_TOO_LARGE: Workflow History size is getting too large.\n - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_HISTORY_EVENTS: Workflow History event count is getting too large.\n - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES: Workflow's count of completed plus in-flight updates is too large."
     },
     "v1TaskIdBlock": {
       "type": "object",
@@ -16251,31 +16463,6 @@
         "workflowExecutionOptions": {
           "$ref": "#/definitions/v1WorkflowExecutionOptions",
           "description": "Workflow Execution options after update."
-        }
-      }
-    },
-    "v1UpdateWorkflowExecutionRequest": {
-      "type": "object",
-      "properties": {
-        "namespace": {
-          "type": "string",
-          "description": "The namespace name of the target Workflow."
-        },
-        "workflowExecution": {
-          "$ref": "#/definitions/v1WorkflowExecution",
-          "description": "The target Workflow Id and (optionally) a specific Run Id thereof."
-        },
-        "firstExecutionRunId": {
-          "type": "string",
-          "description": "If set, this call will error if the most recent (if no Run Id is set on\n`workflow_execution`), or specified (if it is) Workflow Execution is not\npart of the same execution chain as this Id."
-        },
-        "waitPolicy": {
-          "$ref": "#/definitions/v1WaitPolicy",
-          "description": "Specifies client's intent to wait for Update results.\nNOTE: This field works together with API call timeout which is limited by\nserver timeout (maximum wait time). If server timeout is expired before\nuser specified timeout, API call returns even if specified stage is not reached.\nActual reached stage will be included in the response."
-        },
-        "request": {
-          "$ref": "#/definitions/v1Request",
-          "description": "The request information that will be delivered all the way down to the\nWorkflow Execution."
         }
       }
     },
@@ -17987,6 +18174,10 @@
             "$ref": "#/definitions/v1SuggestContinueAsNewReason"
           },
           "description": "The reason(s) that suggest_continue_as_new is true, if it is.\nUnset if suggest_continue_as_new is false."
+        },
+        "targetWorkerDeploymentVersionChanged": {
+          "type": "boolean",
+          "description": "True if Workflow's Target Worker Deployment Version is different from its Pinned Version and\nthe workflow is Pinned.\nExperimental."
         },
         "historySizeBytes": {
           "type": "string",
