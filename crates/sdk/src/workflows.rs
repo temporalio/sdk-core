@@ -6,7 +6,9 @@
 //! Example usage:
 //! ```
 //! use temporalio_macros::{workflow, workflow_methods};
-//! use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
+//! use temporalio_sdk::{
+//!     SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
+//! };
 //!
 //! #[workflow]
 //! pub struct MyWorkflow {
