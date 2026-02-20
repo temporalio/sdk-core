@@ -177,9 +177,9 @@ pub struct WorkerOptions {
     /// executable.
     #[builder(default = def_build_id())]
     pub deployment_options: WorkerDeploymentOptions,
-    /// A human-readable string that can identify this worker. Using something like sdk version
-    /// and host name is a good default. If set, overrides the identity set (if any) on the client
-    /// used by this worker.
+    /// A human-readable string that can identify this worker. If set, overrides the identity on
+    /// the client used by this worker. If unset and the client has no identity, defaults to
+    /// `{pid}@{hostname}`.
     pub client_identity_override: Option<String>,
     /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
     /// history updates are applied incrementally to suspended instances of workflow execution.
@@ -360,11 +360,23 @@ impl WorkerOptions {
     }
 
     #[doc(hidden)]
-    pub fn to_core_options(&self, namespace: String) -> Result<WorkerConfig, String> {
+    pub fn to_core_options(
+        &self,
+        namespace: String,
+        connection_identity: String,
+    ) -> Result<WorkerConfig, String> {
         WorkerConfig::builder()
             .namespace(namespace)
             .task_queue(self.task_queue.clone())
-            .maybe_client_identity_override(self.client_identity_override.clone())
+            .maybe_client_identity_override(self.client_identity_override.clone().or_else(|| {
+                connection_identity.is_empty().then(|| {
+                    format!(
+                        "{}@{}",
+                        std::process::id(),
+                        gethostname::gethostname().to_string_lossy()
+                    )
+                })
+            }))
             .max_cached_workflows(self.max_cached_workflows)
             .tuner(self.tuner.clone())
             .workflow_task_poller_behavior(self.workflow_task_poller_behavior)
@@ -436,7 +448,7 @@ impl Worker {
         let acts = std::mem::take(&mut options.activities);
         let wfs = std::mem::take(&mut options.workflows);
         let wc = options
-            .to_core_options(client.namespace())
+            .to_core_options(client.namespace(), client.identity())
             .map_err(|s| anyhow::anyhow!("{s}"))?;
         let core = init_worker(runtime, wc, client.connection().clone())?;
         let mut me = Self::new_from_core_definitions(
@@ -1399,5 +1411,42 @@ mod tests {
     #[test]
     fn test_workflow_registration() {
         let _ = WorkerOptions::new("task_q").register_workflow::<MyWorkflow>();
+    }
+
+    fn default_identity() -> String {
+        format!(
+            "{}@{}",
+            std::process::id(),
+            gethostname::gethostname().to_string_lossy()
+        )
+    }
+
+    #[rstest::rstest]
+    #[case::default_when_none_provided(None, "", Some(default_identity()))]
+    #[case::connection_identity_preserved(None, "conn-identity", None)]
+    #[case::worker_override_takes_precedence(
+        Some("worker-identity"),
+        "conn-identity",
+        Some("worker-identity".into())
+    )]
+    #[case::worker_override_with_empty_connection(
+        Some("worker-identity"),
+        "",
+        Some("worker-identity".into())
+    )]
+    #[test]
+    fn client_identity_resolution(
+        #[case] worker_override: Option<&str>,
+        #[case] connection_identity: &str,
+        #[case] expected: Option<String>,
+    ) {
+        let opts = WorkerOptions::new("task_q")
+            .task_types(WorkerTaskTypes::activity_only())
+            .maybe_client_identity_override(worker_override.map(|s| s.to_owned()))
+            .build();
+        let config = opts
+            .to_core_options("ns".into(), connection_identity.into())
+            .unwrap();
+        assert_eq!(config.client_identity_override, expected);
     }
 }
