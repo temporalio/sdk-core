@@ -164,308 +164,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/cancel:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskFailed is called by workers when processing an activity task fails.
-
-         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
-         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
-         no longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskCanceled
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCanceledRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCanceledResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/cancel-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskCanceledById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/complete:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskCompleted is called by workers when they successfully complete an activity
-         task.
-
-         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
-         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
-         no longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskCompleted
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCompletedRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCompletedResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/complete-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskCompletedById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/fail:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskFailed is called by workers when processing an activity task fails.
-
-         This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and
-         a new workflow task created for the workflow. Fails with `NotFound` if the task token is no
-         longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskFailed
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskFailedRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskFailedResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/fail-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RecordActivityTaskFailed`. This version allows clients to record failures by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskFailedById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/heartbeat:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
-
-         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
-         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
-         time out the activity.
-
-         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
-         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
-         in that event, the SDK should request cancellation of the activity.
-
-         The request may contain response `details` which will be persisted by the server and may be
-         used by the activity to checkpoint progress. The `cancel_requested` field in the response
-         indicates whether cancellation has been requested for the activity.
-      operationId: RecordActivityTaskHeartbeat
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RecordActivityTaskHeartbeatRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordActivityTaskHeartbeatResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/heartbeat-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RecordActivityTaskHeartbeatById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/pause:
+  /api/v1/namespaces/{namespace}/activities-deprecated/pause:
     post:
       tags:
         - WorkflowService
@@ -515,7 +214,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/reset:
+  /api/v1/namespaces/{namespace}/activities-deprecated/reset:
     post:
       tags:
         - WorkflowService
@@ -566,7 +265,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/unpause:
+  /api/v1/namespaces/{namespace}/activities-deprecated/unpause:
     post:
       tags:
         - WorkflowService
@@ -613,7 +312,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/update-options:
+  /api/v1/namespaces/{namespace}/activities-deprecated/update-options:
     post:
       tags:
         - WorkflowService
@@ -796,6 +495,135 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCompletedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to complete
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskFailed`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskFailedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to fail
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RecordActivityTaskHeartbeatById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity we're heartbeating
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/activities/{activityId}/outcome:
     get:
       tags:
@@ -827,6 +655,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PollActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activities/{activityId}/resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCanceledById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to confirm is cancelled
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
         default:
           description: Default error response
           content:
@@ -873,6 +744,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activity-complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskCompleted is called by workers when they successfully complete an activity
+         task.
+
+         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
+         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
+         no longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskCompleted
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/activity-count:
     get:
       tags:
@@ -897,6 +805,122 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CountActivityExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activity-fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskFailed is called by workers when processing an activity task fails.
+
+         This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and
+         a new workflow task created for the workflow. Fails with `NotFound` if the task token is no
+         longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskFailed
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activity-heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
+
+         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
+         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
+         time out the activity.
+
+         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
+         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
+         in that event, the SDK should request cancellation of the activity.
+
+         The request may contain response `details` which will be persisted by the server and may be
+         used by the activity to checkpoint progress. The `cancel_requested` field in the response
+         indicates whether cancellation has been requested for the activity.
+      operationId: RecordActivityTaskHeartbeat
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/activity-resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskFailed is called by workers when processing an activity task fails.
+
+         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
+         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
+         no longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskCanceled
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledResponse'
         default:
           description: Default error response
           content:
@@ -2793,46 +2817,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/execute-multi-operation:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        ExecuteMultiOperation executes multiple operations within a single workflow.
-
-         Operations are started atomically, meaning if *any* operation fails to be started, none are,
-         and the request fails. Upon start, the API returns only when *all* operations have a response.
-
-         Upon failure, it returns `MultiOperationExecutionFailure` where the status code
-         equals the status code of the *first* operation that failed to be started.
-
-         NOTE: Experimental API.
-      operationId: ExecuteMultiOperation
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExecuteMultiOperationRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExecuteMultiOperationResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}:
     get:
       tags:
@@ -3114,6 +3098,202 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StartWorkflowExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCompletedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to complete
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskFailed`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskFailedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to fail
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RecordActivityTaskHeartbeatById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity we're heartbeating
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCanceledById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to confirm is cancelled
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
         default:
           description: Default error response
           content:
@@ -4077,308 +4257,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/cancel:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskFailed is called by workers when processing an activity task fails.
-
-         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
-         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
-         no longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskCanceled
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCanceledRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCanceledResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/cancel-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskCanceledById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/complete:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskCompleted is called by workers when they successfully complete an activity
-         task.
-
-         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
-         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
-         no longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskCompleted
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCompletedRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCompletedResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/complete-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskCompletedById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/fail:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RespondActivityTaskFailed is called by workers when processing an activity task fails.
-
-         This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and
-         a new workflow task created for the workflow. Fails with `NotFound` if the task token is no
-         longer valid due to activity timeout, already being completed, or never having existed.
-      operationId: RespondActivityTaskFailed
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskFailedRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskFailedResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/fail-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RecordActivityTaskFailed`. This version allows clients to record failures by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RespondActivityTaskFailedById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/heartbeat:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
-
-         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
-         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
-         time out the activity.
-
-         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
-         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
-         in that event, the SDK should request cancellation of the activity.
-
-         The request may contain response `details` which will be persisted by the server and may be
-         used by the activity to checkpoint progress. The `cancel_requested` field in the response
-         indicates whether cancellation has been requested for the activity.
-      operationId: RecordActivityTaskHeartbeat
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RecordActivityTaskHeartbeatRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordActivityTaskHeartbeatResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/heartbeat-by-id:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
-         namespace/workflow id/activity id instead of task token.
-
-         (-- api-linter: core::0136::prepositions=disabled
-             aip.dev/not-precedent: "By" is used to indicate request type. --)
-      operationId: RecordActivityTaskHeartbeatById
-      parameters:
-        - name: namespace
-          in: path
-          description: Namespace of the workflow which scheduled this activity
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/pause:
+  /namespaces/{namespace}/activities-deprecated/pause:
     post:
       tags:
         - WorkflowService
@@ -4428,7 +4307,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/reset:
+  /namespaces/{namespace}/activities-deprecated/reset:
     post:
       tags:
         - WorkflowService
@@ -4479,7 +4358,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/unpause:
+  /namespaces/{namespace}/activities-deprecated/unpause:
     post:
       tags:
         - WorkflowService
@@ -4526,7 +4405,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/activities/update-options:
+  /namespaces/{namespace}/activities-deprecated/update-options:
     post:
       tags:
         - WorkflowService
@@ -4709,6 +4588,135 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCompletedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to complete
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskFailed`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskFailedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to fail
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RecordActivityTaskHeartbeatById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity we're heartbeating
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/activities/{activityId}/outcome:
     get:
       tags:
@@ -4740,6 +4748,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PollActivityExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activities/{activityId}/resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCanceledById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to confirm is cancelled
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
         default:
           description: Default error response
           content:
@@ -4786,6 +4837,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activity-complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskCompleted is called by workers when they successfully complete an activity
+         task.
+
+         For workflow activities, this results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history
+         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
+         no longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskCompleted
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/activity-count:
     get:
       tags:
@@ -4810,6 +4898,122 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CountActivityExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activity-fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskFailed is called by workers when processing an activity task fails.
+
+         This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and
+         a new workflow task created for the workflow. Fails with `NotFound` if the task token is no
+         longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskFailed
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activity-heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.
+
+         If a worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,
+         then the current attempt times out. Depending on RetryPolicy, this may trigger a retry or
+         time out the activity.
+
+         For workflow activities, an `ACTIVITY_TASK_TIMED_OUT` event will be written to the workflow
+         history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in such situations,
+         in that event, the SDK should request cancellation of the activity.
+
+         The request may contain response `details` which will be persisted by the server and may be
+         used by the activity to checkpoint progress. The `cancel_requested` field in the response
+         indicates whether cancellation has been requested for the activity.
+      operationId: RecordActivityTaskHeartbeat
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/activity-resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RespondActivityTaskFailed is called by workers when processing an activity task fails.
+
+         For workflow activities, this results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history
+         and a new workflow task created for the workflow. Fails with `NotFound` if the task token is
+         no longer valid due to activity timeout, already being completed, or never having existed.
+      operationId: RespondActivityTaskCanceled
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledResponse'
         default:
           description: Default error response
           content:
@@ -6648,46 +6852,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/workflows/execute-multi-operation:
-    post:
-      tags:
-        - WorkflowService
-      description: |-
-        ExecuteMultiOperation executes multiple operations within a single workflow.
-
-         Operations are started atomically, meaning if *any* operation fails to be started, none are,
-         and the request fails. Upon start, the API returns only when *all* operations have a response.
-
-         Upon failure, it returns `MultiOperationExecutionFailure` where the status code
-         equals the status code of the *first* operation that failed to be started.
-
-         NOTE: Experimental API.
-      operationId: ExecuteMultiOperation
-      parameters:
-        - name: namespace
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ExecuteMultiOperationRequest'
-        required: true
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ExecuteMultiOperationResponse'
-        default:
-          description: Default error response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/workflows/{execution.workflow_id}:
     get:
       tags:
@@ -6969,6 +7133,202 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StartWorkflowExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/complete:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCompleted`. This version allows clients to record completions by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCompletedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to complete
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCompletedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCompletedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/fail:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskFailed`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskFailedById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to fail
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskFailedByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskFailedByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/heartbeat:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RecordActivityTaskHeartbeatById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity we're heartbeating
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordActivityTaskHeartbeatByIdResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{workflowId}/activities/{activityId}/resolve-as-canceled:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        See `RespondActivityTaskCanceled`. This version allows clients to record failures by
+         namespace/workflow id/activity id instead of task token.
+
+         (-- api-linter: core::0136::prepositions=disabled
+             aip.dev/not-precedent: "By" is used to indicate request type. --)
+      operationId: RespondActivityTaskCanceledById
+      parameters:
+        - name: namespace
+          in: path
+          description: Namespace of the workflow which scheduled this activity
+          required: true
+          schema:
+            type: string
+        - name: workflowId
+          in: path
+          description: Id of the workflow which scheduled this activity, leave empty to target a standalone activity
+          required: true
+          schema:
+            type: string
+        - name: activityId
+          in: path
+          description: Id of the activity to confirm is cancelled
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RespondActivityTaskCanceledByIdRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RespondActivityTaskCanceledByIdResponse'
         default:
           description: Default error response
           content:
@@ -9372,63 +9732,6 @@ components:
           type: string
           description: Nexus task queue to route requests to.
       description: Target a worker polling on a Nexus task queue in a specific namespace.
-    ExecuteMultiOperationRequest:
-      type: object
-      properties:
-        namespace:
-          type: string
-        operations:
-          type: array
-          items:
-            $ref: '#/components/schemas/ExecuteMultiOperationRequest_Operation'
-          description: |-
-            List of operations to execute within a single workflow.
-
-             Preconditions:
-             - The list of operations must not be empty.
-             - The workflow ids must match across operations.
-             - The only valid list of operations at this time is [StartWorkflow, UpdateWorkflow], in this order.
-
-             Note that additional operation-specific restrictions have to be considered.
-    ExecuteMultiOperationRequest_Operation:
-      type: object
-      properties:
-        startWorkflow:
-          allOf:
-            - $ref: '#/components/schemas/StartWorkflowExecutionRequest'
-          description: |-
-            Additional restrictions:
-             - setting `cron_schedule` is invalid
-             - setting `request_eager_execution` is invalid
-             - setting `workflow_start_delay` is invalid
-        updateWorkflow:
-          allOf:
-            - $ref: '#/components/schemas/UpdateWorkflowExecutionRequest'
-          description: |-
-            Additional restrictions:
-             - setting `first_execution_run_id` is invalid
-             - setting `workflow_execution.run_id` is invalid
-    ExecuteMultiOperationResponse:
-      type: object
-      properties:
-        responses:
-          type: array
-          items:
-            $ref: '#/components/schemas/ExecuteMultiOperationResponse_Response'
-      description: |-
-        IMPORTANT: For [StartWorkflow, UpdateWorkflow] combination ("Update-with-Start") when both
-           1. the workflow update for the requested update ID has already completed, and
-           2. the workflow for the requested workflow ID has already been closed,
-         then you'll receive
-           - an update response containing the update's outcome, and
-           - a start response with a `status` field that reflects the workflow's current state.
-    ExecuteMultiOperationResponse_Response:
-      type: object
-      properties:
-        startWorkflow:
-          $ref: '#/components/schemas/StartWorkflowExecutionResponse'
-        updateWorkflow:
-          $ref: '#/components/schemas/UpdateWorkflowExecutionResponse'
     ExternalWorkflowExecutionCancelRequestedEventAttributes:
       type: object
       properties:
@@ -10441,6 +10744,14 @@ components:
         standaloneActivities:
           type: boolean
           description: True if the namespace supports standalone activities
+        workerPollCompleteOnShutdown:
+          type: boolean
+          description: |-
+            True if the namespace supports server-side completion of outstanding worker polls on shutdown.
+             When enabled, the server will complete polls for workers that send WorkerInstanceKey in their
+             poll requests and call ShutdownWorker with the same WorkerInstanceKey. The poll will return
+             an empty response. When this flag is true, workers should allow polls to return gracefully
+             rather than terminating any open polls on shutdown.
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceInfo_Limits:
       type: object
@@ -16748,12 +17059,17 @@ components:
               - SUGGEST_CONTINUE_AS_NEW_REASON_HISTORY_SIZE_TOO_LARGE
               - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_HISTORY_EVENTS
               - SUGGEST_CONTINUE_AS_NEW_REASON_TOO_MANY_UPDATES
-              - SUGGEST_CONTINUE_AS_NEW_REASON_TARGET_WORKER_DEPLOYMENT_VERSION_CHANGED
             type: string
             format: enum
           description: |-
             The reason(s) that suggest_continue_as_new is true, if it is.
              Unset if suggest_continue_as_new is false.
+        targetWorkerDeploymentVersionChanged:
+          type: boolean
+          description: |-
+            True if Workflow's Target Worker Deployment Version is different from its Pinned Version and
+             the workflow is Pinned.
+             Experimental.
         historySizeBytes:
           type: string
           description: |-
