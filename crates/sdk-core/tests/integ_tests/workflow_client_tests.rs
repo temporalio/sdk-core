@@ -111,12 +111,31 @@ async fn list_workflows(#[case] limit: Option<usize>) {
     }
 
     // Verify count_workflows works too
-    let query = format!("TaskQueue = '{task_queue}'");
-    let count = client
-        .count_workflows(&query, WorkflowCountOptions::default())
-        .await
-        .unwrap();
-    assert!(count.count() == num_workflows);
+    let workflow_count = eventually(
+        || {
+            let client = client.clone();
+            let task_queue = task_queue.clone();
+            async move {
+                let query = format!("TaskQueue = '{task_queue}'");
+                let count = client
+                    .count_workflows(&query, WorkflowCountOptions::default())
+                    .await
+                    .unwrap();
+                if count.count() != num_workflows {
+                    return Err(format!(
+                        "Expected {} workflows, got {}",
+                        num_workflows,
+                        count.count()
+                    ));
+                }
+                Ok(count.count())
+            }
+        },
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+    assert!(workflow_count == num_workflows);
 }
 
 #[tokio::test]
