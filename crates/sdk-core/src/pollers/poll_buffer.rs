@@ -366,12 +366,11 @@ where
                         let r = if graceful_shutdown.load(Ordering::Relaxed) {
                             pf(timeout_override).await
                         } else {
-                            let poll_interruptor =
-                                shutdown.cancelled().then(|_| async move {
-                                    if let Some(w) = poll_shutdown_interrupt_wait {
-                                        tokio::time::sleep(w).await;
-                                    }
-                                });
+                            let poll_interruptor = shutdown.cancelled().then(|_| async move {
+                                if let Some(w) = poll_shutdown_interrupt_wait {
+                                    tokio::time::sleep(w).await;
+                                }
+                            });
                             tokio::select! {
                                 r = pf(timeout_override) => r,
                                 _ = poll_interruptor => return,
