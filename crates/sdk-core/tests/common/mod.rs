@@ -483,7 +483,7 @@ impl CoreWfStarter {
                 };
                 let mut core_config = self
                     .sdk_config
-                    .to_core_options(client.namespace())
+                    .to_core_options(client.namespace(), client.identity())
                     .expect("sdk config converts to core config");
                 if let Some(ref ccm) = self.core_config_mutator {
                     ccm(&mut core_config);
