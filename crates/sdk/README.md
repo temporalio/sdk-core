@@ -1,5 +1,8 @@
 # Temporal Rust SDK
 
+[![crates.io](https://img.shields.io/crates/v/temporalio-sdk.svg)](https://crates.io/crates/temporalio-sdk)
+[![docs.rs](https://docs.rs/temporalio-sdk/badge.svg)](https://docs.rs/temporalio-sdk)
+
 This crate contains a prerelease Rust SDK. The SDK is built on top of
 Core and provides a native Rust experience for writing Temporal workflows and activities.
 
@@ -221,7 +224,6 @@ let started = ctx.start_nexus_operation(NexusOperationOptions {
 ```
 
 Defining Nexus handlers will be added later.
-
 
 ## Activities in detail
 
