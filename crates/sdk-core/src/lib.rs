@@ -2,7 +2,9 @@
 #![allow(clippy::upper_case_acronyms)]
 
 //! This crate provides a basis for creating new Temporal SDKs without completely starting from
-//! scratch
+//! scratch. APIs provided by this crate are not considered stable and may break at any time.
+//!
+//! If you are looking for the Temporal Rust SDK, please use `temporalio-sdk`.
 
 #[cfg(test)]
 #[macro_use]

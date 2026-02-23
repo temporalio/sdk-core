@@ -9,6 +9,7 @@ homepage = "https://temporal.io/"
 repository = "https://github.com/temporalio/sdk-core"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
+exclude = ["machine_coverage/*"]
 
 [lib]
 

@@ -233,13 +233,12 @@ impl WorkflowLoadWf {
         Ok(())
     }
 
-    #[signal(name = "signame")]
-    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {}
+    #[signal]
+    fn drain_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn workflow_load() {
-    const SIGNAME: &str = "signame";
     let num_workflows = 500;
     let wf_name = "workflow_load";
     let (mut telemopts, _, _aborter) = prom_metrics(None);
@@ -256,7 +255,6 @@ async fn workflow_load() {
     let task_queue = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     worker.register_workflow::<WorkflowLoadWf>();
-    let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];
     for i in 0..num_workflows {
@@ -274,19 +272,16 @@ async fn workflow_load() {
 
     let sig_sender = async {
         loop {
-            let sends: FuturesUnordered<_> = (0..num_workflows)
-                .map(|i| {
-                    let handle =
-                        client.get_workflow_handle::<UntypedWorkflow>(format!("{wf_name}_{i}"));
-                    async move {
-                        handle
-                            .signal(
-                                UntypedSignal::new(SIGNAME),
-                                RawValue::empty(),
-                                WorkflowSignalOptions::default(),
-                            )
-                            .await
-                    }
+            let sends: FuturesUnordered<_> = workflow_handles
+                .iter()
+                .map(|handle| async move {
+                    handle
+                        .signal(
+                            WorkflowLoadWf::drain_signal,
+                            (),
+                            WorkflowSignalOptions::default(),
+                        )
+                        .await
                 })
                 .collect();
             sends
