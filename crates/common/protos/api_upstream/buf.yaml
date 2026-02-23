@@ -13,11 +13,6 @@ breaking:
     - WIRE_JSON
   ignore:
     - google
-    - temporal/api/enums/v1/failed_cause.proto
-    # TODO: remove this once the changes with WorkflowExecutionExtendedInfo.pause_info is merged
-    - temporal/api/workflow/v1/message.proto
-    # TODO (amazzeo): remove this once worker_instance_key has successfully been retagged in PollWorkflowTaskQueueRequest and PollActivityTaskQueueRequest
-    - temporal/api/workflowservice/v1/request_response.proto
 lint:
   use:
     - DEFAULT
