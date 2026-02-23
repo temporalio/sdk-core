@@ -1267,11 +1267,11 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                     .into_iter()
                     .collect::<HashSet<_>>()
                     .into_iter()
-                    .map(
-                        |name| temporalio_common::protos::temporal::api::worker::v1::StorageDriverInfo {
+                    .map(|name| {
+                        temporalio_common::protos::temporal::api::worker::v1::StorageDriverInfo {
                             name: name.to_owned(),
-                        },
-                    )
+                        }
+                    })
                     .collect::<HashSet<_>>(),
             )
             .build()

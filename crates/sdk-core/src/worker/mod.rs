@@ -13,7 +13,10 @@ use temporalio_common::{
             ActivitySlotInfo, LocalActivitySlotInfo, NamespaceInfo, NexusSlotInfo,
             WorkflowSlotInfo, activity_result::ActivityExecutionResult, namespace_info,
         },
-        temporal::api::{enums::v1::VersioningBehavior, worker::v1::{PluginInfo, StorageDriverInfo}},
+        temporal::api::{
+            enums::v1::VersioningBehavior,
+            worker::v1::{PluginInfo, StorageDriverInfo},
+        },
     },
     telemetry::TelemetryInstance,
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
