@@ -794,6 +794,7 @@ typedef struct TemporalCoreWorkerOptions {
   bool nondeterminism_as_workflow_fail;
   struct TemporalCoreByteArrayRefArray nondeterminism_as_workflow_fail_for_types;
   struct TemporalCoreByteArrayRefArray plugins;
+  struct TemporalCoreByteArrayRefArray storage_drivers;
 } TemporalCoreWorkerOptions;
 
 /**

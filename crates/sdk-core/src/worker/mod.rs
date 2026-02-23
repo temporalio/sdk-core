@@ -13,7 +13,7 @@ use temporalio_common::{
             ActivitySlotInfo, LocalActivitySlotInfo, NamespaceInfo, NexusSlotInfo,
             WorkflowSlotInfo, activity_result::ActivityExecutionResult, namespace_info,
         },
-        temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
+        temporal::api::{enums::v1::VersioningBehavior, worker::v1::{PluginInfo, StorageDriverInfo}},
     },
     telemetry::TelemetryInstance,
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
@@ -265,6 +265,10 @@ pub struct WorkerConfig {
     /// Skips the single worker+client+namespace+task_queue check
     #[builder(default = false)]
     pub skip_client_worker_set_check: bool,
+
+    /// List of storage drivers used by lang.
+    #[builder(default)]
+    pub storage_drivers: HashSet<StorageDriverInfo>,
 }
 
 impl WorkerConfig {
@@ -1992,6 +1996,9 @@ impl WorkerHeartbeatManager {
             let mut plugins: Vec<_> = config.plugins.clone().into_iter().collect();
             plugins.sort_by(|a, b| a.name.cmp(&b.name));
 
+            let mut drivers: Vec<_> = config.storage_drivers.clone().into_iter().collect();
+            drivers.sort_by(|a, b| a.name.cmp(&b.name));
+
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
@@ -2011,6 +2018,7 @@ impl WorkerHeartbeatManager {
                 status: (*heartbeat_manager_metrics.status.read()) as i32,
                 start_time,
                 plugins,
+                drivers,
 
                 // Some Metrics dependent fields are set below, and
                 // some fields like sdk_name, sdk_version, and worker_identity, must be set by
