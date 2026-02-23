@@ -1010,9 +1010,7 @@ impl<W> WorkflowContext<W> {
             if condition(&*self.workflow_state.borrow()) {
                 Poll::Ready(())
             } else {
-                self.condition_wakers
-                    .borrow_mut()
-                    .push(cx.waker().clone());
+                self.condition_wakers.borrow_mut().push(cx.waker().clone());
                 Poll::Pending
             }
         })
