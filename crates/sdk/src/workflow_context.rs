@@ -557,6 +557,11 @@ impl<W> SyncWorkflowContext<W> {
         self.base.inner.shared.borrow().is_replaying
     }
 
+    /// Returns true if the server suggests this workflow should continue-as-new
+    pub fn continue_as_new_suggested(&self) -> bool {
+        self.base.inner.shared.borrow().continue_as_new_suggested
+    }
+
     /// Returns the headers for the current handler invocation (signal, update, query, etc.).
     ///
     /// When called from within a signal handler, returns the headers that were sent with that
@@ -862,6 +867,11 @@ impl<W> WorkflowContext<W> {
         self.sync.is_replaying()
     }
 
+    /// Returns true if the server suggests this workflow should continue-as-new
+    pub fn continue_as_new_suggested(&self) -> bool {
+        self.sync.continue_as_new_suggested()
+    }
+
     /// Returns the headers for the current handler invocation (signal, update, query, etc.).
     pub fn headers(&self) -> &HashMap<String, Payload> {
         self.sync.headers()
@@ -1066,6 +1076,7 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) is_replaying: bool,
     pub(crate) wf_time: Option<SystemTime>,
     pub(crate) history_length: u32,
+    pub(crate) continue_as_new_suggested: bool,
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
