@@ -8,6 +8,7 @@ use temporalio_common::{
         temporal::api::{
             command::v1::command::Attributes,
             enums::v1::{CommandType, ContinueAsNewVersioningBehavior},
+            history::v1::history_event,
         },
     },
     worker::WorkerTaskTypes,
@@ -128,5 +129,45 @@ async fn wf_completing_with_continue_as_new() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<WfWithTimer>();
+    worker.run().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct ContinueAsNewSuggestedWf;
+
+#[workflow_methods]
+impl ContinueAsNewSuggestedWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        // First WFT: flag should be false
+        assert!(!ctx.continue_as_new_suggested());
+        ctx.timer(Duration::from_millis(500)).await;
+        // Second WFT: flag should be true (set on WFT started event 8)
+        assert!(ctx.continue_as_new_suggested());
+        Err(WorkflowTermination::continue_as_new(
+            ContinueAsNewWorkflowExecution {
+                arguments: vec![[1].into()],
+                ..Default::default()
+            },
+        ))
+    }
+}
+
+#[tokio::test]
+async fn continue_as_new_suggested_flag_exposed() {
+    let mut t = canned_histories::timer_then_continue_as_new("1");
+    // Modify the second WFT started event (event 8) to suggest continue-as-new
+    t.modify_event(8, |he| {
+        if let Some(history_event::Attributes::WorkflowTaskStartedEventAttributes(ref mut attrs)) =
+            he.attributes
+        {
+            attrs.suggest_continue_as_new = true;
+        }
+    });
+
+    let mock_cfg = MockPollCfg::from_hist_builder(t);
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<ContinueAsNewSuggestedWf>();
     worker.run().await.unwrap();
 }

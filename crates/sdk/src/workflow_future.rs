@@ -444,6 +444,7 @@ impl Future for WorkflowFuture {
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
+                wlock.continue_as_new_suggested = activation.continue_as_new_suggested;
                 wlock.current_deployment_version = activation
                     .deployment_version_for_current_task
                     .map(Into::into);
