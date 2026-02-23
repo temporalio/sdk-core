@@ -108,10 +108,13 @@ impl ActivityOptions {
                 }
                 .into(),
             ),
-            user_metadata: self.summary.map(|s| UserMetadata {
-                summary: Some(s.into()),
-                details: None,
-            }),
+            user_metadata: self
+                .summary
+                .and_then(|s| s.as_json_payload().ok())
+                .map(|summary| UserMetadata {
+                    summary: Some(summary),
+                    details: None,
+                }),
         }
     }
 }
