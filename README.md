@@ -1,8 +1,5 @@
 # Temporal Core SDK
 
-[![crates.io](https://img.shields.io/crates/v/temporalio-sdk.svg)](https://crates.io/crates/temporalio-sdk)
-[![docs.rs](https://docs.rs/temporalio-sdk/badge.svg)](https://docs.rs/temporalio-sdk)
-
 Core SDK that can be used as a base for other Temporal SDKs. It is currently used as the base of:
 
 - [TypeScript SDK](https://github.com/temporalio/sdk-typescript/)
@@ -11,6 +8,9 @@ Core SDK that can be used as a base for other Temporal SDKs. It is currently use
 - [Ruby SDK](https://github.com/temporalio/sdk-ruby/)
 
 # Temporal Rust SDK
+
+[![crates.io](https://img.shields.io/crates/v/temporalio-sdk.svg)](https://crates.io/crates/temporalio-sdk)
+[![docs.rs](https://docs.rs/temporalio-sdk/badge.svg)](https://docs.rs/temporalio-sdk)
 
 Currently prerelease, see more in the [SDK README.md](crates/sdk/README.md)
 
