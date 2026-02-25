@@ -510,6 +510,16 @@ impl BaseWorkflowContext {
 }
 
 impl<W> SyncWorkflowContext<W> {
+    /// Return the workflow's unique identifier
+    pub fn workflow_id(&self) -> &str {
+        &self.base.inner.inital_information.workflow_id
+    }
+
+    /// Return the run id of this workflow execution
+    pub fn run_id(&self) -> &str {
+        &self.base.inner.run_id
+    }
+
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
         &self.base.inner.namespace
@@ -824,6 +834,16 @@ impl<W> WorkflowContext<W> {
     }
 
     // --- Delegated methods from SyncWorkflowContext ---
+
+    /// Return the workflow's unique identifier
+    pub fn workflow_id(&self) -> &str {
+        self.sync.workflow_id()
+    }
+
+    /// Return the run id of this workflow execution
+    pub fn run_id(&self) -> &str {
+        self.sync.run_id()
+    }
 
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
