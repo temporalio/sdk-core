@@ -9,7 +9,7 @@ services:
   #      - '9042:9042'
 
   temporal:
-    image: temporalio/auto-setup:1.22.0
+    image: temporalio/temporal:1.5.1
     ports:
       - "7233:7233"
       - "7234:7234"
@@ -26,6 +26,7 @@ services:
       - ../dynamic-config.yaml:/etc/dynamic-config.yaml
     depends_on:
       - cassandra
+    command: ["server", "start-dev"]
 
   temporal-web:
     image: temporalio/ui:2.8.0
