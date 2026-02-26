@@ -127,6 +127,9 @@ message WorkerHeartbeat {
 
   // Plugins currently in use by this SDK.
   repeated PluginInfo plugins = 23;
+
+  // Storage drivers in use by this SDK.
+  repeated StorageDriverInfo drivers = 24;
 }
 
 message WorkerInfo {
@@ -138,4 +141,9 @@ message PluginInfo {
     string name = 1;
     // The version of the plugin, may be empty.
     string version = 2;
+}
+
+message StorageDriverInfo {
+  // The name of the driver, required.
+  string name = 1;
 }

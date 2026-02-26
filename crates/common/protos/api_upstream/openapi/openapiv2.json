@@ -15864,6 +15864,15 @@
     "v1StopBatchOperationResponse": {
       "type": "object"
     },
+    "v1StorageDriverInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the driver, required."
+        }
+      }
+    },
     "v1StructuredCalendarSpec": {
       "type": "object",
       "properties": {
@@ -16889,6 +16898,14 @@
             "$ref": "#/definitions/v1PluginInfo"
           },
           "description": "Plugins currently in use by this SDK."
+        },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1StorageDriverInfo"
+          },
+          "description": "Storage drivers in use by this SDK."
         }
       },
       "description": "Worker info message, contains information about the worker and its current state.\nAll information is provided by the worker itself."
