@@ -142,7 +142,7 @@ impl ParallelTimerWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let t1 = ctx.timer(Duration::from_secs(1));
         let t2 = ctx.timer(Duration::from_secs(1));
-        let _ = tokio::join!(t1, t2);
+        let _ = temporalio_sdk::workflows::join!(t1, t2);
         Ok(())
     }
 }

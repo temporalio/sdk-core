@@ -43,6 +43,44 @@
 //! }
 //! ```
 
+/// Deterministic `select!` for use in Temporal workflows.
+///
+/// Polls branches in declaration order (top to bottom), ensuring deterministic
+/// behavior across workflow replays. Delegates to [`futures_util::select_biased!`].
+///
+/// All workflow futures (timers, activities, child workflows, etc.) implement
+/// `FusedFuture`, so they can be stored in variables and passed to `select!`
+/// without needing `.fuse()`.
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::select;
+///
+/// select! {
+///     _ = ctx.timer(Duration::from_secs(60)) => { /* timer fired */ }
+///     reason = ctx.cancelled() => { /* cancelled */ }
+/// };
+/// ```
+#[doc(inline)]
+pub use crate::__temporal_select as select;
+
+/// Deterministic `join!` for use in Temporal workflows.
+///
+/// Polls all futures concurrently to completion in declaration order,
+/// ensuring deterministic behavior across workflow replays. Delegates
+/// to [`futures_util::join!`].
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::join;
+///
+/// let (a, b) = join!(future_a, future_b);
+/// ```
+#[doc(inline)]
+pub use crate::__temporal_join as join;
+
 use crate::{
     BaseWorkflowContext, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
     WorkflowTermination,
