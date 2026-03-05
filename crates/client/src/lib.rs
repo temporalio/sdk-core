@@ -19,6 +19,7 @@ pub mod proxy;
 mod replaceable;
 pub mod request_extensions;
 mod retry;
+mod schedule_handle;
 pub mod worker;
 mod workflow_handle;
 
@@ -34,6 +35,16 @@ pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM
 pub use options_structs::*;
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
+pub use schedule_handle::{
+    CreateScheduleOptions, ListSchedulesOptions, ListSchedulesPage, ScheduleAction,
+    ScheduleBackfill, ScheduleCalendarSpec, ScheduleDescription, ScheduleError, ScheduleHandle,
+    ScheduleIntervalSpec, ScheduleOverlapPolicy, ScheduleRecentAction, ScheduleRunningAction,
+    ScheduleSpec, ScheduleSummary, ScheduleUpdate,
+};
+use temporalio_common::protos::temporal::api::schedule::v1::{
+    Schedule, SchedulePatch, ScheduleState, TriggerImmediatelyRequest,
+};
+
 pub use tonic;
 pub use workflow_handle::{
     UntypedQuery, UntypedSignal, UntypedUpdate, UntypedWorkflow, UntypedWorkflowHandle,
@@ -693,6 +704,89 @@ impl Client {
         identifier: ActivityIdentifier,
     ) -> AsyncActivityHandle<Self> {
         WorkflowClientTrait::get_async_activity_handle(self, identifier)
+    }
+}
+
+// Schedule operations on Client.
+impl Client {
+    /// Create a schedule and return a handle to it.
+    pub async fn create_schedule(
+        &self,
+        schedule_id: impl Into<String>,
+        action: schedule_handle::ScheduleAction,
+        spec: schedule_handle::ScheduleSpec,
+        opts: CreateScheduleOptions,
+    ) -> Result<ScheduleHandle<Self>, ScheduleError> {
+        let schedule_id = schedule_id.into();
+        let namespace = self.namespace();
+        let initial_patch = if opts.trigger_immediately {
+            Some(SchedulePatch {
+                trigger_immediately: Some(TriggerImmediatelyRequest {
+                    overlap_policy: 0,
+                    scheduled_time: None,
+                }),
+                ..Default::default()
+            })
+        } else {
+            None
+        };
+        let schedule = Schedule {
+            spec: Some(spec.into_proto()),
+            action: Some(action.into_proto()),
+            state: Some(ScheduleState {
+                paused: opts.paused,
+                notes: opts.note,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        WorkflowService::create_schedule(
+            &mut self.clone(),
+            CreateScheduleRequest {
+                namespace: namespace.clone(),
+                schedule_id: schedule_id.clone(),
+                schedule: Some(schedule),
+                initial_patch,
+                identity: self.identity(),
+                request_id: Uuid::new_v4().to_string(),
+                ..Default::default()
+            }
+            .into_request(),
+        )
+        .await?;
+        Ok(ScheduleHandle::new(self.clone(), namespace, schedule_id))
+    }
+
+    /// Get a handle to an existing schedule by ID.
+    pub fn get_schedule_handle(&self, schedule_id: impl Into<String>) -> ScheduleHandle<Self> {
+        ScheduleHandle::new(self.clone(), self.namespace(), schedule_id.into())
+    }
+
+    /// List schedules, returning a single page of results.
+    pub async fn list_schedules(
+        &self,
+        opts: ListSchedulesOptions,
+    ) -> Result<ListSchedulesPage, ScheduleError> {
+        let resp = WorkflowService::list_schedules(
+            &mut self.clone(),
+            ListSchedulesRequest {
+                namespace: self.namespace(),
+                maximum_page_size: opts.maximum_page_size,
+                query: opts.query,
+                ..Default::default()
+            }
+            .into_request(),
+        )
+        .await?
+        .into_inner();
+        Ok(ListSchedulesPage {
+            schedules: resp
+                .schedules
+                .into_iter()
+                .map(ScheduleSummary::from)
+                .collect(),
+            next_page_token: resp.next_page_token,
+        })
     }
 }
 
@@ -1577,6 +1671,601 @@ mod tests {
 
             assert_eq!(results.len(), 0);
             assert_eq!(call_count.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    mod schedule_tests {
+        use super::*;
+        use crate::schedule_handle::ScheduleHandle;
+        use futures_util::FutureExt;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::SystemTime;
+        use temporalio_common::protos::temporal::api::{
+            common::v1::{
+                Memo, SearchAttributes, WorkflowExecution as ProtoWorkflowExecution, WorkflowType,
+            },
+            schedule::v1::{
+                Schedule, ScheduleActionResult, ScheduleInfo, ScheduleListEntry, ScheduleListInfo,
+                ScheduleSpec, ScheduleState,
+            },
+            workflowservice::v1::{
+                DeleteScheduleResponse, DescribeScheduleResponse, PatchScheduleResponse,
+                UpdateScheduleResponse,
+            },
+        };
+        use tonic::{Request, Response};
+
+        #[derive(Default)]
+        struct CapturedRequests {
+            describe: AtomicUsize,
+            update: AtomicUsize,
+            delete: AtomicUsize,
+            patch: AtomicUsize,
+        }
+
+        #[derive(Clone, Default)]
+        struct MockScheduleClient {
+            captured: Arc<CapturedRequests>,
+            describe_response: DescribeScheduleResponse,
+            should_error: bool,
+        }
+
+        impl NamespacedClient for MockScheduleClient {
+            fn namespace(&self) -> String {
+                "test-namespace".to_string()
+            }
+            fn identity(&self) -> String {
+                "test-identity".to_string()
+            }
+        }
+
+        impl WorkflowService for MockScheduleClient {
+            fn describe_schedule(
+                &mut self,
+                _request: Request<DescribeScheduleRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<DescribeScheduleResponse>, tonic::Status>,
+            > {
+                self.captured.describe.fetch_add(1, Ordering::SeqCst);
+                let resp = self.describe_response.clone();
+                let should_error = self.should_error;
+                async move {
+                    if should_error {
+                        Err(tonic::Status::not_found("schedule not found"))
+                    } else {
+                        Ok(Response::new(resp))
+                    }
+                }
+                .boxed()
+            }
+
+            fn update_schedule(
+                &mut self,
+                _request: Request<UpdateScheduleRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<UpdateScheduleResponse>, tonic::Status>,
+            > {
+                self.captured.update.fetch_add(1, Ordering::SeqCst);
+                let should_error = self.should_error;
+                async move {
+                    if should_error {
+                        Err(tonic::Status::internal("update failed"))
+                    } else {
+                        Ok(Response::new(UpdateScheduleResponse::default()))
+                    }
+                }
+                .boxed()
+            }
+
+            fn delete_schedule(
+                &mut self,
+                _request: Request<DeleteScheduleRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<DeleteScheduleResponse>, tonic::Status>,
+            > {
+                self.captured.delete.fetch_add(1, Ordering::SeqCst);
+                let should_error = self.should_error;
+                async move {
+                    if should_error {
+                        Err(tonic::Status::internal("delete failed"))
+                    } else {
+                        Ok(Response::new(DeleteScheduleResponse::default()))
+                    }
+                }
+                .boxed()
+            }
+
+            fn patch_schedule(
+                &mut self,
+                _request: Request<PatchScheduleRequest>,
+            ) -> futures_util::future::BoxFuture<
+                '_,
+                Result<Response<PatchScheduleResponse>, tonic::Status>,
+            > {
+                self.captured.patch.fetch_add(1, Ordering::SeqCst);
+                let should_error = self.should_error;
+                async move {
+                    if should_error {
+                        Err(tonic::Status::internal("patch failed"))
+                    } else {
+                        Ok(Response::new(PatchScheduleResponse::default()))
+                    }
+                }
+                .boxed()
+            }
+        }
+
+        fn make_handle(client: MockScheduleClient) -> ScheduleHandle<MockScheduleClient> {
+            ScheduleHandle::new(
+                client,
+                "test-namespace".to_string(),
+                "test-schedule-id".to_string(),
+            )
+        }
+
+        #[test]
+        fn handle_exposes_namespace_and_schedule_id() {
+            let handle = make_handle(MockScheduleClient::default());
+            assert_eq!(handle.namespace, "test-namespace");
+            assert_eq!(handle.schedule_id, "test-schedule-id");
+        }
+
+        #[tokio::test]
+        async fn describe_returns_response_fields() {
+            let conflict_token = b"token-123".to_vec();
+
+            let client = MockScheduleClient {
+                describe_response: DescribeScheduleResponse {
+                    schedule: Some(Schedule::default()),
+                    info: Some(ScheduleInfo::default()),
+                    memo: Some(Memo {
+                        fields: Default::default(),
+                    }),
+                    search_attributes: Some(SearchAttributes {
+                        indexed_fields: Default::default(),
+                    }),
+                    conflict_token: conflict_token.clone(),
+                },
+                ..Default::default()
+            };
+
+            let handle = make_handle(client.clone());
+            let desc = handle.describe().await.unwrap();
+
+            assert_eq!(client.captured.describe.load(Ordering::SeqCst), 1);
+            assert!(desc.raw().schedule.is_some());
+            assert!(desc.raw().info.is_some());
+            assert!(desc.raw().memo.is_some());
+            assert!(desc.raw().search_attributes.is_some());
+            assert_eq!(desc.conflict_token(), conflict_token);
+        }
+
+        #[tokio::test]
+        async fn update_calls_service() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            let desc = ScheduleDescription::from(DescribeScheduleResponse::default());
+            handle.update(desc.into_update()).await.unwrap();
+
+            assert_eq!(client.captured.update.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn multiple_updates_each_call_service() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            let desc1 = ScheduleDescription::from(DescribeScheduleResponse::default());
+            handle.update(desc1.into_update()).await.unwrap();
+            let desc2 = ScheduleDescription::from(DescribeScheduleResponse::default());
+            handle.update(desc2.into_update()).await.unwrap();
+
+            assert_eq!(client.captured.update.load(Ordering::SeqCst), 2);
+        }
+
+        #[tokio::test]
+        async fn delete_calls_service() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            handle.delete().await.unwrap();
+
+            assert_eq!(client.captured.delete.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn pause_calls_patch() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            handle.pause("taking a break").await.unwrap();
+
+            assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn unpause_calls_patch() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            handle.unpause("resuming work").await.unwrap();
+
+            assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn trigger_calls_patch() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            handle.trigger().await.unwrap();
+
+            assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn backfill_calls_patch() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            let now = SystemTime::now();
+            let backfills = vec![
+                ScheduleBackfill::builder()
+                    .start_time(now)
+                    .end_time(now)
+                    .overlap_policy(ScheduleOverlapPolicy::Skip)
+                    .build(),
+                ScheduleBackfill::builder()
+                    .start_time(now)
+                    .end_time(now)
+                    .overlap_policy(ScheduleOverlapPolicy::BufferOne)
+                    .build(),
+            ];
+            handle.backfill(backfills).await.unwrap();
+
+            assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
+        }
+
+        #[tokio::test]
+        async fn describe_propagates_rpc_errors() {
+            let client = MockScheduleClient {
+                should_error: true,
+                ..Default::default()
+            };
+            let handle = make_handle(client);
+
+            let err = handle.describe().await.unwrap_err();
+            assert!(
+                matches!(err, ScheduleError::Rpc(_)),
+                "expected Rpc variant, got: {err:?}"
+            );
+            assert!(err.to_string().contains("schedule not found"));
+        }
+
+        #[tokio::test]
+        async fn update_propagates_rpc_errors() {
+            let client = MockScheduleClient {
+                should_error: true,
+                ..Default::default()
+            };
+            let handle = make_handle(client);
+
+            let desc = ScheduleDescription::from(DescribeScheduleResponse::default());
+            let err = handle.update(desc.into_update()).await.unwrap_err();
+            assert!(matches!(err, ScheduleError::Rpc(_)));
+        }
+
+        #[tokio::test]
+        async fn delete_propagates_rpc_errors() {
+            let client = MockScheduleClient {
+                should_error: true,
+                ..Default::default()
+            };
+            let handle = make_handle(client);
+
+            let err = handle.delete().await.unwrap_err();
+            assert!(matches!(err, ScheduleError::Rpc(_)));
+        }
+
+        #[tokio::test]
+        async fn patch_operations_propagate_rpc_errors() {
+            let client = MockScheduleClient {
+                should_error: true,
+                ..Default::default()
+            };
+            let handle = make_handle(client);
+
+            assert!(handle.pause("").await.is_err());
+            assert!(handle.unpause("").await.is_err());
+            assert!(handle.trigger().await.is_err());
+            assert!(handle.backfill(vec![]).await.is_err());
+        }
+
+        #[tokio::test]
+        async fn all_patch_operations_call_service() {
+            let client = MockScheduleClient::default();
+            let handle = make_handle(client.clone());
+
+            handle.pause("p").await.unwrap();
+            handle.unpause("u").await.unwrap();
+            handle.trigger().await.unwrap();
+            handle.backfill(vec![]).await.unwrap();
+
+            assert_eq!(client.captured.patch.load(Ordering::SeqCst), 4);
+        }
+
+        #[tokio::test]
+        async fn describe_convenience_accessors_with_populated_fields() {
+            let client = MockScheduleClient {
+                describe_response: DescribeScheduleResponse {
+                    schedule: Some(Schedule {
+                        spec: Some(ScheduleSpec {
+                            timezone_name: "US/Eastern".to_string(),
+                            ..Default::default()
+                        }),
+                        state: Some(ScheduleState {
+                            paused: true,
+                            notes: "maintenance window".to_string(),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    info: Some(ScheduleInfo {
+                        action_count: 42,
+                        missed_catchup_window: 3,
+                        overlap_skipped: 5,
+                        recent_actions: vec![ScheduleActionResult::default()],
+                        running_workflows: vec![ProtoWorkflowExecution {
+                            workflow_id: "wf-1".to_string(),
+                            run_id: "run-1".to_string(),
+                        }],
+                        create_time: Some(prost_types::Timestamp {
+                            seconds: 1_700_000_000,
+                            nanos: 0,
+                        }),
+                        update_time: Some(prost_types::Timestamp {
+                            seconds: 1_700_001_000,
+                            nanos: 0,
+                        }),
+                        future_action_times: vec![prost_types::Timestamp {
+                            seconds: 1_700_002_000,
+                            nanos: 0,
+                        }],
+                        ..Default::default()
+                    }),
+                    conflict_token: b"tok".to_vec(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            let handle = make_handle(client);
+            let desc = handle.describe().await.unwrap();
+
+            assert!(desc.paused());
+            assert_eq!(desc.notes(), Some("maintenance window"));
+            assert_eq!(desc.action_count(), 42);
+            assert_eq!(desc.missed_catchup_window(), 3);
+            assert_eq!(desc.overlap_skipped(), 5);
+
+            assert_eq!(desc.recent_actions().len(), 1);
+            assert_eq!(
+                desc.running_actions(),
+                vec![ScheduleRunningAction {
+                    workflow_id: "wf-1".to_string(),
+                    run_id: "run-1".to_string(),
+                }]
+            );
+
+            assert_eq!(desc.future_action_times().len(), 1);
+            assert!(desc.create_time().is_some());
+            assert!(desc.update_time().is_some());
+        }
+
+        #[tokio::test]
+        async fn describe_defaults_when_nested_fields_are_none() {
+            let client = MockScheduleClient::default();
+
+            let handle = make_handle(client);
+            let desc = handle.describe().await.unwrap();
+
+            assert!(!desc.paused());
+            assert_eq!(desc.notes(), None);
+            assert_eq!(desc.action_count(), 0);
+            assert_eq!(desc.missed_catchup_window(), 0);
+            assert_eq!(desc.overlap_skipped(), 0);
+            assert!(desc.recent_actions().is_empty());
+            assert!(desc.running_actions().is_empty());
+            assert!(desc.future_action_times().is_empty());
+            assert!(desc.create_time().is_none());
+            assert!(desc.update_time().is_none());
+            assert!(desc.conflict_token().is_empty());
+        }
+
+        #[test]
+        fn schedule_summary_accessors() {
+            let entry = ScheduleListEntry {
+                schedule_id: "sched-1".to_string(),
+                memo: Some(Memo {
+                    fields: Default::default(),
+                }),
+                search_attributes: Some(SearchAttributes {
+                    indexed_fields: Default::default(),
+                }),
+                info: Some(ScheduleListInfo {
+                    spec: Some(ScheduleSpec::default()),
+                    workflow_type: Some(WorkflowType {
+                        name: "MyWorkflow".to_string(),
+                    }),
+                    notes: "some note".to_string(),
+                    paused: true,
+                    recent_actions: vec![ScheduleActionResult::default()],
+                    future_action_times: vec![prost_types::Timestamp {
+                        seconds: 1_700_000_000,
+                        nanos: 0,
+                    }],
+                }),
+            };
+
+            let summary = ScheduleSummary::from(entry);
+            assert_eq!(summary.schedule_id(), "sched-1");
+            assert!(summary.raw().memo.is_some());
+            assert!(summary.raw().search_attributes.is_some());
+            assert_eq!(summary.workflow_type(), Some("MyWorkflow"));
+            assert_eq!(summary.notes(), Some("some note"));
+            assert!(summary.paused());
+            assert_eq!(summary.recent_actions().len(), 1);
+            assert_eq!(summary.future_action_times().len(), 1);
+        }
+
+        #[test]
+        fn schedule_summary_defaults_when_info_is_none() {
+            let entry = ScheduleListEntry {
+                schedule_id: "sched-2".to_string(),
+                ..Default::default()
+            };
+
+            let summary = ScheduleSummary::from(entry);
+            assert_eq!(summary.schedule_id(), "sched-2");
+            assert!(summary.raw().memo.is_none());
+            assert!(summary.raw().search_attributes.is_none());
+            assert_eq!(summary.workflow_type(), None);
+            assert_eq!(summary.notes(), None);
+            assert!(!summary.paused());
+            assert!(summary.recent_actions().is_empty());
+            assert!(summary.future_action_times().is_empty());
+        }
+
+        #[test]
+        fn schedule_description_raw_round_trip() {
+            let resp = DescribeScheduleResponse {
+                conflict_token: b"ct".to_vec(),
+                schedule: Some(Schedule::default()),
+                ..Default::default()
+            };
+            let desc = ScheduleDescription::from(resp.clone());
+            assert_eq!(desc.raw().conflict_token, b"ct");
+            let recovered = desc.into_raw();
+            assert_eq!(recovered.conflict_token, resp.conflict_token);
+            assert!(recovered.schedule.is_some());
+        }
+
+        #[test]
+        fn schedule_summary_raw_round_trip() {
+            let entry = ScheduleListEntry {
+                schedule_id: "rt-1".to_string(),
+                ..Default::default()
+            };
+            let summary = ScheduleSummary::from(entry.clone());
+            assert_eq!(summary.raw().schedule_id, "rt-1");
+            let recovered = summary.into_raw();
+            assert_eq!(recovered.schedule_id, entry.schedule_id);
+        }
+
+        #[test]
+        fn into_update_preserves_schedule_and_conflict_token() {
+            let resp = DescribeScheduleResponse {
+                schedule: Some(Schedule {
+                    state: Some(ScheduleState {
+                        notes: "my notes".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                conflict_token: b"ct-42".to_vec(),
+                ..Default::default()
+            };
+            let desc = ScheduleDescription::from(resp);
+            let update = desc.into_update();
+
+            assert_eq!(update.conflict_token(), b"ct-42");
+            assert_eq!(update.raw().state.as_ref().unwrap().notes, "my notes");
+        }
+
+        #[test]
+        fn raw_mut_modifications_visible_through_accessors() {
+            let resp = DescribeScheduleResponse {
+                schedule: Some(Schedule {
+                    state: Some(ScheduleState {
+                        paused: false,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+            let mut desc = ScheduleDescription::from(resp);
+
+            assert!(!desc.paused());
+
+            desc.raw_mut()
+                .schedule
+                .as_mut()
+                .unwrap()
+                .state
+                .as_mut()
+                .unwrap()
+                .paused = true;
+
+            assert!(desc.paused());
+        }
+
+        #[test]
+        fn recent_action_from_proto_with_timestamps() {
+            let ts = prost_types::Timestamp {
+                seconds: 1_700_000_000,
+                nanos: 0,
+            };
+            let proto = ScheduleActionResult {
+                schedule_time: Some(ts.clone()),
+                actual_time: Some(ts),
+                start_workflow_result: Some(ProtoWorkflowExecution {
+                    workflow_id: "wf-abc".to_string(),
+                    run_id: "run-xyz".to_string(),
+                }),
+                ..Default::default()
+            };
+
+            let action = ScheduleRecentAction::from(&proto);
+
+            assert!(action.schedule_time.is_some());
+            assert!(action.actual_time.is_some());
+            assert_eq!(action.workflow_id, "wf-abc");
+            assert_eq!(action.run_id, "run-xyz");
+        }
+
+        #[test]
+        fn recent_action_from_proto_without_workflow_result() {
+            let action = ScheduleRecentAction::from(&ScheduleActionResult::default());
+
+            assert!(action.schedule_time.is_none());
+            assert!(action.actual_time.is_none());
+            assert_eq!(action.workflow_id, "");
+            assert_eq!(action.run_id, "");
+        }
+
+        #[test]
+        fn overlap_policy_i32_values() {
+            assert_eq!(ScheduleOverlapPolicy::Unspecified as i32, 0);
+            assert_eq!(ScheduleOverlapPolicy::Skip as i32, 1);
+            assert_eq!(ScheduleOverlapPolicy::BufferOne as i32, 2);
+            assert_eq!(ScheduleOverlapPolicy::BufferAll as i32, 3);
+            assert_eq!(ScheduleOverlapPolicy::CancelOther as i32, 4);
+            assert_eq!(ScheduleOverlapPolicy::TerminateOther as i32, 5);
+            assert_eq!(ScheduleOverlapPolicy::AllowAll as i32, 6);
+        }
+
+        #[test]
+        fn overlap_policy_default_is_unspecified() {
+            assert_eq!(
+                ScheduleOverlapPolicy::default(),
+                ScheduleOverlapPolicy::Unspecified
+            );
         }
     }
 }
