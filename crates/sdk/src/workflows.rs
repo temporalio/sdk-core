@@ -81,6 +81,24 @@ pub use crate::__temporal_select as select;
 #[doc(inline)]
 pub use crate::__temporal_join as join;
 
+/// Deterministic `join_all` for use in Temporal workflows.
+///
+/// Polls a collection of futures concurrently to completion in declaration order,
+/// returning a `Vec` of their results. Delegates to [`futures_util::future::join_all`].
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::join_all;
+///
+/// let timers = vec![
+///     ctx.timer(Duration::from_secs(1)),
+///     ctx.timer(Duration::from_secs(2)),
+/// ];
+/// let results = join_all(timers).await;
+/// ```
+pub use futures_util::future::join_all;
+
 use crate::{
     BaseWorkflowContext, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
     WorkflowTermination,

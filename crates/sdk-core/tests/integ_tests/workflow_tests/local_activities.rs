@@ -6,7 +6,7 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
-use futures_util::{FutureExt, future::join_all};
+use futures_util::FutureExt;
 use rstest::Context;
 use std::{
     collections::HashMap,
@@ -244,7 +244,7 @@ impl LocalActFanoutWf {
             })
             .collect();
         ctx.timer(Duration::from_secs(1)).await;
-        join_all(las).await;
+        temporalio_sdk::workflows::join_all(las).await;
         Ok(())
     }
 }

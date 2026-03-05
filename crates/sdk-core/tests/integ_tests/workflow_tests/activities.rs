@@ -5,7 +5,6 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use futures_util::future::join_all;
 use std::{
     sync::{
         Arc,
@@ -1103,7 +1102,7 @@ async fn graceful_shutdown() {
                     },
                 )
             });
-            join_all(act_futs).await;
+            temporalio_sdk::workflows::join_all(act_futs).await;
             Ok(())
         }
     }
