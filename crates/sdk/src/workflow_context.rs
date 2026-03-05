@@ -607,11 +607,7 @@ impl<W> SyncWorkflowContext<W> {
                 .changed()
                 .await
                 .expect("Cancelled send half not dropped");
-            am_cancelled
-                .borrow()
-                .as_ref()
-                .cloned()
-                .unwrap_or_default()
+            am_cancelled.borrow().as_ref().cloned().unwrap_or_default()
         }
         .fuse()
     }
