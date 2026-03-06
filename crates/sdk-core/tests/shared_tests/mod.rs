@@ -67,24 +67,28 @@ pub(crate) async fn grpc_message_too_large() {
     // Depending on the version of server, it may terminate the workflow, or simply be a task
     // failure
     assert!(
-        events.iter().any(|e| {
-            // Task failure
-            e.event_type == EventType::WorkflowTaskFailed as i32
-                && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                    attr.cause == GrpcMessageTooLarge as i32
-                        && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
-                } else {
-                    false
-                }
-            // Workflow terminated
-            ||
-            e.event_type == EventType::WorkflowExecutionTerminated as i32
-                && if let WorkflowExecutionTerminatedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                    attr.reason == "GrpcMessageTooLarge"
-                } else {
-                    false
-                }
-        }),
+        events.iter().any(is_oversize_grpc_event),
         "Expected workflow task failure or termination b/c grpc message too large: {events:?}",
     );
+}
+
+pub(crate) fn is_oversize_grpc_event(
+    e: &temporalio_common::protos::temporal::api::history::v1::HistoryEvent,
+) -> bool {
+    // Task failure
+    e.event_type == EventType::WorkflowTaskFailed as i32
+        && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
+            attr.cause == GrpcMessageTooLarge as i32
+                && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
+        } else {
+            false
+        }
+    // Workflow terminated
+    ||
+    e.event_type == EventType::WorkflowExecutionTerminated as i32
+        && if let WorkflowExecutionTerminatedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
+            attr.reason == "GrpcMessageTooLarge"
+        } else {
+            false
+        }
 }
