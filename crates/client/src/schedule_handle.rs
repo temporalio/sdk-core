@@ -422,8 +422,8 @@ pub struct ScheduleBackfill {
 
 /// An update to apply to a schedule definition.
 ///
-/// Obtain from [`ScheduleDescription::into_update()`], modify the schedule via
-/// [`raw_mut()`](Self::raw_mut), then pass to [`ScheduleHandle::update()`].
+/// Obtain from [`ScheduleDescription::into_update()`], modify the schedule
+/// using the setter methods, then pass to [`ScheduleHandle::update()`].
 #[derive(Debug, Clone)]
 pub struct ScheduleUpdate {
     schedule: schedule_proto::Schedule,
@@ -431,12 +431,54 @@ pub struct ScheduleUpdate {
 }
 
 impl ScheduleUpdate {
-    /// Access the raw schedule proto.
+    /// Replace the schedule spec (when to trigger).
+    pub fn set_spec(&mut self, spec: ScheduleSpec) {
+        self.schedule.spec = Some(spec.into_proto());
+    }
+
+    /// Replace the schedule action (what to do on trigger).
+    pub fn set_action(&mut self, action: ScheduleAction) {
+        self.schedule.action = Some(action.into_proto());
+    }
+
+    /// Set whether the schedule is paused.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.state_mut().paused = paused;
+    }
+
+    /// Set the note on the schedule state.
+    pub fn set_note(&mut self, note: impl Into<String>) {
+        self.state_mut().notes = note.into();
+    }
+
+    /// Set the overlap policy.
+    pub fn set_overlap_policy(&mut self, policy: ScheduleOverlapPolicy) {
+        self.policies_mut().overlap_policy = policy as i32;
+    }
+
+    /// Set the catchup window. Actions missed by more than this duration are
+    /// skipped.
+    pub fn set_catchup_window(&mut self, window: Duration) {
+        self.policies_mut().catchup_window = window.try_into().ok();
+    }
+
+    /// Set whether to pause the schedule when a workflow run fails or times out.
+    pub fn set_pause_on_failure(&mut self, pause_on_failure: bool) {
+        self.policies_mut().pause_on_failure = pause_on_failure;
+    }
+
+    /// Set whether to keep the original workflow ID without appending a
+    /// timestamp.
+    pub fn set_keep_original_workflow_id(&mut self, keep: bool) {
+        self.policies_mut().keep_original_workflow_id = keep;
+    }
+
+    /// Access the raw schedule proto for fields not covered by setters.
     pub fn raw(&self) -> &schedule_proto::Schedule {
         &self.schedule
     }
 
-    /// Access the raw schedule proto mutably for modification.
+    /// Access the raw schedule proto mutably for fields not covered by setters.
     pub fn raw_mut(&mut self) -> &mut schedule_proto::Schedule {
         &mut self.schedule
     }
@@ -449,6 +491,14 @@ impl ScheduleUpdate {
     /// The conflict token for optimistic concurrency.
     pub fn conflict_token(&self) -> &[u8] {
         &self.conflict_token
+    }
+
+    fn state_mut(&mut self) -> &mut schedule_proto::ScheduleState {
+        self.schedule.state.get_or_insert_with(Default::default)
+    }
+
+    fn policies_mut(&mut self) -> &mut schedule_proto::SchedulePolicies {
+        self.schedule.policies.get_or_insert_with(Default::default)
     }
 }
 
@@ -571,10 +621,31 @@ where
 
     /// Update the schedule definition.
     ///
-    /// Obtain a [`ScheduleUpdate`] from [`ScheduleDescription::into_update()`],
-    /// modify it, then pass it here. The conflict token is used for optimistic
-    /// concurrency.
-    pub async fn update(&self, update: ScheduleUpdate) -> Result<(), ScheduleError> {
+    /// Describes the current schedule, applies the closure to modify it, and
+    /// sends the update. The conflict token is managed automatically.
+    ///
+    /// ```ignore
+    /// handle.update(|u| {
+    ///     u.set_note("updated");
+    ///     u.set_paused(true);
+    /// }).await?;
+    /// ```
+    pub async fn update(
+        &self,
+        updater: impl FnOnce(&mut ScheduleUpdate),
+    ) -> Result<(), ScheduleError> {
+        let desc = self.describe().await?;
+        let mut update = desc.into_update();
+        updater(&mut update);
+        self.send_update(update).await
+    }
+
+    /// Send a pre-built [`ScheduleUpdate`] to the server.
+    ///
+    /// Prefer [`update()`](Self::update) for most use cases. Use this when you
+    /// need to inspect the [`ScheduleDescription`] before deciding what to
+    /// change.
+    pub async fn send_update(&self, update: ScheduleUpdate) -> Result<(), ScheduleError> {
         WorkflowService::update_schedule(
             &mut self.client.clone(),
             UpdateScheduleRequest {
