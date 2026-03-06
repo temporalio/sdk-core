@@ -135,10 +135,7 @@ async fn update_schedule() {
         .await
         .unwrap();
 
-    let desc = handle.describe().await.unwrap();
-    let mut update = desc.into_update();
-    update.raw_mut().state.as_mut().unwrap().notes = "updated notes".to_string();
-    handle.update(update).await.unwrap();
+    handle.update(|u| u.set_note("updated notes")).await.unwrap();
 
     let desc = handle.describe().await.unwrap();
     assert_eq!(desc.notes(), Some("updated notes"));

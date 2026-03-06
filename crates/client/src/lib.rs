@@ -1845,13 +1845,13 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn update_calls_service() {
+        async fn update_describes_then_sends() {
             let client = MockScheduleClient::default();
             let handle = make_handle(client.clone());
 
-            let desc = ScheduleDescription::from(DescribeScheduleResponse::default());
-            handle.update(desc.into_update()).await.unwrap();
+            handle.update(|u| u.set_note("hi")).await.unwrap();
 
+            assert_eq!(client.captured.describe.load(Ordering::SeqCst), 1);
             assert_eq!(client.captured.update.load(Ordering::SeqCst), 1);
         }
 
@@ -1860,10 +1860,8 @@ mod tests {
             let client = MockScheduleClient::default();
             let handle = make_handle(client.clone());
 
-            let desc1 = ScheduleDescription::from(DescribeScheduleResponse::default());
-            handle.update(desc1.into_update()).await.unwrap();
-            let desc2 = ScheduleDescription::from(DescribeScheduleResponse::default());
-            handle.update(desc2.into_update()).await.unwrap();
+            handle.update(|_| {}).await.unwrap();
+            handle.update(|_| {}).await.unwrap();
 
             assert_eq!(client.captured.update.load(Ordering::SeqCst), 2);
         }
@@ -1955,8 +1953,7 @@ mod tests {
             };
             let handle = make_handle(client);
 
-            let desc = ScheduleDescription::from(DescribeScheduleResponse::default());
-            let err = handle.update(desc.into_update()).await.unwrap_err();
+            let err = handle.update(|_| {}).await.unwrap_err();
             assert!(matches!(err, ScheduleError::Rpc(_)));
         }
 
