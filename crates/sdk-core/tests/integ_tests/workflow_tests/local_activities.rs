@@ -6,7 +6,7 @@ use crate::common::{
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
-use futures_util::{FutureExt, future::join_all};
+use futures_util::FutureExt;
 use rstest::Context;
 use std::{
     collections::HashMap,
@@ -124,7 +124,7 @@ impl LocalActConcurrentWithTimerWf {
             LocalActivityOptions::default(),
         );
         let timer = ctx.timer(Duration::from_secs(1));
-        let _ = tokio::join!(la, timer);
+        let _ = temporalio_sdk::workflows::join!(la, timer);
         Ok(())
     }
 }
@@ -244,7 +244,7 @@ impl LocalActFanoutWf {
             })
             .collect();
         ctx.timer(Duration::from_secs(1)).await;
-        join_all(las).await;
+        temporalio_sdk::workflows::join_all(las).await;
         Ok(())
     }
 }
@@ -831,7 +831,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
                     ..Default::default()
                 },
             );
-            let (r1, r2) = tokio::join!(r1, r2);
+            let (r1, r2) = temporalio_sdk::workflows::join!(r1, r2);
             assert!(matches!(r1, Err(ActivityExecutionError::Failed(_))));
             assert!(matches!(r2, Err(ActivityExecutionError::Failed(_))));
             Ok(())
@@ -867,8 +867,8 @@ async fn repro_nondeterminism_with_timer_bug() {
     impl ReproNondeterminismWithTimerBugWf {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let t1 = ctx.timer(Duration::from_secs(30));
-            let r1 = ctx.start_local_activity(
+            let mut t1 = ctx.timer(Duration::from_secs(30));
+            let mut r1 = ctx.start_local_activity(
                 StdActivities::delay,
                 Duration::from_secs(2),
                 LocalActivityOptions {
@@ -883,9 +883,8 @@ async fn repro_nondeterminism_with_timer_bug() {
                     ..Default::default()
                 },
             );
-            tokio::pin!(t1);
-            tokio::select! {
-                _ = &mut t1 => {},
+            temporalio_sdk::workflows::select! {
+                _ = t1 => {},
                 _ = r1 => {
                     t1.cancel();
                 },
@@ -1022,7 +1021,7 @@ async fn la_resolve_same_time_as_other_cancel() {
     impl LaResolveSameTimeAsOtherCancelWf {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let normal_act = ctx.start_activity(
+            let mut normal_act = ctx.start_activity(
                 DelayWithCancellation::delay,
                 Duration::from_secs(9),
                 ActivityOptions {
@@ -1035,7 +1034,7 @@ async fn la_resolve_same_time_as_other_cancel() {
             ctx.timer(Duration::from_millis(1)).await;
 
             // Start LA and cancel the activity at the same time
-            let local_act = ctx.start_local_activity(
+            let mut local_act = ctx.start_local_activity(
                 DelayWithCancellation::delay,
                 Duration::from_millis(100),
                 LocalActivityOptions {
@@ -1044,8 +1043,7 @@ async fn la_resolve_same_time_as_other_cancel() {
             );
             normal_act.cancel();
             // Race them, starting a timer if LA completes first
-            tokio::select! {
-                biased;
+            temporalio_sdk::workflows::select! {
                 _ = normal_act => {},
                 _ = local_act => {
                     ctx.timer(Duration::from_millis(1)).await;
@@ -1207,11 +1205,10 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<usize> {
             let mut wakeup_counter = 0;
-            tokio::join!(
-                // Interestingly - needed because if the condition is polled first, we won't see
-                // that resolved is true.
-                // TODO [rust-sdk-branch] - See if we can fix this and know that we should re-poll.
-                biased;
+            // Interestingly LA munst come first because if the condition is polled first, we won't
+            // see that resolved is true.
+            // TODO [rust-sdk-branch] - See if we can fix this and know that we should re-poll.
+            temporalio_sdk::workflows::join!(
                 async {
                     ctx.start_local_activity(
                         StdActivities::delay,
@@ -2233,7 +2230,7 @@ async fn wft_failure_cancels_running_las() {
                 (),
                 Default::default(),
             );
-            tokio::join!(
+            temporalio_sdk::workflows::join!(
                 async {
                     ctx.timer(Duration::from_secs(1)).await;
                     panic!("ahhh I'm failing wft")
@@ -2872,7 +2869,7 @@ struct TwoLaWfParallel;
 impl TwoLaWfParallel {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let _ = tokio::join!(
+        let _ = temporalio_sdk::workflows::join!(
             ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default()),
             ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
         );

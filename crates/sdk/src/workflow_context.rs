@@ -11,7 +11,11 @@ use crate::{
     SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
     workflow_context::options::IntoWorkflowCommand,
 };
-use futures_util::{FutureExt, future::Shared, task::Context};
+use futures_util::{
+    FutureExt,
+    future::{FusedFuture, Shared},
+    task::Context,
+};
 use std::{
     cell::{Ref, RefCell},
     collections::HashMap,
@@ -592,24 +596,20 @@ impl<W> SyncWorkflowContext<W> {
     }
 
     /// A future that resolves if/when the workflow is cancelled, with the user provided cause
-    pub async fn cancelled(&self) -> String {
-        if let Some(s) = self.base.inner.am_cancelled.borrow().as_ref() {
-            return s.clone();
+    pub fn cancelled(&self) -> impl FusedFuture<Output = String> + '_ {
+        let am_cancelled = self.base.inner.am_cancelled.clone();
+        async move {
+            if let Some(s) = am_cancelled.borrow().as_ref() {
+                return s.clone();
+            }
+            am_cancelled
+                .clone()
+                .changed()
+                .await
+                .expect("Cancelled send half not dropped");
+            am_cancelled.borrow().as_ref().cloned().unwrap_or_default()
         }
-        self.base
-            .inner
-            .am_cancelled
-            .clone()
-            .changed()
-            .await
-            .expect("Cancelled send half not dropped");
-        self.base
-            .inner
-            .am_cancelled
-            .borrow()
-            .as_ref()
-            .cloned()
-            .unwrap_or_default()
+        .fuse()
     }
 
     /// Request to create a timer
@@ -739,7 +739,7 @@ impl<W> SyncWorkflowContext<W> {
         &self,
         target: NamespacedWorkflowExecution,
         reason: String,
-    ) -> impl Future<Output = CancelExternalWfResult> {
+    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
         let seq = self
             .base
             .inner
@@ -908,8 +908,8 @@ impl<W> WorkflowContext<W> {
     }
 
     /// A future that resolves if/when the workflow is cancelled, with the user provided cause
-    pub async fn cancelled(&self) -> String {
-        self.sync.cancelled().await
+    pub fn cancelled(&self) -> impl FusedFuture<Output = String> + '_ {
+        self.sync.cancelled()
     }
 
     /// Request to create a timer
@@ -987,7 +987,7 @@ impl<W> WorkflowContext<W> {
         &self,
         target: NamespacedWorkflowExecution,
         reason: String,
-    ) -> impl Future<Output = CancelExternalWfResult> {
+    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
         self.sync.cancel_external(target, reason)
     }
 
@@ -1104,7 +1104,7 @@ pub(crate) struct WorkflowContextSharedData {
 
 /// A Future that can be cancelled.
 /// Used in the prototype SDK for cancelling operations like timers and activities.
-pub trait CancellableFuture<T>: Future<Output = T> {
+pub trait CancellableFuture<T>: Future<Output = T> + FusedFuture {
     /// Cancel this Future
     fn cancel(&self);
 }
@@ -1149,14 +1149,20 @@ where
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.result_rx.poll_unpin(cx).map(|x| {
-            // SAFETY: Because we can only enter this section once the future has resolved, we
-            // know it will never be polled again, therefore consuming the option is OK.
             let od = self
                 .other_dat
                 .take()
                 .expect("Other data must exist when resolving command future");
             Unblockable::unblock(x.unwrap(), od)
         })
+    }
+}
+impl<T, D> FusedFuture for WFCommandFut<T, D>
+where
+    T: Unblockable<OtherDat = D>,
+{
+    fn is_terminated(&self) -> bool {
+        self.other_dat.is_none()
     }
 }
 
@@ -1201,6 +1207,14 @@ where
         self.cmd_fut.poll_unpin(cx)
     }
 }
+impl<T, D, ID> FusedFuture for CancellableWFCommandFut<T, D, ID>
+where
+    T: Unblockable<OtherDat = D>,
+{
+    fn is_terminated(&self) -> bool {
+        self.cmd_fut.is_terminated()
+    }
+}
 
 impl<T, D, ID> CancellableFuture<T> for CancellableWFCommandFut<T, D, ID>
 where
@@ -1231,6 +1245,7 @@ struct LATimerBackoffFut {
     next_attempt: u32,
     next_sched_time: Option<prost_types::Timestamp>,
     did_cancel: AtomicBool,
+    terminated: bool,
 }
 impl LATimerBackoffFut {
     pub(crate) fn new(
@@ -1254,6 +1269,7 @@ impl LATimerBackoffFut {
             next_attempt: 1,
             next_sched_time: None,
             did_cancel: AtomicBool::new(false),
+            terminated: false,
         }
     }
 }
@@ -1281,6 +1297,7 @@ impl Future for LATimerBackoffFut {
                             ));
                         Poll::Pending
                     } else {
+                        self.terminated = true;
                         Poll::Ready(ActivityResolution {
                             status: Some(
                                 activity_resolution::Status::Cancelled(Default::default()),
@@ -1299,6 +1316,7 @@ impl Future for LATimerBackoffFut {
             // return cancel status. This can happen if cancel comes after the LA says it wants
             // to back off but before we have scheduled the timer.
             if self.did_cancel.load(Ordering::Acquire) {
+                self.terminated = true;
                 return Poll::Ready(ActivityResolution {
                     status: Some(activity_resolution::Status::Cancelled(Default::default())),
                 });
@@ -1315,7 +1333,15 @@ impl Future for LATimerBackoffFut {
             self.next_sched_time.clone_from(&b.original_schedule_time);
             return Poll::Pending;
         }
+        if poll_res.is_ready() {
+            self.terminated = true;
+        }
         poll_res
+    }
+}
+impl FusedFuture for LATimerBackoffFut {
+    fn is_terminated(&self) -> bool {
+        self.terminated
     }
 }
 impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
@@ -1341,6 +1367,7 @@ enum ActivityFut<F, Output> {
         payload_converter: PayloadConverter,
         _phantom: PhantomData<Output>,
     },
+    Terminated,
 }
 
 impl<F, Output> ActivityFut<F, Output> {
@@ -1370,7 +1397,8 @@ where
     type Output = Result<Output, ActivityExecutionError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.get_mut() {
+        let this = self.get_mut();
+        let poll = match this {
             ActivityFut::Errored { error, .. } => {
                 Poll::Ready(Err(error.take().expect("polled after completion")))
             }
@@ -1413,7 +1441,22 @@ where
                     }
                 }),
             },
+            ActivityFut::Terminated => panic!("polled after termination"),
+        };
+        if poll.is_ready() {
+            *this = ActivityFut::Terminated;
         }
+        poll
+    }
+}
+
+impl<F, Output> FusedFuture for ActivityFut<F, Output>
+where
+    F: Future<Output = ActivityResolution> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    fn is_terminated(&self) -> bool {
+        matches!(self, ActivityFut::Terminated)
     }
 }
 
@@ -1423,9 +1466,8 @@ where
     Output: TemporalDeserializable + 'static,
 {
     fn cancel(&self) {
-        match self {
-            ActivityFut::Errored { .. } => {}
-            ActivityFut::Running { inner, .. } => inner.cancel(),
+        if let ActivityFut::Running { inner, .. } = self {
+            inner.cancel()
         }
     }
 }

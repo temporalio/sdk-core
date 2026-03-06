@@ -77,6 +77,22 @@ mod workflow_context;
 mod workflow_future;
 pub mod workflows;
 
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __temporal_select {
+    ($($tokens:tt)*) => {
+        ::futures_util::select_biased! { $($tokens)* }
+    };
+}
+
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __temporal_join {
+    ($($tokens:tt)*) => {
+        ::futures_util::join!($($tokens)*)
+    };
+}
+
 use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
