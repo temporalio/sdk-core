@@ -1,5 +1,6 @@
 use crate::common::{CoreWfStarter, build_fake_sdk, init_core_and_create_wf};
-use std::time::Duration;
+use futures_util::{StreamExt, stream::FuturesUnordered};
+use std::{future::Future, pin::Pin, time::Duration};
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     prost_dur,
@@ -298,5 +299,45 @@ async fn cancel_before_sent_to_server() {
     });
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<CancelBeforeSentWf>();
+    worker.run().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct WaitConditionWakerWf {
+    done: bool,
+}
+
+#[workflow_methods]
+impl WaitConditionWakerWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let mut futs: FuturesUnordered<Pin<Box<dyn Future<Output = ()>>>> = FuturesUnordered::new();
+
+        // Future 1: await timer, then set flag via state_mut
+        let ctx1 = ctx.clone();
+        futs.push(Box::pin(async move {
+            ctx1.timer(Duration::from_millis(500)).await;
+            ctx1.state_mut(|s| s.done = true);
+        }));
+
+        // Future 2: wait_condition on the flag (waker-dependent inside FuturesUnordered)
+        let ctx2 = ctx.clone();
+        futs.push(Box::pin(async move {
+            ctx2.wait_condition(|s| s.done).await;
+        }));
+
+        // Drive both to completion
+        while futs.next().await.is_some() {}
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn wait_condition_waker_in_futures_unordered() {
+    let t = canned_histories::single_timer_wf_completes("1");
+    let mock_cfg = MockPollCfg::from_hist_builder(t);
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<WaitConditionWakerWf>();
     worker.run().await.unwrap();
 }

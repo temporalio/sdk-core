@@ -510,6 +510,16 @@ impl BaseWorkflowContext {
 }
 
 impl<W> SyncWorkflowContext<W> {
+    /// Return the workflow's unique identifier
+    pub fn workflow_id(&self) -> &str {
+        &self.base.inner.inital_information.workflow_id
+    }
+
+    /// Return the run id of this workflow execution
+    pub fn run_id(&self) -> &str {
+        &self.base.inner.run_id
+    }
+
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
         &self.base.inner.namespace
@@ -555,6 +565,11 @@ impl<W> SyncWorkflowContext<W> {
     /// Returns true if the current workflow task is happening under replay
     pub fn is_replaying(&self) -> bool {
         self.base.inner.shared.borrow().is_replaying
+    }
+
+    /// Returns true if the server suggests this workflow should continue-as-new
+    pub fn continue_as_new_suggested(&self) -> bool {
+        self.base.inner.shared.borrow().continue_as_new_suggested
     }
 
     /// Returns the headers for the current handler invocation (signal, update, query, etc.).
@@ -820,6 +835,16 @@ impl<W> WorkflowContext<W> {
 
     // --- Delegated methods from SyncWorkflowContext ---
 
+    /// Return the workflow's unique identifier
+    pub fn workflow_id(&self) -> &str {
+        self.sync.workflow_id()
+    }
+
+    /// Return the run id of this workflow execution
+    pub fn run_id(&self) -> &str {
+        self.sync.run_id()
+    }
+
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
         self.sync.namespace()
@@ -860,6 +885,11 @@ impl<W> WorkflowContext<W> {
     /// Returns true if the current workflow task is happening under replay
     pub fn is_replaying(&self) -> bool {
         self.sync.is_replaying()
+    }
+
+    /// Returns true if the server suggests this workflow should continue-as-new
+    pub fn continue_as_new_suggested(&self) -> bool {
+        self.sync.continue_as_new_suggested()
     }
 
     /// Returns the headers for the current handler invocation (signal, update, query, etc.).
@@ -1066,6 +1096,7 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) is_replaying: bool,
     pub(crate) wf_time: Option<SystemTime>,
     pub(crate) history_length: u32,
+    pub(crate) continue_as_new_suggested: bool,
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,

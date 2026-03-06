@@ -17,6 +17,7 @@ anyhow = "1.0"
 bon = { workspace = true }
 derive_more = { workspace = true }
 futures-util = { version = "0.3", default-features = false }
+gethostname = "1.0.2"
 parking_lot = { version = "0.12", features = ["send_guard"] }
 prost-types = { workspace = true }
 serde = "1.0"
@@ -52,6 +53,7 @@ version = "0.1"
 
 [dev-dependencies]
 futures = "0.3"
+rstest = "0.26"
 
 [features]
 default = []

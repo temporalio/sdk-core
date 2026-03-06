@@ -280,6 +280,10 @@ message WorkflowTaskStartedEventAttributes {
     // The reason(s) that suggest_continue_as_new is true, if it is.
     // Unset if suggest_continue_as_new is false.
     repeated temporal.api.enums.v1.SuggestContinueAsNewReason suggest_continue_as_new_reasons = 8;
+    // True if Workflow's Target Worker Deployment Version is different from its Pinned Version and
+    // the workflow is Pinned.
+    // Experimental.
+    bool target_worker_deployment_version_changed = 9;
     // Total history size in bytes, which the workflow might use to decide when to
     // continue-as-new regardless of the suggestion. Note that history event count is
     // just the event id of this event, so we don't include it explicitly here.
