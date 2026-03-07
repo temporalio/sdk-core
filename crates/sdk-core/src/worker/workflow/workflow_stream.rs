@@ -411,6 +411,22 @@ impl WFStream {
                     })
                     .into_run_update_resp()
             }
+            // If the workflow was terminated or timed out by the server, we won't
+            // send a completion (have_seen_terminal_event causes should_respond=false),
+            // but we still need to evict the run from cache.
+            if res.is_none()
+                && rh.have_seen_terminal_event()
+                && !rh.workflow_is_finished()
+            {
+                res = rh
+                    .request_eviction(RequestEvictMsg {
+                        run_id: run_id.to_string(),
+                        message: "Workflow terminated or timed out".to_string(),
+                        reason: EvictionReason::WorkflowExecutionEnding,
+                        auto_reply_fail_tt: None,
+                    })
+                    .into_run_update_resp()
+            }
         }
         res
     }

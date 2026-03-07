@@ -3127,3 +3127,46 @@ async fn grpc_message_too_large_doesnt_spam_task_fails() {
     core.drain_pollers_and_shutdown().await;
     // Mock only expects 1 task failure, and would fail here if we spammed
 }
+
+/// When a workflow is terminated by the server while an activity is in-flight, the worker receives
+/// a WFT containing a `WorkflowExecutionTerminated` event. The workflow code never issues a
+/// terminal command, but the run should still be evicted from the sticky cache.
+#[tokio::test]
+async fn terminated_workflow_with_pending_activity_evicts_from_cache() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_activity_task_scheduled("act-1");
+    t.add_workflow_execution_terminated();
+
+    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::AllHistory, ResponseType::AllHistory], mock_worker_client(), false);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    // First activation: replay from start, lang schedules the activity
+    let activation = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        activation.run_id,
+        vec![ScheduleActivity {
+            seq: 1,
+            activity_id: "act-1".to_string(),
+            ..default_act_sched()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+
+    // The terminated workflow should produce an eviction activation
+    let evict_act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        evict_act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
+        .await
+        .unwrap();
+}
