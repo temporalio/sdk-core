@@ -43,6 +43,74 @@
 //! }
 //! ```
 
+/// Deterministic `select!` for use in Temporal workflows.
+///
+/// Polls branches in declaration order (top to bottom), ensuring deterministic
+/// behavior across workflow replays. Delegates to [`futures_util::select_biased!`].
+///
+/// All workflow futures (timers, activities, child workflows, etc.) implement
+/// `FusedFuture`, so they can be stored in variables and passed to `select!`
+/// without needing `.fuse()`.
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::select;
+/// use temporalio_sdk::WorkflowContext;
+/// use std::time::Duration;
+///
+/// # async fn hidden(ctx: &mut WorkflowContext<()>) {
+/// select! {
+///     _ = ctx.timer(Duration::from_secs(60)) => { /* timer fired */ }
+///     reason = ctx.cancelled() => { /* cancelled */ }
+/// };
+/// # }
+/// ```
+#[doc(inline)]
+pub use crate::__temporal_select as select;
+
+/// Deterministic `join!` for use in Temporal workflows.
+///
+/// Polls all futures concurrently to completion in declaration order,
+/// ensuring deterministic behavior across workflow replays. Delegates
+/// to [`futures_util::join!`].
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::join;
+///
+/// # async fn hidden() {
+/// let future_a = async { 1 };
+/// let future_b = async { 2 };
+/// let (a, b) = join!(future_a, future_b);
+/// # }
+/// ```
+#[doc(inline)]
+pub use crate::__temporal_join as join;
+
+/// Deterministic `join_all` for use in Temporal workflows.
+///
+/// Polls a collection of futures concurrently to completion in declaration order,
+/// returning a `Vec` of their results. Delegates to [`futures_util::future::join_all`].
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::join_all;
+/// use temporalio_sdk::WorkflowContext;
+/// use std::time::Duration;
+///
+/// # async fn hidden(ctx: &mut WorkflowContext<()>) {
+/// let timers = vec![
+///     ctx.timer(Duration::from_secs(1)),
+///     ctx.timer(Duration::from_secs(2)),
+/// ];
+/// let results = join_all(timers).await;
+/// # }
+/// ```
+pub use futures_util::future::join_all;
+
 use crate::{
     BaseWorkflowContext, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
     WorkflowTermination,

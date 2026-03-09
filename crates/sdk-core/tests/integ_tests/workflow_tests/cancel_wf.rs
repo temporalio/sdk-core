@@ -24,7 +24,7 @@ impl CancelledWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let mut reason = "".to_string();
-        let cancelled = tokio::select! {
+        let cancelled = temporalio_sdk::workflows::select! {
             _ = ctx.timer(Duration::from_secs(500)) => false,
             r = ctx.cancelled() => {
                 reason = r;
