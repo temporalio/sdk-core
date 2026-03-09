@@ -2,7 +2,8 @@ use crate::{
     CompleteNexusError, PollError, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
-        WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
+        WorkerTestHelpers, build_fake_worker, build_mock_pollers, hist_to_poll_resp, mock_worker,
+        test_worker_cfg,
     },
     worker::{
         self, PollerBehavior,
@@ -13,7 +14,7 @@ use crate::{
     },
 };
 use futures_util::{stream, stream::StreamExt};
-use std::{cell::RefCell, collections::HashMap, time::Duration};
+use std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration};
 use temporalio_common::{
     protos::{
         canned_histories,
@@ -1208,4 +1209,61 @@ async fn nexus_start_operation_failure_converts_to_legacy_for_old_server(
     );
     worker.shutdown().await;
     worker.finalize_shutdown().await;
+}
+
+/// Regression test for https://github.com/temporalio/sdk-core/issues/692
+/// When a Worker is dropped without shutdown (e.g. after a fatal poller error), the activation
+/// receiver is dropped. The processing thread must not panic when sending to a closed channel.
+#[tokio::test]
+async fn no_panic_when_worker_dropped_during_wft_processing() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let panicked = Arc::new(AtomicBool::new(false));
+    let panicked_clone = panicked.clone();
+    let prev_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |_info| {
+        panicked_clone.store(true, Ordering::SeqCst);
+    }));
+
+    let notify = Arc::new(tokio::sync::Notify::new());
+    let notify_clone = notify.clone();
+
+    let t = canned_histories::single_timer("1");
+    let poll_resp = hist_to_poll_resp(&t, "wf_id", ResponseType::ToTaskNum(1)).resp;
+
+    // Stream that waits for a signal before producing a valid WFT response
+    let stream = stream::unfold(Some((notify_clone, poll_resp)), |state| async move {
+        let (notify, resp) = state?;
+        notify.notified().await;
+        Some((Ok(resp.try_into().unwrap()), None))
+    });
+
+    let mw = MockWorkerInputs::new(stream.boxed());
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+
+    // Start the processing thread by beginning a poll
+    tokio::select! {
+        _ = worker.poll_workflow_activation() => {},
+        _ = tokio::time::sleep(Duration::from_millis(50)) => {},
+    }
+
+    // Drop the worker, which drops the activation receiver
+    drop(worker);
+
+    // Now signal the stream to produce a WFT. The processing thread will process it and
+    // attempt to send activations through the closed channel.
+    notify.notify_one();
+
+    // Give the processing thread time to process and attempt the send
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    std::panic::set_hook(prev_hook);
+    assert!(
+        !panicked.load(Ordering::SeqCst),
+        "Processing thread panicked when sending to dropped activation channel (issue #692)"
+    );
 }
