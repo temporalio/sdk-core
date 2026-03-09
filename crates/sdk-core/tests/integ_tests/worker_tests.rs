@@ -3,7 +3,7 @@ use crate::{
         CoreWfStarter, activity_functions::StdActivities, fake_grpc_server::fake_server,
         get_integ_runtime_options, get_integ_server_options, get_integ_telem_options, mock_sdk_cfg,
     },
-    shared_tests,
+    shared_tests::{self, is_oversize_grpc_event},
 };
 use assert_matches::assert_matches;
 use futures_util::FutureExt;
@@ -35,14 +35,14 @@ use temporalio_common::{
             common::v1::WorkerVersionStamp,
             enums::v1::{
                 EventType,
-                WorkflowTaskFailedCause::{self, GrpcMessageTooLarge},
+                WorkflowTaskFailedCause::{self},
             },
             failure::v1::Failure as InnerFailure,
             history::v1::{
                 ActivityTaskScheduledEventAttributes,
                 history_event::{
                     self,
-                    Attributes::{self as EventAttributes, WorkflowTaskFailedEventAttributes},
+                    Attributes::{self as EventAttributes},
                 },
             },
             workflowservice::v1::{
@@ -238,7 +238,6 @@ async fn oversize_grpc_message() {
     #[workflow_methods(factory_only)]
     impl OversizeGrpcMessageWf {
         #[run]
-        #[allow(dead_code)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<Vec<u8>> {
             if ctx.state(|wf| wf.has_run.load(Relaxed)) {
                 Ok(vec![])
@@ -258,15 +257,14 @@ async fn oversize_grpc_message() {
         .await;
     core.run_until_done().await.unwrap();
 
-    assert!(starter.get_history().await.events.iter().any(|e| {
-        e.event_type == EventType::WorkflowTaskFailed as i32
-            && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-                attr.cause == GrpcMessageTooLarge as i32
-                    && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
-            } else {
-                false
-            }
-    }));
+    assert!(
+        starter
+            .get_history()
+            .await
+            .events
+            .iter()
+            .any(is_oversize_grpc_event)
+    );
 
     // Verify the workflow task failure metric includes the GrpcMessageTooLarge reason
     let tq = starter.get_task_queue();

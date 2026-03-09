@@ -163,8 +163,13 @@ Workflow code must be deterministic. This means:
 - No threading or random number generation
 - No access to system time (use `ctx.workflow_time()` instead)
 - No global mutable state
-- Future select! and join! should always used `biased` - we will provide first-class APIs in the
-  future for these purposes. All interactions with futures should be done deterministically.
+- **Do not use `tokio` or `futures` concurrency primitives directly in workflow code.** Many of them
+  (e.g. `tokio::select!`, `tokio::spawn`, `futures::select!`) introduce nondeterministic behavior
+  that will break workflow replay. Instead, use the deterministic wrappers provided in
+  `temporalio_sdk::workflows`:
+  - `select!` — deterministic select (polls in declaration order)
+  - `join!` — deterministic join for a fixed number of futures
+  - `join_all` — deterministic join for a dynamic collection of futures
 
 ### Timers
 
@@ -260,12 +265,13 @@ Workflows and activities support cancellation. Note that in an activity, you mus
 heartbeat with `ctx.record_heartbeat(...)` to receive cancellations.
 
 ```rust
+use temporalio_sdk::workflows::select;
+
 // In a workflow: wait for cancellation
 let reason = ctx.cancelled().await;
 
 // Race a timer against cancellation
-tokio::select! {
-    biased;
+select! {
     _ = ctx.timer(Duration::from_secs(60)) => { /* timer fired */ }
     reason = ctx.cancelled() => { /* workflow cancelled */ }
 }
