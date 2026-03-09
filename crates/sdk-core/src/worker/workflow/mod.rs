@@ -234,14 +234,14 @@ impl Workflows {
                         match output {
                             Ok(o) => {
                                 for fetchreq in o.fetch_histories {
-                                    fetch_tx
-                                        .send(fetchreq)
-                                        .expect("Fetch channel must not be dropped");
+                                    if fetch_tx.send(fetchreq).is_err() {
+                                        return;
+                                    }
                                 }
                                 for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
+                                    if activation_tx.send(Ok(act)).is_err() {
+                                        return;
+                                    }
                                 }
                             }
                             Err(e) => {
