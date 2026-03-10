@@ -2219,7 +2219,7 @@ mod tests {
                 nanos: 0,
             };
             let proto = ScheduleActionResult {
-                schedule_time: Some(ts.clone()),
+                schedule_time: Some(ts),
                 actual_time: Some(ts),
                 start_workflow_result: Some(ProtoWorkflowExecution {
                     workflow_id: "wf-abc".to_string(),
