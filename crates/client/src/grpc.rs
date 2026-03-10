@@ -222,7 +222,7 @@ where
 
 impl RawClientProducer for Connection {
     fn get_workers_info(&self) -> Option<Arc<ClientWorkerSet>> {
-        None
+        Some(self.workers())
     }
 
     fn workflow_client(&mut self) -> Box<dyn WorkflowService> {
@@ -2042,5 +2042,118 @@ mod tests {
         mfs.start_workflow_execution(req.into_request())
             .await
             .unwrap();
+    }
+
+    /// Tests that Connection's RawClientProducer impl correctly provides worker info
+    /// so that eager workflow start can reserve a slot and dispatch the WFT.
+    #[tokio::test]
+    async fn connection_eager_start_dispatches_wft() {
+        use crate::{
+            callback_based::{CallbackBasedGrpcService, GrpcSuccessResponse},
+            worker::{MockClientWorker, MockSlot},
+            ConnectionOptions,
+        };
+        use prost::Message;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
+
+        let dispatched = Arc::new(AtomicBool::new(false));
+        let dispatched_clone = dispatched.clone();
+
+        // Create a callback-based service that returns an eager_workflow_task in the response
+        let service_override = CallbackBasedGrpcService {
+            callback: Arc::new(|_req| {
+                Box::pin(async {
+                    let resp = StartWorkflowExecutionResponse {
+                        run_id: "test-run-id".to_string(),
+                        eager_workflow_task: Some(PollWorkflowTaskQueueResponse {
+                            task_token: vec![1, 2, 3],
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    };
+                    let proto = resp.encode_to_vec();
+                    Ok(GrpcSuccessResponse {
+                        headers: Default::default(),
+                        proto,
+                    })
+                })
+            }),
+        };
+
+        let opts = ConnectionOptions::new(
+            url::Url::parse("http://localhost:7233").unwrap(),
+        )
+        .skip_get_system_info(true)
+        .service_override(service_override)
+        .build();
+        let mut connection = crate::Connection::connect(opts).await.unwrap();
+
+        // Register a mock worker on the connection's worker set
+        let mut mock_worker = MockClientWorker::new();
+        mock_worker
+            .expect_namespace()
+            .return_const("default".to_string());
+        mock_worker
+            .expect_task_queue()
+            .return_const("test-tq".to_string());
+        mock_worker
+            .expect_deployment_options()
+            .return_const(None::<temporalio_common::worker::WorkerDeploymentOptions>);
+        mock_worker.expect_heartbeat_enabled().return_const(false);
+        let uuid = Uuid::new_v4();
+        mock_worker
+            .expect_worker_instance_key()
+            .return_const(uuid);
+        mock_worker
+            .expect_worker_task_types()
+            .return_const(WorkerTaskTypes {
+                enable_workflows: true,
+                enable_local_activities: false,
+                enable_remote_activities: false,
+                enable_nexus: false,
+            });
+
+        let mut mock_slot = MockSlot::new();
+        mock_slot.expect_schedule_wft().returning(move |_| {
+            dispatched_clone.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+        mock_worker
+            .expect_try_reserve_wft_slot()
+            .return_once(|| Some(Box::new(mock_slot)));
+
+        connection
+            .workers()
+            .register_worker(Arc::new(mock_worker), true)
+            .unwrap();
+
+        // Make an eager start_workflow_execution call through Connection
+        let req = StartWorkflowExecutionRequest {
+            namespace: "default".to_string(),
+            workflow_id: "test-wf".to_string(),
+            workflow_type: Some(
+                temporalio_common::protos::temporal::api::common::v1::WorkflowType {
+                    name: "test-workflow".to_string(),
+                },
+            ),
+            task_queue: Some(TaskQueue {
+                name: "test-tq".to_string(),
+                kind: 0,
+                normal_name: String::new(),
+            }),
+            request_eager_execution: true,
+            ..Default::default()
+        };
+
+        connection
+            .start_workflow_execution(req.into_request())
+            .await
+            .unwrap();
+
+        assert!(
+            dispatched.load(Ordering::SeqCst),
+            "Eager workflow task should have been dispatched to the worker"
+        );
     }
 }
