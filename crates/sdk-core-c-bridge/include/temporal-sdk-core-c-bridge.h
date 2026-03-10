@@ -5,13 +5,13 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-typedef enum TemporalCoreRpcService {
-  Workflow = 1,
-  Operator,
-  Cloud,
-  Test,
-  Health,
-} TemporalCoreRpcService;
+typedef enum TemporalCoreForwardedLogLevel {
+  Trace = 0,
+  Debug,
+  Info,
+  Warn,
+  Error,
+} TemporalCoreForwardedLogLevel;
 
 typedef enum TemporalCoreMetricAttributeValueType {
   String = 1,
@@ -29,14 +29,6 @@ typedef enum TemporalCoreMetricKind {
   GaugeFloat,
 } TemporalCoreMetricKind;
 
-typedef enum TemporalCoreForwardedLogLevel {
-  Trace = 0,
-  Debug,
-  Info,
-  Warn,
-  Error,
-} TemporalCoreForwardedLogLevel;
-
 typedef enum TemporalCoreOpenTelemetryMetricTemporality {
   Cumulative = 1,
   Delta,
@@ -46,6 +38,14 @@ typedef enum TemporalCoreOpenTelemetryProtocol {
   Grpc = 1,
   Http,
 } TemporalCoreOpenTelemetryProtocol;
+
+typedef enum TemporalCoreRpcService {
+  Workflow = 1,
+  Operator,
+  Cloud,
+  Test,
+  Health,
+} TemporalCoreRpcService;
 
 typedef enum TemporalCoreSlotKindType {
   WorkflowSlotKindType,

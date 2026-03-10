@@ -2049,9 +2049,9 @@ mod tests {
     #[tokio::test]
     async fn connection_eager_start_dispatches_wft() {
         use crate::{
+            ConnectionOptions,
             callback_based::{CallbackBasedGrpcService, GrpcSuccessResponse},
             worker::{MockClientWorker, MockSlot},
-            ConnectionOptions,
         };
         use prost::Message;
         use std::sync::atomic::{AtomicBool, Ordering};
@@ -2081,12 +2081,10 @@ mod tests {
             }),
         };
 
-        let opts = ConnectionOptions::new(
-            url::Url::parse("http://localhost:7233").unwrap(),
-        )
-        .skip_get_system_info(true)
-        .service_override(service_override)
-        .build();
+        let opts = ConnectionOptions::new(url::Url::parse("http://localhost:7233").unwrap())
+            .skip_get_system_info(true)
+            .service_override(service_override)
+            .build();
         let mut connection = crate::Connection::connect(opts).await.unwrap();
 
         // Register a mock worker on the connection's worker set
@@ -2102,9 +2100,7 @@ mod tests {
             .return_const(None::<temporalio_common::worker::WorkerDeploymentOptions>);
         mock_worker.expect_heartbeat_enabled().return_const(false);
         let uuid = Uuid::new_v4();
-        mock_worker
-            .expect_worker_instance_key()
-            .return_const(uuid);
+        mock_worker.expect_worker_instance_key().return_const(uuid);
         mock_worker
             .expect_worker_task_types()
             .return_const(WorkerTaskTypes {
