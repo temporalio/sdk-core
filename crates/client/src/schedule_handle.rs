@@ -3,11 +3,8 @@ use std::time::{Duration, SystemTime};
 use temporalio_common::protos::{
     proto_ts_to_system_time,
     temporal::api::{
-        common::v1 as common_proto,
-        schedule::v1 as schedule_proto,
-        taskqueue::v1 as taskqueue_proto,
-        workflow::v1 as workflow_proto,
-        workflowservice::v1::*,
+        common::v1 as common_proto, schedule::v1 as schedule_proto,
+        taskqueue::v1 as taskqueue_proto, workflow::v1 as workflow_proto, workflowservice::v1::*,
     },
 };
 use tonic::IntoRequest;
@@ -742,10 +739,7 @@ where
     }
 
     /// Request backfill of missed runs.
-    pub async fn backfill(
-        &self,
-        backfills: Vec<ScheduleBackfill>,
-    ) -> Result<(), ScheduleError> {
+    pub async fn backfill(&self, backfills: Vec<ScheduleBackfill>) -> Result<(), ScheduleError> {
         let backfill_requests: Vec<schedule_proto::BackfillRequest> = backfills
             .into_iter()
             .map(|b| schedule_proto::BackfillRequest {

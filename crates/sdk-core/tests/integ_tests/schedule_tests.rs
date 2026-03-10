@@ -23,9 +23,11 @@ fn simple_action() -> ScheduleAction {
 
 fn hourly_spec() -> ScheduleSpec {
     ScheduleSpec::builder()
-        .intervals(vec![ScheduleIntervalSpec::builder()
-            .every(Duration::from_secs(3600))
-            .build()])
+        .intervals(vec![
+            ScheduleIntervalSpec::builder()
+                .every(Duration::from_secs(3600))
+                .build(),
+        ])
         .build()
 }
 
@@ -67,9 +69,7 @@ async fn create_schedule_with_calendar_spec() {
     let schedule_id = test_schedule_id("calendar");
 
     let spec = ScheduleSpec::builder()
-        .calendars(vec![ScheduleCalendarSpec::builder()
-            .hour("2-7")
-            .build()])
+        .calendars(vec![ScheduleCalendarSpec::builder().hour("2-7").build()])
         .build();
 
     let handle = client
@@ -135,7 +135,10 @@ async fn update_schedule() {
         .await
         .unwrap();
 
-    handle.update(|u| u.set_note("updated notes")).await.unwrap();
+    handle
+        .update(|u| u.set_note("updated notes"))
+        .await
+        .unwrap();
 
     let desc = handle.describe().await.unwrap();
     assert_eq!(desc.notes(), Some("updated notes"));
@@ -200,11 +203,13 @@ async fn backfill_schedule() {
     let now = SystemTime::now();
     let two_hours_ago = now - Duration::from_secs(7200);
     handle
-        .backfill(vec![ScheduleBackfill::builder()
-            .start_time(two_hours_ago)
-            .end_time(now)
-            .overlap_policy(ScheduleOverlapPolicy::AllowAll)
-            .build()])
+        .backfill(vec![
+            ScheduleBackfill::builder()
+                .start_time(two_hours_ago)
+                .end_time(now)
+                .overlap_policy(ScheduleOverlapPolicy::AllowAll)
+                .build(),
+        ])
         .await
         .unwrap();
 
