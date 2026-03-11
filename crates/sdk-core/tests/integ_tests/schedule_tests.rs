@@ -2,7 +2,7 @@ use crate::common::{NAMESPACE, eventually, get_integ_client, rand_6_chars};
 use std::time::{Duration, SystemTime};
 use temporalio_client::{
     CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleBackfill,
-    ScheduleCalendarSpec, ScheduleIntervalSpec, ScheduleOverlapPolicy, ScheduleSpec,
+    ScheduleCalendarSpec, ScheduleOverlapPolicy, ScheduleSpec,
 };
 
 async fn test_client() -> temporalio_client::Client {
@@ -22,13 +22,7 @@ fn simple_action() -> ScheduleAction {
 }
 
 fn hourly_spec() -> ScheduleSpec {
-    ScheduleSpec::builder()
-        .intervals(vec![
-            ScheduleIntervalSpec::builder()
-                .every(Duration::from_secs(3600))
-                .build(),
-        ])
-        .build()
+    ScheduleSpec::from_interval(Duration::from_secs(3600))
 }
 
 fn paused_opts(note: &str) -> CreateScheduleOptions {
@@ -68,9 +62,7 @@ async fn create_schedule_with_calendar_spec() {
     let client = test_client().await;
     let schedule_id = test_schedule_id("calendar");
 
-    let spec = ScheduleSpec::builder()
-        .calendars(vec![ScheduleCalendarSpec::builder().hour("2-7").build()])
-        .build();
+    let spec = ScheduleSpec::from_calendar(ScheduleCalendarSpec::builder().hour("2-7").build());
 
     let handle = client
         .create_schedule(
