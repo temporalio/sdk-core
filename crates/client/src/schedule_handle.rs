@@ -100,6 +100,22 @@ pub struct ScheduleSpec {
 }
 
 impl ScheduleSpec {
+    /// Create a spec that triggers on a single interval.
+    pub fn from_interval(every: Duration) -> Self {
+        Self {
+            intervals: vec![every.into()],
+            calendars: vec![],
+        }
+    }
+
+    /// Create a spec that triggers on a single calendar schedule.
+    pub fn from_calendar(calendar: ScheduleCalendarSpec) -> Self {
+        Self {
+            intervals: vec![],
+            calendars: vec![calendar],
+        }
+    }
+
     pub(crate) fn into_proto(self) -> schedule_proto::ScheduleSpec {
         schedule_proto::ScheduleSpec {
             interval: self.intervals.into_iter().map(Into::into).collect(),
@@ -110,12 +126,28 @@ impl ScheduleSpec {
 }
 
 /// An interval-based schedule trigger.
-#[derive(Debug, Clone, bon::Builder)]
+#[derive(Debug, Clone)]
 pub struct ScheduleIntervalSpec {
     /// How often the action should repeat.
     pub every: Duration,
     /// Fixed offset added to each interval.
     pub offset: Option<Duration>,
+}
+
+impl ScheduleIntervalSpec {
+    /// Create an interval with an optional offset.
+    pub fn new(every: Duration, offset: Option<Duration>) -> Self {
+        Self { every, offset }
+    }
+}
+
+impl From<Duration> for ScheduleIntervalSpec {
+    fn from(every: Duration) -> Self {
+        Self {
+            every,
+            offset: None,
+        }
+    }
 }
 
 impl From<ScheduleIntervalSpec> for schedule_proto::IntervalSpec {
