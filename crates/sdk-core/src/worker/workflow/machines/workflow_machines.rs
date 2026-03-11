@@ -902,7 +902,8 @@ impl WorkflowMachines {
             self.history_size_bytes = u64::try_from(attrs.history_size_bytes).unwrap_or_default();
             self.continue_as_new_suggested = attrs.suggest_continue_as_new;
             self.suggest_continue_as_new_reasons = attrs.suggest_continue_as_new_reasons.clone();
-            self.target_worker_deployment_version_changed = attrs.target_worker_deployment_version_changed;
+            self.target_worker_deployment_version_changed =
+                attrs.target_worker_deployment_version_changed;
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
