@@ -130,6 +130,8 @@ pub(crate) struct WorkflowMachines {
     continue_as_new_suggested: bool,
     /// Set on each WFT started event
     suggest_continue_as_new_reasons: Vec<i32>,
+    /// Set on each WFT started event
+    target_worker_deployment_version_changed: bool,
     /// Set if the current WFT is already complete and that completion event had legacy build-id
     /// or a deployment version in it. Will use an empty deployment name if it's legacy build-id.
     current_wft_deployment_info: Option<WorkerDeploymentVersion>,
@@ -295,6 +297,7 @@ impl WorkflowMachines {
             history_size_bytes: 0,
             continue_as_new_suggested: false,
             suggest_continue_as_new_reasons: Default::default(),
+            target_worker_deployment_version_changed: false,
             current_wft_deployment_info: None,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
@@ -477,6 +480,7 @@ impl WorkflowMachines {
                 .unwrap_or_default()
                 .to_owned(),
             suggest_continue_as_new_reasons: self.suggest_continue_as_new_reasons.clone(),
+            target_worker_deployment_version_changed: self.target_worker_deployment_version_changed,
         }
     }
 
@@ -898,6 +902,7 @@ impl WorkflowMachines {
             self.history_size_bytes = u64::try_from(attrs.history_size_bytes).unwrap_or_default();
             self.continue_as_new_suggested = attrs.suggest_continue_as_new;
             self.suggest_continue_as_new_reasons = attrs.suggest_continue_as_new_reasons.clone();
+            self.target_worker_deployment_version_changed = attrs.target_worker_deployment_version_changed;
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
