@@ -1,5 +1,4 @@
 use crate::{NamespacedClient, grpc::WorkflowService};
-use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
@@ -47,9 +46,7 @@ pub struct CreateScheduleOptions {
 }
 
 /// The action a schedule should perform on each trigger.
-// TODO: The proto supports other action types beyond StartWorkflow. Other SDKs
-// (Ruby, TypeScript) currently only support StartWorkflow as well. Add support
-// for additional action types as they become available.
+// TODO: The proto supports other action types beyond StartWorkflow.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub enum ScheduleAction {
@@ -293,9 +290,9 @@ pub struct ScheduleRecentAction {
     pub schedule_time: Option<SystemTime>,
     /// When this action actually occurred.
     pub actual_time: Option<SystemTime>,
-    /// Workflow ID of the started workflow, if any.
+    /// Workflow ID of the started workflow.
     pub workflow_id: String,
-    /// Run ID of the started workflow, if any.
+    /// Run ID of the started workflow.
     pub run_id: String,
 }
 
@@ -311,17 +308,15 @@ pub struct ScheduleRunningAction {
 
 impl From<&schedule_proto::ScheduleActionResult> for ScheduleRecentAction {
     fn from(a: &schedule_proto::ScheduleActionResult) -> Self {
+        let workflow_result = a
+            .start_workflow_result
+            .as_ref()
+            .expect("unsupported schedule action: start_workflow_result should be present");
         ScheduleRecentAction {
             schedule_time: a.schedule_time.as_ref().and_then(proto_ts_to_system_time),
             actual_time: a.actual_time.as_ref().and_then(proto_ts_to_system_time),
-            workflow_id: a
-                .start_workflow_result
-                .as_ref()
-                .map_or_else(String::new, |w| w.workflow_id.clone()),
-            run_id: a
-                .start_workflow_result
-                .as_ref()
-                .map_or_else(String::new, |w| w.run_id.clone()),
+            workflow_id: workflow_result.workflow_id.clone(),
+            run_id: workflow_result.run_id.clone(),
         }
     }
 }
@@ -364,27 +359,22 @@ impl ScheduleDescription {
 
     /// Total number of actions taken by this schedule.
     pub fn action_count(&self) -> i64 {
-        self.raw.info.as_ref().map_or(0, |i| i.action_count)
+        self.info().map_or(0, |i| i.action_count)
     }
 
     /// Number of times a scheduled action was skipped due to missing the catchup window.
     pub fn missed_catchup_window(&self) -> i64 {
-        self.raw
-            .info
-            .as_ref()
-            .map_or(0, |i| i.missed_catchup_window)
+        self.info().map_or(0, |i| i.missed_catchup_window)
     }
 
     /// Number of skipped actions due to overlap.
     pub fn overlap_skipped(&self) -> i64 {
-        self.raw.info.as_ref().map_or(0, |i| i.overlap_skipped)
+        self.info().map_or(0, |i| i.overlap_skipped)
     }
 
     /// Most recent action results (up to 10).
     pub fn recent_actions(&self) -> Vec<ScheduleRecentAction> {
-        self.raw
-            .info
-            .as_ref()
+        self.info()
             .map(|i| {
                 i.recent_actions
                     .iter()
@@ -396,9 +386,7 @@ impl ScheduleDescription {
 
     /// Currently-running workflows started by this schedule.
     pub fn running_actions(&self) -> Vec<ScheduleRunningAction> {
-        self.raw
-            .info
-            .as_ref()
+        self.info()
             .map(|i| {
                 i.running_workflows
                     .iter()
@@ -413,9 +401,7 @@ impl ScheduleDescription {
 
     /// Next scheduled action times.
     pub fn future_action_times(&self) -> Vec<SystemTime> {
-        self.raw
-            .info
-            .as_ref()
+        self.info()
             .map(|i| {
                 i.future_action_times
                     .iter()
@@ -427,20 +413,26 @@ impl ScheduleDescription {
 
     /// When the schedule was created.
     pub fn create_time(&self) -> Option<SystemTime> {
-        self.raw
-            .info
-            .as_ref()
+        self.info()
             .and_then(|i| i.create_time.as_ref())
             .and_then(proto_ts_to_system_time)
     }
 
     /// When the schedule was last updated.
     pub fn update_time(&self) -> Option<SystemTime> {
-        self.raw
-            .info
-            .as_ref()
+        self.info()
             .and_then(|i| i.update_time.as_ref())
             .and_then(proto_ts_to_system_time)
+    }
+
+    /// Memo attached to the schedule.
+    pub fn memo(&self) -> Option<&common_proto::Memo> {
+        self.raw.memo.as_ref()
+    }
+
+    /// Search attributes on the schedule.
+    pub fn search_attributes(&self) -> Option<&common_proto::SearchAttributes> {
+        self.raw.search_attributes.as_ref()
     }
 
     /// Access the raw proto for additional fields not exposed via accessors.
@@ -448,15 +440,13 @@ impl ScheduleDescription {
         &self.raw
     }
 
-    /// Access the raw proto mutably for modification (e.g., before calling
-    /// [`into_update()`](Self::into_update)).
-    pub fn raw_mut(&mut self) -> &mut DescribeScheduleResponse {
-        &mut self.raw
-    }
-
     /// Consume the wrapper and return the raw proto.
     pub fn into_raw(self) -> DescribeScheduleResponse {
         self.raw
+    }
+
+    fn info(&self) -> Option<&schedule_proto::ScheduleInfo> {
+        self.raw.info.as_ref()
     }
 
     /// Convert this description into a [`ScheduleUpdate`] for use with
@@ -588,14 +578,26 @@ impl ScheduleUpdate {
         self
     }
 
-    /// Access the raw schedule proto for fields not covered by setters.
-    pub fn raw(&self) -> &schedule_proto::Schedule {
-        &self.schedule
+    /// Limit the schedule to a fixed number of remaining actions, after which
+    /// it stops triggering. Passing `None` removes the limit.
+    pub fn set_remaining_actions(&mut self, count: Option<i64>) -> &mut Self {
+        let state = self.state_mut();
+        match count {
+            Some(n) => {
+                state.limited_actions = true;
+                state.remaining_actions = n;
+            }
+            None => {
+                state.limited_actions = false;
+                state.remaining_actions = 0;
+            }
+        }
+        self
     }
 
-    /// Access the raw schedule proto mutably for fields not covered by setters.
-    pub fn raw_mut(&mut self) -> &mut schedule_proto::Schedule {
-        &mut self.schedule
+    /// Access the raw schedule proto.
+    pub fn raw(&self) -> &schedule_proto::Schedule {
+        &self.schedule
     }
 
     /// Consume and return the raw schedule proto.
@@ -677,6 +679,16 @@ impl ScheduleSummary {
             .unwrap_or_default()
     }
 
+    /// Memo attached to the schedule.
+    pub fn memo(&self) -> Option<&common_proto::Memo> {
+        self.raw.memo.as_ref()
+    }
+
+    /// Search attributes on the schedule.
+    pub fn search_attributes(&self) -> Option<&common_proto::SearchAttributes> {
+        self.raw.search_attributes.as_ref()
+    }
+
     /// Access the raw proto for additional fields not exposed via accessors.
     pub fn raw(&self) -> &schedule_proto::ScheduleListEntry {
         &self.raw
@@ -701,20 +713,12 @@ impl From<schedule_proto::ScheduleListEntry> for ScheduleSummary {
 /// Handle to an existing schedule. Obtained from
 /// [`Client::create_schedule`](crate::Client::create_schedule) or
 /// [`Client::get_schedule_handle`](crate::Client::get_schedule_handle).
-#[derive(Clone)]
+#[derive(Clone, derive_more::Debug)]
 pub struct ScheduleHandle<CT> {
+    #[debug(skip)]
     client: CT,
     namespace: String,
     schedule_id: String,
-}
-
-impl<CT> fmt::Debug for ScheduleHandle<CT> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ScheduleHandle")
-            .field("namespace", &self.namespace)
-            .field("schedule_id", &self.schedule_id)
-            .finish()
-    }
 }
 
 impl<CT> ScheduleHandle<CT>
@@ -819,15 +823,15 @@ where
     /// Pause the schedule with an optional note.
     ///
     /// If `note` is `None`, a default note is used.
-    pub async fn pause(&self, note: Option<&str>) -> Result<(), ScheduleError> {
-        let note = note.unwrap_or("Paused via Rust SDK");
+    pub async fn pause(&self, note: Option<impl Into<String>>) -> Result<(), ScheduleError> {
+        let note = note.map_or_else(|| "Paused via Rust SDK".to_string(), |s| s.into());
         WorkflowService::patch_schedule(
             &mut self.client.clone(),
             PatchScheduleRequest {
                 namespace: self.namespace.clone(),
                 schedule_id: self.schedule_id.clone(),
                 patch: Some(schedule_proto::SchedulePatch {
-                    pause: note.to_string(),
+                    pause: note,
                     ..Default::default()
                 }),
                 identity: self.client.identity(),
@@ -842,15 +846,15 @@ where
     /// Unpause the schedule with an optional note.
     ///
     /// If `note` is `None`, a default note is used.
-    pub async fn unpause(&self, note: Option<&str>) -> Result<(), ScheduleError> {
-        let note = note.unwrap_or("Unpaused via Rust SDK");
+    pub async fn unpause(&self, note: Option<impl Into<String>>) -> Result<(), ScheduleError> {
+        let note = note.map_or_else(|| "Unpaused via Rust SDK".to_string(), |s| s.into());
         WorkflowService::patch_schedule(
             &mut self.client.clone(),
             PatchScheduleRequest {
                 namespace: self.namespace.clone(),
                 schedule_id: self.schedule_id.clone(),
                 patch: Some(schedule_proto::SchedulePatch {
-                    unpause: note.to_string(),
+                    unpause: note,
                     ..Default::default()
                 }),
                 identity: self.client.identity(),
