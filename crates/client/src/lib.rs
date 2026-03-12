@@ -36,8 +36,8 @@ pub use options_structs::*;
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use schedule_handle::{
-    CreateScheduleOptions, ListSchedulesOptions, ListSchedulesPage, ScheduleAction,
-    ScheduleBackfill, ScheduleCalendarSpec, ScheduleDescription, ScheduleError, ScheduleHandle,
+    CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleBackfill,
+    ScheduleCalendarSpec, ScheduleDescription, ScheduleError, ScheduleHandle,
     ScheduleIntervalSpec, ScheduleOverlapPolicy, ScheduleRecentAction, ScheduleRunningAction,
     ScheduleSpec, ScheduleSummary, ScheduleUpdate,
 };
@@ -762,31 +762,34 @@ impl Client {
         ScheduleHandle::new(self.clone(), self.namespace(), schedule_id.into())
     }
 
-    /// List schedules, returning a single page of results.
+    /// List all schedules matching the query, auto-paginating through results.
     pub async fn list_schedules(
         &self,
         opts: ListSchedulesOptions,
-    ) -> Result<ListSchedulesPage, ScheduleError> {
-        let resp = WorkflowService::list_schedules(
-            &mut self.clone(),
-            ListSchedulesRequest {
-                namespace: self.namespace(),
-                maximum_page_size: opts.maximum_page_size,
-                query: opts.query,
-                ..Default::default()
+    ) -> Result<Vec<ScheduleSummary>, ScheduleError> {
+        let mut all_schedules = Vec::new();
+        let mut next_page_token = Vec::new();
+        loop {
+            let resp = WorkflowService::list_schedules(
+                &mut self.clone(),
+                ListSchedulesRequest {
+                    namespace: self.namespace(),
+                    maximum_page_size: opts.maximum_page_size,
+                    query: opts.query.clone(),
+                    next_page_token: next_page_token.clone(),
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await?
+            .into_inner();
+            all_schedules.extend(resp.schedules.into_iter().map(ScheduleSummary::from));
+            if resp.next_page_token.is_empty() {
+                break;
             }
-            .into_request(),
-        )
-        .await?
-        .into_inner();
-        Ok(ListSchedulesPage {
-            schedules: resp
-                .schedules
-                .into_iter()
-                .map(ScheduleSummary::from)
-                .collect(),
-            next_page_token: resp.next_page_token,
-        })
+            next_page_token = resp.next_page_token;
+        }
+        Ok(all_schedules)
     }
 }
 
@@ -1810,8 +1813,8 @@ mod tests {
         #[test]
         fn handle_exposes_namespace_and_schedule_id() {
             let handle = make_handle(MockScheduleClient::default());
-            assert_eq!(handle.namespace, "test-namespace");
-            assert_eq!(handle.schedule_id, "test-schedule-id");
+            assert_eq!(handle.namespace(), "test-namespace");
+            assert_eq!(handle.schedule_id(), "test-schedule-id");
         }
 
         #[tokio::test]
@@ -1912,19 +1915,17 @@ mod tests {
             let handle = make_handle(client.clone());
 
             let now = SystemTime::now();
-            let backfills = vec![
-                ScheduleBackfill::builder()
-                    .start_time(now)
-                    .end_time(now)
-                    .overlap_policy(ScheduleOverlapPolicy::Skip)
-                    .build(),
-                ScheduleBackfill::builder()
-                    .start_time(now)
-                    .end_time(now)
-                    .overlap_policy(ScheduleOverlapPolicy::BufferOne)
-                    .build(),
-            ];
-            handle.backfill(backfills).await.unwrap();
+            handle
+                .backfill(vec![
+                    ScheduleBackfill::new(now, now)
+                        .overlap_policy(ScheduleOverlapPolicy::Skip)
+                        .build(),
+                    ScheduleBackfill::new(now, now)
+                        .overlap_policy(ScheduleOverlapPolicy::BufferOne)
+                        .build(),
+                ])
+                .await
+                .unwrap();
 
             assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
         }
@@ -2045,7 +2046,7 @@ mod tests {
             let desc = handle.describe().await.unwrap();
 
             assert!(desc.paused());
-            assert_eq!(desc.notes(), Some("maintenance window"));
+            assert_eq!(desc.note(), Some("maintenance window"));
             assert_eq!(desc.action_count(), 42);
             assert_eq!(desc.missed_catchup_window(), 3);
             assert_eq!(desc.overlap_skipped(), 5);
@@ -2072,7 +2073,7 @@ mod tests {
             let desc = handle.describe().await.unwrap();
 
             assert!(!desc.paused());
-            assert_eq!(desc.notes(), None);
+            assert_eq!(desc.note(), None);
             assert_eq!(desc.action_count(), 0);
             assert_eq!(desc.missed_catchup_window(), 0);
             assert_eq!(desc.overlap_skipped(), 0);
@@ -2114,7 +2115,7 @@ mod tests {
             assert!(summary.raw().memo.is_some());
             assert!(summary.raw().search_attributes.is_some());
             assert_eq!(summary.workflow_type(), Some("MyWorkflow"));
-            assert_eq!(summary.notes(), Some("some note"));
+            assert_eq!(summary.note(), Some("some note"));
             assert!(summary.paused());
             assert_eq!(summary.recent_actions().len(), 1);
             assert_eq!(summary.future_action_times().len(), 1);
@@ -2132,7 +2133,7 @@ mod tests {
             assert!(summary.raw().memo.is_none());
             assert!(summary.raw().search_attributes.is_none());
             assert_eq!(summary.workflow_type(), None);
-            assert_eq!(summary.notes(), None);
+            assert_eq!(summary.note(), None);
             assert!(!summary.paused());
             assert!(summary.recent_actions().is_empty());
             assert!(summary.future_action_times().is_empty());
@@ -2244,17 +2245,6 @@ mod tests {
             assert!(action.actual_time.is_none());
             assert_eq!(action.workflow_id, "");
             assert_eq!(action.run_id, "");
-        }
-
-        #[test]
-        fn overlap_policy_i32_values() {
-            assert_eq!(ScheduleOverlapPolicy::Unspecified as i32, 0);
-            assert_eq!(ScheduleOverlapPolicy::Skip as i32, 1);
-            assert_eq!(ScheduleOverlapPolicy::BufferOne as i32, 2);
-            assert_eq!(ScheduleOverlapPolicy::BufferAll as i32, 3);
-            assert_eq!(ScheduleOverlapPolicy::CancelOther as i32, 4);
-            assert_eq!(ScheduleOverlapPolicy::TerminateOther as i32, 5);
-            assert_eq!(ScheduleOverlapPolicy::AllowAll as i32, 6);
         }
 
         #[test]

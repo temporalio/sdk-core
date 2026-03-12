@@ -9,49 +9,29 @@ async fn test_client() -> temporalio_client::Client {
     get_integ_client(NAMESPACE.to_string(), None).await
 }
 
-fn test_schedule_id(label: &str) -> String {
-    format!("sched-{label}-{}", rand_6_chars())
-}
-
-fn simple_action() -> ScheduleAction {
-    ScheduleAction::start_workflow(
-        "NoSuchWorkflow",
-        format!("sched-tq-{}", rand_6_chars()),
-        format!("sched-wf-{}", rand_6_chars()),
-    )
-}
-
-fn hourly_spec() -> ScheduleSpec {
-    ScheduleSpec::from_interval(Duration::from_secs(3600))
-}
-
-fn paused_opts(note: &str) -> CreateScheduleOptions {
-    CreateScheduleOptions::builder()
-        .paused(true)
-        .note(note)
-        .build()
-}
-
 #[tokio::test]
 async fn create_and_describe_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("create-describe");
+    let schedule_id = format!("sched-create-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("created paused for testing"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder()
+                .paused(true)
+                .note("created paused for testing")
+                .build(),
         )
         .await
         .unwrap();
 
-    assert_eq!(handle.schedule_id, schedule_id);
+    assert_eq!(handle.schedule_id(), schedule_id);
 
     let desc = handle.describe().await.unwrap();
     assert!(desc.paused());
-    assert_eq!(desc.notes(), Some("created paused for testing"));
+    assert_eq!(desc.note(), Some("created paused for testing"));
     assert!(!desc.conflict_token().is_empty());
 
     handle.delete().await.unwrap();
@@ -60,16 +40,14 @@ async fn create_and_describe_schedule() {
 #[tokio::test]
 async fn create_schedule_with_calendar_spec() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("calendar");
-
-    let spec = ScheduleSpec::from_calendar(ScheduleCalendarSpec::builder().hour("2-7").build());
+    let schedule_id = format!("sched-calendar-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            spec,
-            paused_opts("calendar test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_calendar(ScheduleCalendarSpec::builder().hour("2-7").build()),
+            CreateScheduleOptions::builder().paused(true).build(),
         )
         .await
         .unwrap();
@@ -84,13 +62,13 @@ async fn create_schedule_with_calendar_spec() {
 #[tokio::test]
 async fn pause_and_unpause_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("pause-unpause");
+    let schedule_id = format!("sched-pause-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
             CreateScheduleOptions::default(),
         )
         .await
@@ -99,15 +77,15 @@ async fn pause_and_unpause_schedule() {
     let desc = handle.describe().await.unwrap();
     assert!(!desc.paused());
 
-    handle.pause("pausing for test").await.unwrap();
+    handle.pause("pausing for maintenance").await.unwrap();
     let desc = handle.describe().await.unwrap();
     assert!(desc.paused());
-    assert_eq!(desc.notes(), Some("pausing for test"));
+    assert_eq!(desc.note(), Some("pausing for maintenance"));
 
-    handle.unpause("resuming").await.unwrap();
+    handle.unpause("maintenance complete").await.unwrap();
     let desc = handle.describe().await.unwrap();
     assert!(!desc.paused());
-    assert_eq!(desc.notes(), Some("resuming"));
+    assert_eq!(desc.note(), Some("maintenance complete"));
 
     handle.delete().await.unwrap();
 }
@@ -115,14 +93,17 @@ async fn pause_and_unpause_schedule() {
 #[tokio::test]
 async fn update_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("update");
+    let schedule_id = format!("sched-update-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("before update"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder()
+                .paused(true)
+                .note("before update")
+                .build(),
         )
         .await
         .unwrap();
@@ -133,7 +114,7 @@ async fn update_schedule() {
         .unwrap();
 
     let desc = handle.describe().await.unwrap();
-    assert_eq!(desc.notes(), Some("updated notes"));
+    assert_eq!(desc.note(), Some("updated notes"));
 
     handle.delete().await.unwrap();
 }
@@ -141,14 +122,14 @@ async fn update_schedule() {
 #[tokio::test]
 async fn trigger_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("trigger");
+    let schedule_id = format!("sched-trigger-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("trigger test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder().paused(true).build(),
         )
         .await
         .unwrap();
@@ -180,14 +161,14 @@ async fn trigger_schedule() {
 #[tokio::test]
 async fn backfill_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("backfill");
+    let schedule_id = format!("sched-backfill-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("backfill test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder().paused(true).build(),
         )
         .await
         .unwrap();
@@ -195,13 +176,9 @@ async fn backfill_schedule() {
     let now = SystemTime::now();
     let two_hours_ago = now - Duration::from_secs(7200);
     handle
-        .backfill(vec![
-            ScheduleBackfill::builder()
-                .start_time(two_hours_ago)
-                .end_time(now)
-                .overlap_policy(ScheduleOverlapPolicy::AllowAll)
-                .build(),
-        ])
+        .backfill([ScheduleBackfill::new(two_hours_ago, now)
+            .overlap_policy(ScheduleOverlapPolicy::AllowAll)
+            .build()])
         .await
         .unwrap();
 
@@ -211,18 +188,19 @@ async fn backfill_schedule() {
 #[tokio::test]
 async fn delete_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("delete");
+    let schedule_id = format!("sched-delete-{}", rand_6_chars());
 
-    let handle = client
+    client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("delete test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder().paused(true).build(),
         )
         .await
         .unwrap();
 
+    let handle = client.get_schedule_handle(&schedule_id);
     handle.delete().await.unwrap();
 
     let err = handle.describe().await.unwrap_err();
@@ -232,14 +210,14 @@ async fn delete_schedule() {
 #[tokio::test]
 async fn get_schedule_handle_for_existing_schedule() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("get-handle");
+    let schedule_id = format!("sched-handle-{}", rand_6_chars());
 
     client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("get handle test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder().paused(true).build(),
         )
         .await
         .unwrap();
@@ -264,9 +242,9 @@ async fn list_schedules() {
         client
             .create_schedule(
                 &schedule_id,
-                simple_action(),
-                hourly_spec(),
-                paused_opts("list test"),
+                ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+                ScheduleSpec::from_interval(Duration::from_secs(3600)),
+                CreateScheduleOptions::builder().paused(true).build(),
             )
             .await
             .unwrap();
@@ -277,12 +255,11 @@ async fn list_schedules() {
             let client = client.clone();
             let expected = schedule_ids.clone();
             async move {
-                let page = client
+                let schedules = client
                     .list_schedules(ListSchedulesOptions::default())
                     .await
                     .map_err(|e| e.to_string())?;
-                let found: Vec<_> = page
-                    .schedules
+                let found: Vec<_> = schedules
                     .iter()
                     .filter(|s| expected.contains(&s.schedule_id().to_string()))
                     .map(|s| s.schedule_id().to_string())
@@ -313,14 +290,17 @@ async fn list_schedules() {
 #[tokio::test]
 async fn describe_accessors_match_created_values() {
     let client = test_client().await;
-    let schedule_id = test_schedule_id("accessors");
+    let schedule_id = format!("sched-accessors-{}", rand_6_chars());
 
     let handle = client
         .create_schedule(
             &schedule_id,
-            simple_action(),
-            hourly_spec(),
-            paused_opts("accessors test"),
+            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
+            ScheduleSpec::from_interval(Duration::from_secs(3600)),
+            CreateScheduleOptions::builder()
+                .paused(true)
+                .note("accessors test")
+                .build(),
         )
         .await
         .unwrap();
@@ -328,7 +308,7 @@ async fn describe_accessors_match_created_values() {
     let desc = handle.describe().await.unwrap();
 
     assert!(desc.paused());
-    assert_eq!(desc.notes(), Some("accessors test"));
+    assert_eq!(desc.note(), Some("accessors test"));
     assert_eq!(desc.action_count(), 0);
     assert_eq!(desc.missed_catchup_window(), 0);
     assert_eq!(desc.overlap_skipped(), 0);
