@@ -1,4 +1,5 @@
 use crate::common::{NAMESPACE, eventually, get_integ_client, rand_6_chars};
+use futures::TryStreamExt;
 use std::time::{Duration, SystemTime};
 use temporalio_client::{
     CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleBackfill,
@@ -255,8 +256,9 @@ async fn list_schedules() {
             let client = client.clone();
             let expected = schedule_ids.clone();
             async move {
-                let schedules = client
+                let schedules: Vec<_> = client
                     .list_schedules(ListSchedulesOptions::default())
+                    .try_collect()
                     .await
                     .map_err(|e| e.to_string())?;
                 let found: Vec<_> = schedules
