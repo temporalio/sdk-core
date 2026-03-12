@@ -36,8 +36,8 @@ pub use options_structs::*;
 pub use replaceable::SharedReplaceableClient;
 pub use retry::RetryOptions;
 pub use schedule_handle::{
-    CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleBackfill,
-    ScheduleCalendarSpec, ScheduleDescription, ScheduleError, ScheduleHandle,
+    CreateScheduleOptions, ListSchedulesOptions, ListSchedulesStream, ScheduleAction,
+    ScheduleBackfill, ScheduleCalendarSpec, ScheduleDescription, ScheduleError, ScheduleHandle,
     ScheduleIntervalSpec, ScheduleOverlapPolicy, ScheduleRecentAction, ScheduleRunningAction,
     ScheduleSpec, ScheduleSummary, ScheduleUpdate,
 };
@@ -762,34 +762,65 @@ impl Client {
         ScheduleHandle::new(self.clone(), self.namespace(), schedule_id.into())
     }
 
-    /// List all schedules matching the query, auto-paginating through results.
-    pub async fn list_schedules(
-        &self,
-        opts: ListSchedulesOptions,
-    ) -> Result<Vec<ScheduleSummary>, ScheduleError> {
-        let mut all_schedules = Vec::new();
-        let mut next_page_token = Vec::new();
-        loop {
-            let resp = WorkflowService::list_schedules(
-                &mut self.clone(),
-                ListSchedulesRequest {
-                    namespace: self.namespace(),
-                    maximum_page_size: opts.maximum_page_size,
-                    query: opts.query.clone(),
-                    next_page_token: next_page_token.clone(),
-                    ..Default::default()
+    /// List schedules matching the query, returning a stream that lazily
+    /// paginates through results.
+    pub fn list_schedules(&self, opts: ListSchedulesOptions) -> ListSchedulesStream {
+        let client = self.clone();
+        let namespace = self.namespace();
+        let query = opts.query;
+        let page_size = opts.maximum_page_size;
+
+        let stream = stream::unfold(
+            (Vec::new(), VecDeque::new(), false),
+            move |(next_page_token, mut buffer, exhausted)| {
+                let mut client = client.clone();
+                let namespace = namespace.clone();
+                let query = query.clone();
+
+                async move {
+                    if let Some(item) = buffer.pop_front() {
+                        return Some((Ok(item), (next_page_token, buffer, exhausted)));
+                    }
+
+                    if exhausted {
+                        return None;
+                    }
+
+                    let response = WorkflowService::list_schedules(
+                        &mut client,
+                        ListSchedulesRequest {
+                            namespace,
+                            maximum_page_size: page_size,
+                            next_page_token: next_page_token.clone(),
+                            query,
+                        }
+                        .into_request(),
+                    )
+                    .await;
+
+                    match response {
+                        Ok(resp) => {
+                            let resp = resp.into_inner();
+                            let new_exhausted = resp.next_page_token.is_empty();
+                            let new_token = resp.next_page_token;
+
+                            buffer = resp
+                                .schedules
+                                .into_iter()
+                                .map(ScheduleSummary::from)
+                                .collect();
+
+                            buffer
+                                .pop_front()
+                                .map(|item| (Ok(item), (new_token, buffer, new_exhausted)))
+                        }
+                        Err(e) => Some((Err(e.into()), (next_page_token, buffer, true))),
+                    }
                 }
-                .into_request(),
-            )
-            .await?
-            .into_inner();
-            all_schedules.extend(resp.schedules.into_iter().map(ScheduleSummary::from));
-            if resp.next_page_token.is_empty() {
-                break;
-            }
-            next_page_token = resp.next_page_token;
-        }
-        Ok(all_schedules)
+            },
+        );
+
+        ListSchedulesStream::new(Box::pin(stream))
     }
 }
 

@@ -1,5 +1,7 @@
 use crate::{NamespacedClient, grpc::WorkflowService};
 use std::fmt;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::{Duration, SystemTime};
 use temporalio_common::protos::{
     proto_ts_to_system_time,
@@ -219,6 +221,30 @@ pub struct ListSchedulesOptions {
     /// Query filter string.
     #[builder(default)]
     pub query: String,
+}
+
+/// A stream of schedule summaries from a list operation.
+/// Internally paginates through results from the server.
+pub struct ListSchedulesStream {
+    inner: Pin<Box<dyn futures_util::Stream<Item = Result<ScheduleSummary, ScheduleError>> + Send>>,
+}
+
+impl ListSchedulesStream {
+    pub(crate) fn new(
+        inner: Pin<
+            Box<dyn futures_util::Stream<Item = Result<ScheduleSummary, ScheduleError>> + Send>,
+        >,
+    ) -> Self {
+        Self { inner }
+    }
+}
+
+impl futures_util::Stream for ListSchedulesStream {
+    type Item = Result<ScheduleSummary, ScheduleError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
 }
 
 /// A recent action taken by a schedule.
