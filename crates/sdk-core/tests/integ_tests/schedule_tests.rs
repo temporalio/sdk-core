@@ -18,9 +18,13 @@ async fn create_and_describe_schedule() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
             CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
                 .paused(true)
                 .note("created paused for testing")
                 .build(),
@@ -46,9 +50,17 @@ async fn create_schedule_with_calendar_spec() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_calendar(ScheduleCalendarSpec::builder().hour("2-7").build()),
-            CreateScheduleOptions::builder().paused(true).build(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_calendar(
+                    ScheduleCalendarSpec::builder().hour("2-7").build(),
+                ))
+                .paused(true)
+                .build(),
         )
         .await
         .unwrap();
@@ -61,6 +73,49 @@ async fn create_schedule_with_calendar_spec() {
 }
 
 #[tokio::test]
+async fn create_schedule_with_trigger_immediately() {
+    let client = test_client().await;
+    let schedule_id = format!("sched-trigimm-{}", rand_6_chars());
+
+    let handle = client
+        .create_schedule(
+            &schedule_id,
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(86400)))
+                .trigger_immediately(true)
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    let desc = eventually(
+        || {
+            let handle = client.get_schedule_handle(&schedule_id);
+            async move {
+                let desc = handle.describe().await.map_err(|e| e.to_string())?;
+                if desc.action_count() > 0 {
+                    Ok(desc)
+                } else {
+                    Err("action_count still 0".to_string())
+                }
+            }
+        },
+        Duration::from_secs(10),
+    )
+    .await
+    .unwrap();
+
+    assert!(desc.action_count() >= 1);
+
+    handle.delete().await.unwrap();
+}
+
+#[tokio::test]
 async fn pause_and_unpause_schedule() {
     let client = test_client().await;
     let schedule_id = format!("sched-pause-{}", rand_6_chars());
@@ -68,9 +123,14 @@ async fn pause_and_unpause_schedule() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
-            CreateScheduleOptions::default(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                .build(),
         )
         .await
         .unwrap();
@@ -78,15 +138,21 @@ async fn pause_and_unpause_schedule() {
     let desc = handle.describe().await.unwrap();
     assert!(!desc.paused());
 
-    handle.pause("pausing for maintenance").await.unwrap();
+    handle.pause(Some("pausing for maintenance")).await.unwrap();
     let desc = handle.describe().await.unwrap();
     assert!(desc.paused());
     assert_eq!(desc.note(), Some("pausing for maintenance"));
 
-    handle.unpause("maintenance complete").await.unwrap();
+    handle.unpause(Some("maintenance complete")).await.unwrap();
     let desc = handle.describe().await.unwrap();
     assert!(!desc.paused());
     assert_eq!(desc.note(), Some("maintenance complete"));
+
+    // Verify None uses default note
+    handle.pause(None).await.unwrap();
+    let desc = handle.describe().await.unwrap();
+    assert!(desc.paused());
+    assert!(desc.note().is_some());
 
     handle.delete().await.unwrap();
 }
@@ -99,9 +165,13 @@ async fn update_schedule() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
             CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
                 .paused(true)
                 .note("before update")
                 .build(),
@@ -110,7 +180,9 @@ async fn update_schedule() {
         .unwrap();
 
     handle
-        .update(|u| u.set_note("updated notes"))
+        .update(|u| {
+            u.set_note("updated notes");
+        })
         .await
         .unwrap();
 
@@ -128,14 +200,22 @@ async fn trigger_schedule() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
-            CreateScheduleOptions::builder().paused(true).build(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                .build(),
         )
         .await
         .unwrap();
 
-    handle.trigger().await.unwrap();
+    handle
+        .trigger(ScheduleOverlapPolicy::AllowAll)
+        .await
+        .unwrap();
 
     let desc = eventually(
         || {
@@ -167,9 +247,15 @@ async fn backfill_schedule() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
-            CreateScheduleOptions::builder().paused(true).build(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                .paused(true)
+                .build(),
         )
         .await
         .unwrap();
@@ -194,9 +280,15 @@ async fn delete_schedule() {
     client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
-            CreateScheduleOptions::builder().paused(true).build(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                .paused(true)
+                .build(),
         )
         .await
         .unwrap();
@@ -216,9 +308,15 @@ async fn get_schedule_handle_for_existing_schedule() {
     client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
-            CreateScheduleOptions::builder().paused(true).build(),
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                .paused(true)
+                .build(),
         )
         .await
         .unwrap();
@@ -243,9 +341,15 @@ async fn list_schedules() {
         client
             .create_schedule(
                 &schedule_id,
-                ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-                ScheduleSpec::from_interval(Duration::from_secs(3600)),
-                CreateScheduleOptions::builder().paused(true).build(),
+                CreateScheduleOptions::builder()
+                    .action(ScheduleAction::start_workflow(
+                        "MyWorkflow",
+                        "my-task-queue",
+                        format!("wf-{}", rand_6_chars()),
+                    ))
+                    .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
+                    .paused(true)
+                    .build(),
             )
             .await
             .unwrap();
@@ -297,9 +401,13 @@ async fn describe_accessors_match_created_values() {
     let handle = client
         .create_schedule(
             &schedule_id,
-            ScheduleAction::start_workflow("MyWorkflow", "my-task-queue", "my-workflow"),
-            ScheduleSpec::from_interval(Duration::from_secs(3600)),
             CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "MyWorkflow",
+                    "my-task-queue",
+                    format!("wf-{}", rand_6_chars()),
+                ))
+                .spec(ScheduleSpec::from_interval(Duration::from_secs(3600)))
                 .paused(true)
                 .note("accessors test")
                 .build(),

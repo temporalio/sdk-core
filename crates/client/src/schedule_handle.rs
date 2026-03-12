@@ -23,13 +23,21 @@ pub enum ScheduleError {
 }
 
 /// Options for creating a schedule.
-#[derive(Debug, Clone, Default, bon::Builder)]
+#[derive(Debug, Clone, bon::Builder)]
 #[builder(on(String, into))]
 #[non_exhaustive]
 pub struct CreateScheduleOptions {
+    /// The action the schedule should perform on each trigger.
+    pub action: ScheduleAction,
+    /// Defines when the schedule should trigger.
+    pub spec: ScheduleSpec,
     /// Whether to trigger the schedule immediately upon creation.
     #[builder(default)]
     pub trigger_immediately: bool,
+    /// Overlap policy for the schedule. Also used for the initial trigger when
+    /// `trigger_immediately` is true.
+    #[builder(default)]
+    pub overlap_policy: ScheduleOverlapPolicy,
     /// Whether the schedule starts in a paused state.
     #[builder(default)]
     pub paused: bool,
@@ -39,7 +47,11 @@ pub struct CreateScheduleOptions {
 }
 
 /// The action a schedule should perform on each trigger.
+// TODO: The proto supports other action types beyond StartWorkflow. Other SDKs
+// (Ruby, TypeScript) currently only support StartWorkflow as well. Add support
+// for additional action types as they become available.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub enum ScheduleAction {
     /// Start a workflow execution.
     StartWorkflow {
@@ -92,7 +104,11 @@ impl ScheduleAction {
 }
 
 /// Defines when a schedule should trigger.
+///
+/// Note: `set_spec` on [`ScheduleUpdate`] replaces the entire spec. Fields not
+/// set here will use their proto defaults on the server.
 #[derive(Debug, Clone, Default, PartialEq, bon::Builder)]
+#[builder(on(String, into))]
 pub struct ScheduleSpec {
     /// Interval-based triggers (e.g., every 1 hour).
     #[builder(default)]
@@ -100,6 +116,21 @@ pub struct ScheduleSpec {
     /// Calendar-based triggers using range strings.
     #[builder(default)]
     pub calendars: Vec<ScheduleCalendarSpec>,
+    /// Calendar-based exclusions. Matching times are skipped.
+    #[builder(default)]
+    pub exclude_calendars: Vec<ScheduleCalendarSpec>,
+    /// Cron expression triggers (e.g., `"0 12 * * MON-FRI"`).
+    #[builder(default)]
+    pub cron_strings: Vec<String>,
+    /// IANA timezone name (e.g., `"US/Eastern"`). Empty uses UTC.
+    #[builder(default)]
+    pub timezone_name: String,
+    /// Earliest time the schedule is active.
+    pub start_time: Option<SystemTime>,
+    /// Latest time the schedule is active.
+    pub end_time: Option<SystemTime>,
+    /// Random jitter applied to each action time.
+    pub jitter: Option<Duration>,
 }
 
 impl ScheduleSpec {
@@ -107,22 +138,29 @@ impl ScheduleSpec {
     pub fn from_interval(every: Duration) -> Self {
         Self {
             intervals: vec![every.into()],
-            calendars: vec![],
+            ..Default::default()
         }
     }
 
     /// Create a spec that triggers on a single calendar schedule.
     pub fn from_calendar(calendar: ScheduleCalendarSpec) -> Self {
         Self {
-            intervals: vec![],
             calendars: vec![calendar],
+            ..Default::default()
         }
     }
 
     pub(crate) fn into_proto(self) -> schedule_proto::ScheduleSpec {
+        #[allow(deprecated)]
         schedule_proto::ScheduleSpec {
             interval: self.intervals.into_iter().map(Into::into).collect(),
             calendar: self.calendars.into_iter().map(Into::into).collect(),
+            exclude_calendar: self.exclude_calendars.into_iter().map(Into::into).collect(),
+            cron_string: self.cron_strings,
+            timezone_name: self.timezone_name,
+            start_time: self.start_time.map(Into::into),
+            end_time: self.end_time.map(Into::into),
+            jitter: self.jitter.and_then(|d| d.try_into().ok()),
             ..Default::default()
         }
     }
@@ -314,12 +352,14 @@ impl ScheduleDescription {
     }
 
     /// Note on the schedule state (e.g., reason for pause).
+    /// Returns `None` if no note is set or the note is empty.
     pub fn note(&self) -> Option<&str> {
         self.raw
             .schedule
             .as_ref()
             .and_then(|s| s.state.as_ref())
             .map(|st| st.notes.as_str())
+            .filter(|s| !s.is_empty())
     }
 
     /// Total number of actions taken by this schedule.
@@ -458,7 +498,7 @@ pub enum ScheduleOverlapPolicy {
 }
 
 impl ScheduleOverlapPolicy {
-    fn to_proto(self) -> i32 {
+    pub(crate) fn to_proto(self) -> i32 {
         match self {
             Self::Unspecified => 0,
             Self::Skip => 1,
@@ -499,45 +539,53 @@ pub struct ScheduleUpdate {
 
 impl ScheduleUpdate {
     /// Replace the schedule spec (when to trigger).
-    pub fn set_spec(&mut self, spec: ScheduleSpec) {
+    pub fn set_spec(&mut self, spec: ScheduleSpec) -> &mut Self {
         self.schedule.spec = Some(spec.into_proto());
+        self
     }
 
     /// Replace the schedule action (what to do on trigger).
-    pub fn set_action(&mut self, action: ScheduleAction) {
+    pub fn set_action(&mut self, action: ScheduleAction) -> &mut Self {
         self.schedule.action = Some(action.into_proto());
+        self
     }
 
     /// Set whether the schedule is paused.
-    pub fn set_paused(&mut self, paused: bool) {
+    pub fn set_paused(&mut self, paused: bool) -> &mut Self {
         self.state_mut().paused = paused;
+        self
     }
 
     /// Set the note on the schedule state.
-    pub fn set_note(&mut self, note: impl Into<String>) {
+    pub fn set_note(&mut self, note: impl Into<String>) -> &mut Self {
         self.state_mut().notes = note.into();
+        self
     }
 
     /// Set the overlap policy.
-    pub fn set_overlap_policy(&mut self, policy: ScheduleOverlapPolicy) {
+    pub fn set_overlap_policy(&mut self, policy: ScheduleOverlapPolicy) -> &mut Self {
         self.policies_mut().overlap_policy = policy.to_proto();
+        self
     }
 
     /// Set the catchup window. Actions missed by more than this duration are
     /// skipped.
-    pub fn set_catchup_window(&mut self, window: Duration) {
+    pub fn set_catchup_window(&mut self, window: Duration) -> &mut Self {
         self.policies_mut().catchup_window = window.try_into().ok();
+        self
     }
 
     /// Set whether to pause the schedule when a workflow run fails or times out.
-    pub fn set_pause_on_failure(&mut self, pause_on_failure: bool) {
+    pub fn set_pause_on_failure(&mut self, pause_on_failure: bool) -> &mut Self {
         self.policies_mut().pause_on_failure = pause_on_failure;
+        self
     }
 
     /// Set whether to keep the original workflow ID without appending a
     /// timestamp.
-    pub fn set_keep_original_workflow_id(&mut self, keep: bool) {
+    pub fn set_keep_original_workflow_id(&mut self, keep: bool) -> &mut Self {
         self.policies_mut().keep_original_workflow_id = keep;
+        self
     }
 
     /// Access the raw schedule proto for fields not covered by setters.
@@ -593,8 +641,11 @@ impl ScheduleSummary {
     }
 
     /// Note on the schedule state.
+    /// Returns `None` if no note is set or the note is empty.
     pub fn note(&self) -> Option<&str> {
-        self.info().map(|i| i.notes.as_str())
+        self.info()
+            .map(|i| i.notes.as_str())
+            .filter(|s| !s.is_empty())
     }
 
     /// Whether the schedule is paused.
@@ -650,6 +701,7 @@ impl From<schedule_proto::ScheduleListEntry> for ScheduleSummary {
 /// Handle to an existing schedule. Obtained from
 /// [`Client::create_schedule`](crate::Client::create_schedule) or
 /// [`Client::get_schedule_handle`](crate::Client::get_schedule_handle).
+#[derive(Clone)]
 pub struct ScheduleHandle<CT> {
     client: CT,
     namespace: String,
@@ -710,10 +762,12 @@ where
     ///
     /// ```ignore
     /// handle.update(|u| {
-    ///     u.set_note("updated");
-    ///     u.set_paused(true);
+    ///     u.set_note("updated").set_paused(true);
     /// }).await?;
     /// ```
+    // TODO: Add a retry loop for conflict token mismatch once there is a
+    // reliable way to distinguish conflict errors from other failures. Other
+    // SDKs (Ruby, TypeScript) have the same limitation today.
     pub async fn update(
         &self,
         updater: impl FnOnce(&mut ScheduleUpdate),
@@ -763,14 +817,17 @@ where
     }
 
     /// Pause the schedule with an optional note.
-    pub async fn pause(&self, note: impl Into<String>) -> Result<(), ScheduleError> {
+    ///
+    /// If `note` is `None`, a default note is used.
+    pub async fn pause(&self, note: Option<&str>) -> Result<(), ScheduleError> {
+        let note = note.unwrap_or("Paused via Rust SDK");
         WorkflowService::patch_schedule(
             &mut self.client.clone(),
             PatchScheduleRequest {
                 namespace: self.namespace.clone(),
                 schedule_id: self.schedule_id.clone(),
                 patch: Some(schedule_proto::SchedulePatch {
-                    pause: note.into(),
+                    pause: note.to_string(),
                     ..Default::default()
                 }),
                 identity: self.client.identity(),
@@ -783,14 +840,17 @@ where
     }
 
     /// Unpause the schedule with an optional note.
-    pub async fn unpause(&self, note: impl Into<String>) -> Result<(), ScheduleError> {
+    ///
+    /// If `note` is `None`, a default note is used.
+    pub async fn unpause(&self, note: Option<&str>) -> Result<(), ScheduleError> {
+        let note = note.unwrap_or("Unpaused via Rust SDK");
         WorkflowService::patch_schedule(
             &mut self.client.clone(),
             PatchScheduleRequest {
                 namespace: self.namespace.clone(),
                 schedule_id: self.schedule_id.clone(),
                 patch: Some(schedule_proto::SchedulePatch {
-                    unpause: note.into(),
+                    unpause: note.to_string(),
                     ..Default::default()
                 }),
                 identity: self.client.identity(),
@@ -802,8 +862,11 @@ where
         Ok(())
     }
 
-    /// Trigger the schedule to run immediately.
-    pub async fn trigger(&self) -> Result<(), ScheduleError> {
+    /// Trigger the schedule to run immediately with the given overlap policy.
+    pub async fn trigger(
+        &self,
+        overlap_policy: ScheduleOverlapPolicy,
+    ) -> Result<(), ScheduleError> {
         WorkflowService::patch_schedule(
             &mut self.client.clone(),
             PatchScheduleRequest {
@@ -811,7 +874,7 @@ where
                 schedule_id: self.schedule_id.clone(),
                 patch: Some(schedule_proto::SchedulePatch {
                     trigger_immediately: Some(schedule_proto::TriggerImmediatelyRequest {
-                        overlap_policy: 0,
+                        overlap_policy: overlap_policy.to_proto(),
                         scheduled_time: None,
                     }),
                     ..Default::default()
