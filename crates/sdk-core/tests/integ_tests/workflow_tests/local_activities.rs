@@ -3074,6 +3074,18 @@ async fn las_separated_by_timer(#[case] replay: bool) {
     worker.run().await.unwrap();
 }
 
+struct SleepActivity;
+
+#[activities]
+impl SleepActivity {
+    #[allow(unused)]
+    #[activity(name = DEFAULT_ACTIVITY_TYPE)]
+    async fn sleep_ms(_ctx: ActivityContext, sleep_ms: u64) -> Result<String, ActivityError> {
+        tokio::time::sleep(Duration::from_millis(sleep_ms)).await;
+        Ok("Resolved".to_string())
+    }
+}
+
 #[workflow]
 #[derive(Default)]
 struct ParallelLasJobOrderWf;
@@ -3083,8 +3095,16 @@ impl ParallelLasJobOrderWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let _ = temporalio_sdk::workflows::join!(
-            ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default()),
-            ctx.start_local_activity(StdActivities::default, (), LocalActivityOptions::default())
+            ctx.start_local_activity(
+                SleepActivity::sleep_ms,
+                100u64,
+                LocalActivityOptions::default()
+            ),
+            ctx.start_local_activity(
+                SleepActivity::sleep_ms,
+                1u64,
+                LocalActivityOptions::default()
+            )
         );
         Ok(())
     }
@@ -3138,7 +3158,7 @@ async fn parallel_las_job_order(#[values(true, false)] replay: bool) {
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
     worker.register_workflow::<ParallelLasJobOrderWf>();
-    worker.register_activities(ResolvedActivity);
+    worker.register_activities(SleepActivity);
     worker.run().await.unwrap();
 }
 
@@ -3458,8 +3478,8 @@ async fn mixed_la_completion_times(#[values(true, false)] replay: bool) {
     });
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
-    worker.register_workflow::<TwoLaWfParallel>();
-    worker.register_activities(ResolvedActivity);
+    worker.register_workflow::<ParallelLasJobOrderWf>();
+    worker.register_activities(SleepActivity);
     worker.run().await.unwrap();
 }
 
@@ -3553,10 +3573,33 @@ async fn two_las_with_heartbeat(
         }
     });
 
+    let la_completion_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+
+    struct BarrierActivity {
+        barr: &'static Barrier,
+        wft_timeout: Duration,
+    }
+    #[activities]
+    impl BarrierActivity {
+        #[allow(unused)]
+        #[activity(name = DEFAULT_ACTIVITY_TYPE)]
+        async fn wait(
+            self: Arc<Self>,
+            _ctx: ActivityContext,
+            _: (),
+        ) -> Result<String, ActivityError> {
+            tokio::time::sleep(self.wft_timeout.mul_f64(1.5)).await;
+            self.barr.wait().await;
+            Ok("hi".to_string())
+        }
+    }
+
     let mut worker = build_fake_sdk(mock_cfg);
     worker.set_worker_interceptor(aai);
     worker.register_workflow::<TwoLaWfParallel>();
-    worker.register_activities(ResolvedActivity);
+    worker.register_activities(BarrierActivity {
+        barr: la_completion_barr,
+        wft_timeout: Duration::from_millis(100),
+    });
     worker.run().await.unwrap();
 }
-
