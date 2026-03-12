@@ -1934,7 +1934,7 @@ mod tests {
         let client = MockScheduleClient::default();
         let handle = make_schedule_handle(client.clone());
 
-        handle.pause(None).await.unwrap();
+        handle.pause(None::<&str>).await.unwrap();
 
         assert_eq!(client.captured.patch.load(Ordering::SeqCst), 1);
     }
@@ -2070,7 +2070,13 @@ mod tests {
                     action_count: 42,
                     missed_catchup_window: 3,
                     overlap_skipped: 5,
-                    recent_actions: vec![ScheduleActionResult::default()],
+                    recent_actions: vec![ScheduleActionResult {
+                        start_workflow_result: Some(ProtoWorkflowExecution {
+                            workflow_id: "ra-wf".to_string(),
+                            run_id: "ra-run".to_string(),
+                        }),
+                        ..Default::default()
+                    }],
                     running_workflows: vec![ProtoWorkflowExecution {
                         workflow_id: "wf-1".to_string(),
                         run_id: "run-1".to_string(),
@@ -2190,7 +2196,13 @@ mod tests {
                 }),
                 notes: "some note".to_string(),
                 paused: true,
-                recent_actions: vec![ScheduleActionResult::default()],
+                recent_actions: vec![ScheduleActionResult {
+                    start_workflow_result: Some(ProtoWorkflowExecution {
+                        workflow_id: "ra-wf".to_string(),
+                        run_id: "ra-run".to_string(),
+                    }),
+                    ..Default::default()
+                }],
                 future_action_times: vec![prost_types::Timestamp {
                     seconds: 1_700_000_000,
                     nanos: 0,
@@ -2287,34 +2299,6 @@ mod tests {
     }
 
     #[test]
-    fn schedule_raw_mut_modifications_visible_through_accessors() {
-        let resp = DescribeScheduleResponse {
-            schedule: Some(Schedule {
-                state: Some(ScheduleState {
-                    paused: false,
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-        let mut desc = ScheduleDescription::from(resp);
-
-        assert!(!desc.paused());
-
-        desc.raw_mut()
-            .schedule
-            .as_mut()
-            .unwrap()
-            .state
-            .as_mut()
-            .unwrap()
-            .paused = true;
-
-        assert!(desc.paused());
-    }
-
-    #[test]
     fn schedule_recent_action_from_proto_with_timestamps() {
         let ts = prost_types::Timestamp {
             seconds: 1_700_000_000,
@@ -2339,13 +2323,9 @@ mod tests {
     }
 
     #[test]
-    fn schedule_recent_action_from_proto_without_workflow_result() {
-        let action = ScheduleRecentAction::from(&ScheduleActionResult::default());
-
-        assert!(action.schedule_time.is_none());
-        assert!(action.actual_time.is_none());
-        assert_eq!(action.workflow_id, "");
-        assert_eq!(action.run_id, "");
+    #[should_panic(expected = "unsupported schedule action")]
+    fn schedule_recent_action_panics_without_workflow_result() {
+        let _ = ScheduleRecentAction::from(&ScheduleActionResult::default());
     }
 
     #[test]

@@ -149,7 +149,7 @@ async fn pause_and_unpause_schedule() {
     assert_eq!(desc.note(), Some("maintenance complete"));
 
     // Verify None uses default note
-    handle.pause(None).await.unwrap();
+    handle.pause(None::<&str>).await.unwrap();
     let desc = handle.describe().await.unwrap();
     assert!(desc.paused());
     assert!(desc.note().is_some());
