@@ -1,4 +1,5 @@
 use crate::{NamespacedClient, grpc::WorkflowService};
+use std::fmt;
 use std::time::{Duration, SystemTime};
 use temporalio_common::protos::{
     proto_ts_to_system_time,
@@ -36,7 +37,7 @@ pub struct CreateScheduleOptions {
 }
 
 /// The action a schedule should perform on each trigger.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ScheduleAction {
     /// Start a workflow execution.
     StartWorkflow {
@@ -89,7 +90,7 @@ impl ScheduleAction {
 }
 
 /// Defines when a schedule should trigger.
-#[derive(Debug, Clone, Default, bon::Builder)]
+#[derive(Debug, Clone, Default, PartialEq, bon::Builder)]
 pub struct ScheduleSpec {
     /// Interval-based triggers (e.g., every 1 hour).
     #[builder(default)]
@@ -126,7 +127,8 @@ impl ScheduleSpec {
 }
 
 /// An interval-based schedule trigger.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ScheduleIntervalSpec {
     /// How often the action should repeat.
     pub every: Duration,
@@ -162,8 +164,9 @@ impl From<ScheduleIntervalSpec> for schedule_proto::IntervalSpec {
 /// A calendar-based schedule trigger using range strings (e.g., `"2-7"` for hours 2 through 7).
 ///
 /// Empty strings use server defaults (typically `"*"` for most fields, `"0"` for seconds/minutes).
-#[derive(Debug, Clone, Default, bon::Builder)]
+#[derive(Debug, Clone, Default, PartialEq, bon::Builder)]
 #[builder(on(String, into))]
+#[non_exhaustive]
 pub struct ScheduleCalendarSpec {
     /// Second within the minute. Default: `"0"`.
     #[builder(default)]
@@ -210,7 +213,7 @@ impl From<ScheduleCalendarSpec> for schedule_proto::CalendarSpec {
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
 pub struct ListSchedulesOptions {
-    /// Maximum number of results per page.
+    /// Maximum number of results per page (server-side hint).
     #[builder(default)]
     pub maximum_page_size: i32,
     /// Query filter string.
@@ -218,17 +221,9 @@ pub struct ListSchedulesOptions {
     pub query: String,
 }
 
-/// A single page of schedule list results.
-#[derive(Debug)]
-pub struct ListSchedulesPage {
-    /// The schedule entries in this page.
-    pub schedules: Vec<ScheduleSummary>,
-    /// Token for the next page. Empty if no more pages.
-    pub next_page_token: Vec<u8>,
-}
-
 /// A recent action taken by a schedule.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ScheduleRecentAction {
     /// When this action was scheduled to occur (including jitter).
     pub schedule_time: Option<SystemTime>,
@@ -242,6 +237,7 @@ pub struct ScheduleRecentAction {
 
 /// A currently-running workflow started by a schedule.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct ScheduleRunningAction {
     /// Workflow ID of the running workflow.
     pub workflow_id: String,
@@ -291,8 +287,8 @@ impl ScheduleDescription {
             .is_some_and(|st| st.paused)
     }
 
-    /// Notes on the schedule state (e.g., reason for pause).
-    pub fn notes(&self) -> Option<&str> {
+    /// Note on the schedule state (e.g., reason for pause).
+    pub fn note(&self) -> Option<&str> {
         self.raw
             .schedule
             .as_ref()
@@ -398,10 +394,9 @@ impl ScheduleDescription {
     }
 
     /// Convert this description into a [`ScheduleUpdate`] for use with
-    /// [`ScheduleHandle::update()`].
+    /// [`ScheduleHandle::send_update()`].
     ///
-    /// Extracts the schedule definition and conflict token. Modify the
-    /// schedule via [`ScheduleUpdate::raw_mut()`] before passing to update.
+    /// Extracts the schedule definition and conflict token.
     pub fn into_update(self) -> ScheduleUpdate {
         ScheduleUpdate {
             schedule: self.raw.schedule.unwrap_or_default(),
@@ -418,31 +413,48 @@ impl From<DescribeScheduleResponse> for ScheduleDescription {
 
 /// Controls what happens when a scheduled workflow would overlap with a running one.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[repr(i32)]
 pub enum ScheduleOverlapPolicy {
     /// Use the server default (currently Skip).
     #[default]
-    Unspecified = 0,
+    Unspecified,
     /// Don't start a new workflow if one is already running.
-    Skip = 1,
+    Skip,
     /// Buffer one workflow start, to run after the current one completes.
-    BufferOne = 2,
+    BufferOne,
     /// Buffer all workflow starts, to run sequentially.
-    BufferAll = 3,
+    BufferAll,
     /// Cancel the running workflow and start a new one.
-    CancelOther = 4,
+    CancelOther,
     /// Terminate the running workflow and start a new one.
-    TerminateOther = 5,
+    TerminateOther,
     /// Start any number of concurrent workflows.
-    AllowAll = 6,
+    AllowAll,
+}
+
+impl ScheduleOverlapPolicy {
+    fn to_proto(self) -> i32 {
+        match self {
+            Self::Unspecified => 0,
+            Self::Skip => 1,
+            Self::BufferOne => 2,
+            Self::BufferAll => 3,
+            Self::CancelOther => 4,
+            Self::TerminateOther => 5,
+            Self::AllowAll => 6,
+        }
+    }
 }
 
 /// A backfill request for a schedule, specifying a time range of missed runs.
-#[derive(Debug, Clone, bon::Builder)]
+#[derive(Debug, Clone, PartialEq, bon::Builder)]
+#[non_exhaustive]
+#[builder(start_fn = new)]
 pub struct ScheduleBackfill {
     /// Start of the time range to backfill.
+    #[builder(start_fn)]
     pub start_time: SystemTime,
     /// End of the time range to backfill.
+    #[builder(start_fn)]
     pub end_time: SystemTime,
     /// How overlapping runs are handled during backfill.
     #[builder(default)]
@@ -482,7 +494,7 @@ impl ScheduleUpdate {
 
     /// Set the overlap policy.
     pub fn set_overlap_policy(&mut self, policy: ScheduleOverlapPolicy) {
-        self.policies_mut().overlap_policy = policy as i32;
+        self.policies_mut().overlap_policy = policy.to_proto();
     }
 
     /// Set the catchup window. Actions missed by more than this duration are
@@ -554,8 +566,8 @@ impl ScheduleSummary {
             .map(|wt| wt.name.as_str())
     }
 
-    /// Notes on the schedule state.
-    pub fn notes(&self) -> Option<&str> {
+    /// Note on the schedule state.
+    pub fn note(&self) -> Option<&str> {
         self.info().map(|i| i.notes.as_str())
     }
 
@@ -614,10 +626,17 @@ impl From<schedule_proto::ScheduleListEntry> for ScheduleSummary {
 /// [`Client::get_schedule_handle`](crate::Client::get_schedule_handle).
 pub struct ScheduleHandle<CT> {
     client: CT,
-    /// The namespace the schedule belongs to.
-    pub namespace: String,
-    /// The schedule ID.
-    pub schedule_id: String,
+    namespace: String,
+    schedule_id: String,
+}
+
+impl<CT> fmt::Debug for ScheduleHandle<CT> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ScheduleHandle")
+            .field("namespace", &self.namespace)
+            .field("schedule_id", &self.schedule_id)
+            .finish()
+    }
 }
 
 impl<CT> ScheduleHandle<CT>
@@ -630,6 +649,16 @@ where
             namespace,
             schedule_id,
         }
+    }
+
+    /// The namespace the schedule belongs to.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// The schedule ID.
+    pub fn schedule_id(&self) -> &str {
+        &self.schedule_id
     }
 
     /// Describe this schedule, returning its full definition, info, and conflict token.
@@ -771,13 +800,16 @@ where
     }
 
     /// Request backfill of missed runs.
-    pub async fn backfill(&self, backfills: Vec<ScheduleBackfill>) -> Result<(), ScheduleError> {
+    pub async fn backfill(
+        &self,
+        backfills: impl IntoIterator<Item = ScheduleBackfill>,
+    ) -> Result<(), ScheduleError> {
         let backfill_requests: Vec<schedule_proto::BackfillRequest> = backfills
             .into_iter()
             .map(|b| schedule_proto::BackfillRequest {
                 start_time: Some(b.start_time.into()),
                 end_time: Some(b.end_time.into()),
-                overlap_policy: b.overlap_policy as i32,
+                overlap_policy: b.overlap_policy.to_proto(),
             })
             .collect();
         WorkflowService::patch_schedule(
