@@ -716,14 +716,12 @@ impl Client {
     ) -> Result<ScheduleHandle<Self>, ScheduleError> {
         let schedule_id = schedule_id.into();
         let namespace = self.namespace();
-        let overlap_proto = opts.overlap_policy.to_proto();
 
         let initial_patch = if opts.trigger_immediately {
             Some(SchedulePatch {
                 trigger_immediately: Some(TriggerImmediatelyRequest {
                     // Always use AllowAll for the initial trigger so the
                     // schedule fires immediately regardless of overlap state.
-                    // Matches TypeScript SDK behavior.
                     overlap_policy: ScheduleOverlapPolicy::AllowAll.to_proto(),
                     scheduled_time: None,
                 }),
@@ -734,16 +732,12 @@ impl Client {
         };
         // Only send explicit policies when the user set a non-default overlap
         // policy, so the server uses its own defaults otherwise.
-        let policies = if opts.overlap_policy != ScheduleOverlapPolicy::Unspecified {
-            Some(
-                temporalio_common::protos::temporal::api::schedule::v1::SchedulePolicies {
-                    overlap_policy: overlap_proto,
-                    ..Default::default()
-                },
-            )
-        } else {
-            None
-        };
+        let policies = (opts.overlap_policy != ScheduleOverlapPolicy::Unspecified).then(|| {
+            temporalio_common::protos::temporal::api::schedule::v1::SchedulePolicies {
+                overlap_policy: opts.overlap_policy.to_proto(),
+                ..Default::default()
+            }
+        });
         let schedule = Schedule {
             spec: Some(opts.spec.into_proto()),
             action: Some(opts.action.into_proto()),
@@ -794,9 +788,7 @@ impl Client {
                 async move {
                     if let Some(item) = buffer.pop_front() {
                         return Some((Ok(item), (next_page_token, buffer, exhausted)));
-                    }
-
-                    if exhausted {
+                    } else if exhausted {
                         return None;
                     }
 
