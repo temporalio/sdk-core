@@ -489,33 +489,16 @@ impl Future for WorkflowFuture {
             }
 
             // Then updates
-            self.update_futures = std::mem::take(&mut self.update_futures)
-                .into_iter()
-                .filter_map(
-                    |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
-                        Poll::Ready(v) => {
-                            // Push into the command channel here rather than activation_cmds
-                            // directly to avoid completing an update before any final un-awaited
-                            // commands started from within it.
-                            self.base_ctx.send(
-                                update_response(
-                                    instance_id,
-                                    match v {
-                                        Ok(v) => update_response::Response::Completed(v),
-                                        Err(e) => update_response::Response::Rejected(e.into()),
-                                    },
-                                )
-                                .into(),
-                            );
-                            None
-                        }
-                        Poll::Pending => Some((instance_id, update_fut)),
-                    },
-                )
-                .collect();
+            self.poll_update_futures(cx);
 
             if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                 continue;
+            }
+
+            // Re-poll update futures: poll_wf_future may have changed state
+            // via state_mut, unblocking a wait_condition in an update handler.
+            if should_poll_wf {
+                self.poll_update_futures(cx);
             }
 
             // TODO: deadlock detector
@@ -535,6 +518,33 @@ impl Future for WorkflowFuture {
 // Separate impl block down here just to keep it close to the future poll implementation which
 // it is specific to.
 impl WorkflowFuture {
+    fn poll_update_futures(&mut self, cx: &mut Context) {
+        self.update_futures = std::mem::take(&mut self.update_futures)
+            .into_iter()
+            .filter_map(
+                |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
+                    Poll::Ready(v) => {
+                        // Push into the command channel here rather than activation_cmds
+                        // directly to avoid completing an update before any final un-awaited
+                        // commands started from within it.
+                        self.base_ctx.send(
+                            update_response(
+                                instance_id,
+                                match v {
+                                    Ok(v) => update_response::Response::Completed(v),
+                                    Err(e) => update_response::Response::Rejected(e.into()),
+                                },
+                            )
+                            .into(),
+                        );
+                        None
+                    }
+                    Poll::Pending => Some((instance_id, update_fut)),
+                },
+            )
+            .collect();
+    }
+
     /// Returns true if the workflow future polling loop should be continued
     fn poll_wf_future(
         &mut self,

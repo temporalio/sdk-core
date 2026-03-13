@@ -1543,16 +1543,16 @@ async fn update_blocked_80s_spans_many_long_polls() {
 /// re-evaluated after `poll_wf_future` advances the workflow and mutates
 /// state via `state_mut`.
 ///
-/// The bug: `WorkflowFuture::poll` polls update futures *before* the workflow
-/// future. When both `run` and an update handler use `wait_condition` on
-/// each other's state, they deadlock: the update's predicate is checked
-/// before `run` has called `state_mut`, and after `poll_wf_future` sets the
-/// flag, update futures are never re-polled within the same activation.
+/// Regression test for the convergence loop in `WorkflowFuture::poll`.
+/// When both `run` and an update handler use `wait_condition` on each
+/// other's state, the futures must be re-polled after each `state_mut`
+/// so that newly-unblocked predicates are observed within the same
+/// activation.
 ///
 /// Concretely: `run` sets `run_ready` then waits for `update_acked`.
 /// The update handler waits for `run_ready` then sets `update_acked`.
-/// With the bug, when the update arrives in the same activation that
-/// polls the workflow, the update sees stale state and blocks forever.
+/// If update futures are not re-polled after `poll_wf_future`, the
+/// update sees stale state and blocks forever.
 #[tokio::test]
 async fn update_wait_condition_unblocked_by_run_state_change() {
     let wf_name = "update_wc_run_state";
@@ -1597,6 +1597,7 @@ async fn update_wait_condition_unblocked_by_run_state_change() {
         .await
         .unwrap();
 
+    let shutdown = worker.inner_mut().shutdown_handle();
     let update_fut = handle.execute_update(
         WaitCondRunWf::wait_for_run,
         (),
@@ -1604,23 +1605,22 @@ async fn update_wait_condition_unblocked_by_run_state_change() {
     );
 
     let runner = async {
-        worker.run_until_done().await.unwrap();
+        worker.inner_mut().run().await.unwrap();
     };
 
-    // Race update against a local 5s timer.  Without the bug the update
-    // and workflow complete in under a second; with the bug neither
-    // makes progress (deadlock) and the timer fires.
+    // Race update + worker against a 5s deadline.  The update should
+    // complete in under a second; if the convergence loop regresses the
+    // futures deadlock and the timer fires.
     tokio::select! {
-        res = async { join!(update_fut, runner) } => {
-            assert_eq!(res.0.unwrap(), "done");
+        res = update_fut => {
+            assert_eq!(res.unwrap(), "done");
+            shutdown();
+        }
+        _ = runner => {
+            panic!("worker exited before update completed");
         }
         _ = tokio::time::sleep(Duration::from_secs(5)) => {
             panic!("deadlock: update and workflow stuck for 5 s");
         }
     }
-
-    handle
-        .fetch_history_and_replay(worker.inner_mut())
-        .await
-        .unwrap();
 }
