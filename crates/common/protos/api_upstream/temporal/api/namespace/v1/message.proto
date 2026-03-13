@@ -42,6 +42,12 @@ message NamespaceInfo {
         bool workflow_pause = 6;
         // True if the namespace supports standalone activities
         bool standalone_activities = 7;
+        // True if the namespace supports server-side completion of outstanding worker polls on shutdown.
+        // When enabled, the server will complete polls for workers that send WorkerInstanceKey in their
+        // poll requests and call ShutdownWorker with the same WorkerInstanceKey. The poll will return
+        // an empty response. When this flag is true, workers should allow polls to return gracefully
+        // rather than terminating any open polls on shutdown.
+        bool worker_poll_complete_on_shutdown = 8;
     }
 
     // Namespace configured limits

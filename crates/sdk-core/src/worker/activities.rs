@@ -781,6 +781,7 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -873,6 +874,7 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -947,6 +949,7 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),

@@ -9,7 +9,7 @@ use crate::{
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
 use std::{
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, atomic::AtomicBool},
     time::SystemTime,
 };
 use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -26,6 +26,7 @@ pub(crate) fn make_wft_poller(
     wft_slots: &MeteredPermitDealer<WorkflowSlotKind>,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+    graceful_poll_shutdown: Arc<AtomicBool>,
 ) -> impl Stream<
     Item = Result<
         (
@@ -59,6 +60,7 @@ pub(crate) fn make_wft_poller(
             wft_poller_shared: wft_poller_shared.clone(),
         },
         last_successful_poll_time,
+        graceful_poll_shutdown.clone(),
     );
     let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
         let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
@@ -74,6 +76,7 @@ pub(crate) fn make_wft_poller(
             }),
             WorkflowTaskOptions { wft_poller_shared },
             sticky_last_successful_poll_time,
+            graceful_poll_shutdown,
         )
     });
     let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(

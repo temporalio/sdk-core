@@ -534,6 +534,7 @@ pub mod coresdk {
                 deployment_version_for_current_task: None,
                 last_sdk_version: String::new(),
                 suggest_continue_as_new_reasons: vec![],
+                target_worker_deployment_version_changed: false,
             }
         }
 

@@ -442,6 +442,90 @@ async fn http_proxy() {
     tcp_proxy.shutdown();
 }
 
+#[tokio::test]
+async fn update_get_result_retries_on_empty_outcome() {
+    use temporalio_common::protos::temporal::api::{
+        common::v1::{Payloads, WorkflowExecution as ProtoWorkflowExecution},
+        update::v1::{self, Outcome, UpdateRef},
+        workflowservice::v1::{
+            PollWorkflowExecutionUpdateResponse, UpdateWorkflowExecutionResponse,
+        },
+    };
+
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let poll_count_clone = poll_count.clone();
+
+    let fs = fake_server(move |req| {
+        let poll_count = poll_count_clone.clone();
+        async move {
+            let path = req.uri().path();
+            if path.contains("UpdateWorkflowExecution") {
+                // start_update: return a handle reference with no outcome
+                make_ok_response(UpdateWorkflowExecutionResponse {
+                    update_ref: Some(UpdateRef {
+                        workflow_execution: Some(ProtoWorkflowExecution {
+                            workflow_id: "wf-id".into(),
+                            run_id: "run-id".into(),
+                        }),
+                        update_id: "update-id".into(),
+                    }),
+                    outcome: None,
+                    ..Default::default()
+                })
+            } else if path.contains("PollWorkflowExecutionUpdate") {
+                let n = poll_count.fetch_add(1, Ordering::SeqCst);
+                let response = if n == 0 {
+                    // First poll: simulate server long-poll timeout (no outcome)
+                    PollWorkflowExecutionUpdateResponse::default()
+                } else {
+                    // Second poll: return a successful outcome
+                    PollWorkflowExecutionUpdateResponse {
+                        outcome: Some(Outcome {
+                            value: Some(v1::outcome::Value::Success(Payloads { payloads: vec![] })),
+                        }),
+                        ..Default::default()
+                    }
+                };
+                make_ok_response(response)
+            } else {
+                Response::new(Body::empty())
+            }
+        }
+        .boxed()
+    })
+    .await;
+
+    let mut opts = get_integ_server_options();
+    opts.target = format!("http://localhost:{}", fs.addr.port())
+        .parse::<url::Url>()
+        .unwrap();
+    opts.set_skip_get_system_info(true);
+    opts.retry_options = RetryOptions::no_retries();
+    let connection = Connection::connect(opts).await.unwrap();
+    let client_opts = temporalio_client::ClientOptions::new("default").build();
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
+
+    let wf_handle = client.get_workflow_handle::<UntypedWorkflow>("wf-id");
+    let result = wf_handle
+        .execute_update(
+            temporalio_client::UntypedUpdate::new("my-update"),
+            temporalio_common::data_converters::RawValue::default(),
+            Default::default(),
+        )
+        .await;
+    assert!(
+        result.is_ok(),
+        "execute_update should retry polling and succeed, got: {result:?}"
+    );
+    assert_eq!(
+        poll_count.load(Ordering::SeqCst),
+        2,
+        "should have polled twice"
+    );
+
+    fs.shutdown().await;
+}
+
 fn make_ok_response<T>(message: T) -> Response<Body>
 where
     T: Message,

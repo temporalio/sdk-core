@@ -24,3 +24,5 @@ jobs:
             git diff
             exit 1
           fi
+      - name: Check for OpenAPI path conflicts
+        run: go run ./cmd/check-path-conflicts/main.go openapi/openapiv2.json

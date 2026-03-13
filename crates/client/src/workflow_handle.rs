@@ -781,31 +781,37 @@ where
         let outcome = if let Some(known) = &self.known_outcome {
             known.clone()
         } else {
-            let response = WorkflowService::poll_workflow_execution_update(
-                &mut self.client.clone(),
-                PollWorkflowExecutionUpdateRequest {
-                    namespace: self.client.namespace(),
-                    update_ref: Some(update::v1::UpdateRef {
-                        workflow_execution: Some(ProtoWorkflowExecution {
-                            workflow_id: self.workflow_id.clone(),
-                            run_id: self.run_id.clone().unwrap_or_default(),
+            // The server's internal long-poll timeout (~60s) may expire before the update
+            // completes, returning a response with outcome: None. Keep polling until we
+            // get an actual outcome.
+            loop {
+                let response = WorkflowService::poll_workflow_execution_update(
+                    &mut self.client.clone(),
+                    PollWorkflowExecutionUpdateRequest {
+                        namespace: self.client.namespace(),
+                        update_ref: Some(update::v1::UpdateRef {
+                            workflow_execution: Some(ProtoWorkflowExecution {
+                                workflow_id: self.workflow_id.clone(),
+                                run_id: self.run_id.clone().unwrap_or_default(),
+                            }),
+                            update_id: self.update_id.clone(),
                         }),
-                        update_id: self.update_id.clone(),
-                    }),
-                    identity: self.client.identity(),
-                    wait_policy: Some(WaitPolicy {
-                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed.into(),
-                    }),
-                }
-                .into_request(),
-            )
-            .await
-            .map_err(WorkflowUpdateError::from_status)?
-            .into_inner();
+                        identity: self.client.identity(),
+                        wait_policy: Some(WaitPolicy {
+                            lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed
+                                .into(),
+                        }),
+                    }
+                    .into_request(),
+                )
+                .await
+                .map_err(WorkflowUpdateError::from_status)?
+                .into_inner();
 
-            response.outcome.ok_or_else(|| {
-                WorkflowUpdateError::Other("Update poll returned no outcome".into())
-            })?
+                if let Some(outcome) = response.outcome {
+                    break outcome;
+                }
+            }
         };
 
         match outcome.value {
