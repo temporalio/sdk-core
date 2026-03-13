@@ -239,9 +239,9 @@ impl Workflows {
                                         .expect("Fetch channel must not be dropped");
                                 }
                                 for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
+                                    if activation_tx.send(Ok(act)).is_err() {
+                                        return;
+                                    }
                                 }
                             }
                             Err(e) => {
