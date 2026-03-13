@@ -234,6 +234,55 @@ async fn activity_has_deployment_stamp() {
     //   to the event.
 }
 
+#[tokio::test]
+async fn versioning_off_with_custom_build_id() {
+    let wf_type = "versioning_off_with_custom_build_id";
+    let mut starter = CoreWfStarter::new(wf_type);
+    let build_id = "my-custom-build-id-1.0";
+    starter.sdk_config.deployment_options = WorkerDeploymentOptions {
+        version: WorkerDeploymentVersion {
+            deployment_name: format!("deployment-{}", starter.get_task_queue()),
+            build_id: build_id.to_string(),
+        },
+        use_worker_versioning: false,
+        default_versioning_behavior: None,
+    };
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let core = starter.get_worker().await;
+    starter.start_wf().await;
+
+    let res = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion {
+        run_id: res.run_id.clone(),
+        status: Some(
+            workflow_completion::Success::from_variants(vec![
+                CompleteWorkflowExecution { result: None }.into(),
+            ])
+            .into(),
+        ),
+    })
+    .await
+    .unwrap();
+
+    core.handle_eviction().await;
+    core.shutdown().await;
+
+    let history = starter.get_history().await;
+    let wft_complete = history
+        .events
+        .into_iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowTaskCompletedEventAttributes(a) = e.attributes.unwrap() {
+                Some(a)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    let dv = wft_complete.deployment_version.unwrap();
+    assert_eq!(dv.build_id, build_id);
+}
+
 #[workflow]
 #[derive(Default)]
 struct ActivityHasDeploymentStampWf;

@@ -371,6 +371,11 @@ impl<S: worker_config_builder::IsComplete> WorkerConfigBuilder<S> {
                 {
                     return Err("WorkerDeploymentVersion must have a non-empty build_id and deployment_name when deployment-based versioning is enabled".to_string());
                 }
+                if !d.use_worker_versioning
+                    && d.default_versioning_behavior.is_some()
+                {
+                    return Err("default_versioning_behavior must be None when use_worker_versioning is false".to_string());
+                }
             }
             WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
                 if build_id.is_empty() {
@@ -2392,5 +2397,30 @@ mod tests {
                 "Effective types should match for {description}",
             );
         }
+    }
+
+    #[test]
+    fn rejects_versioning_behavior_when_versioning_off() {
+        let result = WorkerConfig::builder()
+            .namespace("default")
+            .task_queue("test-queue")
+            .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
+                WorkerDeploymentOptions {
+                    version: WorkerDeploymentVersion {
+                        deployment_name: "deployment".to_string(),
+                        build_id: "1.0".to_string(),
+                    },
+                    use_worker_versioning: false,
+                    default_versioning_behavior: Some(VersioningBehavior::AutoUpgrade),
+                },
+            ))
+            .task_types(WorkerTaskTypes::all())
+            .build();
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.contains("default_versioning_behavior must be None"),
+            "Error should mention default_versioning_behavior: {err}",
+        );
     }
 }
