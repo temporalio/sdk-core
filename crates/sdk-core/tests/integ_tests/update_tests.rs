@@ -1379,3 +1379,248 @@ async fn update_lost_on_activity_mismatch() {
         .await
         .unwrap();
 }
+
+/// Helper: start a workflow with a blocking update handler, send a signal
+/// after `delay_secs` to unblock it, and return the result or error from
+/// `execute_update` along with the elapsed wall-clock time.
+async fn run_blocking_update_test(
+    delay_secs: u64,
+    test_name: &str,
+) -> (Result<String, String>, Duration) {
+    let mut starter = CoreWfStarter::new(test_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    #[workflow]
+    #[derive(Default)]
+    struct UpdateBlockedWf {
+        ready: bool,
+    }
+
+    #[workflow_methods]
+    impl UpdateBlockedWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.wait_condition(|s| s.ready).await;
+            Ok(())
+        }
+
+        #[update]
+        async fn blocking_update(
+            ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            ctx.wait_condition(|s| s.ready).await;
+            Ok("unblocked".to_string())
+        }
+
+        #[signal]
+        fn unblock(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _: ()) {
+            self.ready = true;
+        }
+    }
+
+    worker.register_workflow::<UpdateBlockedWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            UpdateBlockedWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+        )
+        .await
+        .unwrap();
+
+    let start = std::time::Instant::now();
+    let update_result = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+    let update_result2 = update_result.clone();
+
+    let update = async {
+        let res = handle
+            .execute_update(
+                UpdateBlockedWf::blocking_update,
+                (),
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await;
+        let elapsed = start.elapsed();
+        let mapped = res.map_err(|e| format!("{e}"));
+        *update_result2.lock().await = Some((mapped, elapsed));
+    };
+
+    let signal_and_cleanup = async {
+        // Wait the specified delay, then unblock.
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+        handle
+            .signal(
+                UpdateBlockedWf::unblock,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .ok();
+
+        // If the update already failed (before the signal), we still need
+        // to wait for the result to be stored, then unblock again so the
+        // workflow's run method can complete.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        handle
+            .signal(
+                UpdateBlockedWf::unblock,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .ok();
+    };
+
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+
+    join!(update, signal_and_cleanup, run);
+
+    let guard = update_result.lock().await;
+    guard.clone().unwrap()
+}
+
+/// 25s delay: within ~one server long-poll cycle (~20s).
+/// Should succeed — the update completes within the initial
+/// UpdateWorkflowExecution call or one PollWorkflowExecutionUpdate.
+#[tokio::test]
+async fn update_blocked_25s_within_one_long_poll() {
+    let (result, elapsed) = run_blocking_update_test(
+        25,
+        "update_blocked_25s_within_one_long_poll",
+    )
+    .await;
+    eprintln!("25s test: elapsed={elapsed:?}, result={result:?}");
+    assert!(
+        result.is_ok(),
+        "execute_update should succeed at 25s but got: {:?}",
+        result.unwrap_err()
+    );
+    assert_eq!(result.unwrap(), "unblocked");
+}
+
+/// 45s delay: spans two+ server long-poll cycles (~20s each).
+/// This will fail if the SDK doesn't retry after the first long-poll
+/// returns with no outcome.
+#[tokio::test]
+async fn update_blocked_45s_spans_two_long_polls() {
+    let (result, elapsed) = run_blocking_update_test(
+        45,
+        "update_blocked_45s_spans_two_long_polls",
+    )
+    .await;
+    eprintln!("45s test: elapsed={elapsed:?}, result={result:?}");
+    assert!(
+        result.is_ok(),
+        "execute_update should succeed at 45s but got: {:?}",
+        result.unwrap_err()
+    );
+    assert_eq!(result.unwrap(), "unblocked");
+}
+
+/// 80s delay: spans at least three server long-poll cycles.
+#[tokio::test]
+async fn update_blocked_80s_spans_many_long_polls() {
+    let (result, elapsed) = run_blocking_update_test(
+        80,
+        "update_blocked_80s_spans_many_long_polls",
+    )
+    .await;
+    eprintln!("80s test: elapsed={elapsed:?}, result={result:?}");
+    assert!(
+        result.is_ok(),
+        "execute_update should succeed at 80s but got: {:?}",
+        result.unwrap_err()
+    );
+    assert_eq!(result.unwrap(), "unblocked");
+}
+
+/// Regression test: an update handler blocked on `wait_condition` must be
+/// re-evaluated after `poll_wf_future` advances the workflow and mutates
+/// state via `state_mut`.
+///
+/// The bug: `WorkflowFuture::poll` polls update futures *before* the workflow
+/// future. When both `run` and an update handler use `wait_condition` on
+/// each other's state, they deadlock: the update's predicate is checked
+/// before `run` has called `state_mut`, and after `poll_wf_future` sets the
+/// flag, update futures are never re-polled within the same activation.
+///
+/// Concretely: `run` sets `run_ready` then waits for `update_acked`.
+/// The update handler waits for `run_ready` then sets `update_acked`.
+/// With the bug, when the update arrives in the same activation that
+/// polls the workflow, the update sees stale state and blocks forever.
+#[tokio::test]
+async fn update_wait_condition_unblocked_by_run_state_change() {
+    let wf_name = "update_wc_run_state";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    #[workflow]
+    #[derive(Default)]
+    struct WaitCondRunWf {
+        run_ready: bool,
+        update_acked: bool,
+    }
+
+    #[workflow_methods]
+    impl WaitCondRunWf {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            ctx.state_mut(|s| s.run_ready = true);
+            ctx.wait_condition(|s| s.update_acked).await;
+            Ok(())
+        }
+
+        #[update]
+        async fn wait_for_run(
+            ctx: &mut WorkflowContext<Self>,
+            _: (),
+        ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+            ctx.wait_condition(|s| s.run_ready).await;
+            ctx.state_mut(|s| s.update_acked = true);
+            Ok("done".to_string())
+        }
+    }
+
+    worker.register_workflow::<WaitCondRunWf>();
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            WaitCondRunWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
+        )
+        .await
+        .unwrap();
+
+    let update_fut = handle.execute_update(
+        WaitCondRunWf::wait_for_run,
+        (),
+        WorkflowExecuteUpdateOptions::default(),
+    );
+
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+
+    // Race update against a local 5s timer.  Without the bug the update
+    // and workflow complete in under a second; with the bug neither
+    // makes progress (deadlock) and the timer fires.
+    tokio::select! {
+        res = async { join!(update_fut, runner) } => {
+            assert_eq!(res.0.unwrap(), "done");
+        }
+        _ = tokio::time::sleep(Duration::from_secs(5)) => {
+            panic!("deadlock: update and workflow stuck for 5 s");
+        }
+    }
+
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+}
