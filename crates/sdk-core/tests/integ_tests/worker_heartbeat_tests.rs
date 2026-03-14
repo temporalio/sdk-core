@@ -24,7 +24,7 @@ use temporalio_common::{
         temporal::api::{
             common::v1::RetryPolicy,
             enums::v1::WorkerStatus,
-            worker::v1::{PluginInfo, WorkerHeartbeat},
+            worker::v1::{PluginInfo, StorageDriverInfo, WorkerHeartbeat},
             workflowservice::v1::{DescribeWorkerRequest, ListWorkersRequest},
         },
     },
@@ -145,6 +145,16 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             PluginInfo {
                 name: "plugin2".to_string(),
                 version: "2".to_string(),
+            },
+        ]
+        .into_iter()
+        .collect();
+        c.storage_drivers = vec![
+            StorageDriverInfo {
+                name: "driver1".to_string(),
+            },
+            StorageDriverInfo {
+                name: "driver2".to_string(),
             },
         ]
         .into_iter()
@@ -570,6 +580,17 @@ fn after_shutdown_checks(
             PluginInfo {
                 name: "plugin2".to_string(),
                 version: "2".to_string()
+            }
+        ]
+    );
+    assert_eq!(
+        heartbeat.drivers,
+        vec![
+            StorageDriverInfo {
+                name: "driver1".to_string()
+            },
+            StorageDriverInfo {
+                name: "driver2".to_string()
             }
         ]
     );

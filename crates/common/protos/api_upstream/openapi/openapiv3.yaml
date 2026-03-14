@@ -14042,6 +14042,12 @@ components:
     StopBatchOperationResponse:
       type: object
       properties: {}
+    StorageDriverInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: The name of the driver, required.
     StructuredCalendarSpec:
       type: object
       properties:
@@ -15515,6 +15521,11 @@ components:
           items:
             $ref: '#/components/schemas/PluginInfo'
           description: Plugins currently in use by this SDK.
+        drivers:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageDriverInfo'
+          description: Storage drivers in use by this SDK.
       description: |-
         Worker info message, contains information about the worker and its current state.
          All information is provided by the worker itself.

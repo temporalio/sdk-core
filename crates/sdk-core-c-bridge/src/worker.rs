@@ -51,6 +51,7 @@ pub struct WorkerOptions {
     pub nondeterminism_as_workflow_fail: bool,
     pub nondeterminism_as_workflow_fail_for_types: ByteArrayRefArray,
     pub plugins: ByteArrayRefArray,
+    pub storage_drivers: ByteArrayRefArray,
 }
 
 #[repr(C)]
@@ -1258,6 +1259,19 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                             version: String::new(),
                         },
                     )
+                    .collect::<HashSet<_>>(),
+            )
+            .storage_drivers(
+                opt.storage_drivers
+                    .to_str_vec()
+                    .into_iter()
+                    .collect::<HashSet<_>>()
+                    .into_iter()
+                    .map(|name| {
+                        temporalio_common::protos::temporal::api::worker::v1::StorageDriverInfo {
+                            name: name.to_owned(),
+                        }
+                    })
                     .collect::<HashSet<_>>(),
             )
             .build()
