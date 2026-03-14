@@ -471,8 +471,8 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            // Convergence loop: a state_mut call in any future can unblock
-            // a wait_condition in another. Re-poll until no mutations occur.
+            // Re-poll all futures after state changes: a state_mut call in
+            // any future can unblock a wait_condition in another.
             self.base_ctx.take_state_mutated();
             loop {
                 self.poll_signal_futures(cx)?;
