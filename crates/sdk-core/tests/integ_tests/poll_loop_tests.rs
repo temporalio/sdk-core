@@ -1,7 +1,9 @@
 use crate::common::CoreWfStarter;
 use futures_util::future::join_all;
 use std::time::Duration;
-use temporalio_client::{WorkflowExecuteUpdateOptions, WorkflowSignalOptions, WorkflowStartOptions};
+use temporalio_client::{
+    WorkflowExecuteUpdateOptions, WorkflowSignalOptions, WorkflowStartOptions,
+};
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{WorkflowContext, WorkflowResult};
 
@@ -25,8 +27,12 @@ enum Step {
     Set(usize),
 }
 
-fn wait(flag: usize) -> Step { Step::Wait(flag) }
-fn set(flag: usize) -> Step { Step::Set(flag) }
+fn wait(flag: usize) -> Step {
+    Step::Wait(flag)
+}
+fn set(flag: usize) -> Step {
+    Step::Set(flag)
+}
 
 /// Full test script passed as workflow input.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -175,10 +181,7 @@ async fn scripted_update_workflow_update() {
         "scr_upd_wf_upd",
         TestScript {
             run_steps: vec![wait(1), set(2), wait(3)],
-            update_scripts: vec![
-                vec![set(1)],
-                vec![wait(2), set(3)],
-            ],
+            update_scripts: vec![vec![set(1)], vec![wait(2), set(3)]],
             signal_scripts: vec![],
         },
     )
@@ -194,10 +197,7 @@ async fn scripted_update_cross_unblock() {
         "scr_upd_cross",
         TestScript {
             run_steps: vec![wait(3)],
-            update_scripts: vec![
-                vec![wait(1), set(2), set(3)],
-                vec![set(1), wait(2), set(3)],
-            ],
+            update_scripts: vec![vec![wait(1), set(2), set(3)], vec![set(1), wait(2), set(3)]],
             signal_scripts: vec![],
         },
     )
@@ -212,12 +212,8 @@ async fn scripted_signal_update_workflow() {
         "scr_sig_upd_wf",
         TestScript {
             run_steps: vec![wait(2)],
-            update_scripts: vec![
-                vec![wait(1), set(2)],
-            ],
-            signal_scripts: vec![
-                vec![set(1)],
-            ],
+            update_scripts: vec![vec![wait(1), set(2)]],
+            signal_scripts: vec![vec![set(1)]],
         },
     )
     .await;
@@ -233,12 +229,8 @@ async fn scripted_update_unblocks_signal() {
         "scr_upd_sig",
         TestScript {
             run_steps: vec![wait(2)],
-            update_scripts: vec![
-                vec![set(1)],
-            ],
-            signal_scripts: vec![
-                vec![wait(1), set(2)],
-            ],
+            update_scripts: vec![vec![set(1)]],
+            signal_scripts: vec![vec![wait(1), set(2)]],
         },
     )
     .await;
@@ -259,10 +251,7 @@ async fn scripted_full_chain() {
                 vec![wait(1), set(2), wait(4), set(5)],
                 vec![wait(3), set(4)],
             ],
-            signal_scripts: vec![
-                vec![set(1)],
-                vec![wait(6), set(7)],
-            ],
+            signal_scripts: vec![vec![set(1)], vec![wait(6), set(7)]],
         },
     )
     .await;

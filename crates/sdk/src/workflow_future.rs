@@ -476,15 +476,14 @@ impl Future for WorkflowFuture {
             self.base_ctx.take_state_mutated();
             loop {
                 // Poll signals
-                let signal_result: Result<Vec<_>, _> =
-                    std::mem::take(&mut self.signal_futures)
-                        .into_iter()
-                        .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
-                            Poll::Ready(Ok(())) => None,
-                            Poll::Ready(Err(e)) => Some(Err(e)),
-                            Poll::Pending => Some(Ok(sig_fut)),
-                        })
-                        .collect();
+                let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
+                    .into_iter()
+                    .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
+                        Poll::Ready(Ok(())) => None,
+                        Poll::Ready(Err(e)) => Some(Err(e)),
+                        Poll::Pending => Some(Ok(sig_fut)),
+                    })
+                    .collect();
                 match signal_result {
                     Ok(remaining) => self.signal_futures = remaining,
                     Err(e) => {
@@ -507,12 +506,8 @@ impl Future for WorkflowFuture {
                                     update_response(
                                         instance_id,
                                         match v {
-                                            Ok(v) => {
-                                                update_response::Response::Completed(v)
-                                            }
-                                            Err(e) => {
-                                                update_response::Response::Rejected(e.into())
-                                            }
+                                            Ok(v) => update_response::Response::Completed(v),
+                                            Err(e) => update_response::Response::Rejected(e.into()),
                                         },
                                     )
                                     .into(),
@@ -524,9 +519,7 @@ impl Future for WorkflowFuture {
                     )
                     .collect();
 
-                if should_poll_wf
-                    && self.poll_wf_future(cx, &run_id, &mut activation_cmds)?
-                {
+                if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                     continue 'activations;
                 }
 
