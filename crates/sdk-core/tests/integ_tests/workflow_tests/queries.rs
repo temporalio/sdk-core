@@ -7,10 +7,8 @@ use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::workflow_commands::query_result,
     temporal::api::{
-        common::v1::WorkflowType,
-        enums::v1::EventType,
-        history::v1::WorkflowExecutionStartedEventAttributes,
-        query::v1::WorkflowQuery,
+        common::v1::WorkflowType, enums::v1::EventType,
+        history::v1::WorkflowExecutionStartedEventAttributes, query::v1::WorkflowQuery,
         taskqueue::v1::TaskQueue,
     },
 };
