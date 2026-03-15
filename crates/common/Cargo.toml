@@ -27,7 +27,6 @@ envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
 test-utilities = ["history_builders"]
 core-based-sdk = [
-  "otel",
   "prometheus",
   "envconfig",
   "dep:ringbuf",
