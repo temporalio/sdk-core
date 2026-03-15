@@ -745,6 +745,11 @@ fn find_end_index_of_next_wft_seq(
                             // If we've never seen an interesting event and the next two events are
                             // a completion followed immediately again by scheduled, then this is a
                             // WFT heartbeat and also doesn't conclude the sequence.
+                            // Keep this consistent with other skipped WFTs: do not allow a
+                            // heartbeat task to become a synthetic boundary for update sequencing,
+                            // since whether that heartbeat appears in a given history window can
+                            // vary between incremental processing and replay-after-cache-miss.
+                            wft_started_event_id_to_index.pop();
                             continue;
                         } else {
                             // If we see an update accepted command after WFT completed, we want to
@@ -1660,11 +1665,11 @@ mod tests {
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
-        // unlike the case with a wft failure, here the first task should not extend through to
-        // the update, because here the first empty WFT happened with _just_ the workflow init,
-        // not also with the update.
-        assert_eq!(seq.len(), 3);
+        // Empty heartbeat-like WFTs should not become update sequencing boundaries. Keeping that
+        // out of the lookup path avoids collapse differences between incremental windows and
+        // replay-after-cache-miss windows.
+        assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 3);
-        assert_eq!(seq.len(), 3);
+        assert_eq!(seq.len(), 7);
     }
 }
