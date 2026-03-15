@@ -43,24 +43,13 @@ struct TestScript {
 }
 
 #[workflow]
+#[derive(Default)]
 struct ChainWf {
     flags: [bool; 8],
     script: TestScript,
     script_ready: bool,
     next_update: usize,
     next_signal: usize,
-}
-
-impl Default for ChainWf {
-    fn default() -> Self {
-        Self {
-            flags: [false; 8],
-            script: TestScript::default(),
-            script_ready: false,
-            next_update: 0,
-            next_signal: 0,
-        }
-    }
 }
 
 async fn execute_steps(ctx: &mut WorkflowContext<ChainWf>, steps: Vec<Step>) {
