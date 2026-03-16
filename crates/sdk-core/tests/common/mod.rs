@@ -1062,8 +1062,6 @@ pub(crate) fn integ_dev_server_config(
             // TODO: Delete when temporalCLI enables it by default.
             "--dynamic-config-value".to_string(),
             "system.enableEagerWorkflowStart=true".to_string(),
-            "--dynamic-config-value".to_string(),
-            "system.enableNexus=true".to_string(),
             "--dynamic-config-value".to_owned(),
             "frontend.workerVersioningWorkflowAPIs=true".to_owned(),
             "--dynamic-config-value".to_owned(),
