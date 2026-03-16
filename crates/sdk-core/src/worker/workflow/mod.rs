@@ -564,6 +564,11 @@ impl Workflows {
 
         let completion_outcome = if let Ok(c) = rx.await {
             c
+        } else if is_empty_completion {
+            // The stream may shut down after accepting the message but before processing
+            // it (e.g. an eviction reply racing with shutdown_done()).
+            // Empty complete which is likely an evict reply, we can just ignore as above.
+            return Ok(());
         } else {
             dbg_panic!("Send half of activation complete response channel went missing");
             self.request_eviction(
