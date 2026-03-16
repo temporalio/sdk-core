@@ -2461,8 +2461,8 @@ paths:
         - name: query
           in: query
           description: |-
-            `query` in ListWorkers is used to filter workers based on worker status info.
-             The following worker status attributes are expected are supported as part of the query:
+            `query` in ListWorkers is used to filter workers based on worker attributes.
+             Supported attributes:
             * WorkerInstanceKey
             * WorkerIdentity
             * HostName
@@ -2472,9 +2472,7 @@ paths:
             * SdkName
             * SdkVersion
             * StartTime
-            * LastHeartbeatTime
             * Status
-             Currently metrics are not supported as a part of ListWorkers query.
           schema:
             type: string
       responses:
@@ -6496,8 +6494,8 @@ paths:
         - name: query
           in: query
           description: |-
-            `query` in ListWorkers is used to filter workers based on worker status info.
-             The following worker status attributes are expected are supported as part of the query:
+            `query` in ListWorkers is used to filter workers based on worker attributes.
+             Supported attributes:
             * WorkerInstanceKey
             * WorkerIdentity
             * HostName
@@ -6507,9 +6505,7 @@ paths:
             * SdkName
             * SdkVersion
             * StartTime
-            * LastHeartbeatTime
             * Status
-             Currently metrics are not supported as a part of ListWorkers query.
           schema:
             type: string
       responses:
@@ -9230,6 +9226,14 @@ components:
         data:
           type: string
           format: bytes
+    DeclinedTargetVersionUpgrade:
+      type: object
+      properties:
+        deploymentVersion:
+          $ref: '#/components/schemas/WorkerDeploymentVersion'
+      description: |-
+        Wrapper for a target deployment version that the SDK declined to upgrade to.
+         See declined_target_version_upgrade on WorkflowExecutionStartedEventAttributes.
     DeleteNexusEndpointResponse:
       type: object
       properties: {}
@@ -10550,6 +10554,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkerInfo'
+          description: |-
+            Deprecated: Use workers instead. This field returns full WorkerInfo which
+             includes expensive runtime metrics. We will stop populating this field in the future.
+        workers:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkerListInfo'
+          description: Limited worker information.
         nextPageToken:
           type: string
           description: Next page token
@@ -14042,6 +14054,12 @@ components:
     StopBatchOperationResponse:
       type: object
       properties: {}
+    StorageDriverInfo:
+      type: object
+      properties:
+        type:
+          type: string
+          description: The type of the driver, required.
     StructuredCalendarSpec:
       type: object
       properties:
@@ -15515,6 +15533,11 @@ components:
           items:
             $ref: '#/components/schemas/PluginInfo'
           description: Plugins currently in use by this SDK.
+        drivers:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageDriverInfo'
+          description: Storage drivers in use by this SDK.
       description: |-
         Worker info message, contains information about the worker and its current state.
          All information is provided by the worker itself.
@@ -15555,6 +15578,71 @@ components:
       properties:
         workerHeartbeat:
           $ref: '#/components/schemas/WorkerHeartbeat'
+      description: Detailed worker information.
+    WorkerListInfo:
+      type: object
+      properties:
+        workerInstanceKey:
+          type: string
+          description: |-
+            Worker identifier, should be unique for the namespace.
+             It is distinct from worker identity, which is not necessarily namespace-unique.
+        workerIdentity:
+          type: string
+          description: |-
+            Worker identity, set by the client, may not be unique.
+             Usually host_name+(user group name)+process_id, but can be overwritten by the user.
+        taskQueue:
+          type: string
+          description: Task queue this worker is polling for tasks.
+        deploymentVersion:
+          $ref: '#/components/schemas/WorkerDeploymentVersion'
+        sdkName:
+          type: string
+        sdkVersion:
+          type: string
+        status:
+          enum:
+            - WORKER_STATUS_UNSPECIFIED
+            - WORKER_STATUS_RUNNING
+            - WORKER_STATUS_SHUTTING_DOWN
+            - WORKER_STATUS_SHUTDOWN
+          type: string
+          description: Worker status. Defined by SDK.
+          format: enum
+        startTime:
+          type: string
+          description: |-
+            Worker start time.
+             It can be used to determine worker uptime. (current time - start time)
+          format: date-time
+        hostName:
+          type: string
+          description: Worker host identifier.
+        workerGroupingKey:
+          type: string
+          description: |-
+            Worker grouping identifier. A key to group workers that share the same client+namespace+process.
+             This will be used to build the worker command nexus task queue name:
+             "temporal-sys/worker-commands/{worker_grouping_key}"
+        processId:
+          type: string
+          description: |-
+            Worker process identifier. This id only needs to be unique
+             within one host (so using e.g. a unix pid would be appropriate).
+        plugins:
+          type: array
+          items:
+            $ref: '#/components/schemas/PluginInfo'
+          description: Plugins currently in use by this SDK.
+        drivers:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageDriverInfo'
+          description: Storage drivers in use by this SDK.
+      description: |-
+        Limited worker information returned in the list response.
+         When adding fields here, ensure that it is also added to WorkerInfo (as it carries the full worker information).
     WorkerPollerInfo:
       type: object
       properties:
@@ -16448,6 +16536,20 @@ components:
             A boolean indicating whether the SDK has asked to eagerly execute the first workflow task for this workflow and
              eager execution was accepted by the server.
              Only populated by server with version >= 1.29.0.
+        declinedTargetVersionUpgrade:
+          allOf:
+            - $ref: '#/components/schemas/DeclinedTargetVersionUpgrade'
+          description: |-
+            During a previous run of this workflow, the server may have notified the SDK
+             that the Target Worker Deployment Version changed, but the SDK declined to
+             upgrade (e.g., by continuing-as-new with PINNED behavior). This field records
+             the target version that was declined.
+
+             This is a wrapper message to distinguish "never declined" (nil wrapper) from
+             "declined an unversioned target" (non-nil wrapper with nil deployment_version).
+
+             Used internally by the server during continue-as-new and retry.
+             Should not be read or interpreted by SDKs.
       description: Always the first event in workflow history
     WorkflowExecutionTerminatedEventAttributes:
       type: object

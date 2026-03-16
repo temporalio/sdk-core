@@ -262,6 +262,11 @@ message PollWorkflowTaskQueueRequest {
     // A unique key for this worker instance, used for tracking worker lifecycle.
     // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
     string worker_instance_key = 8;
+
+    // The task queue on which the server will send control tasks to this worker.
+    // Example tasks: Cancel activity, update config, etc.
+    string worker_control_task_queue = 9;
+
     // Deprecated. Use deployment_options instead.
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
@@ -381,6 +386,14 @@ message RespondWorkflowTaskCompletedRequest {
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 17;
 
+    // A unique key for this worker instance, used for tracking worker lifecycle.
+    // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
+    string worker_instance_key = 18;
+
+    // The task queue on which the server will send control tasks to this worker.
+    // Example tasks: Cancel activity, update config, etc.
+    string worker_control_task_queue = 19;
+
     // SDK capability details.
     message Capabilities {
         // True if the SDK can handle speculative workflow task with command events. If true, the
@@ -444,6 +457,11 @@ message PollActivityTaskQueueRequest {
     // A unique key for this worker instance, used for tracking worker lifecycle.
     // This is guaranteed to be unique, whereas identity is not guaranteed to be unique.
     string worker_instance_key = 8;
+
+    // The task queue on which the server will send control tasks to this worker.
+    // Example tasks: Cancel activity, update config, etc.
+    string worker_control_task_queue = 9;
+
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
@@ -2560,8 +2578,8 @@ message ListWorkersRequest {
     int32 page_size = 2;
     bytes next_page_token = 3;
 
-    // `query` in ListWorkers is used to filter workers based on worker status info.
-    // The following worker status attributes are expected are supported as part of the query:
+    // `query` in ListWorkers is used to filter workers based on worker attributes.
+    // Supported attributes:
     //* WorkerInstanceKey
     //* WorkerIdentity
     //* HostName
@@ -2571,14 +2589,17 @@ message ListWorkersRequest {
     //* SdkName
     //* SdkVersion
     //* StartTime
-    //* LastHeartbeatTime
     //* Status
-    // Currently metrics are not supported as a part of ListWorkers query.
     string query = 4;
 }
 
 message ListWorkersResponse {
-    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1;
+    // Deprecated: Use workers instead. This field returns full WorkerInfo which
+    // includes expensive runtime metrics. We will stop populating this field in the future.
+    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1 [deprecated = true];
+
+    // Limited worker information.
+    repeated temporal.api.worker.v1.WorkerListInfo workers = 3;
 
     // Next page token
     bytes next_page_token = 2;

@@ -184,6 +184,24 @@ message WorkflowExecutionStartedEventAttributes {
     // eager execution was accepted by the server.
     // Only populated by server with version >= 1.29.0.
     bool eager_execution_accepted = 38;
+
+    // During a previous run of this workflow, the server may have notified the SDK
+    // that the Target Worker Deployment Version changed, but the SDK declined to
+    // upgrade (e.g., by continuing-as-new with PINNED behavior). This field records
+    // the target version that was declined.
+    //
+    // This is a wrapper message to distinguish "never declined" (nil wrapper) from
+    // "declined an unversioned target" (non-nil wrapper with nil deployment_version).
+    //
+    // Used internally by the server during continue-as-new and retry.
+    // Should not be read or interpreted by SDKs.
+    DeclinedTargetVersionUpgrade declined_target_version_upgrade = 40;
+}
+
+// Wrapper for a target deployment version that the SDK declined to upgrade to.
+// See declined_target_version_upgrade on WorkflowExecutionStartedEventAttributes.
+message DeclinedTargetVersionUpgrade {
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 1;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
