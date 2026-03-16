@@ -1,7 +1,7 @@
 use crate::common::{NAMESPACE, eventually, get_integ_client, rand_6_chars};
 use futures::TryStreamExt;
 use std::time::{Duration, SystemTime};
-use temporalio_client::{
+use temporalio_client::schedules::{
     CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleBackfill,
     ScheduleCalendarSpec, ScheduleOverlapPolicy, ScheduleSpec,
 };
