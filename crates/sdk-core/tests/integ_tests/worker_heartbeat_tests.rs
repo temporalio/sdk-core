@@ -72,6 +72,7 @@ fn to_system_time(ts: Timestamp) -> SystemTime {
     UNIX_EPOCH + Duration::new(ts.seconds as u64, ts.nanos as u32)
 }
 
+#[allow(deprecated)]
 async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Vec<WorkerHeartbeat> {
     let mut raw_client = client.clone();
     WorkflowService::list_workers(
@@ -229,6 +230,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         .await
         .unwrap()
         .into_inner();
+        #[allow(deprecated)]
         let worker_info = workers_list
             .workers_info
             .iter()
@@ -271,6 +273,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
+    #[allow(deprecated)]
     let worker_info = workers_list
         .workers_info
         .iter()
@@ -376,6 +379,7 @@ async fn docker_worker_heartbeat_tuner() {
     .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
+    #[allow(deprecated)]
     let worker_info = workers_list
         .workers_info
         .iter()
@@ -945,6 +949,7 @@ async fn worker_heartbeat_failure_metrics() {
                 .await
                 .unwrap()
                 .into_inner();
+                #[allow(deprecated)]
                 let worker_info = workers_list
                     .workers_info
                     .iter()
@@ -990,6 +995,7 @@ async fn worker_heartbeat_failure_metrics() {
                 .await
                 .unwrap()
                 .into_inner();
+                #[allow(deprecated)]
                 let worker_info = workers_list
                     .workers_info
                     .iter()
@@ -1102,6 +1108,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     .into_inner();
 
     // Ensure worker has not ever heartbeated
+    #[allow(deprecated)]
     let heartbeat = workers_list.workers_info.iter().find(|worker_info| {
         if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
             hb.worker_instance_key == worker_instance_key.to_string()
@@ -1174,6 +1181,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     .into_inner();
 
     // Ensure worker still heartbeats
+    #[allow(deprecated)]
     let heartbeat = workers_list.workers_info.iter().find(|worker_info| {
         if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
             hb.worker_instance_key == worker_instance_key.to_string()
