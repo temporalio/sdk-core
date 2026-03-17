@@ -2,8 +2,8 @@
 
 use http::uri::InvalidUri;
 use temporalio_common::{
-    data_converters::PayloadConversionError,
-    protos::temporal::api::{common::v1::Payload, failure::v1::Failure, query::v1::QueryRejected},
+    data_converters::{PayloadConversionError, TemporalFailure},
+    protos::temporal::api::{common::v1::Payload, query::v1::QueryRejected},
 };
 use tonic::Code;
 
@@ -123,8 +123,8 @@ pub enum WorkflowUpdateError {
     NotFound(#[source] tonic::Status),
 
     /// The update failed with an application-level failure.
-    #[error("Update failed: {0:?}")]
-    Failed(Box<Failure>),
+    #[error("Update failed: {0}")]
+    Failed(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// Error serializing input or deserializing output.
     #[error("Payload conversion error: {0}")]
@@ -140,6 +140,16 @@ pub enum WorkflowUpdateError {
 }
 
 impl WorkflowUpdateError {
+    /// If this is a `Failed` variant, attempt to downcast the inner error to a
+    /// [`TemporalFailure`]. Returns `None` for other variants or if a custom
+    /// `FailureConverter` produced a different error type.
+    pub fn as_temporal_failure(&self) -> Option<&TemporalFailure> {
+        match self {
+            Self::Failed(e) => e.downcast_ref::<TemporalFailure>(),
+            _ => None,
+        }
+    }
+
     pub(crate) fn from_status(status: tonic::Status) -> Self {
         if status.code() == Code::NotFound {
             Self::NotFound(status)
@@ -154,8 +164,8 @@ impl WorkflowUpdateError {
 #[non_exhaustive]
 pub enum WorkflowGetResultError {
     /// The workflow finished in failure.
-    #[error("Workflow failed: {0:?}")]
-    Failed(Box<Failure>),
+    #[error("Workflow failed: {0}")]
+    Failed(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// The workflow was cancelled.
     #[error("Workflow cancelled")]
@@ -208,6 +218,16 @@ impl From<WorkflowInteractionError> for WorkflowGetResultError {
 }
 
 impl WorkflowGetResultError {
+    /// If this is a `Failed` variant, attempt to downcast the inner error to a
+    /// [`TemporalFailure`]. Returns `None` for other variants or if a custom
+    /// `FailureConverter` produced a different error type.
+    pub fn as_temporal_failure(&self) -> Option<&TemporalFailure> {
+        match self {
+            Self::Failed(e) => e.downcast_ref::<TemporalFailure>(),
+            _ => None,
+        }
+    }
+
     /// Returns `true` if this error represents a workflow-level non-success outcome
     /// (Failed, Cancelled, Terminated, TimedOut, or ContinuedAsNew) rather than an
     /// infrastructure/RPC error.

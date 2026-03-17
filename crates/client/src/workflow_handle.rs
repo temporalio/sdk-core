@@ -267,7 +267,14 @@ where
         let raw = self.get_result_raw(opts).await?;
         match raw {
             WorkflowExecutionResult::Succeeded(v) => Ok(v),
-            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(Box::new(f))),
+            WorkflowExecutionResult::Failed(f) => {
+                let err = self
+                    .client
+                    .data_converter()
+                    .to_error(f, &SerializationContextData::Workflow)
+                    .map_err(|e| WorkflowGetResultError::Other(Box::new(e)))?;
+                Err(WorkflowGetResultError::Failed(err))
+            }
             WorkflowExecutionResult::Cancelled { details } => {
                 Err(WorkflowGetResultError::Cancelled { details })
             }
@@ -805,7 +812,12 @@ where
                 .await
                 .map_err(WorkflowUpdateError::from),
             Some(update::v1::outcome::Value::Failure(failure)) => {
-                Err(WorkflowUpdateError::Failed(Box::new(failure)))
+                let err = self
+                    .client
+                    .data_converter()
+                    .to_error(failure, &SerializationContextData::Workflow)
+                    .map_err(|e| WorkflowUpdateError::Other(Box::new(e)))?;
+                Err(WorkflowUpdateError::Failed(err))
             }
             None => Err(WorkflowUpdateError::Other(
                 "Update returned no outcome value".into(),

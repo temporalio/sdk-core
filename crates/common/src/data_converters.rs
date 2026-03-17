@@ -19,7 +19,6 @@ use std::{collections::HashMap, sync::Arc};
 #[derive(Clone)]
 pub struct DataConverter {
     payload_converter: PayloadConverter,
-    #[allow(dead_code)] // Will be used for failure conversion
     failure_converter: Arc<dyn FailureConverter + Send + Sync>,
     codec: Arc<dyn PayloadCodec + Send + Sync>,
 }
@@ -114,9 +113,34 @@ impl DataConverter {
         &self.payload_converter
     }
 
+    /// Returns the failure converter component of this data converter.
+    pub fn failure_converter(&self) -> &(dyn FailureConverter + Send + Sync) {
+        self.failure_converter.as_ref()
+    }
+
     /// Returns the codec component of this data converter.
     pub fn codec(&self) -> &(dyn PayloadCodec + Send + Sync) {
         self.codec.as_ref()
+    }
+
+    /// Convert a [`Failure`] proto into a typed Rust error.
+    pub fn to_error(
+        &self,
+        failure: Failure,
+        context: &SerializationContextData,
+    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+        self.failure_converter
+            .to_error(failure, &self.payload_converter, context)
+    }
+
+    /// Convert an error into a [`Failure`] proto.
+    pub fn to_failure(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+        context: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        self.failure_converter
+            .to_failure(error, &self.payload_converter, context)
     }
 }
 
@@ -210,7 +234,7 @@ pub trait FailureConverter {
     /// Convert an error into a Temporal failure protobuf.
     fn to_failure(
         &self,
-        error: Box<dyn std::error::Error>,
+        error: Box<dyn std::error::Error + Send + Sync>,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError>;
@@ -221,7 +245,7 @@ pub trait FailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
+    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError>;
 }
 /// Default failure converter that maps between Temporal [`Failure`] protobufs
 /// and Rust error types.
@@ -398,8 +422,27 @@ impl TemporalFailure {
         }
     }
 
-    fn from_failure(failure: Failure) -> Self {
-        let cause = failure.cause.map(|c| Box::new(Self::from_failure(*c)));
+    fn from_failure(mut failure: Failure, payload_converter: &PayloadConverter) -> Self {
+        // If encoded_attributes is present, decode message (and stack_trace)
+        // from the payload — the top-level fields were cleared for encryption.
+        if let Some(payload) = failure.encoded_attributes.take() {
+            let ctx = SerializationContext {
+                data: &SerializationContextData::None,
+                converter: payload_converter,
+            };
+            if let Ok(attrs) = payload_converter.from_payload::<serde_json::Value>(&ctx, payload) {
+                if let Some(msg) = attrs.get("message").and_then(|v| v.as_str()) {
+                    failure.message = msg.to_owned();
+                }
+                if let Some(st) = attrs.get("stack_trace").and_then(|v| v.as_str()) {
+                    failure.stack_trace = st.to_owned();
+                }
+            }
+        }
+
+        let cause = failure
+            .cause
+            .map(|c| Box::new(Self::from_failure(*c, payload_converter)));
 
         match failure.failure_info {
             Some(FailureInfo::ApplicationFailureInfo(info)) => Self::Application {
@@ -1111,7 +1154,7 @@ impl Default for DataConverter {
 impl FailureConverter for DefaultFailureConverter {
     fn to_failure(
         &self,
-        error: Box<dyn std::error::Error>,
+        error: Box<dyn std::error::Error + Send + Sync>,
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError> {
@@ -1134,10 +1177,13 @@ impl FailureConverter for DefaultFailureConverter {
     fn to_error(
         &self,
         failure: Failure,
-        _payload_converter: &PayloadConverter,
+        payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        Ok(Box::new(TemporalFailure::from_failure(failure)))
+    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+        Ok(Box::new(TemporalFailure::from_failure(
+            failure,
+            payload_converter,
+        )))
     }
 }
 impl PayloadCodec for DefaultPayloadCodec {
@@ -1325,7 +1371,8 @@ mod tests {
 
     #[test]
     fn plain_error_becomes_application_failure() {
-        let err: Box<dyn std::error::Error> = "something went wrong".to_string().into();
+        let err: Box<dyn std::error::Error + Send + Sync> =
+            "something went wrong".to_string().into();
         let failure = DefaultFailureConverter
             .to_failure(
                 err,
@@ -1343,7 +1390,7 @@ mod tests {
 
     #[test]
     fn source_field_is_set() {
-        let err: Box<dyn std::error::Error> = "test".to_string().into();
+        let err: Box<dyn std::error::Error + Send + Sync> = "test".to_string().into();
         let failure = DefaultFailureConverter
             .to_failure(
                 err,
@@ -1525,7 +1572,7 @@ mod tests {
     impl FailureConverter for UpperCaseFailureConverter {
         fn to_failure(
             &self,
-            error: Box<dyn std::error::Error>,
+            error: Box<dyn std::error::Error + Send + Sync>,
             _: &PayloadConverter,
             _: &SerializationContextData,
         ) -> Result<Failure, PayloadConversionError> {
@@ -1543,8 +1590,8 @@ mod tests {
             failure: Failure,
             _: &PayloadConverter,
             _: &SerializationContextData,
-        ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-            Ok(failure.message.to_uppercase().into())
+        ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+            Ok(failure.message.to_lowercase().into())
         }
     }
 
@@ -1554,7 +1601,7 @@ mod tests {
         let pc = PayloadConverter::default();
         let ctx = SerializationContextData::Workflow;
 
-        let err: Box<dyn std::error::Error> = "hello world".to_string().into();
+        let err: Box<dyn std::error::Error + Send + Sync> = "hello world".to_string().into();
         let failure = custom
             .to_failure(err, &pc, &ctx)
             .expect("custom to_failure should work");
@@ -1563,7 +1610,7 @@ mod tests {
         let error = custom
             .to_error(failure, &pc, &ctx)
             .expect("custom to_error should work");
-        assert_eq!(error.to_string(), "HELLO WORLD");
+        assert_eq!(error.to_string(), "hello world");
     }
 
     #[test]
@@ -1601,5 +1648,35 @@ mod tests {
             .expect("should decode encoded_attributes");
 
         assert_eq!(error.to_string(), "secret error");
+    }
+
+    #[test]
+    fn non_json_encoded_attributes_falls_back_to_message() {
+        let failure = Failure {
+            message: "fallback message".into(),
+            encoded_attributes: Some(Payload {
+                metadata: {
+                    let mut hm = HashMap::new();
+                    hm.insert("encoding".to_string(), b"binary/protobuf".to_vec());
+                    hm
+                },
+                data: vec![0xFF, 0xFE, 0x00],
+                external_payloads: vec![],
+            }),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(
+                failure,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("should succeed even with undecodable encoded_attributes");
+
+        assert_eq!(error.to_string(), "fallback message");
     }
 }
