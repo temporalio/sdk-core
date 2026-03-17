@@ -127,10 +127,59 @@ message WorkerHeartbeat {
 
   // Plugins currently in use by this SDK.
   repeated PluginInfo plugins = 23;
+
+  // Storage drivers in use by this SDK.
+  repeated StorageDriverInfo drivers = 24;
 }
 
+// Detailed worker information.
 message WorkerInfo {
   WorkerHeartbeat worker_heartbeat = 1;
+}
+
+// Limited worker information returned in the list response.
+// When adding fields here, ensure that it is also added to WorkerInfo (as it carries the full worker information).
+message WorkerListInfo {
+  // Worker identifier, should be unique for the namespace.
+  // It is distinct from worker identity, which is not necessarily namespace-unique.
+  string worker_instance_key = 1;
+
+  // Worker identity, set by the client, may not be unique.
+  // Usually host_name+(user group name)+process_id, but can be overwritten by the user.
+  string worker_identity = 2;
+
+  // Task queue this worker is polling for tasks.
+  string task_queue = 3;
+
+  temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 4;
+
+  string sdk_name = 5;
+  string sdk_version = 6;
+
+  // Worker status. Defined by SDK.
+  temporal.api.enums.v1.WorkerStatus status = 7;
+
+  // Worker start time.
+  // It can be used to determine worker uptime. (current time - start time)
+  google.protobuf.Timestamp start_time = 8;
+
+  // Worker host identifier.
+  string host_name = 9;
+
+  // Worker grouping identifier. A key to group workers that share the same client+namespace+process.
+  // This will be used to build the worker command nexus task queue name:
+  // "temporal-sys/worker-commands/{worker_grouping_key}"
+  string worker_grouping_key = 10;
+
+  // Worker process identifier. This id only needs to be unique
+  // within one host (so using e.g. a unix pid would be appropriate).
+  string process_id = 11;
+
+  // Plugins currently in use by this SDK.
+  repeated PluginInfo plugins = 12;
+
+  // Storage drivers in use by this SDK.
+  repeated StorageDriverInfo drivers = 13;
 }
 
 message PluginInfo {
@@ -138,4 +187,33 @@ message PluginInfo {
     string name = 1;
     // The version of the plugin, may be empty.
     string version = 2;
+}
+
+message StorageDriverInfo {
+  // The type of the driver, required.
+  string type = 1;
+}
+
+// A command sent from the server to a worker.
+message WorkerCommand {
+  oneof type {
+    CancelActivityCommand cancel_activity = 1;
+  }
+}
+
+// Cancel an activity if it is still running. Otherwise, do nothing.
+message CancelActivityCommand {
+  bytes task_token = 1;
+}
+
+// The result of executing a WorkerCommand.
+message WorkerCommandResult {
+  oneof type {
+    CancelActivityResult cancel_activity = 1;
+  }
+}
+
+// Result of a CancelActivityCommand.
+// Treat both successful cancellation and no-op (activity is no longer running) as success.
+message CancelActivityResult {
 }
