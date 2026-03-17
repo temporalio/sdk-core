@@ -60,6 +60,11 @@ fsm! {
         shared on_child_workflow_execution_started) --> Started;
     StartEventRecorded --(StartChildWorkflowExecutionFailed(StartChildWorkflowExecutionFailedCause),
         on_start_child_workflow_execution_failed) --> StartFailed;
+    // Cancel may arrive before ChildWorkflowExecutionStarted if the parent workflow is cancelled
+    // while the child start is still in flight.
+    StartEventRecorded --(Cancel(String), shared on_cancelled) --> StartEventRecorded;
+    StartEventRecorded --(Cancel(String), shared on_cancelled) --> Cancelled;
+    StartEventRecorded --(CommandRequestCancelExternalWorkflowExecution) --> StartEventRecorded;
 
     Started --(ChildWorkflowExecutionCompleted(Option<Payloads>),
         on_child_workflow_execution_completed) --> Completed;
@@ -81,6 +86,10 @@ fsm! {
 
     // Ignore any spurious cancellations after resolution
     Cancelled --(Cancel(String)) --> Cancelled;
+    // ChildWorkflowExecutionStarted may arrive after we cancelled from StartEventRecorded
+    Cancelled --(ChildWorkflowExecutionStarted(ChildWorkflowExecutionStartedEvent)) --> Cancelled;
+    Cancelled --(StartChildWorkflowExecutionFailed(StartChildWorkflowExecutionFailedCause)) --> Cancelled;
+    Cancelled --(CommandRequestCancelExternalWorkflowExecution) --> Cancelled;
     Cancelled --(ChildWorkflowExecutionCancelled,
         on_child_workflow_execution_cancelled) --> Cancelled;
     // Completions of any kind after cancellation are acceptable for abandoned children
@@ -296,6 +305,23 @@ impl StartEventRecorded {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::StartFail(cause)],
             StartFailed::default(),
+        )
+    }
+
+    pub(super) fn on_cancelled(
+        self,
+        state: &mut SharedState,
+        reason: String,
+    ) -> ChildWorkflowMachineTransition<StartEventRecordedOrCancelled> {
+        let dest = match state.cancel_type {
+            ChildWorkflowCancellationType::Abandon | ChildWorkflowCancellationType::TryCancel => {
+                StartEventRecordedOrCancelled::Cancelled(Default::default())
+            }
+            _ => StartEventRecordedOrCancelled::StartEventRecorded(Default::default()),
+        };
+        TransitionResult::ok(
+            [ChildWorkflowCommand::IssueCancelAfterStarted { reason }],
+            dest,
         )
     }
 }
@@ -871,5 +897,52 @@ mod test {
             }
             if commands.is_empty()
         ));
+    }
+
+    #[test]
+    fn cancel_in_start_event_recorded() {
+        for cancel_type in [
+            ChildWorkflowCancellationType::WaitCancellationCompleted,
+            ChildWorkflowCancellationType::TryCancel,
+            ChildWorkflowCancellationType::Abandon,
+        ] {
+            let mut s = ChildWorkflowMachine::from_parts(
+                StartEventRecorded {}.into(),
+                SharedState {
+                    initiated_event_id: 1,
+                    started_event_id: 0,
+                    lang_sequence_number: 1,
+                    namespace: "".to_string(),
+                    workflow_id: "child-wf-id".to_string(),
+                    run_id: "".to_string(),
+                    workflow_type: "child".to_string(),
+                    cancelled_before_sent: false,
+                    cancel_type,
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
+                },
+            );
+            let cmds = s
+                .cancel("parent cancelled".to_string())
+                .expect("Cancel in StartEventRecorded should not fail");
+            assert!(
+                !cmds.is_empty(),
+                "Should produce commands for {cancel_type:?}"
+            );
+            match cancel_type {
+                ChildWorkflowCancellationType::Abandon
+                | ChildWorkflowCancellationType::TryCancel => {
+                    assert!(
+                        matches!(s.state(), ChildWorkflowMachineState::Cancelled(_)),
+                        "Should be Cancelled for {cancel_type:?}"
+                    );
+                }
+                _ => {
+                    assert!(
+                        matches!(s.state(), ChildWorkflowMachineState::StartEventRecorded(_)),
+                        "Should stay in StartEventRecorded for {cancel_type:?}"
+                    );
+                }
+            }
+        }
     }
 }

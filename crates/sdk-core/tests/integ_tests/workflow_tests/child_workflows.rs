@@ -24,10 +24,10 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            enums::v1::{CommandType, EventType, ParentClosePolicy},
+            enums::v1::{CommandType, EventType, ParentClosePolicy, WorkflowTaskFailedCause},
             history::v1::{
                 StartChildWorkflowExecutionFailedEventAttributes,
-                StartChildWorkflowExecutionInitiatedEventAttributes,
+                StartChildWorkflowExecutionInitiatedEventAttributes, history_event,
             },
             sdk::v1::UserMetadata,
         },
@@ -944,18 +944,27 @@ async fn cancel_child_wf_before_started_event_real_server() {
     };
     tokio::join!(canceller, runner);
 
-    // Verify no workflow task failures in history (the bug manifests as a WFT failure with NDE)
+    // Verify no unexpected workflow task failures in history. The bug manifests as a WFT failure
+    // with a nondeterminism error. UnhandledCommand failures are acceptable since the server
+    // may reject a cancel command if it races with the child workflow start.
     let history = handle.fetch_history(Default::default()).await.unwrap();
-    let wft_failures: Vec<_> = history
+    let unexpected_wft_failures: Vec<_> = history
         .events()
         .iter()
-        .filter(|e| e.event_type == EventType::WorkflowTaskFailed as i32)
+        .filter(|e| {
+            if let Some(history_event::Attributes::WorkflowTaskFailedEventAttributes(attrs)) =
+                &e.attributes
+            {
+                attrs.cause != WorkflowTaskFailedCause::UnhandledCommand as i32
+            } else {
+                false
+            }
+        })
         .collect();
     assert!(
-        wft_failures.is_empty(),
-        "Expected no WorkflowTaskFailed events, but found {}: {:?}",
-        wft_failures.len(),
-        wft_failures
+        unexpected_wft_failures.is_empty(),
+        "Expected no unexpected WorkflowTaskFailed events, but found: {:?}",
+        unexpected_wft_failures
     );
 
     // Replay the history to verify determinism
