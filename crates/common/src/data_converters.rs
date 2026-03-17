@@ -1,7 +1,16 @@
 //! Contains traits for and default implementations of data converters, codecs, and other
 //! serialization related functionality.
 
-use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
+use crate::protos::temporal::api::{
+    common::v1::{Payload, Payloads},
+    enums::v1::{RetryState, TimeoutType},
+    failure::v1::{
+        ActivityFailureInfo, ApplicationFailureInfo, CanceledFailureInfo,
+        ChildWorkflowExecutionFailureInfo, Failure, NexusHandlerFailureInfo,
+        NexusOperationFailureInfo, ServerFailureInfo, TerminatedFailureInfo, TimeoutFailureInfo,
+        failure::FailureInfo,
+    },
+};
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
@@ -214,8 +223,434 @@ pub trait FailureConverter {
         context: &SerializationContextData,
     ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
 }
-/// Default (currently unimplemented) failure converter.
+/// Default failure converter that maps between Temporal [`Failure`] protobufs
+/// and Rust error types.
 pub struct DefaultFailureConverter;
+
+/// An error produced by the failure converter, representing a Temporal
+/// [`Failure`] proto as a typed Rust error.
+#[derive(Debug, thiserror::Error)]
+pub enum TemporalFailure {
+    /// Application-level failure — the primary error type users throw from
+    /// workflows and activities.
+    #[error("{message}")]
+    Application {
+        /// Human-readable error message.
+        message: String,
+        /// Application error type string.
+        r#type: String,
+        /// Whether this error is non-retryable.
+        non_retryable: bool,
+        /// Serialized detail payloads.
+        details: Option<Payloads>,
+        /// Override for the next retry delay.
+        next_retry_delay: Option<prost_types::Duration>,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// A timeout occurred (activity start-to-close, schedule-to-close, etc.).
+    #[error("{message}")]
+    Timeout {
+        /// Human-readable error message.
+        message: String,
+        /// Which kind of timeout.
+        timeout_type: TimeoutType,
+        /// Last heartbeat details before the timeout.
+        last_heartbeat_details: Option<Payloads>,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// The operation was cancelled.
+    #[error("{message}")]
+    Cancelled {
+        /// Human-readable error message.
+        message: String,
+        /// Cancellation detail payloads.
+        details: Option<Payloads>,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// The workflow or activity was terminated.
+    #[error("{message}")]
+    Terminated {
+        /// Human-readable error message.
+        message: String,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// An error originated at the Temporal server.
+    #[error("{message}")]
+    Server {
+        /// Human-readable error message.
+        message: String,
+        /// Whether this error is non-retryable.
+        non_retryable: bool,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// An activity execution failed. The original error is available as the
+    /// cause.
+    #[error("{message}")]
+    Activity {
+        /// Human-readable error message.
+        message: String,
+        /// Scheduled event ID.
+        scheduled_event_id: i64,
+        /// Started event ID.
+        started_event_id: i64,
+        /// Worker identity.
+        identity: String,
+        /// Activity type name.
+        activity_type: String,
+        /// Activity ID.
+        activity_id: String,
+        /// Retry state at the time of failure.
+        retry_state: RetryState,
+        /// Recursive cause (typically the underlying application error).
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// A child workflow execution failed.
+    #[error("{message}")]
+    ChildWorkflow {
+        /// Human-readable error message.
+        message: String,
+        /// Child workflow namespace.
+        namespace: String,
+        /// Child workflow ID.
+        workflow_id: String,
+        /// Child workflow run ID.
+        run_id: String,
+        /// Child workflow type name.
+        workflow_type: String,
+        /// Initiated event ID.
+        initiated_event_id: i64,
+        /// Started event ID.
+        started_event_id: i64,
+        /// Retry state at the time of failure.
+        retry_state: RetryState,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// A Nexus operation failed.
+    #[error("{message}")]
+    NexusOperation {
+        /// Human-readable error message.
+        message: String,
+        /// Scheduled event ID.
+        scheduled_event_id: i64,
+        /// Nexus endpoint name.
+        endpoint: String,
+        /// Nexus service name.
+        service: String,
+        /// Nexus operation name.
+        operation: String,
+        /// Operation token (may be empty for sync completions).
+        operation_token: String,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// A Nexus handler produced an error.
+    #[error("{message}")]
+    NexusHandler {
+        /// Human-readable error message.
+        message: String,
+        /// Nexus error type.
+        r#type: String,
+        /// Retry behavior (proto enum value).
+        retry_behavior: i32,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+    /// A failure with no specific `failure_info`, or an unmodeled variant.
+    #[error("{message}")]
+    Generic {
+        /// Human-readable error message.
+        message: String,
+        /// Recursive cause.
+        #[source]
+        cause: Option<Box<TemporalFailure>>,
+    },
+}
+
+impl TemporalFailure {
+    /// The human-readable error message, regardless of variant.
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Application { message, .. }
+            | Self::Timeout { message, .. }
+            | Self::Cancelled { message, .. }
+            | Self::Terminated { message, .. }
+            | Self::Server { message, .. }
+            | Self::Activity { message, .. }
+            | Self::ChildWorkflow { message, .. }
+            | Self::NexusOperation { message, .. }
+            | Self::NexusHandler { message, .. }
+            | Self::Generic { message, .. } => message,
+        }
+    }
+
+    fn from_failure(failure: Failure) -> Self {
+        let cause = failure.cause.map(|c| Box::new(Self::from_failure(*c)));
+
+        match failure.failure_info {
+            Some(FailureInfo::ApplicationFailureInfo(info)) => Self::Application {
+                message: failure.message,
+                r#type: info.r#type,
+                non_retryable: info.non_retryable,
+                details: info.details,
+                next_retry_delay: info.next_retry_delay,
+                cause,
+            },
+            Some(FailureInfo::TimeoutFailureInfo(info)) => Self::Timeout {
+                message: failure.message,
+                timeout_type: info.timeout_type(),
+                last_heartbeat_details: info.last_heartbeat_details,
+                cause,
+            },
+            Some(FailureInfo::CanceledFailureInfo(info)) => Self::Cancelled {
+                message: failure.message,
+                details: info.details,
+                cause,
+            },
+            Some(FailureInfo::TerminatedFailureInfo(_)) => Self::Terminated {
+                message: failure.message,
+                cause,
+            },
+            Some(FailureInfo::ServerFailureInfo(info)) => Self::Server {
+                message: failure.message,
+                non_retryable: info.non_retryable,
+                cause,
+            },
+            Some(FailureInfo::ActivityFailureInfo(info)) => {
+                let retry_state = info.retry_state();
+                Self::Activity {
+                    message: failure.message,
+                    scheduled_event_id: info.scheduled_event_id,
+                    started_event_id: info.started_event_id,
+                    identity: info.identity,
+                    activity_type: info.activity_type.map(|t| t.name).unwrap_or_default(),
+                    activity_id: info.activity_id,
+                    retry_state,
+                    cause,
+                }
+            }
+            Some(FailureInfo::ChildWorkflowExecutionFailureInfo(info)) => {
+                let retry_state = info.retry_state();
+                let (workflow_id, run_id) = info
+                    .workflow_execution
+                    .map(|e| (e.workflow_id, e.run_id))
+                    .unwrap_or_default();
+                Self::ChildWorkflow {
+                    message: failure.message,
+                    namespace: info.namespace,
+                    workflow_id,
+                    run_id,
+                    workflow_type: info.workflow_type.map(|t| t.name).unwrap_or_default(),
+                    initiated_event_id: info.initiated_event_id,
+                    started_event_id: info.started_event_id,
+                    retry_state,
+                    cause,
+                }
+            }
+            Some(FailureInfo::NexusOperationExecutionFailureInfo(info)) => Self::NexusOperation {
+                message: failure.message,
+                scheduled_event_id: info.scheduled_event_id,
+                endpoint: info.endpoint,
+                service: info.service,
+                operation: info.operation,
+                operation_token: info.operation_token,
+                cause,
+            },
+            Some(FailureInfo::NexusHandlerFailureInfo(info)) => Self::NexusHandler {
+                message: failure.message,
+                r#type: info.r#type,
+                retry_behavior: info.retry_behavior,
+                cause,
+            },
+            Some(FailureInfo::ResetWorkflowFailureInfo(_)) | None => Self::Generic {
+                message: failure.message,
+                cause,
+            },
+        }
+    }
+
+    fn into_failure(self) -> Failure {
+        let (message, failure_info, cause) = match self {
+            Self::Application {
+                message,
+                r#type,
+                non_retryable,
+                details,
+                next_retry_delay,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        r#type,
+                        non_retryable,
+                        details,
+                        next_retry_delay,
+                        ..Default::default()
+                    },
+                )),
+                cause,
+            ),
+            Self::Timeout {
+                message,
+                timeout_type,
+                last_heartbeat_details,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
+                    timeout_type: timeout_type.into(),
+                    last_heartbeat_details,
+                })),
+                cause,
+            ),
+            Self::Cancelled {
+                message,
+                details,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                    details,
+                })),
+                cause,
+            ),
+            Self::Terminated { message, cause } => (
+                message,
+                Some(FailureInfo::TerminatedFailureInfo(TerminatedFailureInfo {})),
+                cause,
+            ),
+            Self::Server {
+                message,
+                non_retryable,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::ServerFailureInfo(ServerFailureInfo {
+                    non_retryable,
+                })),
+                cause,
+            ),
+            Self::Activity {
+                message,
+                scheduled_event_id,
+                started_event_id,
+                identity,
+                activity_type,
+                activity_id,
+                retry_state,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+                    scheduled_event_id,
+                    started_event_id,
+                    identity,
+                    activity_type: Some(crate::protos::temporal::api::common::v1::ActivityType {
+                        name: activity_type,
+                    }),
+                    activity_id,
+                    retry_state: retry_state.into(),
+                })),
+                cause,
+            ),
+            Self::ChildWorkflow {
+                message,
+                namespace,
+                workflow_id,
+                run_id,
+                workflow_type,
+                initiated_event_id,
+                started_event_id,
+                retry_state,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
+                    ChildWorkflowExecutionFailureInfo {
+                        namespace,
+                        workflow_execution: Some(
+                            crate::protos::temporal::api::common::v1::WorkflowExecution {
+                                workflow_id,
+                                run_id,
+                            },
+                        ),
+                        workflow_type: Some(
+                            crate::protos::temporal::api::common::v1::WorkflowType {
+                                name: workflow_type,
+                            },
+                        ),
+                        initiated_event_id,
+                        started_event_id,
+                        retry_state: retry_state.into(),
+                    },
+                )),
+                cause,
+            ),
+            Self::NexusOperation {
+                message,
+                scheduled_event_id,
+                endpoint,
+                service,
+                operation,
+                operation_token,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::NexusOperationExecutionFailureInfo(
+                    NexusOperationFailureInfo {
+                        scheduled_event_id,
+                        endpoint,
+                        service,
+                        operation,
+                        operation_token,
+                        ..Default::default()
+                    },
+                )),
+                cause,
+            ),
+            Self::NexusHandler {
+                message,
+                r#type,
+                retry_behavior,
+                cause,
+            } => (
+                message,
+                Some(FailureInfo::NexusHandlerFailureInfo(
+                    NexusHandlerFailureInfo {
+                        r#type,
+                        retry_behavior,
+                    },
+                )),
+                cause,
+            ),
+            Self::Generic { message, cause } => (message, None, cause),
+        };
+
+        Failure {
+            message,
+            source: "RustSDK".into(),
+            failure_info,
+            cause: cause.map(|c| Box::new(c.into_failure())),
+            ..Default::default()
+        }
+    }
+}
+
 /// Encodes and decodes payloads, enabling encryption or compression.
 pub trait PayloadCodec {
     /// Encode payloads before they are sent to the server.
@@ -672,22 +1107,37 @@ impl Default for DataConverter {
         )
     }
 }
+
 impl FailureConverter for DefaultFailureConverter {
     fn to_failure(
         &self,
-        _: Box<dyn std::error::Error>,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
+        error: Box<dyn std::error::Error>,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError> {
-        todo!()
+        match error.downcast::<TemporalFailure>() {
+            Ok(tf) => Ok(tf.into_failure()),
+            Err(error) => {
+                // Unknown error type — wrap as ApplicationFailureInfo.
+                Ok(Failure {
+                    message: error.to_string(),
+                    source: "RustSDK".into(),
+                    failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                        ApplicationFailureInfo::default(),
+                    )),
+                    ..Default::default()
+                })
+            }
+        }
     }
+
     fn to_error(
         &self,
-        _: Failure,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
+        failure: Failure,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
     ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        todo!()
+        Ok(Box::new(TemporalFailure::from_failure(failure)))
     }
 }
 impl PayloadCodec for DefaultPayloadCodec {
