@@ -1,10 +1,10 @@
 use crate::{
     ActivityHeartbeat, CompleteActivityError, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
-        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, WorkerExt,
-        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, fanout_tasks,
-        gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker, poll_and_reply,
-        single_hist_mock_sg, test_worker_cfg,
+        FakeWfResponses, MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, WorkerExt,
+        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, build_multihist_mock_sg,
+        fanout_tasks, gen_assert_and_reply, mock_manual_poller, mock_poller, mock_worker,
+        poll_and_reply, single_hist_mock_sg, test_worker_cfg,
     },
     worker::{
         PollerBehavior,
@@ -509,6 +509,98 @@ async fn activity_timeout_no_double_resolve() {
     .await;
 
     core.drain_pollers_and_shutdown().await;
+}
+
+/// Regression test for a race between stream shutdown and eviction completion.
+///
+/// With zero-cache and `ignore_evicts_on_shutdown=true`, the workflow stream can
+/// decide to shut down (via `shutdown_done()`) after accepting an eviction
+/// completion message but before processing it. The BumpStream from
+/// `initiate_shutdown` is queued in the local channel ahead of the eviction
+/// completion (FIFO). The stream processes BumpStream, sees `shutdown_done()`
+/// is true, and exits — dropping the eviction completion's response channel
+/// sender without fulfilling it.
+#[tokio::test]
+async fn eviction_completion_during_shutdown_does_not_panic() {
+    let t = canned_histories::activity_double_resolve_repro();
+    let mut mh = build_multihist_mock_sg(
+        vec![FakeWfResponses {
+            wf_id: "fake_wf_id".to_owned(),
+            hist: t,
+            response_batches: vec![3.into()],
+        }],
+        true,
+        0,
+    );
+    // Prevent PollerDead from arriving so we control shutdown timing exactly.
+    mh.make_wft_stream_interminable();
+    let core = mock_worker(mh);
+    let activity_id = 1;
+
+    poll_and_reply(
+        &core,
+        WorkflowCachingPolicy::NonSticky,
+        &[
+            gen_assert_and_reply(
+                &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
+                vec![
+                    ScheduleActivity {
+                        seq: activity_id,
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
+                vec![
+                    RequestCancelActivity { seq: activity_id }.into(),
+                    start_timer_cmd(2, Duration::from_secs(1)),
+                ],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(workflow_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Cancelled(..)),
+                        }),
+                        ..
+                    }
+                )),
+                vec![],
+            ),
+            gen_assert_and_reply(
+                &job_assert!(
+                    workflow_activation_job::Variant::SignalWorkflow(_),
+                    workflow_activation_job::Variant::FireTimer(_)
+                ),
+                vec![CompleteWorkflowExecution { result: None }.into()],
+            ),
+        ],
+    )
+    .await;
+
+    // The zero-cache eviction produces an eviction activation after the last
+    // completion's PostActivation is processed.
+    let eviction = core.poll_workflow_activation().await.unwrap();
+    assert!(eviction.is_only_eviction());
+
+    // Cancel the shutdown token and enqueue BumpStream into the local channel.
+    // The stream will process BumpStream, see shutdown_done()=true (because
+    // ignore_evicts_on_shutdown skips the eviction activation), and exit.
+    core.initiate_shutdown();
+
+    // Complete the eviction. Its WFActCompleteMsg is queued AFTER BumpStream
+    // (same FIFO channel), so the stream exits before processing it — dropping
+    // the response channel sender. Without the fix, rx.await returning Err for
+    // an empty completion triggers dbg_panic!.
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(eviction.run_id))
+        .await
+        .unwrap();
+
+    core.finalize_shutdown().await;
 }
 
 #[tokio::test]
