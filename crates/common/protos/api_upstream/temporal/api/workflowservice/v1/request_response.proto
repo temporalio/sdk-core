@@ -357,6 +357,8 @@ message RespondWorkflowTaskCompletedRequest {
     // Responses to the `queries` field in the task being responded to
     map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
     string namespace = 9;
+    // Resource ID for routing. Contains the workflow ID from the original task.
+    string resource_id = 18;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -418,6 +420,8 @@ message RespondWorkflowTaskFailedRequest {
     // Worker process' unique binary id
     string binary_checksum = 5 [deprecated = true];
     string namespace = 6;
+    // Resource ID for routing. Contains the workflow ID from the original task.
+    string resource_id = 11;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 7;
     // Version info of the worker who processed this task. This message's `build_id` field should
@@ -522,6 +526,8 @@ message RecordActivityTaskHeartbeatRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 5;
 }
 
 message RecordActivityTaskHeartbeatResponse {
@@ -551,6 +557,8 @@ message RecordActivityTaskHeartbeatByIdRequest {
     temporal.api.common.v1.Payloads details = 5;
     // The identity of the worker/client
     string identity = 6;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 7;
 }
 
 message RecordActivityTaskHeartbeatByIdResponse {
@@ -574,6 +582,8 @@ message RespondActivityTaskCompletedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 8;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -604,6 +614,8 @@ message RespondActivityTaskCompletedByIdRequest {
     temporal.api.common.v1.Payloads result = 5;
     // The identity of the worker/client
     string identity = 6;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 7;
 }
 
 message RespondActivityTaskCompletedByIdResponse {
@@ -617,6 +629,8 @@ message RespondActivityTaskFailedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 9;
     // Additional details to be stored as last activity heartbeat
     temporal.api.common.v1.Payloads last_heartbeat_details = 5;
     // Version info of the worker who processed this task. This message's `build_id` field should
@@ -654,6 +668,8 @@ message RespondActivityTaskFailedByIdRequest {
     string identity = 6;
     // Additional details to be stored as last activity heartbeat
     temporal.api.common.v1.Payloads last_heartbeat_details = 7;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 8;
 }
 
 message RespondActivityTaskFailedByIdResponse {
@@ -670,6 +686,8 @@ message RespondActivityTaskCanceledRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Resource ID for routing. Contains the workflow ID or activity ID for standalone activities.
+    string resource_id = 8;
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
@@ -702,6 +720,8 @@ message RespondActivityTaskCanceledByIdRequest {
     string identity = 6;
     // Worker deployment options that user has set in the worker.
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 7;
+    // Resource ID for routing. Contains "workflow:workflow_id" or "activity:activity_id" for standalone activities.
+    string resource_id = 8;
 }
 
 message RespondActivityTaskCanceledByIdResponse {
@@ -1915,6 +1935,9 @@ message ExecuteMultiOperationRequest {
     // Note that additional operation-specific restrictions have to be considered.
     repeated Operation operations = 2;
 
+    // Resource ID for routing. Should match operations[0].start_workflow.workflow_id
+    string resource_id = 3;
+
     message Operation {
         oneof operation {
             // Additional restrictions:
@@ -2549,6 +2572,9 @@ message RecordWorkerHeartbeatRequest {
     string identity = 2;
 
     repeated temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat = 3;
+    
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 4;
 }
 
 message RecordWorkerHeartbeatResponse {
@@ -2635,6 +2661,8 @@ message FetchWorkerConfigRequest {
     // Defines which workers should receive this command.
     // only single worker is supported at this time.
     temporal.api.common.v1.WorkerSelector selector = 6;
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 7;
 }
 
 message FetchWorkerConfigResponse {
@@ -2661,6 +2689,8 @@ message UpdateWorkerConfigRequest {
 
     // Defines which workers should receive this command.
     temporal.api.common.v1.WorkerSelector selector = 6;
+    // Resource ID for routing. Contains the worker grouping key.
+    string resource_id = 7;
 }
 
 message UpdateWorkerConfigResponse {
