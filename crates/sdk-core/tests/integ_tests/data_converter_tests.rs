@@ -249,6 +249,124 @@ async fn multi_args_serializes_as_multiple_payloads() {
     assert_eq!(second_payload_data, 42);
 }
 
+#[workflow]
+#[derive(Default)]
+struct FailingWorkflow;
+#[workflow_methods]
+impl FailingWorkflow {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>, message: String) -> WorkflowResult<String> {
+        Err(temporalio_sdk::WorkflowTermination::Failed(
+            anyhow::anyhow!("{}", message),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn failing_workflow_produces_failure_with_message() {
+    let wf_name = FailingWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_workflow::<FailingWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            FailingWorkflow::run,
+            "intentional failure".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let res = handle.get_result(Default::default()).await.unwrap_err();
+    match res {
+        temporalio_client::errors::WorkflowGetResultError::Failed(failure) => {
+            assert!(
+                failure.message.contains("intentional failure"),
+                "failure message should contain the workflow error, got: {}",
+                failure.message
+            );
+        }
+        other => panic!("expected WorkflowGetResultError::Failed, got: {:?}", other),
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct FailingActivityWorkflow;
+#[workflow_methods]
+impl FailingActivityWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        ctx.start_activity(
+            FailingActivities::always_fail,
+            "activity input".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                retry_policy: Some(
+                    temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| {
+            temporalio_sdk::WorkflowTermination::Failed(anyhow::anyhow!("activity failed: {}", e))
+        })
+    }
+}
+
+struct FailingActivities;
+#[activities]
+impl FailingActivities {
+    #[activity]
+    async fn always_fail(_ctx: ActivityContext, _input: String) -> Result<String, ActivityError> {
+        Err(ActivityError::NonRetryable(
+            "activity went boom".to_string().into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn activity_failure_propagates_through_workflow() {
+    let wf_name = FailingActivityWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .sdk_config
+        .register_workflow::<FailingActivityWorkflow>();
+    starter.sdk_config.register_activities(FailingActivities);
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            FailingActivityWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let res = handle.get_result(Default::default()).await.unwrap_err();
+    match res {
+        temporalio_client::errors::WorkflowGetResultError::Failed(failure) => {
+            assert!(
+                failure.message.contains("activity failed"),
+                "workflow failure should mention the activity error, got: {}",
+                failure.message
+            );
+        }
+        other => panic!("expected WorkflowGetResultError::Failed, got: {:?}", other),
+    }
+}
+
 /// A codec that XORs payload data with a key and tracks encode/decode operations.
 struct XorCodec {
     key: u8,

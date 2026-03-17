@@ -769,6 +769,12 @@ impl_multi_args!(MultiArgs6; 6; 0: A, 1: B, 2: C, 3: D, 4: E, 5: F);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protos::temporal::api::failure::v1::{
+        ApplicationFailureInfo, CanceledFailureInfo, ServerFailureInfo, TerminatedFailureInfo,
+        TimeoutFailureInfo, failure::FailureInfo,
+    };
+    use assert_matches::assert_matches;
+    use rstest::rstest;
 
     #[test]
     fn test_empty_payloads_as_unit_type() {
@@ -865,5 +871,285 @@ mod tests {
     fn multi_args_from_tuple() {
         let args: MultiArgs2<String, i32> = ("hello".to_string(), 42i32).into();
         assert_eq!(args, MultiArgs2("hello".to_string(), 42));
+    }
+
+    #[test]
+    fn plain_error_becomes_application_failure() {
+        let err: Box<dyn std::error::Error> = "something went wrong".to_string().into();
+        let failure = DefaultFailureConverter
+            .to_failure(
+                err,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("to_failure should succeed");
+
+        assert_eq!(failure.message, "something went wrong");
+        assert_matches!(
+            failure.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        );
+    }
+
+    #[test]
+    fn source_field_is_set() {
+        let err: Box<dyn std::error::Error> = "test".to_string().into();
+        let failure = DefaultFailureConverter
+            .to_failure(
+                err,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("to_failure should succeed");
+
+        assert_eq!(failure.source, "RustSDK");
+    }
+
+    #[rstest]
+    #[case::application(
+        "app error",
+        FailureInfo::ApplicationFailureInfo(ApplicationFailureInfo {
+            r#type: "MyError".into(),
+            non_retryable: true,
+            ..Default::default()
+        })
+    )]
+    #[case::timeout(
+        "timed out",
+        FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
+            timeout_type: 1,
+            ..Default::default()
+        })
+    )]
+    #[case::canceled(
+        "canceled",
+        FailureInfo::CanceledFailureInfo(CanceledFailureInfo::default())
+    )]
+    #[case::terminated(
+        "terminated",
+        FailureInfo::TerminatedFailureInfo(TerminatedFailureInfo {})
+    )]
+    #[case::server(
+        "server error",
+        FailureInfo::ServerFailureInfo(ServerFailureInfo { non_retryable: true })
+    )]
+    fn failure_type_round_trips(#[case] message: &str, #[case] info: FailureInfo) {
+        let converter = DefaultFailureConverter;
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        let original = Failure {
+            message: message.into(),
+            failure_info: Some(info.clone()),
+            ..Default::default()
+        };
+
+        let error = converter
+            .to_error(original.clone(), &pc, &ctx)
+            .expect("to_error should succeed");
+        assert_eq!(error.to_string(), message);
+
+        let round_tripped = converter
+            .to_failure(error, &pc, &ctx)
+            .expect("round-trip to_failure should succeed");
+        assert_eq!(round_tripped.failure_info, Some(info));
+        assert_eq!(round_tripped.message, original.message);
+    }
+
+    // -- cause chain --
+
+    #[test]
+    fn cause_chain_is_preserved() {
+        let inner = Failure {
+            message: "root cause".into(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let outer = Failure {
+            message: "outer error".into(),
+            cause: Some(Box::new(inner)),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(
+                outer,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("to_error should succeed");
+
+        let source = error.source().expect("error should have a source");
+        assert_eq!(source.to_string(), "root cause");
+    }
+
+    #[test]
+    fn deeply_nested_cause_chain() {
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        let level0 = Failure {
+            message: "level0".into(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let level1 = Failure {
+            message: "level1".into(),
+            cause: Some(Box::new(level0)),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let level2 = Failure {
+            message: "level2".into(),
+            cause: Some(Box::new(level1)),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(level2, &pc, &ctx)
+            .expect("to_error should handle deep nesting");
+
+        let e1 = error.source().expect("should have level1");
+        assert_eq!(e1.to_string(), "level1");
+        let e0 = e1.source().expect("should have level0");
+        assert_eq!(e0.to_string(), "level0");
+    }
+
+    // -- cross-SDK --
+
+    #[test]
+    fn cross_sdk_failure_deserializes() {
+        let foreign = Failure {
+            message: "something failed in TypeScript".into(),
+            source: "TypeScriptSDK".into(),
+            stack_trace: "at someFunction (file.ts:10:5)".into(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    r#type: "Error".into(),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(
+                foreign,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("should handle cross-SDK failures");
+        assert_eq!(error.to_string(), "something failed in TypeScript");
+    }
+
+    #[test]
+    fn failure_with_no_info_deserializes() {
+        let bare = Failure {
+            message: "bare failure".into(),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(
+                bare,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("should handle failure with no failure_info");
+        assert_eq!(error.to_string(), "bare failure");
+    }
+
+    struct UpperCaseFailureConverter;
+    impl FailureConverter for UpperCaseFailureConverter {
+        fn to_failure(
+            &self,
+            error: Box<dyn std::error::Error>,
+            _: &PayloadConverter,
+            _: &SerializationContextData,
+        ) -> Result<Failure, PayloadConversionError> {
+            Ok(Failure {
+                message: error.to_string().to_uppercase(),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo::default(),
+                )),
+                ..Default::default()
+            })
+        }
+
+        fn to_error(
+            &self,
+            failure: Failure,
+            _: &PayloadConverter,
+            _: &SerializationContextData,
+        ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
+            Ok(failure.message.to_uppercase().into())
+        }
+    }
+
+    #[test]
+    fn custom_failure_converter_is_used() {
+        let custom = UpperCaseFailureConverter;
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        let err: Box<dyn std::error::Error> = "hello world".to_string().into();
+        let failure = custom
+            .to_failure(err, &pc, &ctx)
+            .expect("custom to_failure should work");
+        assert_eq!(failure.message, "HELLO WORLD");
+
+        let error = custom
+            .to_error(failure, &pc, &ctx)
+            .expect("custom to_error should work");
+        assert_eq!(error.to_string(), "HELLO WORLD");
+    }
+
+    #[test]
+    fn encoded_attributes_hides_message_and_stack_trace() {
+        let encoded_msg = serde_json::to_vec(&serde_json::json!({
+            "message": "secret error",
+            "stack_trace": "at secret_fn (secret.rs:42)"
+        }))
+        .unwrap();
+
+        let failure = Failure {
+            message: "Encoded failure".into(),
+            stack_trace: String::new(),
+            encoded_attributes: Some(Payload {
+                metadata: {
+                    let mut hm = HashMap::new();
+                    hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                    hm
+                },
+                data: encoded_msg,
+                external_payloads: vec![],
+            }),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let error = DefaultFailureConverter
+            .to_error(
+                failure,
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .expect("should decode encoded_attributes");
+
+        assert_eq!(error.to_string(), "secret error");
     }
 }

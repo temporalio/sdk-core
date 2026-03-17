@@ -104,6 +104,8 @@ pbjson-build = { workspace = true }
 workspace = true
 
 [dev-dependencies]
+assert_matches = "1.5"
 futures-util = { version = "0.3", default-features = false }
+rstest = "0.26"
 tempfile = "3.21"
 tokio = { version = "1.47", features = ["macros", "rt"] }
