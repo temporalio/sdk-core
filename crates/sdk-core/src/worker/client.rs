@@ -441,6 +441,7 @@ impl WorkerClient for WorkerClientBag {
             deployment: None,
             versioning_behavior: request.versioning_behavior.into(),
             deployment_options: self.deployment_options(),
+            resource_id: Default::default(),
         };
         Ok(self
             .connection
@@ -469,6 +470,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
+                    resource_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -511,6 +513,7 @@ impl WorkerClient for WorkerClientBag {
                     details,
                     identity: self.identity(),
                     namespace: self.namespace.clone(),
+                    resource_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -537,6 +540,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
+                    resource_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -565,6 +569,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
+                    resource_id: Default::default(),
                 }
                 .into_request(),
             )
@@ -591,6 +596,7 @@ impl WorkerClient for WorkerClientBag {
             // Will never be set, deprecated.
             deployment: None,
             deployment_options: self.deployment_options(),
+            resource_id: Default::default(),
         };
         Ok(self
             .connection
@@ -744,6 +750,7 @@ impl WorkerClient for WorkerClientBag {
             namespace,
             identity: self.identity(),
             worker_heartbeat,
+            resource_id: Default::default(),
         };
         Ok(self
             .connection
