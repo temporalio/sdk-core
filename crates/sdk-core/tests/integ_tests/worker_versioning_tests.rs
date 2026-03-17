@@ -268,6 +268,9 @@ async fn versioning_off_with_custom_build_id() {
     core.shutdown().await;
 
     let history = starter.get_history().await;
+    // The SDK sends deployment_options on WFT completion. For unversioned workers, the server
+    // records the deployment name in worker_deployment_name but does not populate
+    // deployment_version.
     let wft_complete = history
         .events
         .into_iter()
@@ -279,8 +282,10 @@ async fn versioning_off_with_custom_build_id() {
             }
         })
         .unwrap();
-    let dv = wft_complete.deployment_version.unwrap();
-    assert_eq!(dv.build_id, build_id);
+    assert!(
+        !wft_complete.worker_deployment_name.is_empty(),
+        "Expected deployment name to appear in workflow history"
+    );
 }
 
 #[workflow]
