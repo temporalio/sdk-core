@@ -1,9 +1,11 @@
 use crate::{Client, NamespacedClient, grpc::WorkflowService};
 use futures_util::stream;
-use std::collections::VecDeque;
-use std::pin::Pin;
-use std::task::{Context, Poll};
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::VecDeque,
+    pin::Pin,
+    task::{Context, Poll},
+    time::{Duration, SystemTime},
+};
 use temporalio_common::protos::{
     proto_ts_to_system_time,
     temporal::api::{
@@ -1044,12 +1046,15 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::NamespacedClient;
-    use crate::grpc::WorkflowService;
+    use crate::{NamespacedClient, grpc::WorkflowService};
     use futures_util::FutureExt;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::SystemTime;
+    use std::{
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::SystemTime,
+    };
     use temporalio_common::protos::temporal::api::{
         common::v1::{
             Memo, SearchAttributes, WorkflowExecution as ProtoWorkflowExecution, WorkflowType,
