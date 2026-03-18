@@ -120,7 +120,6 @@ const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Handle type used to store client interceptors inside [ClientOptions].
 #[derive(Clone)]
 pub struct ClientInterceptorHandle(pub Arc<dyn ClientInterceptor>);
 
@@ -130,14 +129,7 @@ impl Debug for ClientInterceptorHandle {
     }
 }
 
-/// Intercepts high-level client operations such as starting workflows.
-///
-/// This is intended for SDKs or advanced users who need to observe or record
-/// behavior around client calls (for example logging or metrics).
 pub trait ClientInterceptor: Send + Sync {
-    /// Called just before a workflow is started.
-    ///
-    /// Implementations must not block for long periods of time.
     fn on_start_workflow(
         &self,
         _namespace: &str,
