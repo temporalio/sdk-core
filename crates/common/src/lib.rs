@@ -23,7 +23,7 @@ mod workflow_definition;
 pub use activity_definition::ActivityDefinition;
 pub use priority::Priority;
 pub use workflow_definition::{
-    QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
+    HasWorkflowDefinition, QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
 };
 
 macro_rules! dbg_panic {

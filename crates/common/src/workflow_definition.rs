@@ -13,6 +13,16 @@ pub trait WorkflowDefinition {
     fn name(&self) -> &str;
 }
 
+/// Indicates that a type is associated with a [`WorkflowDefinition`], enabling typed
+/// signal, query, and update methods on [`WorkflowHandle`](crate::WorkflowHandle).
+///
+/// Structs annotated with `#[workflow_methods]` implement this trait automatically.
+pub trait HasWorkflowDefinition: WorkflowDefinition {
+    /// The [`WorkflowDefinition`] type that [`SignalDefinition`], [`QueryDefinition`], and
+    /// [`UpdateDefinition`] are associated with.
+    type Run: WorkflowDefinition;
+}
+
 /// Implement on a marker struct to define a query.
 ///
 /// Typically, you will want to use the `#[query]` attribute inside a `#[workflow_methods]` macro

@@ -66,7 +66,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
-    WorkflowDefinition,
+    HasWorkflowDefinition,
     data_converters::{DataConverter, SerializationContextData},
     protos::{
         coresdk::IntoPayloadsExt,
@@ -650,7 +650,7 @@ impl Client {
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: HasWorkflowDefinition,
         W::Input: Send,
     {
         WorkflowClientTrait::start_workflow(self, workflow, input, options).await
@@ -659,7 +659,7 @@ impl Client {
     /// Get a handle to an existing workflow.
     ///
     /// For untyped access, use `get_workflow_handle::<UntypedWorkflow>(...)`.
-    pub fn get_workflow_handle<W: WorkflowDefinition>(
+    pub fn get_workflow_handle<W: HasWorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W> {
@@ -744,7 +744,7 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
     ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, WorkflowStartError>>
     where
         Self: Sized,
-        W: WorkflowDefinition,
+        W: HasWorkflowDefinition,
         W::Input: Send;
 
     /// Get a handle to an existing workflow. `run_id` may be left blank to specify the most recent
@@ -753,7 +753,7 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
     /// For untyped access, use `get_workflow_handle::<UntypedWorkflow>(...)`.
     ///
     /// See also [WorkflowHandle::new], for specifying namespace or first_execution_run_id.
-    fn get_workflow_handle<W: WorkflowDefinition>(
+    fn get_workflow_handle<W: HasWorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
@@ -1016,7 +1016,7 @@ where
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: HasWorkflowDefinition,
         W::Input: Send,
     {
         let payloads = self
@@ -1132,7 +1132,7 @@ where
         ))
     }
 
-    fn get_workflow_handle<W: WorkflowDefinition>(
+    fn get_workflow_handle<W: HasWorkflowDefinition>(
         &self,
         workflow_id: impl Into<String>,
     ) -> WorkflowHandle<Self, W>
