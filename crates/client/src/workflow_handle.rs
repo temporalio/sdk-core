@@ -271,7 +271,8 @@ where
                 let err = self
                     .client
                     .data_converter()
-                    .to_error(f, &SerializationContextData::Workflow)
+                    .decode_failure(f, &SerializationContextData::Workflow)
+                    .await
                     .map_err(|e| WorkflowGetResultError::Other(Box::new(e)))?;
                 Err(WorkflowGetResultError::Failed(err))
             }
@@ -815,7 +816,8 @@ where
                 let err = self
                     .client
                     .data_converter()
-                    .to_error(failure, &SerializationContextData::Workflow)
+                    .decode_failure(failure, &SerializationContextData::Workflow)
+                    .await
                     .map_err(|e| WorkflowUpdateError::Other(Box::new(e)))?;
                 Err(WorkflowUpdateError::Failed(err))
             }

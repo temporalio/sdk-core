@@ -282,16 +282,14 @@ async fn failing_workflow_produces_failure_with_message() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    match res {
-        temporalio_client::errors::WorkflowGetResultError::Failed(failure) => {
-            let msg = failure.to_string();
-            assert!(
-                msg.contains("intentional failure"),
-                "failure message should contain the workflow error, got: {msg}",
-            );
-        }
-        other => panic!("expected WorkflowGetResultError::Failed, got: {other:?}"),
-    }
+    let tf = res
+        .as_temporal_failure()
+        .expect("Failed variant should downcast to TemporalFailure");
+    assert!(
+        tf.message().contains("intentional failure"),
+        "failure message should contain the workflow error, got: {}",
+        tf.message(),
+    );
 }
 
 #[workflow]
@@ -355,16 +353,14 @@ async fn activity_failure_propagates_through_workflow() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    match res {
-        temporalio_client::errors::WorkflowGetResultError::Failed(failure) => {
-            let msg = failure.to_string();
-            assert!(
-                msg.contains("activity failed"),
-                "workflow failure should mention the activity error, got: {msg}",
-            );
-        }
-        other => panic!("expected WorkflowGetResultError::Failed, got: {other:?}"),
-    }
+    let tf = res
+        .as_temporal_failure()
+        .expect("Failed variant should downcast to TemporalFailure");
+    assert!(
+        tf.message().contains("activity failed"),
+        "workflow failure should mention the activity error, got: {}",
+        tf.message(),
+    );
 }
 
 /// A codec that XORs payload data with a key and tracks encode/decode operations.

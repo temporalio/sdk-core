@@ -3,7 +3,7 @@
 
 use crate::protos::temporal::api::{
     common::v1::{Payload, Payloads},
-    enums::v1::{RetryState, TimeoutType},
+    enums::v1::{NexusHandlerErrorRetryBehavior, RetryState, TimeoutType},
     failure::v1::{
         ActivityFailureInfo, ApplicationFailureInfo, CanceledFailureInfo,
         ChildWorkflowExecutionFailureInfo, Failure, NexusHandlerFailureInfo,
@@ -13,6 +13,7 @@ use crate::protos::temporal::api::{
 };
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
+use tracing::warn;
 
 /// Combines a [`PayloadConverter`], [`FailureConverter`], and [`PayloadCodec`] to handle all
 /// serialization needs for communicating with the Temporal server.
@@ -123,7 +124,9 @@ impl DataConverter {
         self.codec.as_ref()
     }
 
-    /// Convert a [`Failure`] proto into a typed Rust error.
+    /// Convert a [`Failure`] proto into an error using only the
+    /// failure converter (no codec). Use [`decode_failure`](Self::decode_failure)
+    /// for the full pipeline including codec.
     pub fn to_error(
         &self,
         failure: Failure,
@@ -133,7 +136,9 @@ impl DataConverter {
             .to_error(failure, &self.payload_converter, context)
     }
 
-    /// Convert an error into a [`Failure`] proto.
+    /// Convert an error into a [`Failure`] proto using only the failure
+    /// converter (no codec). Use [`encode_failure`](Self::encode_failure)
+    /// for the full pipeline including codec.
     pub fn to_failure(
         &self,
         error: Box<dyn std::error::Error + Send + Sync>,
@@ -141,6 +146,113 @@ impl DataConverter {
     ) -> Result<Failure, PayloadConversionError> {
         self.failure_converter
             .to_failure(error, &self.payload_converter, context)
+    }
+
+    /// Decode a [`Failure`] proto into an error, applying the codec
+    /// to embedded payloads before running the failure converter. This is the
+    /// receive-path counterpart to [`encode_failure`](Self::encode_failure).
+    pub async fn decode_failure(
+        &self,
+        failure: Failure,
+        context: &SerializationContextData,
+    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+        let decoded = Self::apply_codec_to_failure(failure, context, |ctx, payloads| {
+            self.codec.decode(ctx, payloads)
+        })
+        .await;
+        self.failure_converter
+            .to_error(decoded, &self.payload_converter, context)
+    }
+
+    /// Convert an error into a [`Failure`] proto, then apply the codec to
+    /// embedded payloads. This is the send-path counterpart to
+    /// [`decode_failure`](Self::decode_failure).
+    pub async fn encode_failure(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+        context: &SerializationContextData,
+    ) -> Result<Failure, PayloadConversionError> {
+        let failure = self
+            .failure_converter
+            .to_failure(error, &self.payload_converter, context)?;
+        Ok(
+            Self::apply_codec_to_failure(failure, context, |ctx, payloads| {
+                self.codec.encode(ctx, payloads)
+            })
+            .await,
+        )
+    }
+
+    /// Recursively apply a codec operation (encode or decode) to all payloads
+    /// embedded in a [`Failure`]: `encoded_attributes`, detail payloads in
+    /// failure info variants, and causes.
+    async fn apply_codec_to_failure<F, Fut>(
+        failure: Failure,
+        context: &SerializationContextData,
+        codec_fn: F,
+    ) -> Failure
+    where
+        F: Fn(&SerializationContextData, Vec<Payload>) -> Fut + Copy,
+        Fut: std::future::Future<Output = Vec<Payload>>,
+    {
+        let Failure {
+            message,
+            source,
+            stack_trace,
+            encoded_attributes,
+            cause,
+            failure_info,
+            ..
+        } = failure;
+
+        let encoded_attributes = match encoded_attributes {
+            Some(ea) => codec_fn(context, vec![ea]).await.into_iter().next(),
+            None => None,
+        };
+
+        let failure_info = match failure_info {
+            Some(FailureInfo::ApplicationFailureInfo(mut app)) => {
+                let mut d = app.details.take().unwrap_or_default();
+                d.payloads = codec_fn(context, d.payloads).await;
+                app.details = Some(d);
+                Some(FailureInfo::ApplicationFailureInfo(app))
+            }
+            Some(FailureInfo::TimeoutFailureInfo(mut t)) => {
+                let mut d = t.last_heartbeat_details.take().unwrap_or_default();
+                d.payloads = codec_fn(context, d.payloads).await;
+                t.last_heartbeat_details = Some(d);
+                Some(FailureInfo::TimeoutFailureInfo(t))
+            }
+            Some(FailureInfo::CanceledFailureInfo(mut c)) => {
+                let mut d = c.details.take().unwrap_or_default();
+                d.payloads = codec_fn(context, d.payloads).await;
+                c.details = Some(d);
+                Some(FailureInfo::CanceledFailureInfo(c))
+            }
+            Some(FailureInfo::ResetWorkflowFailureInfo(mut r)) => {
+                let mut d = r.last_heartbeat_details.take().unwrap_or_default();
+                d.payloads = codec_fn(context, d.payloads).await;
+                r.last_heartbeat_details = Some(d);
+                Some(FailureInfo::ResetWorkflowFailureInfo(r))
+            }
+            other => other,
+        };
+
+        let cause = match cause {
+            Some(c) => Some(Box::new(
+                Box::pin(Self::apply_codec_to_failure(*c, context, codec_fn)).await,
+            )),
+            None => None,
+        };
+
+        Failure {
+            message,
+            source,
+            stack_trace,
+            encoded_attributes,
+            cause,
+            failure_info,
+        }
     }
 }
 
@@ -252,7 +364,7 @@ pub trait FailureConverter {
 pub struct DefaultFailureConverter;
 
 /// An error produced by the failure converter, representing a Temporal
-/// [`Failure`] proto as a typed Rust error.
+/// [`Failure`] proto as an error.
 #[derive(Debug, thiserror::Error)]
 pub enum TemporalFailure {
     /// Application-level failure — the primary error type users throw from
@@ -261,6 +373,8 @@ pub enum TemporalFailure {
     Application {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Application error type string.
         r#type: String,
         /// Whether this error is non-retryable.
@@ -278,6 +392,8 @@ pub enum TemporalFailure {
     Timeout {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Which kind of timeout.
         timeout_type: TimeoutType,
         /// Last heartbeat details before the timeout.
@@ -291,6 +407,8 @@ pub enum TemporalFailure {
     Cancelled {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Cancellation detail payloads.
         details: Option<Payloads>,
         /// Recursive cause.
@@ -302,6 +420,8 @@ pub enum TemporalFailure {
     Terminated {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Recursive cause.
         #[source]
         cause: Option<Box<TemporalFailure>>,
@@ -311,6 +431,8 @@ pub enum TemporalFailure {
     Server {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Whether this error is non-retryable.
         non_retryable: bool,
         /// Recursive cause.
@@ -323,6 +445,8 @@ pub enum TemporalFailure {
     Activity {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Scheduled event ID.
         scheduled_event_id: i64,
         /// Started event ID.
@@ -344,6 +468,8 @@ pub enum TemporalFailure {
     ChildWorkflow {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Child workflow namespace.
         namespace: String,
         /// Child workflow ID.
@@ -367,6 +493,8 @@ pub enum TemporalFailure {
     NexusOperation {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Scheduled event ID.
         scheduled_event_id: i64,
         /// Nexus endpoint name.
@@ -386,10 +514,12 @@ pub enum TemporalFailure {
     NexusHandler {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Nexus error type.
         r#type: String,
-        /// Retry behavior (proto enum value).
-        retry_behavior: i32,
+        /// Retry behavior.
+        retry_behavior: NexusHandlerErrorRetryBehavior,
         /// Recursive cause.
         #[source]
         cause: Option<Box<TemporalFailure>>,
@@ -399,6 +529,8 @@ pub enum TemporalFailure {
     Generic {
         /// Human-readable error message.
         message: String,
+        /// Stack trace from the originating SDK, if available.
+        stack_trace: String,
         /// Recursive cause.
         #[source]
         cause: Option<Box<TemporalFailure>>,
@@ -422,6 +554,22 @@ impl TemporalFailure {
         }
     }
 
+    /// The stack trace, regardless of variant. May be empty.
+    pub fn stack_trace(&self) -> &str {
+        match self {
+            Self::Application { stack_trace, .. }
+            | Self::Timeout { stack_trace, .. }
+            | Self::Cancelled { stack_trace, .. }
+            | Self::Terminated { stack_trace, .. }
+            | Self::Server { stack_trace, .. }
+            | Self::Activity { stack_trace, .. }
+            | Self::ChildWorkflow { stack_trace, .. }
+            | Self::NexusOperation { stack_trace, .. }
+            | Self::NexusHandler { stack_trace, .. }
+            | Self::Generic { stack_trace, .. } => stack_trace,
+        }
+    }
+
     fn from_failure(mut failure: Failure, payload_converter: &PayloadConverter) -> Self {
         // If encoded_attributes is present, decode message (and stack_trace)
         // from the payload — the top-level fields were cleared for encryption.
@@ -430,12 +578,21 @@ impl TemporalFailure {
                 data: &SerializationContextData::None,
                 converter: payload_converter,
             };
-            if let Ok(attrs) = payload_converter.from_payload::<serde_json::Value>(&ctx, payload) {
-                if let Some(msg) = attrs.get("message").and_then(|v| v.as_str()) {
-                    failure.message = msg.to_owned();
+            match payload_converter.from_payload::<serde_json::Value>(&ctx, payload) {
+                Ok(attrs) => {
+                    if let Some(msg) = attrs.get("message").and_then(|v| v.as_str()) {
+                        failure.message = msg.to_owned();
+                    }
+                    if let Some(st) = attrs.get("stack_trace").and_then(|v| v.as_str()) {
+                        failure.stack_trace = st.to_owned();
+                    }
                 }
-                if let Some(st) = attrs.get("stack_trace").and_then(|v| v.as_str()) {
-                    failure.stack_trace = st.to_owned();
+                Err(e) => {
+                    warn!(
+                        error = %e,
+                        "Failed to decode encoded_attributes on Failure proto, \
+                         falling back to top-level message"
+                    );
                 }
             }
         }
@@ -444,9 +601,12 @@ impl TemporalFailure {
             .cause
             .map(|c| Box::new(Self::from_failure(*c, payload_converter)));
 
+        let stack_trace = failure.stack_trace;
+
         match failure.failure_info {
             Some(FailureInfo::ApplicationFailureInfo(info)) => Self::Application {
                 message: failure.message,
+                stack_trace,
                 r#type: info.r#type,
                 non_retryable: info.non_retryable,
                 details: info.details,
@@ -455,21 +615,25 @@ impl TemporalFailure {
             },
             Some(FailureInfo::TimeoutFailureInfo(info)) => Self::Timeout {
                 message: failure.message,
+                stack_trace,
                 timeout_type: info.timeout_type(),
                 last_heartbeat_details: info.last_heartbeat_details,
                 cause,
             },
             Some(FailureInfo::CanceledFailureInfo(info)) => Self::Cancelled {
                 message: failure.message,
+                stack_trace,
                 details: info.details,
                 cause,
             },
             Some(FailureInfo::TerminatedFailureInfo(_)) => Self::Terminated {
                 message: failure.message,
+                stack_trace,
                 cause,
             },
             Some(FailureInfo::ServerFailureInfo(info)) => Self::Server {
                 message: failure.message,
+                stack_trace,
                 non_retryable: info.non_retryable,
                 cause,
             },
@@ -477,6 +641,7 @@ impl TemporalFailure {
                 let retry_state = info.retry_state();
                 Self::Activity {
                     message: failure.message,
+                    stack_trace,
                     scheduled_event_id: info.scheduled_event_id,
                     started_event_id: info.started_event_id,
                     identity: info.identity,
@@ -494,6 +659,7 @@ impl TemporalFailure {
                     .unwrap_or_default();
                 Self::ChildWorkflow {
                     message: failure.message,
+                    stack_trace,
                     namespace: info.namespace,
                     workflow_id,
                     run_id,
@@ -506,6 +672,7 @@ impl TemporalFailure {
             }
             Some(FailureInfo::NexusOperationExecutionFailureInfo(info)) => Self::NexusOperation {
                 message: failure.message,
+                stack_trace,
                 scheduled_event_id: info.scheduled_event_id,
                 endpoint: info.endpoint,
                 service: info.service,
@@ -513,23 +680,29 @@ impl TemporalFailure {
                 operation_token: info.operation_token,
                 cause,
             },
-            Some(FailureInfo::NexusHandlerFailureInfo(info)) => Self::NexusHandler {
-                message: failure.message,
-                r#type: info.r#type,
-                retry_behavior: info.retry_behavior,
-                cause,
-            },
+            Some(FailureInfo::NexusHandlerFailureInfo(info)) => {
+                let retry_behavior = info.retry_behavior();
+                Self::NexusHandler {
+                    message: failure.message,
+                    stack_trace,
+                    r#type: info.r#type,
+                    retry_behavior,
+                    cause,
+                }
+            }
             Some(FailureInfo::ResetWorkflowFailureInfo(_)) | None => Self::Generic {
                 message: failure.message,
+                stack_trace,
                 cause,
             },
         }
     }
 
     fn into_failure(self) -> Failure {
-        let (message, failure_info, cause) = match self {
+        let (message, stack_trace, failure_info, cause) = match self {
             Self::Application {
                 message,
+                stack_trace,
                 r#type,
                 non_retryable,
                 details,
@@ -537,6 +710,7 @@ impl TemporalFailure {
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::ApplicationFailureInfo(
                     ApplicationFailureInfo {
                         r#type,
@@ -550,11 +724,13 @@ impl TemporalFailure {
             ),
             Self::Timeout {
                 message,
+                stack_trace,
                 timeout_type,
                 last_heartbeat_details,
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
                     timeout_type: timeout_type.into(),
                     last_heartbeat_details,
@@ -563,26 +739,35 @@ impl TemporalFailure {
             ),
             Self::Cancelled {
                 message,
+                stack_trace,
                 details,
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                     details,
                 })),
                 cause,
             ),
-            Self::Terminated { message, cause } => (
+            Self::Terminated {
                 message,
+                stack_trace,
+                cause,
+            } => (
+                message,
+                stack_trace,
                 Some(FailureInfo::TerminatedFailureInfo(TerminatedFailureInfo {})),
                 cause,
             ),
             Self::Server {
                 message,
+                stack_trace,
                 non_retryable,
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::ServerFailureInfo(ServerFailureInfo {
                     non_retryable,
                 })),
@@ -590,6 +775,7 @@ impl TemporalFailure {
             ),
             Self::Activity {
                 message,
+                stack_trace,
                 scheduled_event_id,
                 started_event_id,
                 identity,
@@ -599,6 +785,7 @@ impl TemporalFailure {
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
                     scheduled_event_id,
                     started_event_id,
@@ -613,6 +800,7 @@ impl TemporalFailure {
             ),
             Self::ChildWorkflow {
                 message,
+                stack_trace,
                 namespace,
                 workflow_id,
                 run_id,
@@ -623,6 +811,7 @@ impl TemporalFailure {
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
                     ChildWorkflowExecutionFailureInfo {
                         namespace,
@@ -646,6 +835,7 @@ impl TemporalFailure {
             ),
             Self::NexusOperation {
                 message,
+                stack_trace,
                 scheduled_event_id,
                 endpoint,
                 service,
@@ -654,6 +844,7 @@ impl TemporalFailure {
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::NexusOperationExecutionFailureInfo(
                     NexusOperationFailureInfo {
                         scheduled_event_id,
@@ -668,24 +859,31 @@ impl TemporalFailure {
             ),
             Self::NexusHandler {
                 message,
+                stack_trace,
                 r#type,
                 retry_behavior,
                 cause,
             } => (
                 message,
+                stack_trace,
                 Some(FailureInfo::NexusHandlerFailureInfo(
                     NexusHandlerFailureInfo {
                         r#type,
-                        retry_behavior,
+                        retry_behavior: retry_behavior.into(),
                     },
                 )),
                 cause,
             ),
-            Self::Generic { message, cause } => (message, None, cause),
+            Self::Generic {
+                message,
+                stack_trace,
+                cause,
+            } => (message, stack_trace, None, cause),
         };
 
         Failure {
             message,
+            stack_trace,
             source: "RustSDK".into(),
             failure_info,
             cause: cause.map(|c| Box::new(c.into_failure())),
@@ -1549,6 +1747,9 @@ mod tests {
             )
             .expect("should handle cross-SDK failures");
         assert_eq!(error.to_string(), "something failed in TypeScript");
+
+        let tf = error.downcast_ref::<TemporalFailure>().unwrap();
+        assert_eq!(tf.stack_trace(), "at someFunction (file.ts:10:5)");
     }
 
     #[test]
@@ -1678,5 +1879,145 @@ mod tests {
             .expect("should succeed even with undecodable encoded_attributes");
 
         assert_eq!(error.to_string(), "fallback message");
+    }
+
+    #[test]
+    fn stack_trace_round_trips() {
+        let converter = DefaultFailureConverter;
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        let original = Failure {
+            message: "oops".into(),
+            stack_trace: "at my_fn (lib.rs:42)".into(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let error = converter
+            .to_error(original, &pc, &ctx)
+            .expect("to_error should succeed");
+        let tf = error.downcast_ref::<TemporalFailure>().unwrap();
+        assert_eq!(tf.stack_trace(), "at my_fn (lib.rs:42)");
+
+        let round_tripped = converter
+            .to_failure(error, &pc, &ctx)
+            .expect("to_failure should succeed");
+        assert_eq!(round_tripped.stack_trace, "at my_fn (lib.rs:42)");
+    }
+
+    /// A codec that XOR-encodes payload data, used to verify that
+    /// `DataConverter::to_error`/`to_failure` apply the codec to failure payloads.
+    struct XorFailureCodec(u8);
+    impl PayloadCodec for XorFailureCodec {
+        fn encode(
+            &self,
+            _: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Vec<Payload>> {
+            let key = self.0;
+            async move {
+                payloads
+                    .into_iter()
+                    .map(|mut p| {
+                        p.data.iter_mut().for_each(|b| *b ^= key);
+                        p
+                    })
+                    .collect()
+            }
+            .boxed()
+        }
+        fn decode(
+            &self,
+            _: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Vec<Payload>> {
+            // XOR is its own inverse
+            let key = self.0;
+            async move {
+                payloads
+                    .into_iter()
+                    .map(|mut p| {
+                        p.data.iter_mut().for_each(|b| *b ^= key);
+                        p
+                    })
+                    .collect()
+            }
+            .boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn data_converter_applies_codec_to_failure_details() {
+        let dc = DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            XorFailureCodec(0xAB),
+        );
+        let ctx = SerializationContextData::Workflow;
+
+        // Build a TemporalFailure with detail payloads
+        let detail_payload = Payload {
+            metadata: {
+                let mut hm = HashMap::new();
+                hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                hm
+            },
+            data: b"\"some detail\"".to_vec(),
+            external_payloads: vec![],
+        };
+        let tf = TemporalFailure::Application {
+            message: "test".into(),
+            stack_trace: String::new(),
+            r#type: "TestError".into(),
+            non_retryable: false,
+            details: Some(Payloads {
+                payloads: vec![detail_payload.clone()],
+            }),
+            next_retry_delay: None,
+            cause: None,
+        };
+
+        // encode_failure should encode the detail payloads via the codec
+        let failure = dc
+            .encode_failure(Box::new(tf), &ctx)
+            .await
+            .expect("encode_failure should succeed");
+
+        let encoded_details = failure
+            .failure_info
+            .as_ref()
+            .and_then(|info| match info {
+                FailureInfo::ApplicationFailureInfo(app) => {
+                    app.details.as_ref().map(|d| &d.payloads)
+                }
+                _ => None,
+            })
+            .expect("should have details");
+
+        // The data should be XOR'd, not the original plaintext
+        assert_ne!(
+            encoded_details[0].data, detail_payload.data,
+            "codec should have transformed the detail payload data"
+        );
+
+        // decode_failure should decode back, producing readable details
+        let error = dc
+            .decode_failure(failure, &ctx)
+            .await
+            .expect("decode_failure should succeed");
+        let recovered = error.downcast_ref::<TemporalFailure>().unwrap();
+        match recovered {
+            TemporalFailure::Application { details, .. } => {
+                let payloads = details.as_ref().unwrap();
+                assert_eq!(
+                    payloads.payloads[0].data, detail_payload.data,
+                    "round-tripped detail payload should match original"
+                );
+            }
+            other => panic!("expected Application, got {other:?}"),
+        }
     }
 }
