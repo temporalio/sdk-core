@@ -1,4 +1,4 @@
-use crate::common::{CoreWfStarter, build_fake_sdk, mock_sdk, mock_sdk_cfg};
+use crate::common::{CoreWfStarter, WorkflowHandleExt, build_fake_sdk, mock_sdk, mock_sdk_cfg};
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
@@ -18,16 +18,16 @@ use temporalio_common::{
                 workflow_activation_job,
             },
             workflow_commands::{
-                CancelChildWorkflowExecution, CompleteWorkflowExecution,
+                CancelChildWorkflowExecution, CancelWorkflowExecution, CompleteWorkflowExecution,
                 StartChildWorkflowExecution,
             },
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            enums::v1::{CommandType, EventType, ParentClosePolicy},
+            enums::v1::{CommandType, EventType, ParentClosePolicy, WorkflowTaskFailedCause},
             history::v1::{
                 StartChildWorkflowExecutionFailedEventAttributes,
-                StartChildWorkflowExecutionInitiatedEventAttributes,
+                StartChildWorkflowExecutionInitiatedEventAttributes, history_event,
             },
             sdk::v1::UserMetadata,
         },
@@ -43,7 +43,10 @@ use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{MockPollCfg, ResponseType, mock_worker, mock_worker_client, single_hist_mock_sg},
 };
-use tokio::{join, sync::Barrier};
+use tokio::{
+    join,
+    sync::{Barrier, Notify},
+};
 
 static PARENT_WF_TYPE: &str = "parent_wf";
 static CHILD_WF_TYPE: &str = "child_wf";
@@ -827,4 +830,146 @@ async fn single_child_workflow_cancel_before_sent() {
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<CancelBeforeSendWf>();
     worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancel_child_before_started_event() {
+    // Reproduce the bug where parent cancel arrives while child workflow machine is in
+    // StartEventRecorded (i.e. before ChildWorkflowExecutionStarted event).
+    let t = canned_histories::cancel_child_workflow_before_started_event("child-id-1");
+    let mock = mock_worker_client();
+    let mock = single_hist_mock_sg("fakeid", t, [ResponseType::AllHistory], mock, true);
+    let core = mock_worker(mock);
+
+    // WFT1: Initialize workflow, issue start child workflow command
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        StartChildWorkflowExecution {
+            seq: 1,
+            workflow_id: "child-id-1".to_string(),
+            workflow_type: "child".to_string(),
+            cancellation_type: ChildWorkflowCancellationType::WaitCancellationCompleted as i32,
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // WFT2: Cancel arrives before ChildWorkflowExecutionStarted. Lang sees a CancelWorkflow job.
+    // Lang cancels the child and the workflow.
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            CancelChildWorkflowExecution {
+                child_workflow_seq: 1,
+                reason: "parent cancelled".to_string(),
+            }
+            .into(),
+            CancelWorkflowExecution {}.into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    // WFT3: Resolve the child workflow start and completion (both arrive now), then workflow done.
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        CancelWorkflowExecution {}.into(),
+    ))
+    .await
+    .unwrap();
+}
+
+#[workflow]
+struct CancelChildBeforeStartedParent {
+    barr: Arc<Notify>,
+}
+
+#[workflow_methods(factory_only)]
+impl CancelChildBeforeStartedParent {
+    #[run(name = "parent_wf")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
+            workflow_id: "cancel-before-started-child".to_owned(),
+            workflow_type: CHILD_WF_TYPE.to_owned(),
+            cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+            ..Default::default()
+        });
+        let started = child.start();
+
+        ctx.state(|wf| wf.barr.notify_one());
+        // Wait for parent cancellation
+        ctx.cancelled().await;
+        started.cancel();
+        Err(WorkflowTermination::Cancelled)
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_wf_before_started_event_real_server() {
+    let mut starter = CoreWfStarter::new("child-wf-cancel-before-start");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let barr = Arc::new(Notify::new());
+    let barr_clone = barr.clone();
+    worker.register_workflow_with_factory(move || CancelChildBeforeStartedParent {
+        barr: barr_clone.clone(),
+    });
+    worker.register_workflow::<AbandonedChildBugReproChild>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            CancelChildBeforeStartedParent::run,
+            (),
+            WorkflowStartOptions::new(task_queue, "cancel-before-started-parent").build(),
+        )
+        .await
+        .unwrap();
+
+    let canceller = async {
+        barr.notified().await;
+        handle
+            .cancel(WorkflowCancelOptions::builder().reason("die").build())
+            .await
+            .unwrap();
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::join!(canceller, runner);
+
+    // Verify no unexpected workflow task failures in history. The bug manifests as a WFT failure
+    // with a nondeterminism error. UnhandledCommand failures are acceptable since the server
+    // may reject a cancel command if it races with the child workflow start.
+    let history = handle.fetch_history(Default::default()).await.unwrap();
+    let unexpected_wft_failures: Vec<_> = history
+        .events()
+        .iter()
+        .filter(|e| {
+            if let Some(history_event::Attributes::WorkflowTaskFailedEventAttributes(attrs)) =
+                &e.attributes
+            {
+                attrs.cause != WorkflowTaskFailedCause::UnhandledCommand as i32
+            } else {
+                false
+            }
+        })
+        .collect();
+    assert!(
+        unexpected_wft_failures.is_empty(),
+        "Expected no unexpected WorkflowTaskFailed events, but found: {:?}",
+        unexpected_wft_failures
+    );
+
+    // Replay the history to verify determinism
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
