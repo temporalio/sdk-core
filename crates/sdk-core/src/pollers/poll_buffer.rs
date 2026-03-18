@@ -649,15 +649,7 @@ impl PollScalerReportHandle {
                     }
                     self.ever_saw_scaling_decision
                         .store(true, Ordering::Relaxed);
-                }
-                // We want to avoid scaling down on empty polls if the server has never made any
-                // scaling decisions - otherwise we might never scale up again. If the server
-                // supports poller autoscaling, it's safe to scale down without having seen a
-                // decision.
-                else if (self.ever_saw_scaling_decision.load(Ordering::Relaxed)
-                    || self.server_supports_autoscaling.load(Ordering::Relaxed))
-                    && res.is_empty()
-                {
+                } else if self.can_scale_down() && res.is_empty() {
                     self.change_target(usize::saturating_sub, 1);
                 }
             }
@@ -677,11 +669,7 @@ impl PollScalerReportHandle {
                         .metadata()
                         .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
 
-                    // We should only react to errors in autoscaling mode if we saw a scaling
-                    // decision or the server supports poller autoscaling
-                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed)
-                        || self.server_supports_autoscaling.load(Ordering::Relaxed)
-                    {
+                    if self.can_scale_down() {
                         debug!("Got error from server while polling: {:?}", e);
                         if e.code() == Code::ResourceExhausted {
                             // Scale down significantly for resource exhaustion
@@ -705,6 +693,14 @@ impl PollScalerReportHandle {
                 Some(change(v, change_by).clamp(self.min, self.max))
             })
             .expect("Cannot fail because always returns Some");
+    }
+
+    /// We want to avoid scaling down on empty polls if the server has never made any scaling
+    /// decisions - otherwise we might never scale up again. If the server supports poller
+    /// autoscaling, it's safe to scale down without having seen a decision.
+    fn can_scale_down(&self) -> bool {
+        self.ever_saw_scaling_decision.load(Ordering::Relaxed)
+            || self.server_supports_autoscaling.load(Ordering::Relaxed)
     }
 }
 
