@@ -158,15 +158,9 @@ impl From<WorkflowError> for Failure {
     }
 }
 
-/// Intercepts high-level workflow operations such as init, run, signals, queries, and updates.
-///
-/// This trait is intended for SDKs or advanced users that want to observe workflow behavior at a
-/// semantic level instead of at the lower-level activation stream.
 pub trait WorkflowInterceptor: 'static {
-    /// Called just before a workflow instance is initialized.
     fn on_init_start(&self, _workflow_type: &str, _namespace: &str) {}
 
-    /// Called just before the workflow run method is invoked.
     fn on_run_start(&self, _workflow_type: &str, _namespace: &str) {}
 }
 

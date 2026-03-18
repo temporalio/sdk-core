@@ -419,10 +419,6 @@ impl WorkerOptions {
     }
 }
 
-/// Builds a [Worker] from a task queue and registered Rust workflow/activity definitions.
-///
-/// This is a convenience wrapper around [WorkerOptions] and [Worker::new] for the common case of
-/// configuring registrations first, then constructing the worker once runtime and client are ready.
 pub struct WorkerBuilder {
     options: WorkerOptions,
 }
