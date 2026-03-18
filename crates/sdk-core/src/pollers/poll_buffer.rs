@@ -78,6 +78,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         options: WorkflowTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         graceful_poll_shutdown: Arc<AtomicBool>,
+        server_supports_autoscaling: Arc<AtomicBool>,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
         let poll_scaler = PollScaler::new(
@@ -85,6 +86,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
+            server_supports_autoscaling,
         );
         if let Some(wftps) = options.wft_poller_shared.as_ref() {
             if is_sticky {
@@ -157,6 +159,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
         options: ActivityTaskOptions,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         graceful_poll_shutdown: Arc<AtomicBool>,
+        server_supports_autoscaling: Arc<AtomicBool>,
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
@@ -201,6 +204,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             num_pollers_handler,
             shutdown.clone(),
             last_successful_poll_time,
+            server_supports_autoscaling,
         );
         Self::new(
             poll_fn,
@@ -226,6 +230,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
         send_heartbeat: bool,
         graceful_poll_shutdown: Arc<AtomicBool>,
+        server_supports_autoscaling: Arc<AtomicBool>,
     ) -> Self {
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
             Some(NoRetryOnMatching {
@@ -259,6 +264,7 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
                 num_pollers_handler,
                 shutdown,
                 last_successful_poll_time,
+                server_supports_autoscaling,
             ),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
@@ -483,6 +489,7 @@ where
         num_pollers_handler: Option<F>,
         shutdown: CancellationToken,
         last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
+        server_supports_autoscaling: Arc<AtomicBool>,
     ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
         let num_pollers_handler = num_pollers_handler.map(Arc::new);
@@ -499,6 +506,7 @@ where
             min,
             target: AtomicUsize::new(target),
             ever_saw_scaling_decision: AtomicBool::default(),
+            server_supports_autoscaling,
             behavior,
             ingested_this_period: Default::default(),
             ingested_last_period: Default::default(),
@@ -583,6 +591,7 @@ struct PollScalerReportHandle {
     min: usize,
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
+    server_supports_autoscaling: Arc<AtomicBool>,
     behavior: PollerBehavior,
 
     ingested_this_period: AtomicUsize,
@@ -642,8 +651,13 @@ impl PollScalerReportHandle {
                         .store(true, Ordering::Relaxed);
                 }
                 // We want to avoid scaling down on empty polls if the server has never made any
-                // scaling decisions - otherwise we might never scale up again.
-                else if self.ever_saw_scaling_decision.load(Ordering::Relaxed) && res.is_empty() {
+                // scaling decisions - otherwise we might never scale up again. If the server
+                // supports poller autoscaling, it's safe to scale down without having seen a
+                // decision.
+                else if (self.ever_saw_scaling_decision.load(Ordering::Relaxed)
+                    || self.server_supports_autoscaling.load(Ordering::Relaxed))
+                    && res.is_empty()
+                {
                     self.change_target(usize::saturating_sub, 1);
                 }
             }
@@ -663,8 +677,11 @@ impl PollScalerReportHandle {
                         .metadata()
                         .contains_key(ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT);
 
-                    // We should only react to errors in autoscaling mode if we saw a scaling decision
-                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed) {
+                    // We should only react to errors in autoscaling mode if we saw a scaling
+                    // decision or the server supports poller autoscaling
+                    if self.ever_saw_scaling_decision.load(Ordering::Relaxed)
+                        || self.server_supports_autoscaling.load(Ordering::Relaxed)
+                    {
                         debug!("Got error from server while polling: {:?}", e);
                         if e.code() == Code::ResourceExhausted {
                             // Scale down significantly for resource exhaustion
@@ -854,6 +871,7 @@ mod tests {
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
@@ -910,6 +928,7 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(1)))),
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         );
 
@@ -987,6 +1006,7 @@ mod tests {
                 wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
             Arc::new(AtomicCell::new(None)),
+            Arc::new(AtomicBool::new(false)),
             Arc::new(AtomicBool::new(false)),
         );
 
@@ -1094,6 +1114,7 @@ mod tests {
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
         ));
 
         // Trigger the first poll to initialize and get the scaling decision
@@ -1175,6 +1196,7 @@ mod tests {
             },
             Arc::new(AtomicCell::new(None)),
             Arc::new(AtomicBool::new(graceful)),
+            Arc::new(AtomicBool::new(false)),
         );
 
         let first = pb.poll().await.unwrap().unwrap();
@@ -1209,5 +1231,44 @@ mod tests {
         }
 
         pb.shutdown().await;
+    }
+
+    #[rstest]
+    #[case::with_capability(true, 1, 1)]
+    #[case::without_capability(false, 1, 10)]
+    #[case::clamps_to_nonone_min(true, 3, 3)]
+    #[test]
+    fn autoscale_down_on_timeout_respects_server_capability(
+        #[case] supports_autoscaling: bool,
+        #[case] minimum: usize,
+        #[case] expected_target: usize,
+    ) {
+        let handle = Arc::new(PollScalerReportHandle {
+            max: 10,
+            min: minimum,
+            target: AtomicUsize::new(10),
+            ever_saw_scaling_decision: AtomicBool::new(false),
+            server_supports_autoscaling: Arc::new(AtomicBool::new(supports_autoscaling)),
+            behavior: PollerBehavior::Autoscaling {
+                minimum,
+                maximum: 10,
+                initial: 10,
+            },
+            ingested_this_period: Default::default(),
+            ingested_last_period: Default::default(),
+            scale_up_allowed: AtomicBool::new(true),
+            last_successful_poll_time: Arc::new(AtomicCell::new(None)),
+            exponential_backoff: parking_lot::Mutex::new(ExponentialBackoff::default()),
+            resource_exhausted_backoff: parking_lot::Mutex::new(ExponentialBackoff::default()),
+        });
+
+        for _ in 0..20 {
+            let empty_resp: Result<PollWorkflowTaskQueueResponse, tonic::Status> =
+                Ok(PollWorkflowTaskQueueResponse::default());
+            handle.poll_result(&empty_resp);
+        }
+
+        assert_eq!(handle.target.load(Ordering::Relaxed), expected_target);
+        assert!(!handle.ever_saw_scaling_decision.load(Ordering::Relaxed));
     }
 }
