@@ -19,6 +19,8 @@ pub mod proxy;
 mod replaceable;
 pub mod request_extensions;
 mod retry;
+/// Schedule operations: create, describe, update, pause, trigger, backfill, list, and delete.
+pub mod schedules;
 pub mod worker;
 mod workflow_handle;
 
