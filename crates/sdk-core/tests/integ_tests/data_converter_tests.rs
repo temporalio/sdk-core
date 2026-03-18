@@ -493,3 +493,654 @@ async fn codec_encodes_and_decodes_payloads() {
         "Codec should have decoded payloads, but decode_count was 0"
     );
 }
+
+struct UpperCaseFailureConverter;
+impl temporalio_common::data_converters::FailureConverter for UpperCaseFailureConverter {
+    fn to_failure(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
+    ) -> Result<
+        temporalio_common::protos::temporal::api::failure::v1::Failure,
+        PayloadConversionError,
+    > {
+        use temporalio_common::protos::temporal::api::failure::v1::{
+            ApplicationFailureInfo, failure::FailureInfo,
+        };
+        Ok(
+            temporalio_common::protos::temporal::api::failure::v1::Failure {
+                message: error.to_string().to_uppercase(),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo::default(),
+                )),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn to_error(
+        &self,
+        failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
+    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+        Ok(failure.message.to_lowercase().into())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct CustomConverterFailWorkflow;
+#[workflow_methods]
+impl CustomConverterFailWorkflow {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>, message: String) -> WorkflowResult<String> {
+        Err(temporalio_sdk::WorkflowTermination::Failed(
+            anyhow::anyhow!("{}", message),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn custom_failure_converter_applied_to_workflow_failure() {
+    let wf_name = CustomConverterFailWorkflow::name();
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        UpperCaseFailureConverter,
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<CustomConverterFailWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            CustomConverterFailWorkflow::run,
+            "should be uppercased".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // Fetch the raw failure from history to see what the worker actually sent.
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let failed_attrs = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowExecutionFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find WorkflowExecutionFailed event");
+
+    let failure = failed_attrs.failure.as_ref().expect("should have failure");
+
+    // The custom converter uppercases, so the server-side failure message must
+    // be all-uppercase. Without the converter wired up, this would contain the
+    // raw lowercase message.
+    assert_eq!(
+        failure.message, "SHOULD BE UPPERCASED",
+        "Failure message on server should reflect custom converter (uppercase), got: {}",
+        failure.message,
+    );
+}
+
+#[workflow]
+#[derive(Default)]
+struct FailWithDetailsWorkflow;
+#[workflow_methods]
+impl FailWithDetailsWorkflow {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+
+        // Build detail payloads with a known plaintext marker.
+        let detail_payload = Payload {
+            metadata: {
+                let mut hm = std::collections::HashMap::new();
+                hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                hm
+            },
+            data: b"\"detail-marker-plaintext\"".to_vec(),
+            external_payloads: vec![],
+        };
+
+        let tf = TemporalFailure::Application {
+            message: "fail with details".to_string(),
+            stack_trace: String::new(),
+            r#type: String::new(),
+            non_retryable: false,
+            details: Some(Payloads {
+                payloads: vec![detail_payload],
+            }),
+            next_retry_delay: None,
+            cause: None,
+        };
+
+        Err(temporalio_sdk::WorkflowTermination::Failed(tf.into()))
+    }
+}
+
+#[tokio::test]
+async fn codec_applied_to_outgoing_workflow_failure_payloads() {
+    let wf_name = FailWithDetailsWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<FailWithDetailsWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            FailWithDetailsWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // Fetch raw history — the server stores whatever the worker sent, so if the
+    // codec was applied the detail payloads will NOT contain our plaintext marker.
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let failed_attrs = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowExecutionFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find WorkflowExecutionFailed event");
+
+    let failure = failed_attrs.failure.as_ref().expect("should have failure");
+
+    // Dig into ApplicationFailureInfo to find the detail payloads.
+    use temporalio_common::protos::temporal::api::failure::v1::failure::FailureInfo;
+    let details = match failure.failure_info.as_ref() {
+        Some(FailureInfo::ApplicationFailureInfo(info)) => info.details.as_ref(),
+        other => panic!("Expected ApplicationFailureInfo, got: {:?}", other),
+    };
+
+    let detail_payloads = details.expect("should have detail payloads");
+    assert!(
+        !detail_payloads.payloads.is_empty(),
+        "should have at least one detail payload"
+    );
+
+    // The plaintext marker should NOT appear in the raw data if the codec was applied.
+    let raw_data = &detail_payloads.payloads[0].data;
+    let raw_str = String::from_utf8_lossy(raw_data);
+    assert!(
+        !raw_str.contains("detail-marker-plaintext"),
+        "Detail payload on server should be encoded by the codec, but found plaintext: {}",
+        raw_str,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Send path: codec is applied to outgoing activity failure payloads
+// ---------------------------------------------------------------------------
+
+struct FailWithDetailsActivities;
+#[activities]
+impl FailWithDetailsActivities {
+    #[activity]
+    async fn fail_with_details(
+        _ctx: ActivityContext,
+        _input: String,
+    ) -> Result<String, ActivityError> {
+        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+
+        let detail_payload = Payload {
+            metadata: {
+                let mut hm = std::collections::HashMap::new();
+                hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                hm
+            },
+            data: b"\"activity-detail-plaintext\"".to_vec(),
+            external_payloads: vec![],
+        };
+
+        let tf = TemporalFailure::Application {
+            message: "activity fail with details".to_string(),
+            stack_trace: String::new(),
+            r#type: String::new(),
+            non_retryable: true,
+            details: Some(Payloads {
+                payloads: vec![detail_payload],
+            }),
+            next_retry_delay: None,
+            cause: None,
+        };
+
+        Err(ActivityError::NonRetryable(Box::new(tf)))
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ActivityFailDetailsWorkflow;
+#[workflow_methods]
+impl ActivityFailDetailsWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        ctx.start_activity(
+            FailWithDetailsActivities::fail_with_details,
+            "trigger".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                retry_policy: Some(
+                    temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    },
+                ),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| {
+            temporalio_sdk::WorkflowTermination::Failed(anyhow::anyhow!("activity failed: {}", e))
+        })
+    }
+}
+
+#[tokio::test]
+async fn codec_applied_to_outgoing_activity_failure_payloads() {
+    let wf_name = ActivityFailDetailsWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<ActivityFailDetailsWorkflow>();
+    starter
+        .sdk_config
+        .register_activities(FailWithDetailsActivities);
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            ActivityFailDetailsWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // Fetch raw history to inspect the ActivityTaskFailed event.
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let activity_failed_attrs = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::ActivityTaskFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find ActivityTaskFailed event");
+
+    let failure = activity_failed_attrs
+        .failure
+        .as_ref()
+        .expect("should have failure");
+
+    // Walk through cause chain — the activity failure wraps an application failure.
+    use temporalio_common::protos::temporal::api::failure::v1::failure::FailureInfo;
+    let app_failure = failure
+        .cause
+        .as_ref()
+        .map(|c| c.as_ref())
+        .unwrap_or(failure);
+
+    let details = match app_failure.failure_info.as_ref() {
+        Some(FailureInfo::ApplicationFailureInfo(info)) => info.details.as_ref(),
+        other => panic!("Expected ApplicationFailureInfo, got: {:?}", other),
+    };
+
+    let detail_payloads = details.expect("should have detail payloads");
+    assert!(
+        !detail_payloads.payloads.is_empty(),
+        "should have at least one detail payload"
+    );
+
+    let raw_data = &detail_payloads.payloads[0].data;
+    let raw_str = String::from_utf8_lossy(raw_data);
+    assert!(
+        !raw_str.contains("activity-detail-plaintext"),
+        "Activity failure detail payload on server should be encoded by codec, \
+         but found plaintext: {}",
+        raw_str,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Receive path: activity failures are converted through the failure converter
+// before reaching workflow code
+// ---------------------------------------------------------------------------
+
+/// Workflow that captures the activity error message into its result so the
+/// test can inspect it from outside.
+#[workflow]
+#[derive(Default)]
+struct ActivityFailConverterWorkflow;
+#[workflow_methods]
+impl ActivityFailConverterWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        let err = ctx
+            .start_activity(
+                FailingActivities::always_fail,
+                "input".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    retry_policy: Some(
+                        temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        },
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+
+        // Return the error's Display output so we can assert on it from the client.
+        Ok(format!("activity_error:{}", err))
+    }
+}
+
+#[tokio::test]
+async fn activity_failure_converted_through_failure_converter() {
+    let wf_name = ActivityFailConverterWorkflow::name();
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        UpperCaseFailureConverter,
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<ActivityFailConverterWorkflow>();
+    starter.sdk_config.register_activities(FailingActivities);
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityFailConverterWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+
+    // UpperCaseFailureConverter.to_error() lowercases the failure message.
+    // If the converter is NOT wired up, the workflow sees a raw Failure proto
+    // whose Display is something like "Activity failed: activity went boom".
+    // If it IS wired up, to_error() lowercases the message (which was uppercased
+    // by to_failure on the send side), so we should see all-lowercase.
+    assert!(
+        result.contains("activity_error:"),
+        "Result should contain the activity error prefix, got: {}",
+        result,
+    );
+
+    // The UpperCaseFailureConverter.to_error returns `failure.message.to_lowercase()`.
+    // On the send side, the activity error "activity went boom" was uppercased to
+    // "ACTIVITY WENT BOOM". On the receive side, to_error lowercases back to
+    // "activity went boom". But crucially, the ActivityExecutionError currently
+    // surfaces the raw Failure proto (not via the converter), so the workflow
+    // would see the uppercase version or the raw proto Display — not the
+    // lowercased converter output.
+    //
+    // Once the receive path is wired up, the error will go through to_error()
+    // which lowercases, so the workflow will see a lowercased string.
+    let error_part = result.strip_prefix("activity_error:").unwrap();
+    assert!(
+        !error_part.contains("Activity failed:"),
+        "Activity error should go through the failure converter (not be a raw Failure proto), \
+         got: {}",
+        error_part,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Receive path: codec decodes activity failure payloads before the workflow
+// sees them
+// ---------------------------------------------------------------------------
+
+/// Activity that fails with detail payloads (used by the codec receive test).
+struct CodecFailActivities;
+#[activities]
+impl CodecFailActivities {
+    #[activity]
+    async fn fail_with_encoded_details(
+        _ctx: ActivityContext,
+        _input: String,
+    ) -> Result<String, ActivityError> {
+        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+
+        let detail_payload = Payload {
+            metadata: {
+                let mut hm = std::collections::HashMap::new();
+                hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                hm
+            },
+            data: b"\"readable-detail\"".to_vec(),
+            external_payloads: vec![],
+        };
+
+        let tf = TemporalFailure::Application {
+            message: "activity with details".to_string(),
+            stack_trace: String::new(),
+            r#type: String::new(),
+            non_retryable: true,
+            details: Some(Payloads {
+                payloads: vec![detail_payload],
+            }),
+            next_retry_delay: None,
+            cause: None,
+        };
+
+        Err(ActivityError::NonRetryable(Box::new(tf)))
+    }
+}
+
+/// Workflow that catches the activity error and extracts the detail payload
+/// to return as its result, so the test can verify the payload was decoded.
+#[workflow]
+#[derive(Default)]
+struct ActivityCodecDecodeWorkflow;
+#[workflow_methods]
+impl ActivityCodecDecodeWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        use temporalio_common::data_converters::TemporalFailure;
+
+        let err = ctx
+            .start_activity(
+                CodecFailActivities::fail_with_encoded_details,
+                "input".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    retry_policy: Some(
+                        temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        },
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+
+        // Try to extract the detail payload from the error. If the failure
+        // converter + codec are wired up on the receive path, the error will be
+        // a TemporalFailure with decoded detail payloads.
+        let err_str = format!("{}", err);
+        let source: &dyn std::error::Error = &err;
+        // Walk the error chain looking for TemporalFailure
+        let mut current: Option<&dyn std::error::Error> = Some(source);
+        while let Some(e) = current {
+            if let Some(tf) = e.downcast_ref::<TemporalFailure>() {
+                if let TemporalFailure::Application { details, .. } = tf {
+                    if let Some(payloads) = details {
+                        if let Some(p) = payloads.payloads.first() {
+                            let detail_str = String::from_utf8_lossy(&p.data);
+                            return Ok(format!("detail:{}", detail_str));
+                        }
+                    }
+                }
+                return Ok(format!("temporal_failure_no_details:{}", tf.message()));
+            }
+            current = e.source();
+        }
+
+        Ok(format!("raw_error:{}", err_str))
+    }
+}
+
+#[tokio::test]
+async fn codec_decodes_activity_failure_payloads_on_receive() {
+    let wf_name = ActivityCodecDecodeWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<ActivityCodecDecodeWorkflow>();
+    starter.sdk_config.register_activities(CodecFailActivities);
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityCodecDecodeWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+
+    // If the codec + failure converter are wired up on the receive path, the
+    // workflow should see a TemporalFailure with the decoded detail payload
+    // containing the original "readable-detail" string.
+    assert!(
+        result.starts_with("detail:"),
+        "Workflow should receive a TemporalFailure with decoded detail payloads, got: {}",
+        result,
+    );
+    assert!(
+        result.contains("readable-detail"),
+        "Detail payload should be decoded (readable), got: {}",
+        result,
+    );
+}
