@@ -46,12 +46,12 @@ version = "0.1"
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
 version = "0.1"
-features = ["ephemeral-server"]
+features = ["ephemeral-server", "otel"]
 
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.1"
-features = ["core-based-sdk"]
+features = ["core-based-sdk", "otel"]
 
 [dev-dependencies]
 base64 = "0.21.0"
