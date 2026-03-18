@@ -1,6 +1,6 @@
 [package]
 name = "temporalio-sdk"
-version = "0.1.0-alpha.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Spencer Judge <spencer@temporal.io>"]
 license-file = { workspace = true }
@@ -36,20 +36,20 @@ uuid = { version = "1.18", features = ["v4"] }
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
-version = "0.1"
+version = "0.2"
 default-features = false
 
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.1"
+version = "0.2"
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.1"
+version = "0.2"
 
 [dependencies.temporalio-macros]
 path = "../macros"
-version = "0.1"
+version = "0.2"
 
 [dev-dependencies]
 futures = "0.3"
