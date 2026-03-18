@@ -20,8 +20,7 @@ use temporalio_sdk_core::test_help::{
 };
 
 /// A workflow that returns Pending on first poll and Ready on second poll.
-/// Uses Cell for interior mutability to avoid state_mut (which triggers re-polling).
-/// This ensures the workflow genuinely stays pending after the first activation.
+/// Uses Cell to avoid state_mut which triggers re-polling.
 #[workflow]
 #[derive(Default)]
 struct CompleteOnSecondPollWf {
@@ -50,12 +49,14 @@ impl CompleteOnSecondPollWf {
     }
 }
 
-/// Query-only activations must not poll the main workflow future. If they did, this
-/// workflow (which completes on its second poll) would produce a CompleteWorkflowExecution
-/// command alongside the query response — an invalid combination.
+/// This test demonstrates a bug where the SDK advances the workflow future even when
+/// receiving a query-only activation. When the workflow would complete on the next poll,
+/// this causes both a query response AND a workflow completion command to be sent
+/// together, which is invalid.
 ///
-/// The test checks a relative invariant: the main future's poll count does not change
-/// between before and after the query-only activation.
+/// The error message from core when this happens is:
+/// "Workflow completion had a legacy query response along with other commands.
+/// This is not allowed and constitutes an error in the lang SDK."
 #[tokio::test]
 async fn query_only_activation_should_not_advance_workflow() {
     let mut t = TestHistoryBuilder::default();
@@ -65,9 +66,7 @@ async fn query_only_activation_should_not_advance_workflow() {
     let wfid = "query_only_test";
 
     let tasks = [
-        // First activation: workflow starts, polls once → Pending
         hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
-        // Second activation: legacy query only, no new history
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
             pr.query = Some(WorkflowQuery {
@@ -86,8 +85,6 @@ async fn query_only_activation_should_not_advance_workflow() {
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
         asserts
             .then(|wft| {
-                // After first activation the workflow should be pending (polled once, returned
-                // Pending). It must NOT have completed.
                 let has_complete_cmd = wft
                     .commands
                     .iter()
@@ -99,9 +96,6 @@ async fn query_only_activation_should_not_advance_workflow() {
                 );
             })
             .then(|wft| {
-                // The query-only activation must not advance the workflow future.
-                // If the future were polled, it would return Ready and produce a completion
-                // command — exactly the bug we are guarding against.
                 let has_complete_cmd = wft
                     .commands
                     .iter()
