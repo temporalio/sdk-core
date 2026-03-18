@@ -110,7 +110,9 @@ use crate::{
     },
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
-    workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
+    workflows::{
+        WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer, WorkflowInterceptor,
+    },
 };
 use anyhow::{Context, anyhow, bail};
 use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt};
@@ -193,6 +195,9 @@ pub struct WorkerOptions {
     /// executable.
     #[builder(default = def_build_id())]
     pub deployment_options: WorkerDeploymentOptions,
+    /// Optional workflow-level interceptors that observe semantic workflow events.
+    #[builder(default)]
+    pub workflow_interceptors: Vec<Arc<dyn WorkflowInterceptor>>,
     /// A human-readable string that can identify this worker. If set, overrides the identity on
     /// the client used by this worker. If unset and the client has no identity, defaults to
     /// `{pid}@{hostname}`.
@@ -510,6 +515,7 @@ struct WorkflowHalf {
     workflows: RefCell<HashMap<String, WorkflowData>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
+    workflow_interceptors: Vec<Arc<dyn WorkflowInterceptor>>,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
@@ -554,6 +560,7 @@ impl Worker {
         );
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
+        me.workflow_half.workflow_interceptors = options.workflow_interceptors;
         Ok(me)
     }
 
