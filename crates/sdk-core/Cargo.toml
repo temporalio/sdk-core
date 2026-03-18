@@ -15,8 +15,6 @@ exclude = ["machine_coverage/*"]
 
 [features]
 default = []
-# OpenTelemetry metrics export via OTLP. Disabled by default to reduce build times and
-# dependency count for users who use Prometheus or custom meters only.
 otel = [
   "dep:opentelemetry",
   "dep:opentelemetry_sdk",
