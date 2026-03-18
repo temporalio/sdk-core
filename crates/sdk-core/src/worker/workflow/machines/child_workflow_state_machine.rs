@@ -800,6 +800,7 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::internal_flags::InternalFlags;
+    use rstest::rstest;
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
 
     #[test]
@@ -899,50 +900,49 @@ mod test {
         ));
     }
 
-    #[test]
-    fn cancel_in_start_event_recorded() {
-        for cancel_type in [
-            ChildWorkflowCancellationType::WaitCancellationCompleted,
-            ChildWorkflowCancellationType::TryCancel,
-            ChildWorkflowCancellationType::Abandon,
-        ] {
-            let mut s = ChildWorkflowMachine::from_parts(
-                StartEventRecorded {}.into(),
-                SharedState {
-                    initiated_event_id: 1,
-                    started_event_id: 0,
-                    lang_sequence_number: 1,
-                    namespace: "".to_string(),
-                    workflow_id: "child-wf-id".to_string(),
-                    run_id: "".to_string(),
-                    workflow_type: "child".to_string(),
-                    cancelled_before_sent: false,
-                    cancel_type,
-                    internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
-                },
-            );
-            let cmds = s
-                .cancel("parent cancelled".to_string())
-                .expect("Cancel in StartEventRecorded should not fail");
-            assert!(
-                !cmds.is_empty(),
-                "Should produce commands for {cancel_type:?}"
-            );
-            match cancel_type {
-                ChildWorkflowCancellationType::Abandon
-                | ChildWorkflowCancellationType::TryCancel => {
-                    assert!(
-                        matches!(s.state(), ChildWorkflowMachineState::Cancelled(_)),
-                        "Should be Cancelled for {cancel_type:?}"
-                    );
-                }
-                _ => {
-                    assert!(
-                        matches!(s.state(), ChildWorkflowMachineState::StartEventRecorded(_)),
-                        "Should stay in StartEventRecorded for {cancel_type:?}"
-                    );
-                }
-            }
-        }
+    #[rstest]
+    #[case::wait_cancellation_completed(
+        ChildWorkflowCancellationType::WaitCancellationCompleted,
+        discriminant(&ChildWorkflowMachineState::StartEventRecorded(Default::default()))
+    )]
+    #[case::try_cancel(
+        ChildWorkflowCancellationType::TryCancel,
+        discriminant(&ChildWorkflowMachineState::Cancelled(Default::default()))
+    )]
+    #[case::abandon(
+        ChildWorkflowCancellationType::Abandon,
+        discriminant(&ChildWorkflowMachineState::Cancelled(Default::default()))
+    )]
+    fn cancel_in_start_event_recorded(
+        #[case] cancel_type: ChildWorkflowCancellationType,
+        #[case] expected_state: std::mem::Discriminant<ChildWorkflowMachineState>,
+    ) {
+        let mut s = ChildWorkflowMachine::from_parts(
+            StartEventRecorded {}.into(),
+            SharedState {
+                initiated_event_id: 1,
+                started_event_id: 0,
+                lang_sequence_number: 1,
+                namespace: "".to_string(),
+                workflow_id: "child-wf-id".to_string(),
+                run_id: "".to_string(),
+                workflow_type: "child".to_string(),
+                cancelled_before_sent: false,
+                cancel_type,
+                internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
+            },
+        );
+        let cmds = s
+            .cancel("parent cancelled".to_string())
+            .expect("Cancel in StartEventRecorded should not fail");
+        assert!(
+            !cmds.is_empty(),
+            "Should produce commands for {cancel_type:?}"
+        );
+        assert_eq!(
+            discriminant(s.state()),
+            expected_state,
+            "Unexpected state for {cancel_type:?}"
+        );
     }
 }
