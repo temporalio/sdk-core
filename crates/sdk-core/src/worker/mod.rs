@@ -13,7 +13,10 @@ use temporalio_common::{
             ActivitySlotInfo, LocalActivitySlotInfo, NamespaceInfo, NexusSlotInfo,
             WorkflowSlotInfo, activity_result::ActivityExecutionResult, namespace_info,
         },
-        temporal::api::{enums::v1::VersioningBehavior, worker::v1::PluginInfo},
+        temporal::api::{
+            enums::v1::VersioningBehavior,
+            worker::v1::{PluginInfo, StorageDriverInfo},
+        },
     },
     telemetry::TelemetryInstance,
     worker::{WorkerDeploymentOptions, WorkerDeploymentVersion},
@@ -265,6 +268,10 @@ pub struct WorkerConfig {
     /// Skips the single worker+client+namespace+task_queue check
     #[builder(default = false)]
     pub skip_client_worker_set_check: bool,
+
+    /// List of storage drivers used by lang.
+    #[builder(default)]
+    pub storage_drivers: HashSet<StorageDriverInfo>,
 }
 
 impl WorkerConfig {
@@ -418,6 +425,9 @@ pub struct Worker {
     /// Set during validate() when server supports graceful poll cancellation on shutdown.
     /// Shared with pollers so they can decide per-poll whether to hard-kill or wait.
     graceful_poll_shutdown: Arc<AtomicBool>,
+    /// Set during validate() when the namespace has the poller_autoscaling capability,
+    /// enabling scale-down on poll timeout even without an explicit scaling decision.
+    poller_autoscaling: Arc<AtomicBool>,
 }
 
 struct AllPermitsTracker {
@@ -490,11 +500,13 @@ impl Worker {
                         memo_size_limit_error: api_limits.memo_size_limit_error,
                     })
                 });
-                if ns_info
-                    .and_then(|ns| ns.capabilities)
-                    .is_some_and(|caps| caps.worker_poll_complete_on_shutdown)
-                {
-                    self.graceful_poll_shutdown.store(true, Ordering::Relaxed);
+                if let Some(caps) = ns_info.and_then(|ns| ns.capabilities) {
+                    if caps.worker_poll_complete_on_shutdown {
+                        self.graceful_poll_shutdown.store(true, Ordering::Relaxed);
+                    }
+                    if caps.poller_autoscaling {
+                        self.poller_autoscaling.store(true, Ordering::Relaxed);
+                    }
                 }
                 Ok(NamespaceInfo { limits })
             }
@@ -617,6 +629,7 @@ impl Worker {
         let act_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let graceful_poll_shutdown = Arc::new(AtomicBool::new(false));
+        let poller_autoscaling = Arc::new(AtomicBool::new(false));
 
         let nexus_slots = MeteredPermitDealer::new(
             tuner.nexus_task_slot_supplier(),
@@ -638,6 +651,7 @@ impl Worker {
                         wf_last_suc_poll_time.clone(),
                         wf_sticky_last_suc_poll_time.clone(),
                         graceful_poll_shutdown.clone(),
+                        poller_autoscaling.clone(),
                     )
                     .boxed();
                     let stream = if !client.is_mock() {
@@ -668,6 +682,7 @@ impl Worker {
                         },
                         act_last_suc_poll_time.clone(),
                         graceful_poll_shutdown.clone(),
+                        poller_autoscaling.clone(),
                     );
                     Some(Box::from(ap) as BoxedActPoller)
                 } else {
@@ -686,6 +701,7 @@ impl Worker {
                         nexus_last_suc_poll_time.clone(),
                         shared_namespace_worker,
                         graceful_poll_shutdown.clone(),
+                        poller_autoscaling.clone(),
                     )) as BoxedNexusPoller)
                 } else {
                     None
@@ -906,6 +922,7 @@ impl Worker {
             client_worker_registrator,
             status: worker_status,
             graceful_poll_shutdown,
+            poller_autoscaling,
         })
     }
 
@@ -1992,6 +2009,9 @@ impl WorkerHeartbeatManager {
             let mut plugins: Vec<_> = config.plugins.clone().into_iter().collect();
             plugins.sort_by(|a, b| a.name.cmp(&b.name));
 
+            let mut drivers: Vec<_> = config.storage_drivers.clone().into_iter().collect();
+            drivers.sort_by(|a, b| a.r#type.cmp(&b.r#type));
+
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
@@ -2011,6 +2031,7 @@ impl WorkerHeartbeatManager {
                 status: (*heartbeat_manager_metrics.status.read()) as i32,
                 start_time,
                 plugins,
+                drivers,
 
                 // Some Metrics dependent fields are set below, and
                 // some fields like sdk_name, sdk_version, and worker_identity, must be set by

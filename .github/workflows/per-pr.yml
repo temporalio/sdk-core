@@ -17,7 +17,7 @@ concurrency:
 jobs:
   build-and-lint:
     name: "Format, docs, and lint"
-    timeout-minutes: 10
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 15 || 10 }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo fmt --all --check
       - run: cargo doc --workspace --all-features --no-deps
         env:
@@ -45,7 +47,8 @@ jobs:
 
   test:
     name: Unit Tests
-    timeout-minutes: 15
+    # Give extra time to ensure pushes to main have time to populate the cache
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 20 || 15 }}
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +84,8 @@ jobs:
           script: |
             core.exportVariable('RUSTFLAGS', '-Csymbol-mangling-version=v0');
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo test -- --include-ignored --nocapture
       - name: Find test executable for cgroup tests
         id: find-cgroup-test
@@ -124,7 +129,7 @@ jobs:
 
   integ-tests:
     name: Integ tests
-    timeout-minutes: 25
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 30 || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +165,8 @@ jobs:
           script: |
             core.exportVariable('RUSTFLAGS', '-Csymbol-mangling-version=v0');
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo integ-test
 
   cloud-tests:
@@ -170,7 +177,7 @@ jobs:
       TEMPORAL_NAMESPACE: ${{ vars.TEMPORAL_CLIENT_NAMESPACE }}
       TEMPORAL_CLIENT_CERT: ${{ secrets.TEMPORAL_CLIENT_CERT }}
       TEMPORAL_CLIENT_KEY: ${{ secrets.TEMPORAL_CLIENT_KEY }}
-    timeout-minutes: 20
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 25 || 20 }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -185,6 +192,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo test --features=test-utilities --test cloud_tests
 
   docker-integ-tests:
@@ -195,7 +204,7 @@ jobs:
       TEMPORAL_CLIENT_CERT: ${{ secrets.TEMPORAL_CLIENT_CERT }}
       TEMPORAL_CLIENT_KEY: ${{ secrets.TEMPORAL_CLIENT_KEY }}
       DOCKER_PROMETHEUS_RUNNING: true
-    timeout-minutes: 20
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 25 || 20 }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,6 +222,8 @@ jobs:
         with:
           compose-file: ./etc/docker/docker-compose-ci.yaml
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo integ-test docker_
 
   c-bridge-static-link-test:

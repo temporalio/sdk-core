@@ -133,7 +133,7 @@ pub extern "C" fn temporal_core_client_connect(
     }
     // Spawn async call
     let user_data = UserDataHandle(user_data);
-    connection_options.metrics_meter = runtime.core.telemetry().get_metric_meter();
+    connection_options.metrics_meter = runtime.core.telemetry().get_temporal_metric_meter();
     runtime.core.tokio_handle().spawn(async move {
         match temporalio_client::Connection::connect(connection_options).await {
             Ok(connection) => {

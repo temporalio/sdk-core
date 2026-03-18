@@ -48,6 +48,8 @@ message NamespaceInfo {
         // an empty response. When this flag is true, workers should allow polls to return gracefully
         // rather than terminating any open polls on shutdown.
         bool worker_poll_complete_on_shutdown = 8;
+        // True if the namespace supports poller autoscaling
+        bool poller_autoscaling = 9;
     }
 
     // Namespace configured limits

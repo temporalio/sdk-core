@@ -14,8 +14,13 @@ exclude = ["machine_coverage/*"]
 [lib]
 
 [features]
-default = ["otel"]
-otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+default = []
+otel = [
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+  "temporalio-common/otel",
+]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
 test-utilities = ["dep:assert_matches", "dep:bimap"]

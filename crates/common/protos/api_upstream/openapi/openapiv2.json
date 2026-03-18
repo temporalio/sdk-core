@@ -2735,7 +2735,7 @@
           },
           {
             "name": "query",
-            "description": "`query` in ListWorkers is used to filter workers based on worker status info.\nThe following worker status attributes are expected are supported as part of the query:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* LastHeartbeatTime\n* Status\nCurrently metrics are not supported as a part of ListWorkers query.",
+            "description": "`query` in ListWorkers is used to filter workers based on worker attributes.\nSupported attributes:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* Status",
             "in": "query",
             "required": false,
             "type": "string"
@@ -7235,7 +7235,7 @@
           },
           {
             "name": "query",
-            "description": "`query` in ListWorkers is used to filter workers based on worker status info.\nThe following worker status attributes are expected are supported as part of the query:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* LastHeartbeatTime\n* Status\nCurrently metrics are not supported as a part of ListWorkers query.",
+            "description": "`query` in ListWorkers is used to filter workers based on worker attributes.\nSupported attributes:\n* WorkerInstanceKey\n* WorkerIdentity\n* HostName\n* TaskQueue\n* DeploymentName\n* BuildId\n* SdkName\n* SdkVersion\n* StartTime\n* Status",
             "in": "query",
             "required": false,
             "type": "string"
@@ -9183,6 +9183,10 @@
         "selector": {
           "$ref": "#/definitions/v1WorkerSelector",
           "description": "Defines which workers should receive this command.\nonly single worker is supported at this time."
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the worker grouping key."
         }
       }
     },
@@ -9296,6 +9300,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the workflow ID or activity ID for standalone activities."
         }
       }
     },
@@ -9313,6 +9321,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains \"workflow:workflow_id\" or \"activity:activity_id\" for standalone activities."
         }
       }
     },
@@ -9329,6 +9341,10 @@
             "type": "object",
             "$ref": "#/definitions/v1WorkerHeartbeat"
           }
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the worker grouping key."
         }
       }
     },
@@ -9498,6 +9514,10 @@
           "type": "string",
           "title": "The identity of the worker/client"
         },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the workflow ID or activity ID for standalone activities."
+        },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
           "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment_options` instead."
@@ -9530,6 +9550,10 @@
         "deploymentOptions": {
           "$ref": "#/definitions/v1WorkerDeploymentOptions",
           "description": "Worker deployment options that user has set in the worker."
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains \"workflow:workflow_id\" or \"activity:activity_id\" for standalone activities."
         }
       }
     },
@@ -9548,6 +9572,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the workflow ID or activity ID for standalone activities."
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
@@ -9577,6 +9605,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains \"workflow:workflow_id\" or \"activity:activity_id\" for standalone activities."
         }
       }
     },
@@ -9595,6 +9627,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the workflow ID or activity ID for standalone activities."
         },
         "lastHeartbeatDetails": {
           "$ref": "#/definitions/v1Payloads",
@@ -9632,6 +9668,10 @@
         "lastHeartbeatDetails": {
           "$ref": "#/definitions/v1Payloads",
           "title": "Additional details to be stored as last activity heartbeat"
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains \"workflow:workflow_id\" or \"activity:activity_id\" for standalone activities."
         }
       }
     },
@@ -10416,6 +10456,10 @@
         "selector": {
           "$ref": "#/definitions/v1WorkerSelector",
           "description": "Defines which workers should receive this command."
+        },
+        "resourceId": {
+          "type": "string",
+          "description": "Resource ID for routing. Contains the worker grouping key."
         }
       }
     },
@@ -12040,6 +12084,15 @@
         }
       }
     },
+    "v1DeclinedTargetVersionUpgrade": {
+      "type": "object",
+      "properties": {
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion"
+        }
+      },
+      "description": "Wrapper for a target deployment version that the SDK declined to upgrade to.\nSee declined_target_version_upgrade on WorkflowExecutionStartedEventAttributes."
+    },
     "v1DeleteNexusEndpointResponse": {
       "type": "object"
     },
@@ -13429,7 +13482,16 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1WorkerInfo"
-          }
+          },
+          "description": "Deprecated: Use workers instead. This field returns full WorkerInfo which\nincludes expensive runtime metrics. We will stop populating this field in the future."
+        },
+        "workers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkerListInfo"
+          },
+          "description": "Limited worker information."
         },
         "nextPageToken": {
           "type": "string",
@@ -13674,6 +13736,10 @@
         "workerPollCompleteOnShutdown": {
           "type": "boolean",
           "description": "True if the namespace supports server-side completion of outstanding worker polls on shutdown.\nWhen enabled, the server will complete polls for workers that send WorkerInstanceKey in their\npoll requests and call ShutdownWorker with the same WorkerInstanceKey. The poll will return\nan empty response. When this flag is true, workers should allow polls to return gracefully\nrather than terminating any open polls on shutdown."
+        },
+        "pollerAutoscaling": {
+          "type": "boolean",
+          "title": "True if the namespace supports poller autoscaling"
         }
       },
       "description": "Namespace capability details. Should contain what features are enabled in a namespace."
@@ -15864,6 +15930,15 @@
     "v1StopBatchOperationResponse": {
       "type": "object"
     },
+    "v1StorageDriverInfo": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The type of the driver, required."
+        }
+      }
+    },
     "v1StructuredCalendarSpec": {
       "type": "object",
       "properties": {
@@ -16889,6 +16964,14 @@
             "$ref": "#/definitions/v1PluginInfo"
           },
           "description": "Plugins currently in use by this SDK."
+        },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1StorageDriverInfo"
+          },
+          "description": "Storage drivers in use by this SDK."
         }
       },
       "description": "Worker info message, contains information about the worker and its current state.\nAll information is provided by the worker itself."
@@ -16927,7 +17010,72 @@
         "workerHeartbeat": {
           "$ref": "#/definitions/v1WorkerHeartbeat"
         }
-      }
+      },
+      "description": "Detailed worker information."
+    },
+    "v1WorkerListInfo": {
+      "type": "object",
+      "properties": {
+        "workerInstanceKey": {
+          "type": "string",
+          "description": "Worker identifier, should be unique for the namespace.\nIt is distinct from worker identity, which is not necessarily namespace-unique."
+        },
+        "workerIdentity": {
+          "type": "string",
+          "description": "Worker identity, set by the client, may not be unique.\nUsually host_name+(user group name)+process_id, but can be overwritten by the user."
+        },
+        "taskQueue": {
+          "type": "string",
+          "description": "Task queue this worker is polling for tasks."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion"
+        },
+        "sdkName": {
+          "type": "string"
+        },
+        "sdkVersion": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/v1WorkerStatus",
+          "description": "Worker status. Defined by SDK."
+        },
+        "startTime": {
+          "type": "string",
+          "format": "date-time",
+          "title": "Worker start time.\nIt can be used to determine worker uptime. (current time - start time)"
+        },
+        "hostName": {
+          "type": "string",
+          "description": "Worker host identifier."
+        },
+        "workerGroupingKey": {
+          "type": "string",
+          "title": "Worker grouping identifier. A key to group workers that share the same client+namespace+process.\nThis will be used to build the worker command nexus task queue name:\n\"temporal-sys/worker-commands/{worker_grouping_key}\""
+        },
+        "processId": {
+          "type": "string",
+          "description": "Worker process identifier. This id only needs to be unique\nwithin one host (so using e.g. a unix pid would be appropriate)."
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1PluginInfo"
+          },
+          "description": "Plugins currently in use by this SDK."
+        },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1StorageDriverInfo"
+          },
+          "description": "Storage drivers in use by this SDK."
+        }
+      },
+      "description": "Limited worker information returned in the list response.\nWhen adding fields here, ensure that it is also added to WorkerInfo (as it carries the full worker information)."
     },
     "v1WorkerPollerInfo": {
       "type": "object",
@@ -17628,6 +17776,10 @@
         "eagerExecutionAccepted": {
           "type": "boolean",
           "description": "A boolean indicating whether the SDK has asked to eagerly execute the first workflow task for this workflow and\neager execution was accepted by the server.\nOnly populated by server with version >= 1.29.0."
+        },
+        "declinedTargetVersionUpgrade": {
+          "$ref": "#/definitions/v1DeclinedTargetVersionUpgrade",
+          "description": "During a previous run of this workflow, the server may have notified the SDK\nthat the Target Worker Deployment Version changed, but the SDK declined to\nupgrade (e.g., by continuing-as-new with PINNED behavior). This field records\nthe target version that was declined.\n\nThis is a wrapper message to distinguish \"never declined\" (nil wrapper) from\n\"declined an unversioned target\" (non-nil wrapper with nil deployment_version).\n\nUsed internally by the server during continue-as-new and retry.\nShould not be read or interpreted by SDKs."
         }
       },
       "title": "Always the first event in workflow history"
