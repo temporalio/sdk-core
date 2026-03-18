@@ -669,6 +669,10 @@ impl WorkflowMethodsDefinition {
                 }
             }
 
+            impl ::temporalio_common::HasWorkflowDefinition for #module_ident::#struct_ident {
+                type Run = Self;
+            }
+
             impl ::temporalio_common::WorkflowDefinition for #impl_type {
                 type Input = #input_type;
                 type Output = #output_type;
@@ -676,6 +680,10 @@ impl WorkflowMethodsDefinition {
                 fn name(&self) -> &str {
                     #workflow_name
                 }
+            }
+
+            impl ::temporalio_common::HasWorkflowDefinition for #impl_type {
+                type Run = #module_ident::#struct_ident;
             }
         });
 
