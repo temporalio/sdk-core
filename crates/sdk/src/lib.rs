@@ -414,6 +414,80 @@ impl WorkerOptions {
     }
 }
 
+/// Builds a [Worker] from a task queue and registered Rust workflow/activity definitions.
+///
+/// This is a convenience wrapper around [WorkerOptions] and [Worker::new] for the common case of
+/// configuring registrations first, then constructing the worker once runtime and client are ready.
+pub struct WorkerBuilder {
+    options: WorkerOptions,
+}
+
+impl WorkerBuilder {
+    /// Create a new builder for workers polling `task_queue`.
+    pub fn new(task_queue: impl Into<String>) -> Self {
+        Self {
+            options: WorkerOptions::new(task_queue).build(),
+        }
+    }
+
+    /// Registers all activities on an activity implementer.
+    pub fn register_activities<AI: ActivityImplementer>(mut self, instance: AI) -> Self {
+        self.options.register_activities(instance);
+        self
+    }
+
+    /// Registers a specific activitiy.
+    pub fn register_activity<AD>(mut self, instance: Arc<AD::Implementer>) -> Self
+    where
+        AD: ActivityDefinition + ExecutableActivity,
+        AD::Output: Send + Sync,
+    {
+        self.options.register_activity::<AD>(instance);
+        self
+    }
+
+    /// Registers all workflows on a workflow implementer.
+    pub fn register_workflow<WI: WorkflowImplementer>(mut self) -> Self {
+        self.options.register_workflow::<WI>();
+        self
+    }
+
+    /// Register a workflow with a custom factory for instance creation.
+    ///
+    /// # Warning: Advanced Usage
+    /// See [WorkerOptionsBuilder::register_workflow_with_factory] for more.
+    pub fn register_workflow_with_factory<W, F>(mut self, factory: F) -> Self
+    where
+        W: WorkflowImplementation,
+        <W::Run as WorkflowDefinition>::Input: Send,
+        F: Fn() -> W + Send + Sync + 'static,
+    {
+        self.options.register_workflow_with_factory::<W, F>(factory);
+        self
+    }
+
+    /// Returns mutable access to the underlying [WorkerOptions].
+    ///
+    /// This can be used to tweak less-common fields while still using this convenience builder.
+    pub fn worker_options_mut(&mut self) -> &mut WorkerOptions {
+        &mut self.options
+    }
+
+    /// Converts this builder into [WorkerOptions] without constructing a [Worker].
+    pub fn into_worker_options(self) -> WorkerOptions {
+        self.options
+    }
+
+    /// Consumes this builder and constructs a [Worker].
+    pub fn build(
+        self,
+        runtime: &CoreRuntime,
+        client: Client,
+    ) -> Result<Worker, Box<dyn std::error::Error>> {
+        Worker::new(runtime, client, self.options)
+    }
+}
+
 /// A worker that can poll for and respond to workflow tasks by using
 /// [temporalio_macros::workflow], and activity tasks by using activities defined with
 /// [temporalio_macros::activities].
@@ -455,6 +529,11 @@ struct ActivityHalf {
 }
 
 impl Worker {
+    /// Start building a worker for a task queue using [WorkerBuilder].
+    pub fn builder(task_queue: impl Into<String>) -> WorkerBuilder {
+        WorkerBuilder::new(task_queue)
+    }
+
     /// Create a new worker from an existing connection, and options.
     pub fn new(
         runtime: &CoreRuntime,
@@ -1360,6 +1439,16 @@ mod tests {
     fn test_activity_registration() {
         let act_instance = MyActivities {};
         let _ = WorkerOptions::new("task_q").register_activities(act_instance);
+    }
+
+    #[test]
+    fn test_worker_builder_registration() {
+        let opts = WorkerBuilder::new("task_q")
+            .register_activities(MyActivities {})
+            .register_workflow::<MyWorkflow>()
+            .into_worker_options();
+        assert!(!opts.activities().is_empty());
+        assert!(!opts.workflows().is_empty());
     }
 
     // Compile-only test for workflow context invocation
