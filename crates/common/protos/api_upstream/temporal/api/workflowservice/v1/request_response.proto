@@ -2560,8 +2560,8 @@ message ListWorkersRequest {
     int32 page_size = 2;
     bytes next_page_token = 3;
 
-    // `query` in ListWorkers is used to filter workers based on worker status info.
-    // The following worker status attributes are expected are supported as part of the query:
+    // `query` in ListWorkers is used to filter workers based on worker attributes.
+    // Supported attributes:
     //* WorkerInstanceKey
     //* WorkerIdentity
     //* HostName
@@ -2571,14 +2571,17 @@ message ListWorkersRequest {
     //* SdkName
     //* SdkVersion
     //* StartTime
-    //* LastHeartbeatTime
     //* Status
-    // Currently metrics are not supported as a part of ListWorkers query.
     string query = 4;
 }
 
 message ListWorkersResponse {
-    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1;
+    // Deprecated: Use workers instead. This field returns full WorkerInfo which
+    // includes expensive runtime metrics. We will stop populating this field in the future.
+    repeated temporal.api.worker.v1.WorkerInfo workers_info = 1 [deprecated = true];
+
+    // Limited worker information.
+    repeated temporal.api.worker.v1.WorkerListInfo workers = 3;
 
     // Next page token
     bytes next_page_token = 2;
