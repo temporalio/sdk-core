@@ -423,7 +423,6 @@ pub struct WorkerBuilder {
 }
 
 impl WorkerBuilder {
-    /// Create a new builder for workers polling `task_queue`.
     pub fn new(task_queue: impl Into<String>) -> Self {
         Self {
             options: WorkerOptions::new(task_queue).build(),
@@ -529,7 +528,6 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    /// Start building a worker for a task queue using [WorkerBuilder].
     pub fn builder(task_queue: impl Into<String>) -> WorkerBuilder {
         WorkerBuilder::new(task_queue)
     }
