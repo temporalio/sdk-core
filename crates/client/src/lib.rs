@@ -58,7 +58,7 @@ use http::Uri;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, Formatter},
     pin::Pin,
     str::FromStr,
     sync::{Arc, OnceLock},
@@ -119,6 +119,33 @@ pub static ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT: &str = "short-circuit";
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Handle type used to store client interceptors inside [ClientOptions].
+#[derive(Clone)]
+pub struct ClientInterceptorHandle(pub Arc<dyn ClientInterceptor>);
+
+impl Debug for ClientInterceptorHandle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ClientInterceptorHandle(..)")
+    }
+}
+
+/// Intercepts high-level client operations such as starting workflows.
+///
+/// This is intended for SDKs or advanced users who need to observe or record
+/// behavior around client calls (for example logging or metrics).
+pub trait ClientInterceptor: Send + Sync {
+    /// Called just before a workflow is started.
+    ///
+    /// Implementations must not block for long periods of time.
+    fn on_start_workflow(
+        &self,
+        _namespace: &str,
+        _workflow_name: &str,
+        _options: &WorkflowStartOptions,
+    ) {
+    }
+}
 
 /// A connection to the Temporal service.
 ///
@@ -653,6 +680,17 @@ impl Client {
         W: WorkflowDefinition,
         W::Input: Send,
     {
+        // Allow client interceptors to observe the start call before it reaches the server.
+        if let Some(interceptors) = &self.options.client_interceptors {
+            let namespace = self.namespace();
+            let workflow_name = workflow.name().to_string();
+            for interceptor in interceptors {
+                interceptor
+                    .0
+                    .on_start_workflow(&namespace, &workflow_name, &options);
+            }
+        }
+
         WorkflowClientTrait::start_workflow(self, workflow, input, options).await
     }
 

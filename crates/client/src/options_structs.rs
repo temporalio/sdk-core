@@ -1,4 +1,6 @@
-use crate::{HttpConnectProxyOptions, RetryOptions, VERSION, callback_based};
+use crate::{
+    ClientInterceptorHandle, HttpConnectProxyOptions, RetryOptions, VERSION, callback_based,
+};
 use http::Uri;
 use std::{collections::HashMap, time::Duration};
 use temporalio_common::{
@@ -123,6 +125,8 @@ pub struct ClientOptions {
     /// The data converter used for serializing/deserializing payloads.
     #[builder(default)]
     pub data_converter: DataConverter,
+    /// Interceptors that can observe high-level client operations.
+    pub client_interceptors: Option<Vec<ClientInterceptorHandle>>,
 }
 
 /// Configuration options for TLS
