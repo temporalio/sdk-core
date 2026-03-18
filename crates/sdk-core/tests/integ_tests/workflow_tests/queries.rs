@@ -2,12 +2,13 @@
 
 use crate::common::build_fake_sdk;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, time::Duration};
+use std::{cell::Cell, collections::HashMap, future::poll_fn, task::Poll, time::Duration};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::workflow_commands::query_result,
     temporal::api::{
-        common::v1::WorkflowType, enums::v1::EventType,
+        common::v1::WorkflowType,
+        enums::v1::{CommandType, EventType},
         history::v1::WorkflowExecutionStartedEventAttributes, query::v1::WorkflowQuery,
         taskqueue::v1::TaskQueue,
     },
@@ -17,6 +18,163 @@ use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, 
 use temporalio_sdk_core::test_help::{
     MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
 };
+
+/// A workflow that returns Pending on first poll and Ready on second poll.
+/// Uses Cell for interior mutability to avoid state_mut (which triggers re-polling).
+/// This ensures the workflow genuinely stays pending after the first activation.
+#[workflow]
+#[derive(Default)]
+struct CompleteOnSecondPollWf {
+    polled_once: Cell<bool>,
+}
+
+#[workflow_methods]
+impl CompleteOnSecondPollWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<u32> {
+        poll_fn(|_| {
+            if ctx.state(|s| s.polled_once.get()) {
+                Poll::Ready(())
+            } else {
+                ctx.state(|s| s.polled_once.set(true));
+                Poll::Pending
+            }
+        })
+        .await;
+        Ok(42)
+    }
+
+    #[query]
+    fn get_value(&self, _ctx: &WorkflowContextView) -> bool {
+        self.polled_once.get()
+    }
+}
+
+/// Query-only activations must not poll the main workflow future. If they did, this
+/// workflow (which completes on its second poll) would produce a CompleteWorkflowExecution
+/// command alongside the query response — an invalid combination.
+///
+/// The test checks a relative invariant: the main future's poll count does not change
+/// between before and after the query-only activation.
+#[tokio::test]
+async fn query_only_activation_should_not_advance_workflow() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let wfid = "query_only_test";
+
+    let tasks = [
+        // First activation: workflow starts, polls once → Pending
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        // Second activation: legacy query only, no new history
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
+            pr.query = Some(WorkflowQuery {
+                query_type: "get_value".to_string(),
+                query_args: None,
+                header: None,
+            });
+            pr.history = Some(Default::default());
+            pr
+        },
+    ];
+
+    let mut mock_cfg = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
+    mock_cfg.num_expected_legacy_query_resps = 1;
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(|wft| {
+                // After first activation the workflow should be pending (polled once, returned
+                // Pending). It must NOT have completed.
+                let has_complete_cmd = wft
+                    .commands
+                    .iter()
+                    .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+                assert!(
+                    !has_complete_cmd,
+                    "First activation should not complete workflow! Commands: {:?}",
+                    wft.commands
+                );
+            })
+            .then(|wft| {
+                // The query-only activation must not advance the workflow future.
+                // If the future were polled, it would return Ready and produce a completion
+                // command — exactly the bug we are guarding against.
+                let has_complete_cmd = wft
+                    .commands
+                    .iter()
+                    .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+                assert!(
+                    !has_complete_cmd,
+                    "Query-only activation should NOT cause workflow completion! Commands: {:?}",
+                    wft.commands
+                );
+            });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<CompleteOnSecondPollWf>();
+    worker.run().await.unwrap();
+}
+
+/// Test that a query for a non-existent handler doesn't advance the workflow either.
+#[tokio::test]
+async fn nonexistent_query_should_not_advance_workflow() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let wfid = "nonexistent_query_test";
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
+            pr.query = Some(WorkflowQuery {
+                query_type: "__temporal_workflow_metadata".to_string(),
+                query_args: None,
+                header: None,
+            });
+            pr.history = Some(Default::default());
+            pr
+        },
+    ];
+
+    let mut mock_cfg = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
+    mock_cfg.num_expected_legacy_query_resps = 1;
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(|wft| {
+                let has_complete_cmd = wft
+                    .commands
+                    .iter()
+                    .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+                assert!(
+                    !has_complete_cmd,
+                    "First activation should not complete workflow! Commands: {:?}",
+                    wft.commands
+                );
+            })
+            .then(|wft| {
+                let has_complete_cmd = wft
+                    .commands
+                    .iter()
+                    .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+                assert!(
+                    !has_complete_cmd,
+                    "Nonexistent query should NOT cause workflow completion! Commands: {:?}",
+                    wft.commands
+                );
+            });
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<CompleteOnSecondPollWf>();
+    worker.run().await.unwrap();
+}
 
 /// A workflow that increments a counter when started and when it receives a signal.
 /// Used to test that non-legacy queries see state after the workflow has advanced.
