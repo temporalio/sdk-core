@@ -1,6 +1,6 @@
 [package]
 name = "temporalio-sdk-core"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Temporal Technologies Inc. <sdk@temporal.io>"]
 edition = "2024"
 license-file = { workspace = true }
@@ -107,17 +107,17 @@ zip = { version = "4.6", optional = true, default-features = false, features = [
 # 1st party local deps
 [dependencies.temporalio-common]
 path = "../common"
-version = "0.1"
+version = "0.2"
 features = ["core-based-sdk", "history_builders", "test-utilities"]
 
 [dependencies.temporalio-client]
 path = "../client"
-version = "0.1"
+version = "0.2"
 features = ["core-based-sdk"]
 
 [dependencies.temporalio-macros]
 path = "../macros"
-version = "0.1"
+version = "0.2"
 
 [dev-dependencies]
 assert_matches = "1.5"
