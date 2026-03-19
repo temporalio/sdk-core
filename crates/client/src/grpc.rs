@@ -1680,8 +1680,8 @@ proxier! {
     (delete_connectivity_rule, cloudreq::DeleteConnectivityRuleRequest, cloudreq::DeleteConnectivityRuleResponse);
     (set_service_account_namespace_access, cloudreq::SetServiceAccountNamespaceAccessRequest, cloudreq::SetServiceAccountNamespaceAccessResponse);
     (validate_account_audit_log_sink, cloudreq::ValidateAccountAuditLogSinkRequest, cloudreq::ValidateAccountAuditLogSinkResponse);
-    (create_billing_report, cloudreq::CreateBillingReportRequest, cloudreq:CreateBillingReportResponse);
-    (get_billing_report, cloudreq::GetBillingReportRequest, cloudreq:GetBillingReportResponse);
+    (create_billing_report, cloudreq::CreateBillingReportRequest, cloudreq::CreateBillingReportResponse);
+    (get_billing_report, cloudreq::GetBillingReportRequest, cloudreq::GetBillingReportResponse);
 }
 
 proxier! {
