@@ -3,6 +3,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
+    data_converters::TemporalError,
     prost_dur,
     protos::{
         DEFAULT_ACTIVITY_TYPE,
@@ -55,7 +56,15 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
             .await;
         let err = res.unwrap_err();
         if let ActivityExecutionError::Failed(f) = &err {
-            assert_eq!(f.is_timeout(), Some(TimeoutType::Heartbeat));
+            if let TemporalError::Activity { cause, .. } = f.as_ref() {
+                assert_matches!(
+                    cause.as_deref(),
+                    Some(TemporalError::Timeout { timeout_type, .. })
+                        if *timeout_type == TimeoutType::Heartbeat
+                );
+            } else {
+                panic!("expected Activity, got {f:?}");
+            }
         } else {
             panic!("expected Failed, got {err:?}");
         }

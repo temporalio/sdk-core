@@ -803,7 +803,6 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
-            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
@@ -812,7 +811,7 @@ impl WorkflowHalf {
                         run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
-                        payload_converter,
+                        common.data_converter.clone(),
                         self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
@@ -963,10 +962,14 @@ impl ActivityHalf {
                                 source,
                                 explicit_delay,
                             } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(source),
-                                    false,
-                                );
+                                let mut f = codec_data_converter
+                                    .to_failure(source, &SerializationContextData::Activity)
+                                    .unwrap_or_else(|e| {
+                                        Failure::application_failure(
+                                            format!("Failed to convert error: {e}"),
+                                            false,
+                                        )
+                                    });
                                 if let Some(d) = explicit_delay
                                     && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
                                         f.failure_info.as_mut()
@@ -979,10 +982,14 @@ impl ActivityHalf {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
                             ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(nre),
-                                    true,
-                                ),
+                                codec_data_converter
+                                    .to_failure(nre, &SerializationContextData::Activity)
+                                    .unwrap_or_else(|e| {
+                                        Failure::application_failure(
+                                            format!("Failed to convert error: {e}"),
+                                            true,
+                                        )
+                                    }),
                             ),
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()

@@ -619,8 +619,9 @@ struct FailWithDetailsWorkflow;
 impl FailWithDetailsWorkflow {
     #[run]
     async fn run(_ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
-        use temporalio_common::data_converters::TemporalError;
-        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+        use temporalio_common::{
+            data_converters::TemporalError, protos::temporal::api::common::v1::Payloads,
+        };
 
         // Build detail payloads with a known plaintext marker.
         let detail_payload = Payload {
@@ -744,8 +745,9 @@ impl FailWithDetailsActivities {
         _ctx: ActivityContext,
         _input: String,
     ) -> Result<String, ActivityError> {
-        use temporalio_common::data_converters::TemporalError;
-        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+        use temporalio_common::{
+            data_converters::TemporalError, protos::temporal::api::common::v1::Payloads,
+        };
 
         let detail_payload = Payload {
             metadata: {
@@ -1011,8 +1013,9 @@ impl CodecFailActivities {
         _ctx: ActivityContext,
         _input: String,
     ) -> Result<String, ActivityError> {
-        use temporalio_common::data_converters::TemporalError;
-        use temporalio_common::protos::temporal::api::common::v1::Payloads;
+        use temporalio_common::{
+            data_converters::TemporalError, protos::temporal::api::common::v1::Payloads,
+        };
 
         let detail_payload = Payload {
             metadata: {
@@ -1073,22 +1076,19 @@ impl ActivityCodecDecodeWorkflow {
         // converter + codec are wired up on the receive path, the error will be
         // a TemporalError with decoded detail payloads.
         let err_str = format!("{}", err);
-        let source: &dyn std::error::Error = &err;
-        // Walk the error chain looking for TemporalError
-        let mut current: Option<&dyn std::error::Error> = Some(source);
-        while let Some(e) = current {
-            if let Some(tf) = e.downcast_ref::<TemporalError>() {
-                if let TemporalError::Application { details, .. } = tf {
-                    if let Some(payloads) = details {
-                        if let Some(p) = payloads.payloads.first() {
-                            let detail_str = String::from_utf8_lossy(&p.data);
-                            return Ok(format!("detail:{}", detail_str));
-                        }
-                    }
-                }
-                return Ok(format!("temporal_failure_no_details:{}", tf.message()));
-            }
-            current = e.source();
+        assert_matches!(err, temporalio_sdk::ActivityExecutionError::Failed(_));
+        if let temporalio_sdk::ActivityExecutionError::Failed(e) = err
+            && let TemporalError::Activity {
+                cause: Some(tf), ..
+            } = e.as_ref()
+            && let TemporalError::Application {
+                details: Some(payloads),
+                ..
+            } = tf.as_ref()
+            && let Some(p) = payloads.payloads.first()
+        {
+            let detail_str = String::from_utf8_lossy(&p.data);
+            return Ok(format!("detail:{}", detail_str));
         }
 
         Ok(format!("raw_error:{}", err_str))

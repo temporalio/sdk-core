@@ -21,7 +21,7 @@ use temporalio_client::{
     NamespacedClient, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowStartOptions,
 };
 use temporalio_common::{
-    data_converters::RawValue,
+    data_converters::{RawValue, TemporalError},
     protos::{
         DEFAULT_ACTIVITY_TYPE, canned_histories,
         coresdk::{
@@ -39,7 +39,7 @@ use temporalio_common::{
             command::v1::{RecordMarkerCommandAttributes, command},
             common::v1::RetryPolicy,
             enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
-            failure::v1::{Failure, failure::FailureInfo},
+            failure::v1::Failure,
             history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
             query::v1::WorkflowQuery,
         },
@@ -640,10 +640,16 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 .await;
             let err = res.unwrap_err();
             if let ActivityExecutionError::Failed(f) = &err {
-                assert_eq!(
-                    f.is_timeout(),
-                    Some(TimeoutType::try_from(timeout_type).unwrap())
-                );
+                if let TemporalError::Activity { cause, .. } = f.as_ref() {
+                    let expected_tt = TimeoutType::try_from(timeout_type).unwrap();
+                    assert_matches!(
+                        cause.as_deref(),
+                        Some(TemporalError::Timeout { timeout_type, .. })
+                            if *timeout_type == expected_tt
+                    );
+                } else {
+                    panic!("expected Activity, got {f:?}");
+                }
             } else {
                 return Err(anyhow!("expected Failed, got {err:?}").into());
             }
@@ -718,7 +724,15 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
                 .await;
             let err = res.unwrap_err();
             if let ActivityExecutionError::Failed(f) = &err {
-                assert_eq!(f.is_timeout(), Some(TimeoutType::ScheduleToClose));
+                if let TemporalError::Activity { cause, .. } = f.as_ref() {
+                    assert_matches!(
+                        cause.as_deref(),
+                        Some(TemporalError::Timeout { timeout_type, .. })
+                            if *timeout_type == TimeoutType::ScheduleToClose
+                    );
+                } else {
+                    panic!("expected Activity, got {f:?}");
+                }
             } else {
                 panic!("expected Failed, got {err:?}");
             }
@@ -1990,12 +2004,15 @@ async fn test_schedule_to_start_timeout() {
                 .await;
             assert!(la_res.is_err());
             if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::ScheduleToStart));
-                assert_matches!(fail.failure_info, Some(FailureInfo::ActivityFailureInfo(_)));
-                assert_matches!(
-                    fail.cause.as_ref().unwrap().failure_info,
-                    Some(FailureInfo::TimeoutFailureInfo(_))
-                );
+                if let TemporalError::Activity { cause, .. } = fail.as_ref() {
+                    assert_matches!(
+                        cause.as_deref(),
+                        Some(TemporalError::Timeout { timeout_type, .. })
+                            if *timeout_type == TimeoutType::ScheduleToStart
+                    );
+                } else {
+                    panic!("expected Activity, got {fail:?}");
+                }
             }
             Ok(())
         }
@@ -2088,7 +2105,15 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             if is_sched_to_start {
                 assert!(la_res.is_ok());
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::ScheduleToClose));
+                if let TemporalError::Activity { cause, .. } = fail.as_ref() {
+                    assert_matches!(
+                        cause.as_deref(),
+                        Some(TemporalError::Timeout { timeout_type, .. })
+                            if *timeout_type == TimeoutType::ScheduleToClose
+                    );
+                } else {
+                    panic!("expected Activity, got {fail:?}");
+                }
             }
             Ok(())
         }
@@ -2158,7 +2183,15 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
             if la_completes {
                 assert!(la_res.is_ok(), "Result should be ok was {la_res:?}");
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                assert_eq!(fail.is_timeout(), Some(TimeoutType::StartToClose));
+                if let TemporalError::Activity { cause, .. } = fail.as_ref() {
+                    assert_matches!(
+                        cause.as_deref(),
+                        Some(TemporalError::Timeout { timeout_type, .. })
+                            if *timeout_type == TimeoutType::StartToClose
+                    );
+                } else {
+                    panic!("expected Activity, got {fail:?}");
+                }
             }
             Ok(())
         }
@@ -3280,14 +3313,14 @@ async fn cancel_after_act_starts_canned(
                 Err(ActivityExecutionError::Cancelled(_))
             ));
             if let Err(ActivityExecutionError::Cancelled(rfail)) = resolution {
-                assert_matches!(
-                    rfail.failure_info,
-                    Some(FailureInfo::ActivityFailureInfo(_))
-                );
-                assert_matches!(
-                    rfail.cause.unwrap().failure_info,
-                    Some(FailureInfo::CanceledFailureInfo(_))
-                );
+                if let TemporalError::Activity { cause, .. } = rfail.as_ref() {
+                    assert_matches!(
+                        cause.as_ref().unwrap().as_ref(),
+                        TemporalError::Cancelled { .. }
+                    );
+                } else {
+                    panic!("Should be cancel: {rfail}");
+                }
             }
             Ok(())
         }

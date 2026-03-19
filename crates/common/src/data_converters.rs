@@ -576,6 +576,23 @@ impl TemporalError {
         }
     }
 
+    /// Returns the cause of this error, if any.
+    pub fn cause(&self) -> Option<&TemporalError> {
+        match self {
+            Self::Application { cause, .. }
+            | Self::Timeout { cause, .. }
+            | Self::Cancelled { cause, .. }
+            | Self::Terminated { cause, .. }
+            | Self::Server { cause, .. }
+            | Self::Activity { cause, .. }
+            | Self::ChildWorkflow { cause, .. }
+            | Self::NexusOperation { cause, .. }
+            | Self::NexusHandler { cause, .. }
+            | Self::Generic { cause, .. } => cause.as_deref(),
+            Self::Other(_) => None,
+        }
+    }
+
     fn from_failure(mut failure: Failure, payload_converter: &PayloadConverter) -> Self {
         // If encoded_attributes is present, decode message (and stack_trace)
         // from the payload — the top-level fields were cleared for encryption.
@@ -1803,9 +1820,7 @@ mod tests {
             _: &PayloadConverter,
             _: &SerializationContextData,
         ) -> Result<TemporalError, PayloadConversionError> {
-            Ok(TemporalError::Other(
-                failure.message.to_lowercase().into(),
-            ))
+            Ok(TemporalError::Other(failure.message.to_lowercase().into()))
         }
     }
 

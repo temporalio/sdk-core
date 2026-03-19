@@ -2,11 +2,14 @@ use crate::common::CoreWfStarter;
 use rstest::rstest;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{ActivityIdentifier, WorkflowStartOptions};
-use temporalio_common::protos::{
-    coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
-    temporal::api::{
-        common::v1::RetryPolicy,
-        failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+use temporalio_common::{
+    data_converters::TemporalError,
+    protos::{
+        coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
+        temporal::api::{
+            common::v1::RetryPolicy,
+            failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+        },
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -136,9 +139,13 @@ async fn async_activity_completions(
                 Outcome::Failure => {
                     let err = activity_result.expect_err("expected failure");
                     if let ActivityExecutionError::Failed(failure) = err {
-                        // The failure we sent is wrapped as the cause
-                        let cause = failure.cause.expect("cause should be present");
-                        assert_eq!(cause.message, "async failure reason");
+                        // The failure we sent is wrapped in Activity { cause: Application }
+                        if let TemporalError::Activity { cause, .. } = failure.as_ref() {
+                            let cause = cause.as_ref().expect("cause should be present");
+                            assert_eq!(cause.message(), "async failure reason");
+                        } else {
+                            panic!("expected Activity, got {failure:?}");
+                        }
                     } else {
                         panic!("expected Failed, got {err:?}");
                     }
