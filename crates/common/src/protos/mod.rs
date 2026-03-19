@@ -1986,7 +1986,7 @@ pub mod temporal {
             }
             pub mod billing {
                 pub mod v1 {
-                    tonic::include_proto!("temporal.api.cloud.cloudservice.v1")
+                    tonic::include_proto!("temporal.api.cloud.billing.v1")
                 }
             }
             pub mod cloudservice {
