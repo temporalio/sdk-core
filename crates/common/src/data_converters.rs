@@ -131,7 +131,7 @@ impl DataConverter {
         &self,
         failure: Failure,
         context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+    ) -> Result<TemporalError, PayloadConversionError> {
         self.failure_converter
             .to_error(failure, &self.payload_converter, context)
     }
@@ -155,7 +155,7 @@ impl DataConverter {
         &self,
         failure: Failure,
         context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
+    ) -> Result<TemporalError, PayloadConversionError> {
         let decoded = Self::apply_codec_to_failure(failure, context, |ctx, payloads| {
             self.codec.decode(ctx, payloads)
         })
@@ -357,7 +357,7 @@ pub trait FailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError>;
+    ) -> Result<TemporalError, PayloadConversionError>;
 }
 /// Default failure converter that maps between Temporal [`Failure`] protobufs
 /// and Rust error types.
@@ -366,7 +366,7 @@ pub struct DefaultFailureConverter;
 /// An error produced by the failure converter, representing a Temporal
 /// [`Failure`] proto as an error.
 #[derive(Debug, thiserror::Error)]
-pub enum TemporalFailure {
+pub enum TemporalError {
     /// Application-level failure — the primary error type users throw from
     /// workflows and activities.
     #[error("{message}")]
@@ -385,7 +385,7 @@ pub enum TemporalFailure {
         next_retry_delay: Option<prost_types::Duration>,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// A timeout occurred (activity start-to-close, schedule-to-close, etc.).
     #[error("{message}")]
@@ -400,7 +400,7 @@ pub enum TemporalFailure {
         last_heartbeat_details: Option<Payloads>,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// The operation was cancelled.
     #[error("{message}")]
@@ -413,7 +413,7 @@ pub enum TemporalFailure {
         details: Option<Payloads>,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// The workflow or activity was terminated.
     #[error("{message}")]
@@ -424,7 +424,7 @@ pub enum TemporalFailure {
         stack_trace: String,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// An error originated at the Temporal server.
     #[error("{message}")]
@@ -437,7 +437,7 @@ pub enum TemporalFailure {
         non_retryable: bool,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// An activity execution failed. The original error is available as the
     /// cause.
@@ -461,7 +461,7 @@ pub enum TemporalFailure {
         retry_state: RetryState,
         /// Recursive cause (typically the underlying application error).
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// A child workflow execution failed.
     #[error("{message}")]
@@ -486,7 +486,7 @@ pub enum TemporalFailure {
         retry_state: RetryState,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// A Nexus operation failed.
     #[error("{message}")]
@@ -507,7 +507,7 @@ pub enum TemporalFailure {
         operation_token: String,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// A Nexus handler produced an error.
     #[error("{message}")]
@@ -522,7 +522,7 @@ pub enum TemporalFailure {
         retry_behavior: NexusHandlerErrorRetryBehavior,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
     /// A failure with no specific `failure_info`, or an unmodeled variant.
     #[error("{message}")]
@@ -533,11 +533,15 @@ pub enum TemporalFailure {
         stack_trace: String,
         /// Recursive cause.
         #[source]
-        cause: Option<Box<TemporalFailure>>,
+        cause: Option<Box<TemporalError>>,
     },
+    /// An opaque error from a custom failure converter that doesn't map to a
+    /// known Temporal failure type.
+    #[error(transparent)]
+    Other(Box<dyn std::error::Error + Send + Sync>),
 }
 
-impl TemporalFailure {
+impl TemporalError {
     /// The human-readable error message, regardless of variant.
     pub fn message(&self) -> &str {
         match self {
@@ -551,6 +555,7 @@ impl TemporalFailure {
             | Self::NexusOperation { message, .. }
             | Self::NexusHandler { message, .. }
             | Self::Generic { message, .. } => message,
+            Self::Other(_) => "",
         }
     }
 
@@ -567,6 +572,7 @@ impl TemporalFailure {
             | Self::NexusOperation { stack_trace, .. }
             | Self::NexusHandler { stack_trace, .. }
             | Self::Generic { stack_trace, .. } => stack_trace,
+            Self::Other(_) => "",
         }
     }
 
@@ -879,6 +885,14 @@ impl TemporalFailure {
                 stack_trace,
                 cause,
             } => (message, stack_trace, None, cause),
+            Self::Other(e) => (
+                e.to_string(),
+                String::new(),
+                Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo::default(),
+                )),
+                None,
+            ),
         };
 
         Failure {
@@ -1356,7 +1370,7 @@ impl FailureConverter for DefaultFailureConverter {
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError> {
-        match error.downcast::<TemporalFailure>() {
+        match error.downcast::<TemporalError>() {
             Ok(tf) => Ok(tf.into_failure()),
             Err(error) => {
                 // Unknown error type — wrap as ApplicationFailureInfo.
@@ -1377,11 +1391,8 @@ impl FailureConverter for DefaultFailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
-        Ok(Box::new(TemporalFailure::from_failure(
-            failure,
-            payload_converter,
-        )))
+    ) -> Result<TemporalError, PayloadConversionError> {
+        Ok(TemporalError::from_failure(failure, payload_converter))
     }
 }
 impl PayloadCodec for DefaultPayloadCodec {
@@ -1469,6 +1480,7 @@ mod tests {
     };
     use assert_matches::assert_matches;
     use rstest::rstest;
+    use std::error::Error as _;
 
     #[test]
     fn test_empty_payloads_as_unit_type() {
@@ -1645,7 +1657,7 @@ mod tests {
         assert_eq!(error.to_string(), message);
 
         let round_tripped = converter
-            .to_failure(error, &pc, &ctx)
+            .to_failure(Box::new(error), &pc, &ctx)
             .expect("round-trip to_failure should succeed");
         assert_eq!(round_tripped.failure_info, Some(info));
         assert_eq!(round_tripped.message, original.message);
@@ -1748,8 +1760,7 @@ mod tests {
             .expect("should handle cross-SDK failures");
         assert_eq!(error.to_string(), "something failed in TypeScript");
 
-        let tf = error.downcast_ref::<TemporalFailure>().unwrap();
-        assert_eq!(tf.stack_trace(), "at someFunction (file.ts:10:5)");
+        assert_eq!(error.stack_trace(), "at someFunction (file.ts:10:5)");
     }
 
     #[test]
@@ -1791,8 +1802,10 @@ mod tests {
             failure: Failure,
             _: &PayloadConverter,
             _: &SerializationContextData,
-        ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
-            Ok(failure.message.to_lowercase().into())
+        ) -> Result<TemporalError, PayloadConversionError> {
+            Ok(TemporalError::Other(
+                failure.message.to_lowercase().into(),
+            ))
         }
     }
 
@@ -1899,11 +1912,10 @@ mod tests {
         let error = converter
             .to_error(original, &pc, &ctx)
             .expect("to_error should succeed");
-        let tf = error.downcast_ref::<TemporalFailure>().unwrap();
-        assert_eq!(tf.stack_trace(), "at my_fn (lib.rs:42)");
+        assert_eq!(error.stack_trace(), "at my_fn (lib.rs:42)");
 
         let round_tripped = converter
-            .to_failure(error, &pc, &ctx)
+            .to_failure(Box::new(error), &pc, &ctx)
             .expect("to_failure should succeed");
         assert_eq!(round_tripped.stack_trace, "at my_fn (lib.rs:42)");
     }
@@ -1958,7 +1970,7 @@ mod tests {
         );
         let ctx = SerializationContextData::Workflow;
 
-        // Build a TemporalFailure with detail payloads
+        // Build a TemporalError with detail payloads
         let detail_payload = Payload {
             metadata: {
                 let mut hm = HashMap::new();
@@ -1968,7 +1980,7 @@ mod tests {
             data: b"\"some detail\"".to_vec(),
             external_payloads: vec![],
         };
-        let tf = TemporalFailure::Application {
+        let tf = TemporalError::Application {
             message: "test".into(),
             stack_trace: String::new(),
             r#type: "TestError".into(),
@@ -2008,9 +2020,8 @@ mod tests {
             .decode_failure(failure, &ctx)
             .await
             .expect("decode_failure should succeed");
-        let recovered = error.downcast_ref::<TemporalFailure>().unwrap();
-        match recovered {
-            TemporalFailure::Application { details, .. } => {
+        match &error {
+            TemporalError::Application { details, .. } => {
                 let payloads = details.as_ref().unwrap();
                 assert_eq!(
                     payloads.payloads[0].data, detail_payload.data,

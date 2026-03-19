@@ -284,7 +284,7 @@ async fn failing_workflow_produces_failure_with_message() {
     let res = handle.get_result(Default::default()).await.unwrap_err();
     let tf = res
         .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalFailure");
+        .expect("Failed variant should downcast to TemporalError");
     assert!(
         tf.message().contains("intentional failure"),
         "failure message should contain the workflow error, got: {}",
@@ -355,7 +355,7 @@ async fn activity_failure_propagates_through_workflow() {
     let res = handle.get_result(Default::default()).await.unwrap_err();
     let tf = res
         .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalFailure");
+        .expect("Failed variant should downcast to TemporalError");
     assert!(
         tf.message().contains("activity failed"),
         "workflow failure should mention the activity error, got: {}",
@@ -524,8 +524,10 @@ impl temporalio_common::data_converters::FailureConverter for UpperCaseFailureCo
         failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error + Send + Sync>, PayloadConversionError> {
-        Ok(failure.message.to_lowercase().into())
+    ) -> Result<temporalio_common::data_converters::TemporalError, PayloadConversionError> {
+        Ok(temporalio_common::data_converters::TemporalError::Other(
+            failure.message.to_lowercase().into(),
+        ))
     }
 }
 
@@ -617,7 +619,7 @@ struct FailWithDetailsWorkflow;
 impl FailWithDetailsWorkflow {
     #[run]
     async fn run(_ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
-        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::data_converters::TemporalError;
         use temporalio_common::protos::temporal::api::common::v1::Payloads;
 
         // Build detail payloads with a known plaintext marker.
@@ -631,7 +633,7 @@ impl FailWithDetailsWorkflow {
             external_payloads: vec![],
         };
 
-        let tf = TemporalFailure::Application {
+        let tf = TemporalError::Application {
             message: "fail with details".to_string(),
             stack_trace: String::new(),
             r#type: String::new(),
@@ -742,7 +744,7 @@ impl FailWithDetailsActivities {
         _ctx: ActivityContext,
         _input: String,
     ) -> Result<String, ActivityError> {
-        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::data_converters::TemporalError;
         use temporalio_common::protos::temporal::api::common::v1::Payloads;
 
         let detail_payload = Payload {
@@ -755,7 +757,7 @@ impl FailWithDetailsActivities {
             external_payloads: vec![],
         };
 
-        let tf = TemporalFailure::Application {
+        let tf = TemporalError::Application {
             message: "activity fail with details".to_string(),
             stack_trace: String::new(),
             r#type: String::new(),
@@ -1009,7 +1011,7 @@ impl CodecFailActivities {
         _ctx: ActivityContext,
         _input: String,
     ) -> Result<String, ActivityError> {
-        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::data_converters::TemporalError;
         use temporalio_common::protos::temporal::api::common::v1::Payloads;
 
         let detail_payload = Payload {
@@ -1022,7 +1024,7 @@ impl CodecFailActivities {
             external_payloads: vec![],
         };
 
-        let tf = TemporalFailure::Application {
+        let tf = TemporalError::Application {
             message: "activity with details".to_string(),
             stack_trace: String::new(),
             r#type: String::new(),
@@ -1047,7 +1049,7 @@ struct ActivityCodecDecodeWorkflow;
 impl ActivityCodecDecodeWorkflow {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
-        use temporalio_common::data_converters::TemporalFailure;
+        use temporalio_common::data_converters::TemporalError;
 
         let err = ctx
             .start_activity(
@@ -1069,14 +1071,14 @@ impl ActivityCodecDecodeWorkflow {
 
         // Try to extract the detail payload from the error. If the failure
         // converter + codec are wired up on the receive path, the error will be
-        // a TemporalFailure with decoded detail payloads.
+        // a TemporalError with decoded detail payloads.
         let err_str = format!("{}", err);
         let source: &dyn std::error::Error = &err;
-        // Walk the error chain looking for TemporalFailure
+        // Walk the error chain looking for TemporalError
         let mut current: Option<&dyn std::error::Error> = Some(source);
         while let Some(e) = current {
-            if let Some(tf) = e.downcast_ref::<TemporalFailure>() {
-                if let TemporalFailure::Application { details, .. } = tf {
+            if let Some(tf) = e.downcast_ref::<TemporalError>() {
+                if let TemporalError::Application { details, .. } = tf {
                     if let Some(payloads) = details {
                         if let Some(p) = payloads.payloads.first() {
                             let detail_str = String::from_utf8_lossy(&p.data);
@@ -1131,11 +1133,11 @@ async fn codec_decodes_activity_failure_payloads_on_receive() {
     let result = handle.get_result(Default::default()).await.unwrap();
 
     // If the codec + failure converter are wired up on the receive path, the
-    // workflow should see a TemporalFailure with the decoded detail payload
+    // workflow should see a TemporalError with the decoded detail payload
     // containing the original "readable-detail" string.
     assert!(
         result.starts_with("detail:"),
-        "Workflow should receive a TemporalFailure with decoded detail payloads, got: {}",
+        "Workflow should receive a TemporalError with decoded detail payloads, got: {}",
         result,
     );
     assert!(
