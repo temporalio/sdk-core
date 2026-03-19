@@ -42,7 +42,7 @@ grpc-install:
 
 openapiv2-install:
 	printf $(COLOR) "Install/update openapiv2 protoc gen..."
-	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.16.2
+	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.26.3
 
 ##### Linters #####
 buf-lint:
