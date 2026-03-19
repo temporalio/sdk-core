@@ -233,15 +233,8 @@ impl Workflows {
                     while let Some(output) = stream.next().await {
                         match output {
                             Ok(o) => {
-                                for fetchreq in o.fetch_histories {
-                                    fetch_tx
-                                        .send(fetchreq)
-                                        .expect("Fetch channel must not be dropped");
-                                }
-                                for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
+                                if !forward_stream_output(&fetch_tx, &activation_tx, o) {
+                                    return;
                                 }
                             }
                             Err(e) => {
@@ -868,6 +861,29 @@ impl Workflows {
             .and_then(|sa| sa.worker_task_queue.as_ref())
             .map(|tq| tq.name.clone())
     }
+}
+
+fn forward_stream_output(
+    fetch_tx: &UnboundedSender<HistoryFetchReq>,
+    activation_tx: &UnboundedSender<Result<ActivationOrAuto, PollError>>,
+    output: WFStreamOutput,
+) -> bool {
+    for fetchreq in output.fetch_histories {
+        if let Err(e) = fetch_tx.send(fetchreq) {
+            warn!(fetch=?e.0, "Fetch channel dropped, stopping workflow processing");
+            return false;
+        }
+    }
+    for act in output.activations {
+        if let Err(e) = activation_tx.send(Ok(act)) {
+            debug!(
+                activation=?e.0,
+                "Activation processor channel dropped, stopping workflow processing"
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// Returned when a cache miss happens and we need to fetch history from the beginning to
@@ -1700,6 +1716,7 @@ mod tests {
     use super::*;
     use itertools::Itertools;
     use temporalio_common::protos::coresdk::workflow_activation::SignalWorkflow;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn jobs_sort() {
@@ -1788,5 +1805,41 @@ mod tests {
             ..Default::default()
         };
         prepare_to_ship_activation(&mut act);
+    }
+
+    #[test]
+    fn forwarding_output_stops_when_activation_channel_dropped() {
+        let (fetch_tx, _fetch_rx) = unbounded_channel();
+        let (activation_tx, activation_rx) = unbounded_channel();
+        drop(activation_rx);
+
+        let output = WFStreamOutput {
+            activations: vec![ActivationOrAuto::Autocomplete {
+                run_id: "run-id".to_string(),
+            }]
+            .into_iter()
+            .collect(),
+            fetch_histories: Default::default(),
+        };
+
+        assert!(!forward_stream_output(&fetch_tx, &activation_tx, output));
+    }
+
+    #[test]
+    fn forwarding_output_succeeds_with_live_channels() {
+        let (fetch_tx, _fetch_rx) = unbounded_channel();
+        let (activation_tx, mut activation_rx) = unbounded_channel();
+
+        let output = WFStreamOutput {
+            activations: vec![ActivationOrAuto::Autocomplete {
+                run_id: "run-id".to_string(),
+            }]
+            .into_iter()
+            .collect(),
+            fetch_histories: Default::default(),
+        };
+
+        assert!(forward_stream_output(&fetch_tx, &activation_tx, output));
+        assert!(activation_rx.try_recv().is_ok());
     }
 }
