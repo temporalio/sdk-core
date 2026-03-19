@@ -17,7 +17,7 @@ use futures_util::{
     task::Context,
 };
 use std::{
-    cell::{Ref, RefCell},
+    cell::{Cell, Ref, RefCell},
     collections::HashMap,
     future::{self, Future},
     marker::PhantomData,
@@ -97,6 +97,7 @@ struct WorkflowContextInner {
     shared: RefCell<WorkflowContextSharedData>,
     seq_nums: RefCell<WfCtxProtectedDat>,
     payload_converter: PayloadConverter,
+    state_mutated: Cell<bool>,
 }
 
 /// Context provided to synchronous signal and update handlers.
@@ -340,6 +341,7 @@ impl BaseWorkflowContext {
                         next_nexus_op_sequence_number: 1,
                     }),
                     payload_converter,
+                    state_mutated: Cell::new(false),
                 }),
             },
             rx,
@@ -349,6 +351,17 @@ impl BaseWorkflowContext {
     /// Buffer a command to be sent in the activation reply
     pub(crate) fn send(&self, c: RustWfCmd) {
         self.inner.chan.send(c).expect("command channel intact");
+    }
+
+    /// Check and clear the state_mutated flag. Returns `true` if `state_mut`
+    /// was called since the last time this method was invoked.
+    pub(crate) fn take_state_mutated(&self) -> bool {
+        self.inner.state_mutated.replace(false)
+    }
+
+    /// Mark that workflow state has been mutated.
+    pub(crate) fn set_state_mutated(&self) {
+        self.inner.state_mutated.set(true);
     }
 
     /// Cancel any cancellable operation by ID
@@ -1025,6 +1038,7 @@ impl<W> WorkflowContext<W> {
         for waker in self.condition_wakers.borrow_mut().drain(..) {
             waker.wake();
         }
+        self.sync.base.set_state_mutated();
         result
     }
 
