@@ -36,7 +36,7 @@ message MtlsAuthSpec {
     // (-- api-linter: core::0140::base64=disabled --)
     // Deprecated: Not supported after v0.2.0 api version. Use accepted_client_ca instead.
     // temporal:versioning:max_version=v0.2.0
-    string accepted_client_ca_deprecated = 1;
+    string accepted_client_ca_deprecated = 1 [deprecated = true];
     // The ca cert(s) in PEM format that the clients can use for authentication and authorization.
     // This must only be one value, but the CA can have a chain.
     // temporal:versioning:min_version=v0.2.0
@@ -55,6 +55,11 @@ message ApiKeyAuthSpec {
     // Flag to enable API key auth (default: disabled).
     // Note: disabling API key auth will cause existing API key connections to fail.
     bool enabled = 1;
+}
+
+message LifecycleSpec {
+    // Flag to enable delete protection for the namespace.
+    bool enable_delete_protection = 1;
 }
 
 message CodecServerSpec {
@@ -81,14 +86,70 @@ message CodecServerSpec {
     }
 }
 
-message LifecycleSpec {
-    // Flag to enable delete protection for the namespace.
-    bool enable_delete_protection = 1;
-}
-
 message HighAvailabilitySpec {
     // Flag to disable managed failover for the namespace.
     bool disable_managed_failover = 1;
+}
+
+
+// temporal:versioning:min_version=v0.10.0
+message CapacitySpec {
+    oneof spec {
+        // The on-demand capacity mode configuration.
+        OnDemand on_demand = 1;
+        // The provisioned capacity mode configuration.
+        Provisioned provisioned = 2;
+    }
+
+    message OnDemand {
+    }
+
+    message Provisioned {
+        // The units of provisioned capacity in TRU (Temporal Resource Units).
+        // Each TRU unit assigned to the namespace will entitle it with additional APS limits as specified in the documentation.
+        double value = 1;
+    }
+}
+
+message Capacity {
+    oneof current_mode {
+        // The status of on-demand capacity mode.
+        OnDemand on_demand = 1;
+        // The status of provisioned capacity mode.
+        Provisioned provisioned = 2;
+    }
+
+    message OnDemand {
+    }
+
+    message Provisioned {
+        // The current provisioned capacity for the namespace in Temporal Resource Units.
+        // Can be different from the requested capacity in latest_request if the request is still in progress.
+        double current_value = 1;
+    }
+
+    message Request {
+        // The current state of the capacity request (e.g. in-progress, completed, failed).
+        State state = 1;
+        // The date and time when the capacity request was created.
+        google.protobuf.Timestamp start_time = 2;
+        // The date and time when the capacity request was completed or failed.
+        google.protobuf.Timestamp end_time = 3;
+        // The id of the async operation that is creating/updating/deleting the capacity, if any.
+        string async_operation_id = 4;
+        // The requested capacity specification.
+        CapacitySpec spec = 5;
+
+        enum State {
+            STATE_CAPACITY_REQUEST_UNSPECIFIED = 0;
+            STATE_CAPACITY_REQUEST_COMPLETED = 1;
+            STATE_CAPACITY_REQUEST_IN_PROGRESS = 2;
+            STATE_CAPACITY_REQUEST_FAILED = 3;
+        }
+    }
+
+    // The latest requested capacity for the namespace, if any.
+    Request latest_request = 3;
 }
 
 message NamespaceSpec {
@@ -134,17 +195,27 @@ message NamespaceSpec {
     // Codec server spec used by UI to decode payloads for all users interacting with this namespace.
     // Optional, default is unset.
     CodecServerSpec codec_server = 6;
+
     // The lifecycle configuration for the namespace.
     // temporal:versioning:min_version=v0.4.0
     LifecycleSpec lifecycle = 9;
+
     // The high availability configuration for the namespace.
     // temporal:versioning:min_version=v0.4.0
     HighAvailabilitySpec high_availability = 10;
+
     // The private connectivity configuration for the namespace.
     // This will apply the connectivity rules specified to the namespace.
     // temporal:versioning:min_version=v0.6.0
     repeated string connectivity_rule_ids = 11;
 
+    // The capacity configuration for the namespace.
+    // There are two capacity modes: on-demand and provisioned.
+    // On-demand capacity mode allows the namespace to scale automatically based on usage.
+    // Provisioned capacity mode allows the user to specify a fixed amount of capacity (in TRUs) for the namespace.
+    // Can be changed only when the last capacity request is not in progress.
+    // temporal:versioning:min_version=v0.10.0
+    CapacitySpec capacity_spec = 12;
 
     enum SearchAttributeType {
         SEARCH_ATTRIBUTE_TYPE_UNSPECIFIED = 0;
@@ -228,6 +299,8 @@ message Namespace {
     repeated temporal.api.cloud.connectivityrule.v1.ConnectivityRule connectivity_rules = 14;
     // The tags for the namespace.
     map<string, string> tags = 15;
+    // The status of namespace's capacity, if any.
+    Capacity capacity = 16;
 }
 
 message NamespaceRegionStatus {
@@ -255,21 +328,22 @@ message NamespaceRegionStatus {
 }
 
 message ExportSinkSpec {
-    // The unique name of the export sink, it can't be changed once set. 
+    // The unique name of the export sink, it can't be changed once set.
     string name = 1;
 
     // A flag indicating whether the export sink is enabled or not.
     bool enabled = 2;
-    
+
     // The S3 configuration details when destination_type is S3.
     temporal.api.cloud.sink.v1.S3Spec s3 = 3;
 
-    // The GCS configuration details when destination_type is GCS. 
+    // This is a feature under development. We will allow GCS sink support for GCP Namespaces.
+    // The GCS configuration details when destination_type is GCS.
     temporal.api.cloud.sink.v1.GCSSpec gcs = 4;
 }
 
 message ExportSink {
-    // The unique name of the export sink.
+    // The unique name of the export sink, once set it can't be changed
     string name = 1;
 
     // The version of the export sink resource.
@@ -299,4 +373,62 @@ message ExportSink {
         HEALTH_ERROR_INTERNAL = 2;
         HEALTH_ERROR_USER_CONFIGURATION = 3;
     }
+}
+
+// NamespaceCapacityInfo contains detailed capacity information for a namespace.
+message NamespaceCapacityInfo {
+  // The namespace identifier.
+  string namespace = 1;
+
+  // Whether the namespace's APS limit was set by Temporal Support.
+  // When true, adjusting the namespace's capacity will reset this limit.
+  bool has_legacy_limits = 2;
+
+  // The current capacity of the namespace.
+  // Includes the current mode (on-demand or provisioned) and latest request status.
+  Capacity current_capacity = 3;
+
+  // Available capacity mode options for this namespace.
+  // Contains configuration limits for both provisioned and on-demand modes.
+  CapacityModeOptions mode_options = 4;
+
+  // Usage statistics for the namespace over the last 7 days.
+  // Used to calculate On-Demand capacity limits, also useful for capacity planning.
+  Stats stats = 5;
+
+  message CapacityModeOptions {
+    // Provisioned capacity options and entitlements.
+    Provisioned provisioned = 1;
+
+    // On-Demand capacity information.
+    OnDemand on_demand = 2;
+
+    message Provisioned {
+      // The valid TRU (Temporal Resource Unit) values that can be set.
+      // These are the discrete capacity tiers available for selection.
+      repeated double valid_tru_values = 1;
+
+      // The maximum TRU value that can currently be set for this namespace.
+      // This may be lower than the highest value in valid_tru_values due to
+      // inventory constraints.
+      double max_available_tru_value = 2;
+    }
+
+    message OnDemand {
+      // The APS limit that would apply to this namespace in on-demand mode.
+      // See: https://docs.temporal.io/cloud/limits#actions-per-second
+      double aps_limit = 1;
+    }
+  }
+
+  message Stats {
+    // Actions-per-second measurements summarized over the last 7 days.
+    Summary aps = 1;
+
+    message Summary {
+      double mean = 1;
+      double p90 = 2;
+      double p99 = 3;
+    }
+  }
 }
