@@ -9,7 +9,8 @@ use temporalio_common::protos::{
     temporal::api::{
         common::v1::WorkflowType,
         enums::v1::{CommandType, EventType},
-        history::v1::WorkflowExecutionStartedEventAttributes, query::v1::WorkflowQuery,
+        history::v1::WorkflowExecutionStartedEventAttributes,
+        query::v1::WorkflowQuery,
         taskqueue::v1::TaskQueue,
     },
 };
