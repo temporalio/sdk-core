@@ -114,7 +114,7 @@ pub(crate) async fn priority_values_sent_to_server() {
     worker.register_workflow::<ChildWf>();
 
     worker
-        .submit_workflow(ParentWf::run, (), starter.workflow_options.clone())
+        .submit_workflow::<ParentWf>((), starter.workflow_options.clone())
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();

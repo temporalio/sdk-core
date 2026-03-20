@@ -97,8 +97,7 @@ async fn activity_load() {
         let tq = task_queue.clone();
         async move {
             worker
-                .submit_workflow(
-                    ActivityLoadWf::run,
+                .submit_workflow::<ActivityLoadWf>(
                     tq.clone(),
                     WorkflowStartOptions::new(tq, wf_id).build(),
                 )
@@ -187,8 +186,7 @@ async fn chunky_activities_resource_based() {
         let tq = task_queue.clone();
         async move {
             worker
-                .submit_workflow(
-                    ChunkyActivityWf::run,
+                .submit_workflow::<ChunkyActivityWf>(
                     (),
                     WorkflowStartOptions::new(tq, wf_id)
                         .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
@@ -260,8 +258,7 @@ async fn workflow_load() {
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}");
         let handle = worker
-            .submit_workflow(
-                WorkflowLoadWf::run,
+            .submit_workflow::<WorkflowLoadWf>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), wfid).build(),
             )
@@ -315,8 +312,7 @@ async fn evict_while_la_running_no_interference() {
     for i in 1..100 {
         let wf_id = format!("{wf_name}-{i}");
         let handle = worker
-            .submit_workflow(
-                LaProblemWorkflow::run,
+            .submit_workflow::<LaProblemWorkflow>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
             )
@@ -380,8 +376,7 @@ async fn can_paginate_long_history() {
     worker.register_workflow::<ManyParallelTimersLonghistWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ManyParallelTimersLonghistWf::run,
+        .submit_workflow::<ManyParallelTimersLonghistWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -483,8 +478,7 @@ async fn poller_autoscaling_basic_loadtest() {
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}-{}", rand_6_chars());
         let handle = worker
-            .submit_workflow(
-                PollerLoadWf::run,
+            .submit_workflow::<PollerLoadWf>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), wfid)
                     .execution_timeout(Duration::from_secs(120))

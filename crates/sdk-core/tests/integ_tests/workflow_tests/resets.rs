@@ -63,11 +63,7 @@ async fn reset_workflow() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ResetMeWf::run,
-            (),
-            WorkflowStartOptions::new(task_queue, wf_name).build(),
-        )
+        .submit_workflow::<ResetMeWf>((), WorkflowStartOptions::new(task_queue, wf_name).build())
         .await
         .unwrap();
     let run_id = handle.info().run_id.clone().unwrap();
@@ -96,7 +92,7 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain handle.
-        let handle = client.get_workflow_handle::<reset_me_wf::Run>(wf_name.to_owned());
+        let handle = client.get_workflow_handle::<ResetMeWf>(wf_name.to_owned());
         handle
             .signal(ResetMeWf::post_reset, (), WorkflowSignalOptions::default())
             .await
@@ -200,8 +196,7 @@ async fn reset_randomseed() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ResetRandomseedWf::run,
+        .submit_workflow::<ResetRandomseedWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
@@ -242,7 +237,7 @@ async fn reset_randomseed() {
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we re-obtain the handle.
         client
-            .get_workflow_handle::<reset_randomseed_wf::Run>(wf_name.to_owned())
+            .get_workflow_handle::<ResetRandomseedWf>(wf_name.to_owned())
             .signal(
                 ResetRandomseedWf::post_reset,
                 (),

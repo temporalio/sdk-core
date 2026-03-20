@@ -591,11 +591,6 @@ fn extract_maybe_result_output_type(sig: &syn::Signature) -> (Option<Type>, bool
 }
 
 impl WorkflowMethodsDefinition {
-    fn run_struct_ident(&self) -> syn::Ident {
-        let struct_name = method_name_to_pascal_case(&self.run_method.method.sig.ident);
-        format_ident!("{}", struct_name)
-    }
-
     pub(crate) fn codegen_with_options(&self, factory_only: bool) -> TokenStream {
         let impl_type = &self.impl_block.self_ty;
         let impl_type_name = type_name_string(impl_type);
@@ -639,7 +634,6 @@ impl WorkflowMethodsDefinition {
 
         // Run method marker struct and impls
         let run_method = &self.run_method;
-        let struct_ident = self.run_struct_ident();
 
         let input_type = type_to_tokens(
             run_method.input_type.as_ref().or(self
@@ -660,23 +654,16 @@ impl WorkflowMethodsDefinition {
         const_definitions.push(generate_const_definition(&run_method.method, &module_ident));
 
         trait_impls.push(quote! {
-            impl ::temporalio_common::WorkflowDefinition for #module_ident::#struct_ident {
-                type Input = #input_type;
-                type Output = #output_type;
-
-                fn name(&self) -> &str {
-                    #workflow_name
-                }
-            }
-
             impl ::temporalio_common::WorkflowDefinition for #impl_type {
                 type Input = #input_type;
                 type Output = #output_type;
 
-                fn name(&self) -> &str {
+                fn name() -> &'static str {
                     #workflow_name
                 }
             }
+
+            impl ::temporalio_common::StartableWorkflow for #impl_type {}
         });
 
         for signal in &self.signals {
@@ -753,10 +740,9 @@ impl WorkflowMethodsDefinition {
         let input_type = &info.input_type_tokens;
         let signal_name = &info.handler_name;
 
-        let run_struct_ident = self.run_struct_ident();
         let definition_impl = quote! {
             impl ::temporalio_common::SignalDefinition for #module_ident::#struct_ident {
-                type Workflow = #module_ident::#run_struct_ident;
+                type Workflow = #impl_type;
                 type Input = #input_type;
 
                 fn name(&self) -> &str {
@@ -829,10 +815,9 @@ impl WorkflowMethodsDefinition {
             quote! { Ok(#method_call) }
         };
 
-        let run_struct_ident = self.run_struct_ident();
         let trait_impl = quote! {
             impl ::temporalio_common::QueryDefinition for #module_ident::#struct_ident {
-                type Workflow = #module_ident::#run_struct_ident;
+                type Workflow = #impl_type;
                 type Input = #input_type;
                 type Output = #output_type;
 
@@ -872,10 +857,9 @@ impl WorkflowMethodsDefinition {
         let output_type = type_to_tokens(update.output_type.as_ref());
         let update_name = &info.handler_name;
 
-        let run_struct_ident = self.run_struct_ident();
         let definition_impl = quote! {
             impl ::temporalio_common::UpdateDefinition for #module_ident::#struct_ident {
-                type Workflow = #module_ident::#run_struct_ident;
+                type Workflow = #impl_type;
                 type Input = #input_type;
                 type Output = #output_type;
 
@@ -954,9 +938,6 @@ impl WorkflowMethodsDefinition {
         factory_only: bool,
     ) -> TokenStream2 {
         let run_method = &self.run_method;
-
-        let run_struct_name = method_name_to_pascal_case(&run_method.method.sig.ident);
-        let run_struct_ident = format_ident!("{}", run_struct_name);
         let prefixed_run = format_ident!("__{}", run_method.method.sig.ident);
 
         // Determine if init exists and takes input, or if run takes input
@@ -1182,25 +1163,19 @@ impl WorkflowMethodsDefinition {
 
         quote! {
             impl ::temporalio_sdk::workflows::WorkflowImplementation for #impl_type {
-                type Run = #module_ident::#run_struct_ident;
-
                 const HAS_INIT: bool = #has_init;
                 const INIT_TAKES_INPUT: bool = #init_has_input;
 
-                fn name() -> &'static str {
-                    <#impl_type>::name()
-                }
-
                 fn init(
                     ctx: ::temporalio_sdk::WorkflowContextView,
-                    input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
+                    input: ::std::option::Option<<Self as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> Self {
                     #init_body
                 }
 
                 fn run(
                     mut ctx: ::temporalio_sdk::WorkflowContext<Self>,
-                    input: ::std::option::Option<<Self::Run as ::temporalio_common::WorkflowDefinition>::Input>,
+                    input: ::std::option::Option<<Self as ::temporalio_common::WorkflowDefinition>::Input>,
                 ) -> ::futures_util::future::LocalBoxFuture<'static, Result<::temporalio_common::protos::temporal::api::common::v1::Payload, ::temporalio_sdk::WorkflowTermination>> {
                     #run_impl_body
                 }

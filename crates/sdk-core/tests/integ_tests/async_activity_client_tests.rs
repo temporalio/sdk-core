@@ -217,8 +217,7 @@ async fn async_activity_completions(
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            AsyncCompletionWorkflow::run,
+        .submit_workflow::<AsyncCompletionWorkflow>(
             outcome,
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )

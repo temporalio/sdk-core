@@ -116,8 +116,7 @@ async fn multi_arg_activity() {
     let input = "hello".to_string();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            MultiArgActivityWorkflow::run,
+        .submit_workflow::<MultiArgActivityWorkflow>(
             input,
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -141,8 +140,7 @@ async fn one_activity_only() {
     let input = "hello from input!".to_string();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            OneActivityWorkflow::run,
+        .submit_workflow::<OneActivityWorkflow>(
             input.clone(),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -984,8 +982,7 @@ async fn one_activity_abandon_cancelled_before_started() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            OneActivityAbandonCancelledBeforeStarted::run,
+        .submit_workflow::<OneActivityAbandonCancelledBeforeStarted>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
@@ -1032,8 +1029,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            OneActivityAbandonCancelledAfterComplete::run,
+        .submit_workflow::<OneActivityAbandonCancelledAfterComplete>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
@@ -1111,8 +1107,7 @@ async fn graceful_shutdown() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            GracefulShutdownWorkflow::run,
+        .submit_workflow::<GracefulShutdownWorkflow>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
@@ -1204,8 +1199,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            ActivityLocalTimeoutWorkflow::run,
+        .submit_workflow::<ActivityLocalTimeoutWorkflow>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
         )

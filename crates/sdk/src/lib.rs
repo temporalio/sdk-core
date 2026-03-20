@@ -315,7 +315,7 @@ impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
     pub fn register_workflow_with_factory<W, F>(mut self, factory: F) -> Self
     where
         W: WorkflowImplementation,
-        <W::Run as WorkflowDefinition>::Input: Send,
+        <W as WorkflowDefinition>::Input: Send,
         F: Fn() -> W + Send + Sync + 'static,
     {
         self.workflows
@@ -362,7 +362,7 @@ impl WorkerOptions {
     pub fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
     where
         W: WorkflowImplementation,
-        <W::Run as WorkflowDefinition>::Input: Send,
+        <W as WorkflowDefinition>::Input: Send,
         F: Fn() -> W + Send + Sync + 'static,
     {
         self.workflows
@@ -560,7 +560,7 @@ impl Worker {
     pub fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
     where
         W: WorkflowImplementation,
-        <W::Run as WorkflowDefinition>::Input: Send,
+        <W as WorkflowDefinition>::Input: Send,
         F: Fn() -> W + Send + Sync + 'static,
     {
         self.workflow_half

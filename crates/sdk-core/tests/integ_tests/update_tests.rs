@@ -701,8 +701,7 @@ async fn update_with_local_acts() {
     worker.register_workflow::<UpdateWithLocalActsWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateWithLocalActsWf::run,
+        .submit_workflow::<UpdateWithLocalActsWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -778,8 +777,7 @@ async fn update_rejection_sdk() {
     worker.register_workflow::<UpdateRejectionSdkWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateRejectionSdkWf::run,
+        .submit_workflow::<UpdateRejectionSdkWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -835,8 +833,7 @@ async fn update_fail_sdk() {
     worker.register_workflow::<UpdateFailSdkWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateFailSdkWf::run,
+        .submit_workflow::<UpdateFailSdkWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -897,8 +894,7 @@ async fn update_timer_sequence() {
     worker.register_workflow::<UpdateTimerSequenceWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateTimerSequenceWf::run,
+        .submit_workflow::<UpdateTimerSequenceWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -968,8 +964,7 @@ async fn task_failure_during_validation() {
     worker.register_workflow::<TaskFailureDuringValidationWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            TaskFailureDuringValidationWf::run,
+        .submit_workflow::<TaskFailureDuringValidationWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -1040,8 +1035,7 @@ async fn task_failure_after_update() {
     worker.register_workflow::<TaskFailureAfterUpdateWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            TaskFailureAfterUpdateWf::run,
+        .submit_workflow::<TaskFailureAfterUpdateWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -1132,8 +1126,7 @@ async fn worker_restarted_in_middle_of_update() {
     worker.register_workflow::<WorkerRestartedInMiddleOfUpdateWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            WorkerRestartedInMiddleOfUpdateWf::run,
+        .submit_workflow::<WorkerRestartedInMiddleOfUpdateWf>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), starter.get_wf_id().to_owned()).build(),
         )
@@ -1264,8 +1257,7 @@ async fn update_after_empty_wft() {
     worker.register_workflow::<UpdateAfterEmptyWftWf>();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateAfterEmptyWftWf::run,
+        .submit_workflow::<UpdateAfterEmptyWftWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )
@@ -1346,8 +1338,7 @@ async fn update_lost_on_activity_mismatch() {
     let core_worker = worker.core_worker();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            UpdateLostOnActivityMismatchWf::run,
+        .submit_workflow::<UpdateLostOnActivityMismatchWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )

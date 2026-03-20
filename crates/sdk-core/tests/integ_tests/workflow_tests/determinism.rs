@@ -72,8 +72,7 @@ async fn test_determinism_error_then_recovers() {
     });
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            TimerWfNondeterministic::run,
+        .submit_workflow::<TimerWfNondeterministic>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )
@@ -128,8 +127,7 @@ async fn task_fail_causes_replay_unset_too_soon() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            TaskFailReplayWf::run,
+        .submit_workflow::<TaskFailReplayWf>(
             (),
             WorkflowStartOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
         )

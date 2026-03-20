@@ -2,8 +2,8 @@ use crate::common::{CoreWfStarter, eventually, rand_6_chars};
 use futures::TryStreamExt;
 use std::{collections::HashSet, time::Duration};
 use temporalio_client::{
-    UntypedWorkflow, WorkflowCountOptions, WorkflowListOptions, WorkflowStartOptions,
-    WorkflowTerminateOptions, errors::WorkflowStartError,
+    WorkflowCountOptions, WorkflowListOptions, WorkflowStartOptions, WorkflowTerminateOptions,
+    errors::WorkflowStartError,
 };
 use temporalio_common::{data_converters::RawValue, worker::WorkerTaskTypes};
 use temporalio_macros::{workflow, workflow_methods};
@@ -43,8 +43,7 @@ async fn list_workflows(#[case] limit: Option<usize>) {
         let wf_id = format!("{test_name}_{suffix}_{i}");
         started_workflow_ids.push(wf_id.clone());
         let handle = worker
-            .submit_workflow(
-                EmptyWorkflow::run,
+            .submit_workflow::<EmptyWorkflow>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), wf_id).build(),
             )
@@ -147,8 +146,8 @@ async fn already_started_error_contains_run_id() {
     let wf_id = format!("{test_name}_{}", rand_6_chars());
 
     let handle = client
-        .start_workflow(
-            UntypedWorkflow::new(test_name),
+        .start_untyped_workflow(
+            test_name,
             RawValue::empty(),
             WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
         )
@@ -157,8 +156,8 @@ async fn already_started_error_contains_run_id() {
     let first_run_id = handle.run_id().unwrap().to_string();
 
     let err = client
-        .start_workflow(
-            UntypedWorkflow::new(test_name),
+        .start_untyped_workflow(
+            test_name,
             RawValue::empty(),
             WorkflowStartOptions::new(task_queue, wf_id).build(),
         )

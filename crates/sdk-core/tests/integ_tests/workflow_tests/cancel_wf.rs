@@ -53,8 +53,7 @@ async fn cancel_during_timer() {
     let task_queue = starter.get_task_queue().to_owned();
     let wf_id = task_queue.clone();
     let wf_handle = worker
-        .submit_workflow(
-            CancelledWf::run,
+        .submit_workflow::<CancelledWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
         )

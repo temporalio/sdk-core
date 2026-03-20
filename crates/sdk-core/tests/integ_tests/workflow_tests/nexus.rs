@@ -118,11 +118,7 @@ async fn nexus_basic(
 
     worker.register_workflow::<NexusBasicWf>();
     let wf_handle = worker
-        .submit_workflow(
-            NexusBasicWf::run,
-            endpoint.clone(),
-            starter.workflow_options.clone(),
-        )
+        .submit_workflow::<NexusBasicWf>(endpoint.clone(), starter.workflow_options.clone())
         .await
         .unwrap();
 
@@ -342,8 +338,7 @@ async fn nexus_async(
         converter: &converter,
     };
     let wf_handle = worker
-        .submit_workflow(
-            NexusAsyncWf::run,
+        .submit_workflow::<NexusAsyncWf>(
             (endpoint.clone(), schedule_to_close_timeout, outcome),
             starter.workflow_options.clone(),
         )
@@ -573,11 +568,7 @@ async fn nexus_cancel_before_start() {
 
     worker.register_workflow::<NexusCancelBeforeStartWf>();
     let handle = worker
-        .submit_workflow(
-            NexusCancelBeforeStartWf::run,
-            endpoint,
-            starter.workflow_options.clone(),
-        )
+        .submit_workflow::<NexusCancelBeforeStartWf>(endpoint, starter.workflow_options.clone())
         .await
         .unwrap();
 
@@ -640,11 +631,7 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
 
     worker.register_workflow::<NexusMustCompleteTaskWf>();
     let handle = worker
-        .submit_workflow(
-            NexusMustCompleteTaskWf::run,
-            endpoint,
-            starter.workflow_options.clone(),
-        )
+        .submit_workflow::<NexusMustCompleteTaskWf>(endpoint, starter.workflow_options.clone())
         .await
         .unwrap();
     let (complete_order_tx, mut complete_order_rx) = mpsc::unbounded_channel();
@@ -990,7 +977,7 @@ async fn nexus_cancellation_types(
             .try_recv()
             .expect("Should have received handler workflow ID");
         client
-            .get_workflow_handle::<async_completer_wf::Run>(handler_wf_id)
+            .get_workflow_handle::<AsyncCompleterWf>(handler_wf_id)
             .signal(
                 AsyncCompleterWf::handle_proceed_signal,
                 (),

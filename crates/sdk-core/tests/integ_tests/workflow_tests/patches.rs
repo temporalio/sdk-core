@@ -287,8 +287,7 @@ async fn deprecated_patch_removal() {
     });
 
     let handle = worker
-        .submit_workflow(
-            DeprecatedPatchRemovalWf::run,
+        .submit_workflow::<DeprecatedPatchRemovalWf>(
             (),
             WorkflowStartOptions::new(wf_id.clone(), wf_id).build(),
         )

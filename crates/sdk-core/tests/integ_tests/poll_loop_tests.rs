@@ -116,8 +116,7 @@ async fn run_scripted_test(name: &str, script: TestScript) {
     let num_signals = script.signal_scripts.len();
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ChainWf::run,
+        .submit_workflow::<ChainWf>(
             script,
             WorkflowStartOptions::new(task_queue, starter.get_wf_id().to_owned()).build(),
         )

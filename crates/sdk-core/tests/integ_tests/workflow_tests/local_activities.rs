@@ -96,8 +96,7 @@ async fn one_local_activity() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            OneLocalActivityWf::run,
+        .submit_workflow::<OneLocalActivityWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -139,8 +138,7 @@ async fn local_act_concurrent_with_timer() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            LocalActConcurrentWithTimerWf::run,
+        .submit_workflow::<LocalActConcurrentWithTimerWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -179,8 +177,7 @@ async fn local_act_then_timer_then_wait_result() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            LocalActThenTimerThenWaitResult::run,
+        .submit_workflow::<LocalActThenTimerThenWaitResult>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -220,8 +217,7 @@ async fn long_running_local_act_with_timer() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            LocalActThenTimerThenWait::run,
+        .submit_workflow::<LocalActThenTimerThenWait>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -260,8 +256,7 @@ async fn local_act_fanout() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            LocalActFanoutWf::run,
+        .submit_workflow::<LocalActFanoutWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -311,8 +306,7 @@ async fn local_act_retry_timer_backoff() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            LocalActRetryTimerBackoff::run,
+        .submit_workflow::<LocalActRetryTimerBackoff>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -404,8 +398,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            CancelImmediate::run,
+        .submit_workflow::<CancelImmediate>(
             cancel_type,
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -560,8 +553,7 @@ async fn cancel_after_act_starts(
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            CancelAfterActStartsWf::run,
+        .submit_workflow::<CancelAfterActStartsWf>(
             (bo_dur, cancel_type),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -666,8 +658,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            XToCloseTimeoutWf::run,
+        .submit_workflow::<XToCloseTimeoutWf>(
             (sched, start, timeout_type as i32),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -749,8 +740,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            ScheduleToCloseTimeoutAcrossTimerBackoff::run,
+        .submit_workflow::<ScheduleToCloseTimeoutAcrossTimerBackoff>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -781,7 +771,7 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
         WorkflowStartOptions::new(task_queue, wf_name.clone()).build()
     };
     worker
-        .submit_workflow(LocalActThenTimerThenWait::run, (), opts)
+        .submit_workflow::<LocalActThenTimerThenWait>((), opts)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -843,8 +833,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            TimerBackoffConcurrentWf::run,
+        .submit_workflow::<TimerBackoffConcurrentWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -899,8 +888,7 @@ async fn repro_nondeterminism_with_timer_bug() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ReproNondeterminismWithTimerBugWf::run,
+        .submit_workflow::<ReproNondeterminismWithTimerBugWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -1058,8 +1046,7 @@ async fn la_resolve_same_time_as_other_cancel() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            LaResolveSameTimeAsOtherCancelWf::run,
+        .submit_workflow::<LaResolveSameTimeAsOtherCancelWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -1140,8 +1127,7 @@ async fn long_local_activity_with_update(
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            LongLocalActivityWithUpdateWf::run,
+        .submit_workflow::<LongLocalActivityWithUpdateWf>(
             update_inner_timer,
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -1233,8 +1219,7 @@ async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            LocalActivityWithHeartbeatOnlyCausesOneWakeupWf::run,
+        .submit_workflow::<LocalActivityWithHeartbeatOnlyCausesOneWakeupWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )

@@ -205,8 +205,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
-            .submit_workflow(
-                ResourceBasedNonStickyWf::run,
+            .submit_workflow::<ResourceBasedNonStickyWf>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
@@ -806,8 +805,7 @@ async fn test_custom_slot_supplier_simple() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            SlotSupplierWorkflow::run,
+        .submit_workflow::<SlotSupplierWorkflow>(
             (),
             WorkflowStartOptions::new(task_queue, "test-wf".to_owned()).build(),
         )

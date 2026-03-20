@@ -94,8 +94,7 @@ async fn fuzzy_workflow() {
     for i in 0..num_workflows {
         let wfid = format!("{wf_name}_{i}");
         worker
-            .submit_workflow(
-                FuzzyWf::run,
+            .submit_workflow::<FuzzyWf>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), wfid).build(),
             )
