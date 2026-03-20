@@ -550,3 +550,73 @@ async fn test_untyped_signal_query_update() {
     let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
 }
+
+#[tokio::test]
+async fn test_typed_signal_query_update() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let wfid = format!("{}_untyped", starter.get_task_queue());
+    worker
+        .submit_workflow(
+            InteractionWorkflow::run,
+            100,
+            WorkflowStartOptions::new(task_queue.clone(), wfid.clone()).build(),
+        )
+        .await
+        .unwrap();
+    let handle = starter
+        .get_client()
+        .await
+        .get_workflow_handle::<InteractionWorkflow>(wfid);
+
+    let interactions = async {
+        handle
+            .signal(
+                InteractionWorkflow::increment,
+                25,
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let counter = handle
+            .query(
+                InteractionWorkflow::get_counter,
+                (),
+                WorkflowQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(counter, 25);
+
+        let old_value = handle
+            .execute_update(
+                InteractionWorkflow::set_counter,
+                50,
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old_value, 25);
+
+        handle
+            .signal(
+                InteractionWorkflow::increment,
+                50,
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(interactions, worker.run_until_done());
+    worker_res.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+    assert_eq!(result.counter, 100);
+}
