@@ -662,6 +662,8 @@ impl WorkflowMethodsDefinition {
                     #workflow_name
                 }
             }
+
+            impl ::temporalio_common::StartableWorkflow for #impl_type {}
         });
 
         for signal in &self.signals {

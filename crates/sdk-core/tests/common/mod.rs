@@ -36,7 +36,7 @@ use temporalio_client::{
     grpc::WorkflowService,
 };
 use temporalio_common::{
-    WorkflowDefinition,
+    StartableWorkflow, WorkflowDefinition,
     data_converters::{DataConverter, RawValue},
     protos::{
         coresdk::{
@@ -588,7 +588,7 @@ impl TestWorker {
         mut options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: StartableWorkflow,
         W::Input: Send,
     {
         let c = self.client.as_ref().expect("client must be set");

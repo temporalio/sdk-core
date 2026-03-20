@@ -1,0 +1,54 @@
+error[E0277]: `UntypedWorkflow` cannot be used with `start_workflow`
+ --> tests/workflows_trybuild/untyped_start_workflow_fail.rs:9:27
+  |
+9 |         .start_workflow::<UntypedWorkflow>(RawValue::empty(), opts)
+  |          --------------   ^^^^^^^^^^^^^^^ use `start_untyped_workflow` for workflows without compile-time type information
+  |          |
+  |          required by a bound introduced by this call
+  |
+  = help: the trait `StartableWorkflow` is not implemented for `UntypedWorkflow`
+  = note: `UntypedWorkflow` does not implement `StartableWorkflow`; use `Client::start_untyped_workflow` instead
+note: required by a bound in `Client::start_workflow`
+ --> $WORKSPACE/crates/client/src/lib.rs
+  |
+  |     pub async fn start_workflow<W>(
+  |                  -------------- required by a bound in this associated function
+...
+  |         W: StartableWorkflow,
+  |            ^^^^^^^^^^^^^^^^^ required by this bound in `Client::start_workflow`
+
+error[E0277]: `UntypedWorkflow` cannot be used with `start_workflow`
+ --> tests/workflows_trybuild/untyped_start_workflow_fail.rs:8:13
+  |
+8 |       let _ = client
+  |  _____________^
+9 | |         .start_workflow::<UntypedWorkflow>(RawValue::empty(), opts)
+  | |___________________________________________________________________^ use `start_untyped_workflow` for workflows without compile-time type information
+  |
+  = help: the trait `StartableWorkflow` is not implemented for `UntypedWorkflow`
+  = note: `UntypedWorkflow` does not implement `StartableWorkflow`; use `Client::start_untyped_workflow` instead
+note: required by a bound in `Client::start_workflow`
+ --> $WORKSPACE/crates/client/src/lib.rs
+  |
+  |     pub async fn start_workflow<W>(
+  |                  -------------- required by a bound in this associated function
+...
+  |         W: StartableWorkflow,
+  |            ^^^^^^^^^^^^^^^^^ required by this bound in `Client::start_workflow`
+
+error[E0277]: `UntypedWorkflow` cannot be used with `start_workflow`
+  --> tests/workflows_trybuild/untyped_start_workflow_fail.rs:10:10
+   |
+10 |         .await;
+   |          ^^^^^ use `start_untyped_workflow` for workflows without compile-time type information
+   |
+   = help: the trait `StartableWorkflow` is not implemented for `UntypedWorkflow`
+   = note: `UntypedWorkflow` does not implement `StartableWorkflow`; use `Client::start_untyped_workflow` instead
+note: required by a bound in `Client::start_workflow`
+  --> $WORKSPACE/crates/client/src/lib.rs
+   |
+   |     pub async fn start_workflow<W>(
+   |                  -------------- required by a bound in this associated function
+...
+   |         W: StartableWorkflow,
+   |            ^^^^^^^^^^^^^^^^^ required by this bound in `Client::start_workflow`

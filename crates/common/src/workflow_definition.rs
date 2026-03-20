@@ -16,6 +16,18 @@ pub trait WorkflowDefinition {
     fn name() -> &'static str;
 }
 
+/// Marker trait for workflow types that can be started via
+/// [`Client::start_workflow`](https://docs.rs/temporalio-client/latest/temporalio_client/struct.Client.html#method.start_workflow).
+///
+/// All `#[workflow]` types implement this automatically. [`UntypedWorkflow`] intentionally
+/// does not — use [`Client::start_untyped_workflow`] instead.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` cannot be used with `start_workflow`",
+    label = "use `start_untyped_workflow` for workflows without compile-time type information",
+    note = "`UntypedWorkflow` does not implement `StartableWorkflow`; use `Client::start_untyped_workflow` instead"
+)]
+pub trait StartableWorkflow: WorkflowDefinition {}
+
 /// Implement on a marker struct to define a query.
 ///
 /// Typically, you will want to use the `#[query]` attribute inside a `#[workflow_methods]` macro

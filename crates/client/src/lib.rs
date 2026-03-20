@@ -66,7 +66,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
-    WorkflowDefinition,
+    StartableWorkflow, WorkflowDefinition,
     data_converters::{DataConverter, RawValue, SerializationContextData},
     protos::{
         coresdk::IntoPayloadsExt,
@@ -654,7 +654,7 @@ impl Client {
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: StartableWorkflow,
         W::Input: Send,
     {
         WorkflowClientTrait::start_workflow::<W>(self, input, options).await
@@ -761,7 +761,7 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
     ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, WorkflowStartError>>
     where
         Self: Sized,
-        W: WorkflowDefinition,
+        W: StartableWorkflow,
         W::Input: Send;
 
     /// Start an untyped workflow execution with a runtime workflow type name.
@@ -1154,7 +1154,7 @@ where
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: StartableWorkflow,
         W::Input: Send,
     {
         let payloads = self
