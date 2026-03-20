@@ -14,7 +14,7 @@ pub trait WorkflowDefinition {
 }
 
 /// Indicates that a type is associated with a [`WorkflowDefinition`], enabling typed
-/// signal, query, and update methods on [`WorkflowHandle`](crate::WorkflowHandle).
+/// signal, query, and update methods on `WorkflowHandle`.
 ///
 /// Structs annotated with `#[workflow_methods]` implement this trait automatically.
 pub trait HasWorkflowDefinition: WorkflowDefinition {
