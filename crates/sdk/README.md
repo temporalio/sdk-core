@@ -320,10 +320,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = Client::new(connection, ClientOptions::new("default").build());
 
     // Start a workflow
-    let handle = client.start_workflow(
-        GreetingWorkflow::run,
+    let handle = client.start_workflow::<GreetingWorkflow>(
         "World".to_string(),
-        WorkflowOptions::new("my-task-queue", "greeting-workflow-1").build()
+        WorkflowStartOptions::new("my-task-queue", "greeting-workflow-1").build()
     ).await?;
 
     // Wait for the result
