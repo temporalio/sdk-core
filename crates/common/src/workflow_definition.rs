@@ -2,11 +2,8 @@ use crate::data_converters::{TemporalDeserializable, TemporalSerializable};
 
 /// Defines the input and output types and registered name for a workflow.
 ///
-/// User-defined workflow structs (annotated with `#[workflow]` and `#[workflow_methods]`)
-/// implement this trait automatically. It may also be implemented manually if desired.
-///
-/// This trait is the type parameter for `WorkflowHandle`, enabling typed access to
-/// workflow results, signals, queries, and updates.
+/// Typically, you will want to use the `#[workflow]` and `#[workflow_methods]` macros to define
+/// workflows. However, this trait may be implemented manually if desired.
 pub trait WorkflowDefinition {
     /// Type of the input argument to the workflow
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
@@ -39,7 +36,7 @@ pub trait QueryDefinition {
     /// Type of the output of the query.
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
-    /// The query handler name.
+    /// The query name.
     fn name(&self) -> &str;
 }
 
@@ -53,7 +50,7 @@ pub trait SignalDefinition {
     /// Type of the input argument to the signal.
     type Input: TemporalDeserializable + TemporalSerializable + 'static;
 
-    /// The signal handler name.
+    /// The signal name.
     fn name(&self) -> &str;
 }
 
@@ -69,6 +66,6 @@ pub trait UpdateDefinition {
     /// Type of the output of the update.
     type Output: TemporalDeserializable + TemporalSerializable + 'static;
 
-    /// The update handler name.
+    /// The update name.
     fn name(&self) -> &str;
 }

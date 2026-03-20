@@ -158,10 +158,8 @@ impl WorkflowDefinition for UntypedWorkflow {
     type Input = RawValue;
     type Output = RawValue;
     fn name() -> &'static str {
-        // Untyped workflows must pass the workflow type name via WorkflowStartOptions.
-        panic!(
-            "UntypedWorkflow does not have a static workflow type name; use start_untyped_workflow instead"
-        )
+        // Untyped workflows should be started via `Client::start_untyped_workflow`
+        panic!("UntypedWorkflow does not have a workflow name.")
     }
 }
 
