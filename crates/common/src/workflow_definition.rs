@@ -5,7 +5,7 @@ use crate::data_converters::{TemporalDeserializable, TemporalSerializable};
 /// User-defined workflow structs (annotated with `#[workflow]` and `#[workflow_methods]`)
 /// implement this trait automatically. It may also be implemented manually if desired.
 ///
-/// This trait is the type parameter for [`WorkflowHandle`], enabling typed access to
+/// This trait is the type parameter for `WorkflowHandle`, enabling typed access to
 /// workflow results, signals, queries, and updates.
 pub trait WorkflowDefinition {
     /// Type of the input argument to the workflow
@@ -16,11 +16,10 @@ pub trait WorkflowDefinition {
     fn name() -> &'static str;
 }
 
-/// Marker trait for workflow types that can be started via
-/// [`Client::start_workflow`](https://docs.rs/temporalio-client/latest/temporalio_client/struct.Client.html#method.start_workflow).
+/// Marker trait for workflow types that can be started via `Client::start_workflow`.
 ///
-/// All `#[workflow]` types implement this automatically. [`UntypedWorkflow`] intentionally
-/// does not — use [`Client::start_untyped_workflow`] instead.
+/// All `#[workflow]` types implement this automatically. `UntypedWorkflow` intentionally
+/// does not — use `Client::start_untyped_workflow` instead.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot be used with `start_workflow`",
     label = "use `start_untyped_workflow` for workflows without compile-time type information",
