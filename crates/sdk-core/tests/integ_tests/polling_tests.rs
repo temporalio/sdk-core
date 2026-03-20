@@ -169,8 +169,8 @@ async fn switching_worker_client_changes_poll() {
         // Start a workflow on both servers
         info!("Starting workflows");
         let wf1 = client1
-            .start_workflow(
-                UntypedWorkflow::new("my-workflow-type"),
+            .start_untyped_workflow(
+                "my-workflow-type",
                 RawValue::default(),
                 WorkflowStartOptions::new("my-task-queue".to_owned(), "my-workflow-1".to_owned())
                     .build(),
@@ -179,8 +179,8 @@ async fn switching_worker_client_changes_poll() {
             .unwrap();
         let wf1_run_id = wf1.run_id().unwrap().to_string();
         let wf2 = client2
-            .start_workflow(
-                UntypedWorkflow::new("my-workflow-type"),
+            .start_untyped_workflow(
+                "my-workflow-type",
                 RawValue::default(),
                 WorkflowStartOptions::new("my-task-queue".to_owned(), "my-workflow-2".to_owned())
                     .build(),
@@ -298,8 +298,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
     worker.register_workflow::<OnlyOneWorkflowSlotAndTwoPollers>();
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            OnlyOneWorkflowSlotAndTwoPollers::run,
+        .submit_workflow::<OnlyOneWorkflowSlotAndTwoPollers>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), task_queue.clone()).build(),
         )
@@ -307,8 +306,7 @@ async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling
         .unwrap();
     let wf2id = format!("{}-2", starter.get_task_queue());
     worker
-        .submit_workflow(
-            OnlyOneWorkflowSlotAndTwoPollers::run,
+        .submit_workflow::<OnlyOneWorkflowSlotAndTwoPollers>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), wf2id.clone()).build(),
         )
@@ -421,8 +419,8 @@ async fn replace_client_works_after_polling_failure() {
 
             // Polling the initial server the first time is successful.
             let wf_1 = client_for_initial_server
-                .start_workflow(
-                    UntypedWorkflow::new(wf_name),
+                .start_untyped_workflow(
+                    wf_name,
                     RawValue::default(),
                     WorkflowStartOptions::new(task_queue.clone(), wf_name.to_string()).build(),
                 )
@@ -463,8 +461,8 @@ async fn replace_client_works_after_polling_failure() {
             )
             .await;
             let wf_2 = client_for_integ_server
-                .start_workflow(
-                    UntypedWorkflow::new(wf_name),
+                .start_untyped_workflow(
+                    wf_name,
                     RawValue::default(),
                     WorkflowStartOptions::new(task_queue, wf_name)
                         .execution_timeout(Duration::from_secs(60))

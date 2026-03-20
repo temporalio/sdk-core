@@ -406,11 +406,7 @@ impl CoreWfStarter {
         let mut options = self.workflow_options.clone();
         options.workflow_id = workflow_id;
         iw.client
-            .start_workflow(
-                UntypedWorkflow::new(&self.task_queue_name),
-                RawValue::empty(),
-                options,
-            )
+            .start_untyped_workflow(&self.task_queue_name, RawValue::empty(), options)
             .await
             .unwrap()
             .run_id()
@@ -544,7 +540,7 @@ impl TestWorker {
     pub(crate) fn register_workflow_with_factory<W, F>(&mut self, factory: F) -> &mut Self
     where
         W: WorkflowImplementation,
-        <W::Run as WorkflowDefinition>::Input: Send,
+        <W as WorkflowDefinition>::Input: Send,
         F: Fn() -> W + Send + Sync + 'static,
     {
         self.inner.register_workflow_with_factory::<W, F>(factory);
@@ -585,10 +581,9 @@ impl TestWorker {
             .await
     }
 
-    /// Start a workflow returning a handle to the started workflow.
+    /// Start a typed workflow returning a handle to the started workflow.
     pub(crate) async fn submit_workflow<W>(
         &self,
-        workflow: W,
         input: W::Input,
         mut options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
@@ -601,7 +596,7 @@ impl TestWorker {
             options.execution_timeout = Some(Duration::from_secs(60 * 5));
         }
         let wfid = options.workflow_id.clone();
-        let handle = c.start_workflow(workflow, input, options).await?;
+        let handle = c.start_workflow::<W>(input, options).await?;
         self.started_workflows.lock().push(WorkflowExecutionInfo {
             namespace: c.namespace(),
             workflow_id: wfid,
@@ -684,11 +679,7 @@ impl TestWorkerSubmitterHandle {
         let wfid = options.workflow_id.clone();
         let handle = self
             .client
-            .start_workflow(
-                UntypedWorkflow::new(workflow_type.into()),
-                RawValue::new(input),
-                options,
-            )
+            .start_untyped_workflow(workflow_type.into(), RawValue::new(input), options)
             .await?;
         let run_id = handle.run_id().unwrap().to_string();
         self.started_workflows.lock().push(WorkflowExecutionInfo {

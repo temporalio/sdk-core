@@ -938,8 +938,7 @@ async fn worker_heartbeat_failure_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = starter.get_wf_id();
     let handle = worker
-        .submit_workflow(
-            FailureMetricsWf::run,
+        .submit_workflow::<FailureMetricsWf>(
             (),
             WorkflowStartOptions::new(task_queue, workflow_id)
                 .retry_policy(RetryPolicy {

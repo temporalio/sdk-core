@@ -67,7 +67,7 @@ use std::{
 };
 use temporalio_common::{
     WorkflowDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{DataConverter, RawValue, SerializationContextData},
     protos::{
         coresdk::IntoPayloadsExt,
         grpc::health::v1::health_client::HealthClient,
@@ -643,9 +643,13 @@ impl Client {
     ///
     /// Returns a [`WorkflowHandle`] that can be used to interact with the workflow
     /// (e.g., get its result, send signals, query, etc.).
+    ///
+    /// # Example
+    /// ```ignore
+    /// let handle = client.start_workflow::<MyWorkflow>(input, options).await?;
+    /// ```
     pub async fn start_workflow<W>(
         &self,
-        workflow: W,
         input: W::Input,
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
@@ -653,7 +657,21 @@ impl Client {
         W: WorkflowDefinition,
         W::Input: Send,
     {
-        WorkflowClientTrait::start_workflow(self, workflow, input, options).await
+        WorkflowClientTrait::start_workflow::<W>(self, input, options).await
+    }
+
+    /// Start a workflow execution without compile-time type information.
+    ///
+    /// Use this when the workflow type is not known at compile time. Input and output
+    /// are [`RawValue`] (raw JSON payloads).
+    pub async fn start_untyped_workflow(
+        &self,
+        workflow_type_name: impl Into<String>,
+        input: RawValue,
+        options: WorkflowStartOptions,
+    ) -> Result<UntypedWorkflowHandle<Self>, WorkflowStartError> {
+        WorkflowClientTrait::start_untyped_workflow(self, workflow_type_name.into(), input, options)
+            .await
     }
 
     /// Get a handle to an existing workflow.
@@ -738,7 +756,6 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
     /// Start a workflow execution.
     fn start_workflow<W>(
         &self,
-        workflow: W,
         input: W::Input,
         options: WorkflowStartOptions,
     ) -> impl Future<Output = Result<WorkflowHandle<Self, W>, WorkflowStartError>>
@@ -746,6 +763,16 @@ pub(crate) trait WorkflowClientTrait: NamespacedClient {
         Self: Sized,
         W: WorkflowDefinition,
         W::Input: Send;
+
+    /// Start an untyped workflow execution with a runtime workflow type name.
+    fn start_untyped_workflow(
+        &self,
+        workflow_type_name: String,
+        input: RawValue,
+        options: WorkflowStartOptions,
+    ) -> impl Future<Output = Result<UntypedWorkflowHandle<Self>, WorkflowStartError>>
+    where
+        Self: Sized;
 
     /// Get a handle to an existing workflow. `run_id` may be left blank to specify the most recent
     /// execution having the provided `workflow_id`.
@@ -1005,13 +1032,124 @@ impl WorkflowCountAggregationGroup {
     }
 }
 
+async fn start_workflow_rpc<T>(
+    client: &T,
+    workflow_type_name: String,
+    payloads: Vec<Payload>,
+    options: WorkflowStartOptions,
+) -> Result<WorkflowExecutionInfo, WorkflowStartError>
+where
+    T: WorkflowService + NamespacedClient + Clone,
+{
+    let namespace = client.namespace();
+    let workflow_id = options.workflow_id.clone();
+    let task_queue_name = options.task_queue.clone();
+
+    let run_id = if let Some(start_signal) = options.start_signal {
+        let res = WorkflowService::signal_with_start_workflow_execution(
+            &mut client.clone(),
+            SignalWithStartWorkflowExecutionRequest {
+                namespace: namespace.clone(),
+                workflow_id: workflow_id.clone(),
+                workflow_type: Some(WorkflowType {
+                    name: workflow_type_name.clone(),
+                }),
+                task_queue: Some(TaskQueue {
+                    name: task_queue_name,
+                    kind: TaskQueueKind::Normal as i32,
+                    normal_name: "".to_string(),
+                }),
+                input: payloads.into_payloads(),
+                signal_name: start_signal.signal_name,
+                signal_input: start_signal.input,
+                identity: client.identity(),
+                request_id: Uuid::new_v4().to_string(),
+                workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                workflow_id_conflict_policy: options.id_conflict_policy as i32,
+                workflow_execution_timeout: options
+                    .execution_timeout
+                    .and_then(|d| d.try_into().ok()),
+                workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                search_attributes: options.search_attributes.map(|d| d.into()),
+                cron_schedule: options.cron_schedule.unwrap_or_default(),
+                header: options.header.or(start_signal.header),
+                ..Default::default()
+            }
+            .into_request(),
+        )
+        .await?
+        .into_inner();
+        res.run_id
+    } else {
+        let res = client
+            .clone()
+            .start_workflow_execution(
+                StartWorkflowExecutionRequest {
+                    namespace: namespace.clone(),
+                    input: payloads.into_payloads(),
+                    workflow_id: workflow_id.clone(),
+                    workflow_type: Some(WorkflowType {
+                        name: workflow_type_name,
+                    }),
+                    task_queue: Some(TaskQueue {
+                        name: task_queue_name,
+                        kind: TaskQueueKind::Unspecified as i32,
+                        normal_name: "".to_string(),
+                    }),
+                    request_id: Uuid::new_v4().to_string(),
+                    workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                    workflow_id_conflict_policy: options.id_conflict_policy as i32,
+                    workflow_execution_timeout: options
+                        .execution_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                    search_attributes: options.search_attributes.map(|d| d.into()),
+                    cron_schedule: options.cron_schedule.unwrap_or_default(),
+                    request_eager_execution: options.enable_eager_workflow_start,
+                    retry_policy: options.retry_policy,
+                    links: options.links,
+                    completion_callbacks: options.completion_callbacks,
+                    priority: Some(options.priority.into()),
+                    header: options.header,
+                    ..Default::default()
+                }
+                .into_request(),
+            )
+            .await
+            .map_err(|status| {
+                if status.code() == Code::AlreadyExists {
+                    let run_id = decode_status_detail::<WorkflowExecutionAlreadyStartedFailure>(
+                        status.details(),
+                    )
+                    .map(|f| f.run_id);
+                    WorkflowStartError::AlreadyStarted {
+                        run_id,
+                        source: status,
+                    }
+                } else {
+                    WorkflowStartError::Rpc(status)
+                }
+            })?
+            .into_inner();
+        res.run_id
+    };
+
+    Ok(WorkflowExecutionInfo {
+        namespace,
+        workflow_id,
+        run_id: Some(run_id.clone()),
+        first_execution_run_id: Some(run_id),
+    })
+}
+
 impl<T> WorkflowClientTrait for T
 where
     T: WorkflowService + NamespacedClient + Clone + Send + Sync + 'static,
 {
     async fn start_workflow<W>(
         &self,
-        workflow: W,
         input: W::Input,
         options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Self, W>, WorkflowStartError>
@@ -1023,113 +1161,22 @@ where
             .data_converter()
             .to_payloads(&SerializationContextData::Workflow, &input)
             .await?;
-        let namespace = self.namespace();
-        let workflow_id = options.workflow_id.clone();
-        let task_queue_name = options.task_queue.clone();
+        let info = start_workflow_rpc(self, W::name().to_string(), payloads, options).await?;
+        Ok(WorkflowHandle::new(self.clone(), info))
+    }
 
-        let run_id = if let Some(start_signal) = options.start_signal {
-            // Use signal-with-start when a start_signal is provided
-            let res = WorkflowService::signal_with_start_workflow_execution(
-                &mut self.clone(),
-                SignalWithStartWorkflowExecutionRequest {
-                    namespace: namespace.clone(),
-                    workflow_id: workflow_id.clone(),
-                    workflow_type: Some(WorkflowType {
-                        name: workflow.name().to_string(),
-                    }),
-                    task_queue: Some(TaskQueue {
-                        name: task_queue_name,
-                        kind: TaskQueueKind::Normal as i32,
-                        normal_name: "".to_string(),
-                    }),
-                    input: payloads.into_payloads(),
-                    signal_name: start_signal.signal_name,
-                    signal_input: start_signal.input,
-                    identity: self.identity(),
-                    request_id: Uuid::new_v4().to_string(),
-                    workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                    workflow_id_conflict_policy: options.id_conflict_policy as i32,
-                    workflow_execution_timeout: options
-                        .execution_timeout
-                        .and_then(|d| d.try_into().ok()),
-                    workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
-                    workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                    search_attributes: options.search_attributes.map(|d| d.into()),
-                    cron_schedule: options.cron_schedule.unwrap_or_default(),
-                    header: options.header.or(start_signal.header),
-                    ..Default::default()
-                }
-                .into_request(),
-            )
-            .await?
-            .into_inner();
-            res.run_id
-        } else {
-            // Normal start workflow
-            let res = self
-                .clone()
-                .start_workflow_execution(
-                    StartWorkflowExecutionRequest {
-                        namespace: namespace.clone(),
-                        input: payloads.into_payloads(),
-                        workflow_id: workflow_id.clone(),
-                        workflow_type: Some(WorkflowType {
-                            name: workflow.name().to_string(),
-                        }),
-                        task_queue: Some(TaskQueue {
-                            name: task_queue_name,
-                            kind: TaskQueueKind::Unspecified as i32,
-                            normal_name: "".to_string(),
-                        }),
-                        request_id: Uuid::new_v4().to_string(),
-                        workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                        workflow_id_conflict_policy: options.id_conflict_policy as i32,
-                        workflow_execution_timeout: options
-                            .execution_timeout
-                            .and_then(|d| d.try_into().ok()),
-                        workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
-                        workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                        search_attributes: options.search_attributes.map(|d| d.into()),
-                        cron_schedule: options.cron_schedule.unwrap_or_default(),
-                        request_eager_execution: options.enable_eager_workflow_start,
-                        retry_policy: options.retry_policy,
-                        links: options.links,
-                        completion_callbacks: options.completion_callbacks,
-                        priority: Some(options.priority.into()),
-                        header: options.header,
-                        ..Default::default()
-                    }
-                    .into_request(),
-                )
-                .await
-                .map_err(|status| {
-                    if status.code() == Code::AlreadyExists {
-                        let run_id =
-                            decode_status_detail::<WorkflowExecutionAlreadyStartedFailure>(
-                                status.details(),
-                            )
-                            .map(|f| f.run_id);
-                        WorkflowStartError::AlreadyStarted {
-                            run_id,
-                            source: status,
-                        }
-                    } else {
-                        WorkflowStartError::Rpc(status)
-                    }
-                })?
-                .into_inner();
-            res.run_id
-        };
-
-        Ok(WorkflowHandle::new(
-            self.clone(),
-            WorkflowExecutionInfo {
-                namespace,
-                workflow_id,
-                run_id: Some(run_id.clone()),
-                first_execution_run_id: Some(run_id),
-            },
-        ))
+    async fn start_untyped_workflow(
+        &self,
+        workflow_type_name: String,
+        input: RawValue,
+        options: WorkflowStartOptions,
+    ) -> Result<UntypedWorkflowHandle<Self>, WorkflowStartError> {
+        let payloads = self
+            .data_converter()
+            .to_payloads(&SerializationContextData::Workflow, &input)
+            .await?;
+        let info = start_workflow_rpc(self, workflow_type_name, payloads, options).await?;
+        Ok(WorkflowHandle::new(self.clone(), info))
     }
 
     fn get_workflow_handle<W: WorkflowDefinition>(

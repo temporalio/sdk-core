@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Connection, NamespacedClient, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery, UntypedWorkflow,
+    Connection, NamespacedClient, REQUEST_LATENCY_HISTOGRAM_NAME, UntypedQuery,
     WorkflowExecutionInfo, WorkflowQueryOptions, WorkflowStartOptions, grpc::WorkflowService,
 };
 use temporalio_common::{
@@ -278,8 +278,8 @@ async fn one_slot_worker_reports_available_slot() {
 
         // Start a workflow so that a task will get delivered
         client
-            .start_workflow(
-                UntypedWorkflow::new("whatever"),
+            .start_untyped_workflow(
+                "whatever",
                 RawValue::default(),
                 WorkflowStartOptions::new(tq.to_owned(), "one_slot_metric_test".to_owned())
                     .id_conflict_policy(WorkflowIdConflictPolicy::TerminateExisting)
@@ -880,8 +880,7 @@ async fn activity_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = wf_name.to_owned();
     worker
-        .submit_workflow(
-            ActivityMetricsWf::run,
+        .submit_workflow::<ActivityMetricsWf>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
         )
@@ -1015,8 +1014,7 @@ async fn nexus_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = wf_name.to_owned();
     worker
-        .submit_workflow(
-            NexusMetricsWf::run,
+        .submit_workflow::<NexusMetricsWf>(
             endpoint,
             WorkflowStartOptions::new(task_queue.clone(), workflow_id).build(),
         )
@@ -1168,8 +1166,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = wf_name.to_owned();
     worker
-        .submit_workflow(
-            EvictOnCompleteWf::run,
+        .submit_workflow::<EvictOnCompleteWf>(
             (),
             WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )
@@ -1265,8 +1262,7 @@ async fn metrics_available_from_custom_slot_supplier() {
     worker.register_workflow::<CustomSlotSupplierWf>();
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            CustomSlotSupplierWf::run,
+        .submit_workflow::<CustomSlotSupplierWf>(
             (),
             WorkflowStartOptions::new(task_queue, "s_wf".to_owned()).build(),
         )
@@ -1429,8 +1425,7 @@ async fn sticky_queue_label_strategy(
     worker.register_workflow::<StickyQueueLabelStrategyWf>();
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            StickyQueueLabelStrategyWf::run,
+        .submit_workflow::<StickyQueueLabelStrategyWf>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), wf_name.clone())
                 .enable_eager_workflow_start(false)
@@ -1518,8 +1513,7 @@ async fn resource_based_tuner_metrics() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = wf_name.to_owned();
     worker
-        .submit_workflow(
-            ResourceBasedTunerMetricsWf::run,
+        .submit_workflow::<ResourceBasedTunerMetricsWf>(
             (),
             WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )

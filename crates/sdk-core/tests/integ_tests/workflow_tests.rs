@@ -103,8 +103,7 @@ async fn parallel_workflows_same_queue() {
     core.register_workflow::<ParallelWorkflowsWf>();
     let task_queue = starter.get_task_queue().to_owned();
     for i in 0..25 {
-        core.submit_workflow(
-            ParallelWorkflowsWf::run,
+        core.submit_workflow::<ParallelWorkflowsWf>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}-{i}")).build(),
         )
@@ -531,8 +530,7 @@ async fn slow_completes_with_small_cache() {
     let task_queue = starter.get_task_queue().to_owned();
     for i in 0..20 {
         worker
-            .submit_workflow(
-                SlowCompletesWf::run,
+            .submit_workflow::<SlowCompletesWf>(
                 (),
                 WorkflowStartOptions::new(task_queue.clone(), format!("{wf_name}_{i}")).build(),
             )
@@ -1024,8 +1022,7 @@ async fn history_out_of_order_on_restart() {
     worker2.register_workflow::<HistoryOutOfOrderWf2>();
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            HistoryOutOfOrderWf1::run,
+        .submit_workflow::<HistoryOutOfOrderWf1>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned())
                 .execution_timeout(Duration::from_secs(20))

@@ -66,8 +66,7 @@ async fn sends_signal_to_missing_wf() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            SignalSender::run,
+        .submit_workflow::<SignalSender>(
             (Uuid::new_v4().to_string(), true),
             WorkflowStartOptions::new(task_queue, wf_name).build(),
         )
@@ -175,7 +174,7 @@ async fn sends_signal_with_create_wf() {
         .start_signal(start_signal)
         .build();
     let handle = client
-        .start_workflow(SignalWithCreateWfReceiver::run, (), options)
+        .start_workflow::<SignalWithCreateWfReceiver>((), options)
         .await
         .expect("request succeeds.qed");
 

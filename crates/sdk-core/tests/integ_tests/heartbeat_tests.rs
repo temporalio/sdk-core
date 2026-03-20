@@ -225,8 +225,7 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf::run,
+        .submit_workflow::<ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf>(
             (),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )

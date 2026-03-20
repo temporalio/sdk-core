@@ -46,8 +46,7 @@ async fn timer_workflow_workflow_driver() {
     let task_queue = starter.get_task_queue().to_owned();
     let workflow_id = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            TimerWf::run,
+        .submit_workflow::<TimerWf>(
             (),
             WorkflowStartOptions::new(task_queue, workflow_id).build(),
         )

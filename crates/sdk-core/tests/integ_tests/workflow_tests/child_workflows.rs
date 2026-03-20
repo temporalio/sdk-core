@@ -183,8 +183,7 @@ async fn abandoned_child_bug_repro() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            AbandonedChildBugReproParent::run,
+        .submit_workflow::<AbandonedChildBugReproParent>(
             (),
             WorkflowStartOptions::new(task_queue, "parent-abandoner").build(),
         )
@@ -269,8 +268,7 @@ async fn abandoned_child_resolves_post_cancel() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            AbandonedChildResolvesPostCancelParent::run,
+        .submit_workflow::<AbandonedChildResolvesPostCancelParent>(
             (),
             WorkflowStartOptions::new(task_queue, "parent-abandoner-resolving").build(),
         )
@@ -345,8 +343,7 @@ async fn cancelled_child_gets_reason() {
 
     let task_queue = starter.get_task_queue().to_owned();
     worker
-        .submit_workflow(
-            CancelledChildGetsReasonParent::run,
+        .submit_workflow::<CancelledChildGetsReasonParent>(
             (),
             WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
         )
@@ -924,8 +921,7 @@ async fn cancel_child_wf_before_started_event_real_server() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            CancelChildBeforeStartedParent::run,
+        .submit_workflow::<CancelChildBeforeStartedParent>(
             (),
             WorkflowStartOptions::new(task_queue, "cancel-before-started-parent").build(),
         )

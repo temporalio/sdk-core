@@ -132,8 +132,7 @@ async fn test_typed_signal() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             42, // Wait for counter == 42
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -173,8 +172,7 @@ async fn test_typed_update() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             999, // Wait for counter == 999
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -230,8 +228,7 @@ async fn test_typed_query() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             100,
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -297,8 +294,7 @@ async fn test_update_validation() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             42,
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -359,8 +355,7 @@ async fn test_async_signal() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             100,
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -421,8 +416,7 @@ async fn test_fallible_query() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             100,
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -488,8 +482,7 @@ async fn test_untyped_signal_query_update() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            InteractionWorkflow::run,
+        .submit_workflow::<InteractionWorkflow>(
             100,
             WorkflowStartOptions::new(
                 task_queue.clone(),
@@ -538,6 +531,79 @@ async fn test_untyped_signal_query_update() {
             .signal(
                 UntypedSignal::new("increment"),
                 RawValue::from_value(&50i32, &pc),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(interactions, worker.run_until_done());
+    worker_res.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+    assert_eq!(result.counter, 100);
+}
+
+/// Regression test for https://github.com/temporalio/sdk-core/issues/1161
+///
+/// Verifies that typed signal/query/update APIs work on a `WorkflowHandle<_, MyWorkflow>`
+/// (parameterized by the workflow struct directly, not a marker type).
+#[tokio::test]
+async fn test_typed_signal_query_update() {
+    let wf_name = InteractionWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<InteractionWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let wfid = format!("{}_typed", starter.get_task_queue());
+    worker
+        .submit_workflow::<InteractionWorkflow>(
+            100,
+            WorkflowStartOptions::new(task_queue.clone(), wfid.clone()).build(),
+        )
+        .await
+        .unwrap();
+    let handle = starter
+        .get_client()
+        .await
+        .get_workflow_handle::<InteractionWorkflow>(wfid);
+
+    let interactions = async {
+        handle
+            .signal(
+                InteractionWorkflow::increment,
+                25,
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+
+        let counter = handle
+            .query(
+                InteractionWorkflow::get_counter,
+                (),
+                WorkflowQueryOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(counter, 25);
+
+        let old_value = handle
+            .execute_update(
+                InteractionWorkflow::set_counter,
+                50,
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(old_value, 25);
+
+        handle
+            .signal(
+                InteractionWorkflow::increment,
+                50,
                 WorkflowSignalOptions::default(),
             )
             .await

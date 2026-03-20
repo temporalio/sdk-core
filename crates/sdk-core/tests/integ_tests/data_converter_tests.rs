@@ -128,8 +128,7 @@ async fn data_converter_tracks_serialization_points() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            DataConverterTestWorkflow::run,
+        .submit_workflow::<DataConverterTestWorkflow>(
             TrackedWrapper(input),
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -193,8 +192,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
 
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            MultiArgs2Workflow::run,
+        .submit_workflow::<MultiArgs2Workflow>(
             input,
             WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
         )
@@ -351,8 +349,7 @@ async fn codec_encodes_and_decodes_payloads() {
     let input = TrackedValue::new("codec-test".to_string());
     let task_queue = starter.get_task_queue().to_owned();
     let handle = worker
-        .submit_workflow(
-            DataConverterTestWorkflow::run,
+        .submit_workflow::<DataConverterTestWorkflow>(
             TrackedWrapper(input),
             WorkflowStartOptions::new(task_queue, wf_id).build(),
         )
