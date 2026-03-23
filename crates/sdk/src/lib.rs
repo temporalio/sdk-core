@@ -97,6 +97,7 @@ macro_rules! __temporal_join {
 use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
+pub use temporalio_common::protos::temporal::api::enums::v1::{RetryState, TimeoutType};
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
@@ -963,13 +964,7 @@ impl ActivityHalf {
                                 explicit_delay,
                             } => ActivityExecutionResult::fail({
                                 let mut f = codec_data_converter
-                                    .to_failure(source, &SerializationContextData::Activity)
-                                    .unwrap_or_else(|e| {
-                                        Failure::application_failure(
-                                            format!("Failed to convert error: {e}"),
-                                            false,
-                                        )
-                                    });
+                                    .to_failure(source, &SerializationContextData::Activity);
                                 if let Some(d) = explicit_delay
                                     && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
                                         f.failure_info.as_mut()
@@ -983,13 +978,7 @@ impl ActivityHalf {
                             }
                             ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
                                 codec_data_converter
-                                    .to_failure(nre, &SerializationContextData::Activity)
-                                    .unwrap_or_else(|e| {
-                                        Failure::application_failure(
-                                            format!("Failed to convert error: {e}"),
-                                            true,
-                                        )
-                                    }),
+                                    .to_failure(nre, &SerializationContextData::Activity),
                             ),
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()

@@ -127,60 +127,36 @@ impl DataConverter {
     /// Convert a [`Failure`] proto into an error using only the
     /// failure converter (no codec). Use [`decode_failure`](Self::decode_failure)
     /// for the full pipeline including codec.
-    pub fn to_error(
-        &self,
-        failure: Failure,
-        context: &SerializationContextData,
-    ) -> Result<TemporalError, PayloadConversionError> {
+    pub fn to_error(&self, failure: Failure, context: &SerializationContextData) -> TemporalError {
         self.failure_converter
             .to_error(failure, &self.payload_converter, context)
     }
 
     /// Convert an error into a [`Failure`] proto using only the failure
-    /// converter (no codec). Use [`encode_failure`](Self::encode_failure)
-    /// for the full pipeline including codec.
+    /// converter (no codec). The codec is applied separately by the
+    /// `PayloadVisitable` visitor on outgoing completions.
     pub fn to_failure(
         &self,
         error: Box<dyn std::error::Error + Send + Sync>,
         context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
+    ) -> Failure {
         self.failure_converter
             .to_failure(error, &self.payload_converter, context)
     }
 
     /// Decode a [`Failure`] proto into an error, applying the codec
-    /// to embedded payloads before running the failure converter. This is the
-    /// receive-path counterpart to [`encode_failure`](Self::encode_failure).
+    /// to embedded payloads before running the failure converter.
     pub async fn decode_failure(
         &self,
         failure: Failure,
         context: &SerializationContextData,
-    ) -> Result<TemporalError, PayloadConversionError> {
+    ) -> TemporalError {
         let decoded = Self::apply_codec_to_failure(failure, context, |ctx, payloads| {
             self.codec.decode(ctx, payloads)
         })
         .await;
         self.failure_converter
             .to_error(decoded, &self.payload_converter, context)
-    }
-
-    /// Convert an error into a [`Failure`] proto, then apply the codec to
-    /// embedded payloads. This is the send-path counterpart to
-    /// [`decode_failure`](Self::decode_failure).
-    pub async fn encode_failure(
-        &self,
-        error: Box<dyn std::error::Error + Send + Sync>,
-        context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
-        let failure = self
-            .failure_converter
-            .to_failure(error, &self.payload_converter, context)?;
-        Ok(
-            Self::apply_codec_to_failure(failure, context, |ctx, payloads| {
-                self.codec.encode(ctx, payloads)
-            })
-            .await,
-        )
     }
 
     /// Recursively apply a codec operation (encode or decode) to all payloads
@@ -342,6 +318,11 @@ impl std::error::Error for PayloadConversionError {
 }
 
 /// Converts between Rust errors and Temporal [`Failure`] protobufs.
+///
+/// Implementations must be infallible — conversion should always succeed,
+/// falling back to a reasonable default (e.g. wrapping as
+/// `ApplicationFailureInfo`) rather than returning an error. This matches
+/// every other Temporal SDK.
 pub trait FailureConverter {
     /// Convert an error into a Temporal failure protobuf.
     fn to_failure(
@@ -349,7 +330,7 @@ pub trait FailureConverter {
         error: Box<dyn std::error::Error + Send + Sync>,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError>;
+    ) -> Failure;
 
     /// Convert a Temporal failure protobuf back into a Rust error.
     fn to_error(
@@ -357,7 +338,7 @@ pub trait FailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<TemporalError, PayloadConversionError>;
+    ) -> TemporalError;
 }
 /// Default failure converter that maps between Temporal [`Failure`] protobufs
 /// and Rust error types.
@@ -542,8 +523,10 @@ pub enum TemporalError {
 }
 
 impl TemporalError {
-    /// The human-readable error message, regardless of variant.
-    pub fn message(&self) -> &str {
+    /// The human-readable error message, if this is a known Temporal failure
+    /// variant. Returns `None` for [`Other`](Self::Other) — use `Display` to
+    /// get a message from any variant.
+    pub fn message(&self) -> Option<&str> {
         match self {
             Self::Application { message, .. }
             | Self::Timeout { message, .. }
@@ -554,13 +537,14 @@ impl TemporalError {
             | Self::ChildWorkflow { message, .. }
             | Self::NexusOperation { message, .. }
             | Self::NexusHandler { message, .. }
-            | Self::Generic { message, .. } => message,
-            Self::Other(_) => "",
+            | Self::Generic { message, .. } => Some(message),
+            Self::Other(_) => None,
         }
     }
 
-    /// The stack trace, regardless of variant. May be empty.
-    pub fn stack_trace(&self) -> &str {
+    /// The stack trace, if this is a known Temporal failure variant. Returns
+    /// `None` for [`Other`](Self::Other).
+    pub fn stack_trace(&self) -> Option<&str> {
         match self {
             Self::Application { stack_trace, .. }
             | Self::Timeout { stack_trace, .. }
@@ -571,8 +555,8 @@ impl TemporalError {
             | Self::ChildWorkflow { stack_trace, .. }
             | Self::NexusOperation { stack_trace, .. }
             | Self::NexusHandler { stack_trace, .. }
-            | Self::Generic { stack_trace, .. } => stack_trace,
-            Self::Other(_) => "",
+            | Self::Generic { stack_trace, .. } => Some(stack_trace),
+            Self::Other(_) => None,
         }
     }
 
@@ -1386,19 +1370,19 @@ impl FailureConverter for DefaultFailureConverter {
         error: Box<dyn std::error::Error + Send + Sync>,
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
+    ) -> Failure {
         match error.downcast::<TemporalError>() {
-            Ok(tf) => Ok(tf.into_failure()),
+            Ok(tf) => tf.into_failure(),
             Err(error) => {
                 // Unknown error type — wrap as ApplicationFailureInfo.
-                Ok(Failure {
+                Failure {
                     message: error.to_string(),
                     source: "RustSDK".into(),
                     failure_info: Some(FailureInfo::ApplicationFailureInfo(
                         ApplicationFailureInfo::default(),
                     )),
                     ..Default::default()
-                })
+                }
             }
         }
     }
@@ -1408,8 +1392,8 @@ impl FailureConverter for DefaultFailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
-    ) -> Result<TemporalError, PayloadConversionError> {
-        Ok(TemporalError::from_failure(failure, payload_converter))
+    ) -> TemporalError {
+        TemporalError::from_failure(failure, payload_converter)
     }
 }
 impl PayloadCodec for DefaultPayloadCodec {
@@ -1492,8 +1476,8 @@ impl_multi_args!(MultiArgs6; 6; 0: A, 1: B, 2: C, 3: D, 4: E, 5: F);
 mod tests {
     use super::*;
     use crate::protos::temporal::api::failure::v1::{
-        ApplicationFailureInfo, CanceledFailureInfo, ServerFailureInfo, TerminatedFailureInfo,
-        TimeoutFailureInfo, failure::FailureInfo,
+        ActivityFailureInfo, ApplicationFailureInfo, CanceledFailureInfo, ServerFailureInfo,
+        TerminatedFailureInfo, TimeoutFailureInfo, failure::FailureInfo,
     };
     use assert_matches::assert_matches;
     use rstest::rstest;
@@ -1600,13 +1584,11 @@ mod tests {
     fn plain_error_becomes_application_failure() {
         let err: Box<dyn std::error::Error + Send + Sync> =
             "something went wrong".to_string().into();
-        let failure = DefaultFailureConverter
-            .to_failure(
-                err,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("to_failure should succeed");
+        let failure = DefaultFailureConverter.to_failure(
+            err,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         assert_eq!(failure.message, "something went wrong");
         assert_matches!(
@@ -1618,13 +1600,11 @@ mod tests {
     #[test]
     fn source_field_is_set() {
         let err: Box<dyn std::error::Error + Send + Sync> = "test".to_string().into();
-        let failure = DefaultFailureConverter
-            .to_failure(
-                err,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("to_failure should succeed");
+        let failure = DefaultFailureConverter.to_failure(
+            err,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         assert_eq!(failure.source, "RustSDK");
     }
@@ -1668,14 +1648,10 @@ mod tests {
             ..Default::default()
         };
 
-        let error = converter
-            .to_error(original.clone(), &pc, &ctx)
-            .expect("to_error should succeed");
+        let error = converter.to_error(original.clone(), &pc, &ctx);
         assert_eq!(error.to_string(), message);
 
-        let round_tripped = converter
-            .to_failure(Box::new(error), &pc, &ctx)
-            .expect("round-trip to_failure should succeed");
+        let round_tripped = converter.to_failure(Box::new(error), &pc, &ctx);
         assert_eq!(round_tripped.failure_info, Some(info));
         assert_eq!(round_tripped.message, original.message);
     }
@@ -1700,13 +1676,11 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(
-                outer,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("to_error should succeed");
+        let error = DefaultFailureConverter.to_error(
+            outer,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         let source = error.source().expect("error should have a source");
         assert_eq!(source.to_string(), "root cause");
@@ -1741,9 +1715,7 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(level2, &pc, &ctx)
-            .expect("to_error should handle deep nesting");
+        let error = DefaultFailureConverter.to_error(level2, &pc, &ctx);
 
         let e1 = error.source().expect("should have level1");
         assert_eq!(e1.to_string(), "level1");
@@ -1768,16 +1740,14 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(
-                foreign,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("should handle cross-SDK failures");
+        let error = DefaultFailureConverter.to_error(
+            foreign,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
         assert_eq!(error.to_string(), "something failed in TypeScript");
 
-        assert_eq!(error.stack_trace(), "at someFunction (file.ts:10:5)");
+        assert_eq!(error.stack_trace(), Some("at someFunction (file.ts:10:5)"));
     }
 
     #[test]
@@ -1787,13 +1757,11 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(
-                bare,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("should handle failure with no failure_info");
+        let error = DefaultFailureConverter.to_error(
+            bare,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
         assert_eq!(error.to_string(), "bare failure");
     }
 
@@ -1804,14 +1772,14 @@ mod tests {
             error: Box<dyn std::error::Error + Send + Sync>,
             _: &PayloadConverter,
             _: &SerializationContextData,
-        ) -> Result<Failure, PayloadConversionError> {
-            Ok(Failure {
+        ) -> Failure {
+            Failure {
                 message: error.to_string().to_uppercase(),
                 failure_info: Some(FailureInfo::ApplicationFailureInfo(
                     ApplicationFailureInfo::default(),
                 )),
                 ..Default::default()
-            })
+            }
         }
 
         fn to_error(
@@ -1819,8 +1787,8 @@ mod tests {
             failure: Failure,
             _: &PayloadConverter,
             _: &SerializationContextData,
-        ) -> Result<TemporalError, PayloadConversionError> {
-            Ok(TemporalError::Other(failure.message.to_lowercase().into()))
+        ) -> TemporalError {
+            TemporalError::Other(failure.message.to_lowercase().into())
         }
     }
 
@@ -1831,14 +1799,10 @@ mod tests {
         let ctx = SerializationContextData::Workflow;
 
         let err: Box<dyn std::error::Error + Send + Sync> = "hello world".to_string().into();
-        let failure = custom
-            .to_failure(err, &pc, &ctx)
-            .expect("custom to_failure should work");
+        let failure = custom.to_failure(err, &pc, &ctx);
         assert_eq!(failure.message, "HELLO WORLD");
 
-        let error = custom
-            .to_error(failure, &pc, &ctx)
-            .expect("custom to_error should work");
+        let error = custom.to_error(failure, &pc, &ctx);
         assert_eq!(error.to_string(), "hello world");
     }
 
@@ -1868,13 +1832,11 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(
-                failure,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("should decode encoded_attributes");
+        let error = DefaultFailureConverter.to_error(
+            failure,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         assert_eq!(error.to_string(), "secret error");
     }
@@ -1898,13 +1860,11 @@ mod tests {
             ..Default::default()
         };
 
-        let error = DefaultFailureConverter
-            .to_error(
-                failure,
-                &PayloadConverter::default(),
-                &SerializationContextData::Workflow,
-            )
-            .expect("should succeed even with undecodable encoded_attributes");
+        let error = DefaultFailureConverter.to_error(
+            failure,
+            &PayloadConverter::default(),
+            &SerializationContextData::Workflow,
+        );
 
         assert_eq!(error.to_string(), "fallback message");
     }
@@ -1924,14 +1884,10 @@ mod tests {
             ..Default::default()
         };
 
-        let error = converter
-            .to_error(original, &pc, &ctx)
-            .expect("to_error should succeed");
-        assert_eq!(error.stack_trace(), "at my_fn (lib.rs:42)");
+        let error = converter.to_error(original, &pc, &ctx);
+        assert_eq!(error.stack_trace(), Some("at my_fn (lib.rs:42)"));
 
-        let round_tripped = converter
-            .to_failure(Box::new(error), &pc, &ctx)
-            .expect("to_failure should succeed");
+        let round_tripped = converter.to_failure(Box::new(error), &pc, &ctx);
         assert_eq!(round_tripped.stack_trace, "at my_fn (lib.rs:42)");
     }
 
@@ -1977,7 +1933,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn data_converter_applies_codec_to_failure_details() {
+    async fn decode_failure_applies_codec_to_detail_payloads() {
         let dc = DataConverter::new(
             PayloadConverter::default(),
             DefaultFailureConverter,
@@ -1985,65 +1941,117 @@ mod tests {
         );
         let ctx = SerializationContextData::Workflow;
 
-        // Build a TemporalError with detail payloads
-        let detail_payload = Payload {
+        // Build a Failure proto with XOR-encoded detail payloads (simulating
+        // what the server would send after the send-path PayloadVisitable
+        // visitor encoded them).
+        let plaintext = b"\"some detail\"".to_vec();
+        let encoded_data: Vec<u8> = plaintext.iter().map(|b| b ^ 0xAB).collect();
+        let encoded_payload = Payload {
             metadata: {
                 let mut hm = HashMap::new();
                 hm.insert("encoding".to_string(), b"json/plain".to_vec());
                 hm
             },
-            data: b"\"some detail\"".to_vec(),
+            data: encoded_data,
             external_payloads: vec![],
         };
-        let tf = TemporalError::Application {
+        let failure = Failure {
             message: "test".into(),
-            stack_trace: String::new(),
-            r#type: "TestError".into(),
-            non_retryable: false,
-            details: Some(Payloads {
-                payloads: vec![detail_payload.clone()],
-            }),
-            next_retry_delay: None,
-            cause: None,
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    r#type: "TestError".into(),
+                    details: Some(Payloads {
+                        payloads: vec![encoded_payload],
+                    }),
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
         };
 
-        // encode_failure should encode the detail payloads via the codec
-        let failure = dc
-            .encode_failure(Box::new(tf), &ctx)
-            .await
-            .expect("encode_failure should succeed");
-
-        let encoded_details = failure
-            .failure_info
-            .as_ref()
-            .and_then(|info| match info {
-                FailureInfo::ApplicationFailureInfo(app) => {
-                    app.details.as_ref().map(|d| &d.payloads)
-                }
-                _ => None,
-            })
-            .expect("should have details");
-
-        // The data should be XOR'd, not the original plaintext
-        assert_ne!(
-            encoded_details[0].data, detail_payload.data,
-            "codec should have transformed the detail payload data"
-        );
-
-        // decode_failure should decode back, producing readable details
-        let error = dc
-            .decode_failure(failure, &ctx)
-            .await
-            .expect("decode_failure should succeed");
+        // decode_failure should decode the XOR'd payloads back to plaintext
+        let error = dc.decode_failure(failure, &ctx).await;
         match &error {
             TemporalError::Application { details, .. } => {
                 let payloads = details.as_ref().unwrap();
                 assert_eq!(
-                    payloads.payloads[0].data, detail_payload.data,
-                    "round-tripped detail payload should match original"
+                    payloads.payloads[0].data, plaintext,
+                    "decoded detail payload should match original plaintext"
                 );
             }
             other => panic!("expected Application, got {other:?}"),
         }
+    }
+
+    /// Mimics the proto structure produced by the local activity state machine
+    /// when a local activity is cancelled via TryCancel. The outer failure has
+    /// `ActivityFailureInfo` and the cause has `CanceledFailureInfo`.
+    #[test]
+    fn la_cancel_produces_activity_with_cancelled_cause() {
+        let converter = DefaultFailureConverter;
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        // Inner failure: what Cancellation::from_details(None) produces
+        let cancel_cause = Failure {
+            message: "Activity cancelled".into(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                details: None,
+            })),
+            ..Default::default()
+        };
+
+        // Outer failure: what wrap_fail! produces around the cancel cause
+        let wrapped = Failure {
+            message: "Local Activity cancelled".into(),
+            cause: Some(Box::new(cancel_cause)),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+                activity_type: Some(crate::protos::temporal::api::common::v1::ActivityType {
+                    name: "echo".into(),
+                }),
+                activity_id: "1".into(),
+                retry_state: RetryState::CancelRequested.into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let te = converter.to_error(wrapped, &pc, &ctx);
+
+        // Should be Activity { cause: Some(Cancelled { .. }) }
+        assert_matches!(&te, TemporalError::Activity {
+            message,
+            activity_type,
+            cause: Some(cause),
+            ..
+        } => {
+            assert_eq!(message, "Local Activity cancelled");
+            assert_eq!(activity_type, "echo");
+            assert_matches!(cause.as_ref(), TemporalError::Cancelled { message, .. } => {
+                assert_eq!(message, "Activity cancelled");
+            });
+        });
+    }
+
+    /// `Cancellation::from_details(None)` produces a Failure with
+    /// CanceledFailureInfo, which correctly converts to TemporalError::Cancelled.
+    #[test]
+    fn cancellation_from_details_produces_cancelled() {
+        let converter = DefaultFailureConverter;
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+
+        let cancel = Failure {
+            message: "Activity cancelled".into(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                details: None,
+            })),
+            ..Default::default()
+        };
+        let te = converter.to_error(cancel, &pc, &ctx);
+
+        assert_matches!(&te, TemporalError::Cancelled { message, .. } => {
+            assert_eq!(message, "Activity cancelled");
+        });
     }
 }

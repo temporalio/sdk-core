@@ -40,8 +40,8 @@ use temporalio_common::{
     },
     protos::{
         coresdk::{
-            activity_result::{ActivityResolution, activity_resolution},
-            child_workflow::ChildWorkflowResult,
+            activity_result::{ActivityResolution, Cancellation, activity_resolution},
+            child_workflow::{ChildWorkflowResult, child_workflow_result},
             common::NamespacedWorkflowExecution,
             nexus::NexusOperationResult,
             workflow_activation::{
@@ -56,7 +56,9 @@ use temporalio_common::{
             },
         },
         temporal::api::{
-            common::v1::{Memo, Payload, SearchAttributes},
+            common::v1::{Memo, Payload, Payloads, SearchAttributes},
+            enums::v1::{RetryState, TimeoutType},
+            failure::v1::Failure,
             sdk::v1::UserMetadata,
         },
     },
@@ -277,47 +279,203 @@ impl WorkflowContextView {
     }
 }
 
-/// Error type for activity execution outcomes.
+/// Error returned when a workflow awaits an activity result.
 #[derive(Debug, thiserror::Error)]
 pub enum ActivityExecutionError {
-    /// The activity failed with the given failure details.
-    #[error("{0}")]
-    Failed(#[source] Box<TemporalError>),
+    /// The activity failed with an application error.
+    #[error("Activity failed: {message}")]
+    Failed {
+        /// Human-readable error message from the application failure.
+        message: String,
+        /// Application error type string.
+        error_type: String,
+        /// Whether this error is non-retryable.
+        non_retryable: bool,
+        /// Activity type name.
+        activity_type: String,
+        /// Activity ID.
+        activity_id: String,
+        /// Retry state at the time of failure.
+        retry_state: RetryState,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
+    /// The activity timed out.
+    #[error("Activity timed out ({timeout_type:?}): {activity_type} ({activity_id})")]
+    TimedOut {
+        /// Which kind of timeout.
+        timeout_type: TimeoutType,
+        /// Activity type name.
+        activity_type: String,
+        /// Activity ID.
+        activity_id: String,
+        /// Retry state at the time of timeout.
+        retry_state: RetryState,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
     /// The activity was cancelled.
-    #[error("{0}")]
-    Cancelled(#[source] Box<TemporalError>),
-    // TODO: Timed out variant
+    #[error("Activity cancelled")]
+    Cancelled {
+        /// Human-readable cancellation message.
+        message: String,
+        /// Cancellation detail payloads.
+        details: Option<Payloads>,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
+    /// The activity was terminated.
+    #[error("Activity terminated")]
+    Terminated {
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
     /// Failed to serialize input or deserialize result payload.
     #[error("Payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
 }
 
 impl ActivityExecutionError {
-    /// Returns true if this error represents a timeout.
-    pub fn is_timeout(&self) -> bool {
-        match self {
-            ActivityExecutionError::Failed(boxed_err) => match boxed_err.as_ref() {
-                TemporalError::Activity {
-                    cause: Some(cause), ..
-                } => {
-                    matches!(cause.as_ref(), TemporalError::Timeout { .. })
+    /// Construct from a [`TemporalError`], classifying into the appropriate variant
+    /// based on the error's shape.
+    fn from_temporal_error(te: TemporalError) -> Self {
+        match &te {
+            TemporalError::Activity {
+                activity_type,
+                activity_id,
+                retry_state,
+                cause: Some(cause),
+                ..
+            } => {
+                let activity_type = activity_type.clone();
+                let activity_id = activity_id.clone();
+                let retry_state = *retry_state;
+                match cause.as_ref() {
+                    TemporalError::Application {
+                        message,
+                        r#type,
+                        non_retryable,
+                        ..
+                    } => Self::Failed {
+                        message: message.clone(),
+                        error_type: r#type.clone(),
+                        non_retryable: *non_retryable,
+                        activity_type,
+                        activity_id,
+                        retry_state,
+                        source: Box::new(te),
+                    },
+                    TemporalError::Timeout { timeout_type, .. } => Self::TimedOut {
+                        timeout_type: *timeout_type,
+                        activity_type,
+                        activity_id,
+                        retry_state,
+                        source: Box::new(te),
+                    },
+                    TemporalError::Cancelled {
+                        message, details, ..
+                    } => Self::Cancelled {
+                        message: message.clone(),
+                        details: details.clone(),
+                        source: Box::new(te),
+                    },
+                    TemporalError::Terminated { .. } => Self::Terminated {
+                        source: Box::new(te),
+                    },
+                    _ => Self::failed_fallback(te),
                 }
-                _ => false,
+            }
+            TemporalError::Cancelled {
+                message, details, ..
+            } => Self::Cancelled {
+                message: message.clone(),
+                details: details.clone(),
+                source: Box::new(te),
             },
-            _ => false,
+            _ => Self::failed_fallback(te),
+        }
+    }
+
+    fn failed_fallback(te: TemporalError) -> Self {
+        let message = te
+            .message()
+            .map(str::to_owned)
+            .unwrap_or_else(|| "wowo look at this".to_owned());
+        Self::Failed {
+            message,
+            error_type: String::new(),
+            non_retryable: false,
+            activity_type: String::new(),
+            activity_id: String::new(),
+            retry_state: RetryState::Unspecified,
+            source: Box::new(te),
         }
     }
 }
 
-/// Error returned when a child workflow execution fails.
+/// Error returned when a workflow awaits a child workflow result.
 #[derive(Debug, thiserror::Error)]
 pub enum ChildWorkflowExecutionError {
     /// The child workflow failed.
-    #[error("Child workflow failed: {}", .0.message)]
-    Failed(Box<Failure>),
+    #[error("Child workflow failed: {message}")]
+    Failed {
+        /// Human-readable error message from the child workflow failure.
+        message: String,
+        /// Child workflow type name.
+        workflow_type: String,
+        /// Child workflow ID.
+        workflow_id: String,
+        /// Child workflow run ID.
+        run_id: String,
+        /// Retry state at the time of failure.
+        retry_state: RetryState,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
+    /// The child workflow timed out.
+    #[error("Child workflow timed out ({timeout_type:?}): {workflow_type} ({workflow_id})")]
+    TimedOut {
+        /// Which kind of timeout.
+        timeout_type: TimeoutType,
+        /// Child workflow type name.
+        workflow_type: String,
+        /// Child workflow ID.
+        workflow_id: String,
+        /// Child workflow run ID.
+        run_id: String,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
     /// The child workflow was cancelled.
-    #[error("Child workflow cancelled: {}", .0.message)]
-    Cancelled(Box<Failure>),
+    #[error("Child workflow cancelled")]
+    Cancelled {
+        /// Human-readable cancellation message.
+        message: String,
+        /// Cancellation detail payloads.
+        details: Option<Payloads>,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
+    /// The child workflow was terminated.
+    #[error("Child workflow terminated")]
+    Terminated {
+        /// Child workflow type name.
+        workflow_type: String,
+        /// Child workflow ID.
+        workflow_id: String,
+        /// Child workflow run ID.
+        run_id: String,
+        /// The full [`TemporalError`] cause chain.
+        #[source]
+        source: Box<TemporalError>,
+    },
     /// The child workflow failed to start (e.g., workflow ID already exists).
     #[error(
         "Child workflow start failed: workflow_id={workflow_id}, workflow_type={workflow_type}, cause={cause:?}"
@@ -330,9 +488,85 @@ pub enum ChildWorkflowExecutionError {
         /// The cause of the start failure.
         cause: StartChildWorkflowExecutionFailedCause,
     },
-    /// Failed to serialize input or deserialize the child workflow result payload.
+    /// Failed to deserialize the child workflow result payload.
     #[error("Payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
+}
+
+impl ChildWorkflowExecutionError {
+    /// Construct from a [`TemporalError`], classifying into the appropriate variant
+    /// based on the error's shape.
+    fn from_temporal_error(te: TemporalError) -> Self {
+        match &te {
+            TemporalError::ChildWorkflow {
+                workflow_type,
+                workflow_id,
+                run_id,
+                retry_state,
+                cause: Some(cause),
+                ..
+            } => {
+                let workflow_type = workflow_type.clone();
+                let workflow_id = workflow_id.clone();
+                let run_id = run_id.clone();
+                let retry_state = *retry_state;
+                match cause.as_ref() {
+                    TemporalError::Application { message, .. } => Self::Failed {
+                        message: message.clone(),
+                        workflow_type,
+                        workflow_id,
+                        run_id,
+                        retry_state,
+                        source: Box::new(te),
+                    },
+                    TemporalError::Timeout { timeout_type, .. } => Self::TimedOut {
+                        timeout_type: *timeout_type,
+                        workflow_type,
+                        workflow_id,
+                        run_id,
+                        source: Box::new(te),
+                    },
+                    TemporalError::Cancelled {
+                        message, details, ..
+                    } => Self::Cancelled {
+                        message: message.clone(),
+                        details: details.clone(),
+                        source: Box::new(te),
+                    },
+                    TemporalError::Terminated { .. } => Self::Terminated {
+                        workflow_type,
+                        workflow_id,
+                        run_id,
+                        source: Box::new(te),
+                    },
+                    _ => Self::failed_fallback(te),
+                }
+            }
+            TemporalError::Cancelled {
+                message, details, ..
+            } => Self::Cancelled {
+                message: message.clone(),
+                details: details.clone(),
+                source: Box::new(te),
+            },
+            _ => Self::failed_fallback(te),
+        }
+    }
+
+    fn failed_fallback(te: TemporalError) -> Self {
+        let message = te
+            .message()
+            .map(str::to_owned)
+            .unwrap_or_else(|| te.to_string());
+        Self::Failed {
+            message,
+            workflow_type: String::new(),
+            workflow_id: String::new(),
+            run_id: String::new(),
+            retry_state: RetryState::Unspecified,
+            source: Box::new(te),
+        }
+    }
 }
 
 /// Error returned when signaling a child workflow fails.
@@ -533,11 +767,12 @@ impl BaseWorkflowContext {
         WD::Output: TemporalDeserializable,
     {
         let input = input.into();
+        let pc = self.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.inner.payload_converter,
+            converter: pc,
         };
-        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match pc.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return ChildWorkflowStartFut::eager(e.into());
@@ -566,7 +801,7 @@ impl BaseWorkflowContext {
             child_seq,
             result_future: result_cmd,
             base_ctx: self.clone(),
-            payload_converter: self.inner.payload_converter.clone(),
+            data_converter: self.inner.data_converter.clone(),
         };
 
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
@@ -1403,9 +1638,9 @@ impl Future for LATimerBackoffFut {
                     } else {
                         self.terminated = true;
                         Poll::Ready(ActivityResolution {
-                            status: Some(
-                                activity_resolution::Status::Cancelled(Default::default()),
-                            ),
+                            status: Some(activity_resolution::Status::Cancelled(
+                                Cancellation::from_details(None),
+                            )),
                         })
                     }
                 }
@@ -1422,7 +1657,9 @@ impl Future for LATimerBackoffFut {
             if self.did_cancel.load(Ordering::Acquire) {
                 self.terminated = true;
                 return Poll::Ready(ActivityResolution {
-                    status: Some(activity_resolution::Status::Cancelled(Default::default())),
+                    status: Some(activity_resolution::Status::Cancelled(
+                        Cancellation::from_details(None),
+                    )),
                 });
             }
 
@@ -1514,7 +1751,7 @@ where
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(resolution) => Poll::Ready({
                     let status = resolution.status.ok_or_else(|| {
-                        ActivityExecutionError::Failed(Box::new(TemporalError::Application {
+                        ActivityExecutionError::from_temporal_error(TemporalError::Application {
                             message: "Activity completed without a status".to_string(),
                             stack_trace: String::new(),
                             r#type: String::new(),
@@ -1522,7 +1759,7 @@ where
                             details: None,
                             next_retry_delay: None,
                             cause: None,
-                        }))
+                        })
                     })?;
 
                     let ctx = &SerializationContextData::Workflow;
@@ -1539,33 +1776,13 @@ where
                         }
                         activity_resolution::Status::Failed(f) => {
                             let failure = f.failure.unwrap_or_default();
-                            let te = data_converter.to_error(failure, ctx).unwrap_or_else(|e| {
-                                TemporalError::Application {
-                                    message: format!("Failed to convert failure: {e}"),
-                                    stack_trace: String::new(),
-                                    r#type: String::new(),
-                                    non_retryable: false,
-                                    details: None,
-                                    next_retry_delay: None,
-                                    cause: None,
-                                }
-                            });
-                            Err(ActivityExecutionError::Failed(Box::new(te)))
+                            let te = data_converter.to_error(failure, ctx);
+                            Err(ActivityExecutionError::from_temporal_error(te))
                         }
                         activity_resolution::Status::Cancelled(c) => {
                             let failure = c.failure.unwrap_or_default();
-                            let te = data_converter.to_error(failure, ctx).unwrap_or_else(|e| {
-                                TemporalError::Application {
-                                    message: format!("Failed to convert failure: {e}"),
-                                    stack_trace: String::new(),
-                                    r#type: String::new(),
-                                    non_retryable: false,
-                                    details: None,
-                                    next_retry_delay: None,
-                                    cause: None,
-                                }
-                            });
-                            Err(ActivityExecutionError::Cancelled(Box::new(te)))
+                            let te = data_converter.to_error(failure, ctx);
+                            Err(ActivityExecutionError::from_temporal_error(te))
                         }
                         activity_resolution::Status::Backoff(_) => {
                             panic!("DoBackoff should be handled by LATimerBackoffFut")
@@ -1609,7 +1826,7 @@ pub(crate) struct ChildWfCommon {
     child_seq: u32,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
-    payload_converter: PayloadConverter,
+    data_converter: DataConverter,
 }
 
 /// Child workflow in pending state. Internal type used during the start handshake;
@@ -1638,7 +1855,7 @@ pub struct StartedChildWorkflow<WD: WorkflowDefinition> {
 enum ChildWorkflowFut<F, Output> {
     Running {
         inner: F,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         _phantom: PhantomData<Output>,
     },
     Terminated,
@@ -1658,38 +1875,46 @@ where
         let poll = match this {
             ChildWorkflowFut::Running {
                 inner,
-                payload_converter,
+                data_converter,
                 ..
             } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(result) => Poll::Ready({
                     use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
                     let status = result.status.ok_or_else(|| {
-                        ChildWorkflowExecutionError::Failed(Box::new(Failure {
-                            message: "Child workflow completed without a status".to_string(),
-                            ..Default::default()
-                        }))
+                        ChildWorkflowExecutionError::from_temporal_error(
+                            TemporalError::Application {
+                                message: "Child workflow completed without a status".to_string(),
+                                stack_trace: String::new(),
+                                r#type: String::new(),
+                                non_retryable: false,
+                                details: None,
+                                next_retry_delay: None,
+                                cause: None,
+                            },
+                        )
                     })?;
+                    let ctx = &SerializationContextData::Workflow;
+                    let pc = data_converter.payload_converter();
                     match status {
                         child_workflow_result::Status::Completed(success) => {
-                            let payloads = success.result.into_iter().collect();
-                            let ctx = SerializationContext {
-                                data: &SerializationContextData::Workflow,
-                                converter: payload_converter,
+                            let payload = success.result.unwrap_or_default();
+                            let ser_ctx = SerializationContext {
+                                data: ctx,
+                                converter: pc,
                             };
-                            payload_converter
-                                .from_payloads::<Output>(&ctx, payloads)
+                            pc.from_payload::<Output>(&ser_ctx, payload)
                                 .map_err(ChildWorkflowExecutionError::Serialization)
                         }
                         child_workflow_result::Status::Failed(f) => {
-                            Err(ChildWorkflowExecutionError::Failed(Box::new(
-                                f.failure.unwrap_or_default(),
-                            )))
+                            let failure = f.failure.unwrap_or_default();
+                            let te = data_converter.to_error(failure, ctx);
+                            Err(ChildWorkflowExecutionError::from_temporal_error(te))
                         }
                         child_workflow_result::Status::Cancelled(c) => {
-                            Err(ChildWorkflowExecutionError::Cancelled(Box::new(
-                                c.failure.unwrap_or_default(),
-                            )))
+                            let failure = c.failure.unwrap_or_default();
+                            let te = data_converter.to_error(failure, ctx);
+                            Err(ChildWorkflowExecutionError::from_temporal_error(te))
                         }
                     }
                 }),
@@ -1792,9 +2017,18 @@ where
                         })
                     }
                     ChildWorkflowStartStatus::Cancelled(c) => {
-                        Err(ChildWorkflowExecutionError::Cancelled(Box::new(
-                            c.failure.unwrap_or_default(),
-                        )))
+                        let failure = c.failure.unwrap_or_default();
+                        let te = TemporalError::Cancelled {
+                            message: failure.message,
+                            stack_trace: String::new(),
+                            details: None,
+                            cause: None,
+                        };
+                        Err(ChildWorkflowExecutionError::Cancelled {
+                            message: te.message().unwrap_or_default().to_owned(),
+                            details: None,
+                            source: Box::new(te),
+                        })
                     }
                 }),
             },
@@ -1922,7 +2156,7 @@ where
     ) -> impl CancellableFutureWithReason<Result<WD::Output, ChildWorkflowExecutionError>> {
         ChildWorkflowFut::Running {
             inner: self.common.result_future,
-            payload_converter: self.common.payload_converter,
+            data_converter: self.common.data_converter.clone(),
             _phantom: PhantomData,
         }
     }
@@ -1944,11 +2178,12 @@ where
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<Result<(), ChildWorkflowSignalError>> + 'static {
+        let pc = self.common.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.common.payload_converter,
+            converter: pc,
         };
-        let payloads = match self.common.payload_converter.to_payloads(&ctx, &input) {
+        let payloads = match pc.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalChildFut::eager(e.into());
@@ -1990,15 +2225,12 @@ impl ExternalWorkflowHandle {
         signal: S,
         input: S::Input,
     ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let pc = self.base_ctx.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
-            converter: &self.base_ctx.inner.payload_converter,
+            converter: pc,
         };
-        let payloads = match self
-            .base_ctx
-            .inner
-            .payload_converter
-            .to_payloads(&ctx, &input)
+        let payloads = match pc.to_payloads(&ctx, &input)
         {
             Ok(p) => p,
             Err(e) => {

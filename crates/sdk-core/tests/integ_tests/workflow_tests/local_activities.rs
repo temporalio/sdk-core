@@ -296,7 +296,7 @@ impl LocalActRetryTimerBackoff {
                 },
             )
             .await;
-        assert!(matches!(res, Err(ActivityExecutionError::Failed(_))));
+        assert!(matches!(res, Err(ActivityExecutionError::Failed { .. })));
         Ok(())
     }
 }
@@ -391,10 +391,11 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
             );
             la.cancel();
             let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
+            assert!(
+                matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
+                "got: {}",
+                resolution.unwrap_err()
+            );
             Ok(())
         }
     }
@@ -546,10 +547,11 @@ async fn cancel_after_act_starts(
             // resolving the LA with cancel on replay
             ctx.timer(Duration::from_secs(1)).await;
             let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
+            assert!(
+                matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
+                "got: {:?}",
+                resolution.unwrap_err()
+            );
             Ok(())
         }
     }
@@ -639,7 +641,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 )
                 .await;
             let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed(f) = &err {
+            if let ActivityExecutionError::Failed { source: f, .. } = &err {
                 if let TemporalError::Activity { cause, .. } = f.as_ref() {
                     let expected_tt = TimeoutType::try_from(timeout_type).unwrap();
                     assert_matches!(
@@ -722,20 +724,16 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
                     },
                 )
                 .await;
-            let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed(f) = &err {
-                if let TemporalError::Activity { cause, .. } = f.as_ref() {
-                    assert_matches!(
-                        cause.as_deref(),
-                        Some(TemporalError::Timeout { timeout_type, .. })
-                            if *timeout_type == TimeoutType::ScheduleToClose
-                    );
-                } else {
-                    panic!("expected Activity, got {f:?}");
-                }
-            } else {
-                panic!("expected Failed, got {err:?}");
-            }
+            assert!(
+                matches!(
+                    res,
+                    Err(ActivityExecutionError::TimedOut {
+                        timeout_type: TimeoutType::ScheduleToClose,
+                        ..
+                    })
+                ),
+                "expected timeout error, got {res:?}"
+            );
             Ok(())
         }
     }
@@ -846,8 +844,8 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
                 },
             );
             let (r1, r2) = temporalio_sdk::workflows::join!(r1, r2);
-            assert!(matches!(r1, Err(ActivityExecutionError::Failed(_))));
-            assert!(matches!(r2, Err(ActivityExecutionError::Failed(_))));
+            assert!(matches!(r1, Err(ActivityExecutionError::Failed { .. })));
+            assert!(matches!(r2, Err(ActivityExecutionError::Failed { .. })));
             Ok(())
         }
     }
@@ -1539,7 +1537,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
             if eventually_pass {
                 assert!(la_res.is_ok())
             } else {
-                assert!(matches!(la_res, Err(ActivityExecutionError::Failed(_))))
+                assert!(matches!(la_res, Err(ActivityExecutionError::Failed { .. })))
             }
             Ok(())
         }
@@ -1635,7 +1633,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
                     },
                 )
                 .await;
-            assert!(matches!(la_res, Err(ActivityExecutionError::Failed(_))));
+            assert!(matches!(la_res, Err(ActivityExecutionError::Failed { .. })));
             ctx.timer(Duration::from_secs(1)).await;
             Ok(())
         }
@@ -2003,7 +2001,10 @@ async fn test_schedule_to_start_timeout() {
                 )
                 .await;
             assert!(la_res.is_err());
-            if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
+            if let Err(ActivityExecutionError::Failed {
+                source: ref fail, ..
+            }) = la_res
+            {
                 if let TemporalError::Activity { cause, .. } = fail.as_ref() {
                     assert_matches!(
                         cause.as_deref(),
@@ -2104,7 +2105,10 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
                 .await;
             if is_sched_to_start {
                 assert!(la_res.is_ok());
-            } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
+            } else if let Err(ActivityExecutionError::Failed {
+                source: ref fail, ..
+            }) = la_res
+            {
                 if let TemporalError::Activity { cause, .. } = fail.as_ref() {
                     assert_matches!(
                         cause.as_deref(),
@@ -2182,7 +2186,10 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
                 .await;
             if la_completes {
                 assert!(la_res.is_ok(), "Result should be ok was {la_res:?}");
-            } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
+            } else if let Err(ActivityExecutionError::Failed {
+                source: ref fail, ..
+            }) = la_res
+            {
                 if let TemporalError::Activity { cause, .. } = fail.as_ref() {
                     assert_matches!(
                         cause.as_deref(),
@@ -3308,11 +3315,12 @@ async fn cancel_after_act_starts_canned(
             la.cancel();
             ctx.timer(Duration::from_secs(1)).await;
             let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
-            if let Err(ActivityExecutionError::Cancelled(rfail)) = resolution {
+            assert!(
+                matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
+                "got: {}",
+                resolution.unwrap_err()
+            );
+            if let Err(ActivityExecutionError::Cancelled { source: rfail, .. }) = resolution {
                 if let TemporalError::Activity { cause, .. } = rfail.as_ref() {
                     assert_matches!(
                         cause.as_ref().unwrap().as_ref(),

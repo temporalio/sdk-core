@@ -1197,7 +1197,10 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                     },
                 )
                 .await;
-            assert!(res.is_err_and(|e| e.is_timeout()));
+            assert!(res.is_err_and(|e| matches!(
+                e,
+                temporalio_sdk::ActivityExecutionError::TimedOut { .. }
+            )));
             Ok(())
         }
     }

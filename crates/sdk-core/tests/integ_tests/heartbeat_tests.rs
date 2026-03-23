@@ -55,7 +55,7 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
             )
             .await;
         let err = res.unwrap_err();
-        if let ActivityExecutionError::Failed(f) = &err {
+        if let ActivityExecutionError::TimedOut { source: f, .. } = &err {
             if let TemporalError::Activity { cause, .. } = f.as_ref() {
                 assert_matches!(
                     cause.as_deref(),

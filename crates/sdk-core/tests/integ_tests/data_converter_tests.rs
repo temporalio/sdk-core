@@ -282,13 +282,14 @@ async fn failing_workflow_produces_failure_with_message() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    let tf = res
+    let message = res
         .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalError");
+        .expect("Failed variant should downcast to TemporalError")
+        .message()
+        .unwrap();
     assert!(
-        tf.message().contains("intentional failure"),
-        "failure message should contain the workflow error, got: {}",
-        tf.message(),
+        message.contains("intentional failure"),
+        "failure message should contain the workflow error, got: {message}",
     );
 }
 
@@ -353,13 +354,14 @@ async fn activity_failure_propagates_through_workflow() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    let tf = res
+    let message = res
         .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalError");
+        .expect("Failed variant should downcast to TemporalError")
+        .message()
+        .unwrap();
     assert!(
-        tf.message().contains("activity failed"),
-        "workflow failure should mention the activity error, got: {}",
-        tf.message(),
+        message.contains("activity failed"),
+        "workflow failure should mention the activity error, got: {message}",
     );
 }
 
@@ -494,40 +496,42 @@ async fn codec_encodes_and_decodes_payloads() {
     );
 }
 
+/// Apply `f` to every failure in the cause chain.
+fn walk_failure_chain(
+    failure: &mut temporalio_common::protos::temporal::api::failure::v1::Failure,
+    f: fn(&mut temporalio_common::protos::temporal::api::failure::v1::Failure),
+) {
+    let mut curr = Some(failure);
+    while let Some(node) = curr {
+        f(node);
+        curr = node.cause.as_deref_mut();
+    }
+}
+
+/// Custom failure converter that wraps the default, uppercasing outgoing
+/// messages and lowercasing incoming ones.
 struct UpperCaseFailureConverter;
+
 impl temporalio_common::data_converters::FailureConverter for UpperCaseFailureConverter {
     fn to_failure(
         &self,
         error: Box<dyn std::error::Error + Send + Sync>,
-        _payload_converter: &PayloadConverter,
-        _context: &SerializationContextData,
-    ) -> Result<
-        temporalio_common::protos::temporal::api::failure::v1::Failure,
-        PayloadConversionError,
-    > {
-        use temporalio_common::protos::temporal::api::failure::v1::{
-            ApplicationFailureInfo, failure::FailureInfo,
-        };
-        Ok(
-            temporalio_common::protos::temporal::api::failure::v1::Failure {
-                message: error.to_string().to_uppercase(),
-                failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                    ApplicationFailureInfo::default(),
-                )),
-                ..Default::default()
-            },
-        )
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> temporalio_common::protos::temporal::api::failure::v1::Failure {
+        let mut failure = DefaultFailureConverter.to_failure(error, payload_converter, context);
+        walk_failure_chain(&mut failure, |f| f.message = f.message.to_uppercase());
+        failure
     }
 
     fn to_error(
         &self,
-        failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
-        _payload_converter: &PayloadConverter,
-        _context: &SerializationContextData,
-    ) -> Result<temporalio_common::data_converters::TemporalError, PayloadConversionError> {
-        Ok(temporalio_common::data_converters::TemporalError::Other(
-            failure.message.to_lowercase().into(),
-        ))
+        mut failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> temporalio_common::data_converters::TemporalError {
+        walk_failure_chain(&mut failure, |f| f.message = f.message.to_lowercase());
+        DefaultFailureConverter.to_error(failure, payload_converter, context)
     }
 }
 
@@ -928,8 +932,7 @@ impl ActivityFailConverterWorkflow {
             .await
             .unwrap_err();
 
-        // Return the error's Display output so we can assert on it from the client.
-        Ok(format!("activity_error:{}", err))
+        Ok(err.to_string())
     }
 }
 
@@ -968,35 +971,7 @@ async fn activity_failure_converted_through_failure_converter() {
     worker.run_until_done().await.unwrap();
 
     let result = handle.get_result(Default::default()).await.unwrap();
-
-    // UpperCaseFailureConverter.to_error() lowercases the failure message.
-    // If the converter is NOT wired up, the workflow sees a raw Failure proto
-    // whose Display is something like "Activity failed: activity went boom".
-    // If it IS wired up, to_error() lowercases the message (which was uppercased
-    // by to_failure on the send side), so we should see all-lowercase.
-    assert!(
-        result.contains("activity_error:"),
-        "Result should contain the activity error prefix, got: {}",
-        result,
-    );
-
-    // The UpperCaseFailureConverter.to_error returns `failure.message.to_lowercase()`.
-    // On the send side, the activity error "activity went boom" was uppercased to
-    // "ACTIVITY WENT BOOM". On the receive side, to_error lowercases back to
-    // "activity went boom". But crucially, the ActivityExecutionError currently
-    // surfaces the raw Failure proto (not via the converter), so the workflow
-    // would see the uppercase version or the raw proto Display — not the
-    // lowercased converter output.
-    //
-    // Once the receive path is wired up, the error will go through to_error()
-    // which lowercases, so the workflow will see a lowercased string.
-    let error_part = result.strip_prefix("activity_error:").unwrap();
-    assert!(
-        !error_part.contains("Activity failed:"),
-        "Activity error should go through the failure converter (not be a raw Failure proto), \
-         got: {}",
-        error_part,
-    );
+    assert_eq!(result, "Activity failed: activity went boom");
 }
 
 // ---------------------------------------------------------------------------
@@ -1076,8 +1051,8 @@ impl ActivityCodecDecodeWorkflow {
         // converter + codec are wired up on the receive path, the error will be
         // a TemporalError with decoded detail payloads.
         let err_str = format!("{}", err);
-        assert_matches!(err, temporalio_sdk::ActivityExecutionError::Failed(_));
-        if let temporalio_sdk::ActivityExecutionError::Failed(e) = err
+        assert_matches!(err, temporalio_sdk::ActivityExecutionError::Failed { .. });
+        if let temporalio_sdk::ActivityExecutionError::Failed { source: e, .. } = err
             && let TemporalError::Activity {
                 cause: Some(tf), ..
             } = e.as_ref()

@@ -283,24 +283,13 @@ impl WorkflowFuture {
                             response: Some(payload),
                         }),
                         // TODO [rust-sdk-branch]: Return list of known queries in error
-                        None => query_result::Variant::Failed(
-                            self.data_converter
-                                .to_failure(
-                                    format!("No query handler for '{}'", query_type).into(),
-                                    &SerializationContextData::Workflow,
-                                )
-                                .unwrap_or_else(|e| Failure {
-                                    message: format!("No query handler for '{}': {e}", query_type),
-                                    ..Default::default()
-                                }),
-                        ),
+                        None => query_result::Variant::Failed(self.data_converter.to_failure(
+                            format!("No query handler for '{}'", query_type).into(),
+                            &SerializationContextData::Workflow,
+                        )),
                         Some(Err(e)) => query_result::Variant::Failed(
                             self.data_converter
-                                .to_failure(Box::new(e), &SerializationContextData::Workflow)
-                                .unwrap_or_else(|conv_err| Failure {
-                                    message: format!("Query error: {conv_err}"),
-                                    ..Default::default()
-                                }),
+                                .to_failure(Box::new(e), &SerializationContextData::Workflow),
                         ),
                     };
 
@@ -395,11 +384,7 @@ impl WorkflowFuture {
                         Some(Err(e)) => {
                             let failure = self
                                 .data_converter
-                                .to_failure(Box::new(e), &SerializationContextData::Workflow)
-                                .unwrap_or_else(|conv_err| Failure {
-                                    message: format!("Update validation error: {conv_err}"),
-                                    ..Default::default()
-                                });
+                                .to_failure(Box::new(e), &SerializationContextData::Workflow);
                             outgoing_cmds.push(
                                 update_response(
                                     protocol_instance_id.clone(),
@@ -413,17 +398,10 @@ impl WorkflowFuture {
                         }
                     }
                     if not_found {
-                        let failure = self
-                            .data_converter
-                            .to_failure(
-                                format!("No update handler registered for update name {}", name)
-                                    .into(),
-                                &SerializationContextData::Workflow,
-                            )
-                            .unwrap_or_else(|e| Failure {
-                                message: format!("No update handler for '{}': {e}", name),
-                                ..Default::default()
-                            });
+                        let failure = self.data_converter.to_failure(
+                            format!("No update handler registered for update name {}", name).into(),
+                            &SerializationContextData::Workflow,
+                        );
                         outgoing_cmds.push(
                             update_response(
                                 protocol_instance_id,
@@ -609,12 +587,10 @@ impl WorkflowFuture {
                                     match v {
                                         Ok(v) => update_response::Response::Completed(v),
                                         Err(e) => update_response::Response::Rejected(
-                                            self.data_converter
-                                                .to_failure(
-                                                    e.into(),
-                                                    &SerializationContextData::Workflow,
-                                                )
-                                                .expect("cannot fail to convert error"),
+                                            self.data_converter.to_failure(
+                                                Box::new(e),
+                                                &SerializationContextData::Workflow,
+                                            ),
                                         ),
                                     },
                                 )
@@ -798,11 +774,7 @@ impl WorkflowFuture {
                     WorkflowTermination::Failed(e) => {
                         let failure = self
                             .data_converter
-                            .to_failure(anyhow_to_box(e), &SerializationContextData::Workflow)
-                            .unwrap_or_else(|conv_err| Failure {
-                                message: format!("Failed to convert error: {conv_err}"),
-                                ..Default::default()
-                            });
+                            .to_failure(anyhow_to_box(e), &SerializationContextData::Workflow);
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
                             failure: Some(failure),
                         })

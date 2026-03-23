@@ -272,8 +272,7 @@ where
                     .client
                     .data_converter()
                     .decode_failure(f, &SerializationContextData::Workflow)
-                    .await
-                    .map_err(|e| WorkflowGetResultError::Other(Box::new(e)))?;
+                    .await;
                 Err(WorkflowGetResultError::Failed(err))
             }
             WorkflowExecutionResult::Cancelled { details } => {
@@ -817,8 +816,7 @@ where
                     .client
                     .data_converter()
                     .decode_failure(failure, &SerializationContextData::Workflow)
-                    .await
-                    .map_err(|e| WorkflowUpdateError::Other(Box::new(e)))?;
+                    .await;
                 Err(WorkflowUpdateError::Failed(err))
             }
             None => Err(WorkflowUpdateError::Other(

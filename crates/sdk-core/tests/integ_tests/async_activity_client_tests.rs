@@ -138,11 +138,14 @@ async fn async_activity_completions(
                 }
                 Outcome::Failure => {
                     let err = activity_result.expect_err("expected failure");
-                    if let ActivityExecutionError::Failed(failure) = err {
+                    if let ActivityExecutionError::Failed {
+                        source: failure, ..
+                    } = err
+                    {
                         // The failure we sent is wrapped in Activity { cause: Application }
                         if let TemporalError::Activity { cause, .. } = failure.as_ref() {
                             let cause = cause.as_ref().expect("cause should be present");
-                            assert_eq!(cause.message(), "async failure reason");
+                            assert_eq!(cause.message().unwrap(), "async failure reason");
                         } else {
                             panic!("expected Activity, got {failure:?}");
                         }
@@ -153,7 +156,7 @@ async fn async_activity_completions(
                 Outcome::Cancellation => {
                     let err = activity_result.expect_err("expected cancellation");
                     assert!(
-                        matches!(err, ActivityExecutionError::Cancelled(_)),
+                        matches!(err, ActivityExecutionError::Cancelled { .. }),
                         "expected Cancelled, got {err:?}"
                     );
                 }
