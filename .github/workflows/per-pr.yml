@@ -5,7 +5,6 @@ on: # rebuild any PRs and main branch changes
   push:
     branches:
       - master
-      - eamsden/rust-toolchain-ci
 
 permissions:
   contents: read
@@ -123,7 +122,7 @@ jobs:
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/eamsden/rust-toolchain-ci' }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
           key: msrv
       - run: cargo install cargo-msrv
       - run: cargo msrv verify
