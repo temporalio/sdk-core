@@ -123,7 +123,8 @@ jobs:
       - run: rustup component add rustfmt clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          save-if: ${{ github.ref == 'refs/heads/master' }}
+          save-if: ${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/eamsden/rust-toolchain-ci' }}
+          key: msrv
       - run: cargo install cargo-msrv
       - run: cargo msrv verify
         working-directory: ./crates/sdk-core
