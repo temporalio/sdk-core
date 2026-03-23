@@ -560,7 +560,7 @@ async fn test_typed_signal_query_update() {
     worker.register_workflow::<InteractionWorkflow>();
 
     let task_queue = starter.get_task_queue().to_owned();
-    let wfid = format!("{}_untyped", starter.get_task_queue());
+    let wfid = format!("{}_typed", starter.get_task_queue());
     worker
         .submit_workflow(
             InteractionWorkflow::run,
