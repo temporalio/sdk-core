@@ -106,5 +106,6 @@ workspace = true
 
 [dev-dependencies]
 futures-util = { version = "0.3", default-features = false }
+rstest = "0.26"
 tempfile = "3.21"
 tokio = { version = "1.47", features = ["macros", "rt"] }
