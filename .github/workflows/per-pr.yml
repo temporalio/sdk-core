@@ -5,6 +5,7 @@ on: # rebuild any PRs and main branch changes
   push:
     branches:
       - master
+      - eamsden/rust-toolchain-ci
 
 permissions:
   contents: read
@@ -107,6 +108,31 @@ jobs:
         with:
           name: state-machine-coverage
           path: machine_coverage/
+
+  msrv:
+    name: "Verify MSRV"
+    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 15 || 10 }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.92.0
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: rustup component add rustfmt clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - run: cargo install cargo-msrv
+      - run: cargo msrv verify
+        working-directory: ./crates/sdk-core
 
   cgroup-tests:
     name: cgroup tests
