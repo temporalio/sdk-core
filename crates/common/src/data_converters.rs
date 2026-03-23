@@ -158,7 +158,9 @@ impl PayloadConverter {
     pub fn serde_json() -> Self {
         Self::Serde(Arc::new(SerdeJsonPayloadConverter))
     }
-    // TODO [rust-sdk-branch]: Proto binary, other standard built-ins
+    // Proto binary and JSON protobuf encoding are handled via wrapper types
+    // (`ProstSerializable<T>` and `ProstJsonSerializable<T>`) through the `UseWrappers`
+    // variant, not through dedicated converter variants.
 }
 
 impl Default for PayloadConverter {
@@ -618,27 +620,36 @@ pub trait ErasedSerdePayloadConverter: Send + Sync {
 
 /// Wrapper for protobuf messages that implements [`TemporalSerializable`]/[`TemporalDeserializable`]
 /// using `binary/protobuf` encoding.
+///
+/// Use this when you want compact binary protobuf wire format for your proto types.
+///
+/// # Example
+/// ```ignore
+/// let input = ProstSerializable(my_proto_message);
+/// ctx.execute_activity::<my_activities::DoSomething>(input).await?;
+///
+/// let result: ProstSerializable<MyProtoType> = activity_input;
+/// let inner: MyProtoType = result.0;
+/// ```
 pub struct ProstSerializable<T: prost::Message>(pub T);
 impl<T> TemporalSerializable for ProstSerializable<T>
 where
-    T: prost::Message + Default + 'static,
+    T: prost::Message + prost::Name + Default + 'static,
 {
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
-        let as_proto = prost::Message::encode_to_vec(&self.0);
+        let mut metadata = HashMap::new();
+        metadata.insert("encoding".to_string(), b"binary/protobuf".to_vec());
+        metadata.insert("messageType".to_string(), T::full_name().into_bytes());
         Ok(Payload {
-            metadata: {
-                let mut hm = HashMap::new();
-                hm.insert("encoding".to_string(), b"binary/protobuf".to_vec());
-                hm
-            },
-            data: as_proto,
+            metadata,
+            data: prost::Message::encode_to_vec(&self.0),
             external_payloads: vec![],
         })
     }
 }
 impl<T> TemporalDeserializable for ProstSerializable<T>
 where
-    T: prost::Message + Default + 'static,
+    T: prost::Message + prost::Name + Default + 'static,
 {
     fn from_payload(
         _: &SerializationContext<'_>,
@@ -654,6 +665,79 @@ where
         T::decode(p.data.as_slice())
             .map(ProstSerializable)
             .map_err(|e| PayloadConversionError::EncodingError(Box::new(e)))
+    }
+}
+impl<T: prost::Message> From<T> for ProstSerializable<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+impl<T: prost::Message> ProstSerializable<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+}
+
+/// Wrapper for protobuf messages that implements [`TemporalSerializable`]/[`TemporalDeserializable`]
+/// using `json/protobuf` encoding via pbjson-generated serde impls.
+///
+/// Use this when you want human-readable JSON protobuf format (proto3 JSON mapping with
+/// camelCase field names and string enums).
+///
+/// # Example
+/// ```ignore
+/// let input = ProstJsonSerializable(my_proto_message);
+/// ctx.execute_activity::<my_activities::DoSomething>(input).await?;
+///
+/// let result: ProstJsonSerializable<MyProtoType> = activity_input;
+/// let inner: MyProtoType = result.0;
+/// ```
+pub struct ProstJsonSerializable<T: prost::Message>(pub T);
+impl<T> TemporalSerializable for ProstJsonSerializable<T>
+where
+    T: prost::Message + prost::Name + serde::Serialize + Default + 'static,
+{
+    fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
+        let json_bytes = serde_json::to_vec(&self.0)
+            .map_err(|e| PayloadConversionError::EncodingError(e.into()))?;
+        let mut metadata = HashMap::new();
+        metadata.insert("encoding".to_string(), b"json/protobuf".to_vec());
+        metadata.insert("messageType".to_string(), T::full_name().into_bytes());
+        Ok(Payload {
+            metadata,
+            data: json_bytes,
+            external_payloads: vec![],
+        })
+    }
+}
+impl<T> TemporalDeserializable for ProstJsonSerializable<T>
+where
+    T: prost::Message + prost::Name + serde::de::DeserializeOwned + Default + 'static,
+{
+    fn from_payload(
+        _: &SerializationContext<'_>,
+        p: Payload,
+    ) -> Result<Self, PayloadConversionError>
+    where
+        Self: Sized,
+    {
+        let encoding = p.metadata.get("encoding").map(|v| v.as_slice());
+        if encoding != Some(b"json/protobuf".as_slice()) {
+            return Err(PayloadConversionError::WrongEncoding);
+        }
+        serde_json::from_slice(&p.data)
+            .map(ProstJsonSerializable)
+            .map_err(|e| PayloadConversionError::EncodingError(e.into()))
+    }
+}
+impl<T: prost::Message> From<T> for ProstJsonSerializable<T> {
+    fn from(value: T) -> Self {
+        Self(value)
+    }
+}
+impl<T: prost::Message> ProstJsonSerializable<T> {
+    pub fn into_inner(self) -> T {
+        self.0
     }
 }
 
@@ -865,5 +949,135 @@ mod tests {
     fn multi_args_from_tuple() {
         let args: MultiArgs2<String, i32> = ("hello".to_string(), 42i32).into();
         assert_eq!(args, MultiArgs2("hello".to_string(), 42));
+    }
+
+    use crate::protos::temporal::api::common::v1::WorkflowExecution;
+    use rstest::rstest;
+
+    const WF_EXEC_TYPE_NAME: &[u8] = b"temporal.api.common.v1.WorkflowExecution";
+
+    fn test_wf_exec() -> WorkflowExecution {
+        WorkflowExecution {
+            workflow_id: "wf-123".into(),
+            run_id: "run-456".into(),
+        }
+    }
+
+    /// Serialize a WorkflowExecution, returning the payload and expected encoding.
+    fn serialize_as(
+        format: &str,
+        wf: &WorkflowExecution,
+        ctx: &SerializationContext<'_>,
+    ) -> Payload {
+        match format {
+            "binary" => ProstSerializable(wf.clone()).to_payload(ctx).unwrap(),
+            "json" => ProstJsonSerializable(wf.clone()).to_payload(ctx).unwrap(),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Deserialize a payload back into a WorkflowExecution.
+    fn deserialize_as(
+        format: &str,
+        payload: Payload,
+        ctx: &SerializationContext<'_>,
+    ) -> Result<WorkflowExecution, PayloadConversionError> {
+        match format {
+            "binary" => {
+                ProstSerializable::from_payload(ctx, payload).map(|w: ProstSerializable<_>| w.0)
+            }
+            "json" => ProstJsonSerializable::from_payload(ctx, payload)
+                .map(|w: ProstJsonSerializable<_>| w.0),
+            _ => unreachable!(),
+        }
+    }
+
+    #[rstest]
+    #[case::binary("binary", b"binary/protobuf")]
+    #[case::json("json", b"json/protobuf")]
+    fn prost_round_trip(#[case] format: &str, #[case] expected_encoding: &[u8]) {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+        let wf = test_wf_exec();
+
+        let payload = serialize_as(format, &wf, &ctx);
+        assert_eq!(
+            payload.metadata.get("encoding").unwrap().as_slice(),
+            expected_encoding,
+        );
+        assert_eq!(
+            payload.metadata.get("messageType").unwrap().as_slice(),
+            WF_EXEC_TYPE_NAME,
+        );
+
+        let result = deserialize_as(format, payload, &ctx).unwrap();
+        assert_eq!(result, wf);
+    }
+
+    #[test]
+    fn prost_json_produces_proto3_json_format() {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let payload = ProstJsonSerializable(test_wf_exec())
+            .to_payload(&ctx)
+            .unwrap();
+        let json_str = std::str::from_utf8(&payload.data).unwrap();
+        assert!(
+            json_str.contains("workflowId"),
+            "expected camelCase field names in proto3 JSON, got: {json_str}"
+        );
+        assert!(json_str.contains("runId"));
+    }
+
+    #[rstest]
+    #[case::binary_rejects_json("binary", "json")]
+    #[case::json_rejects_binary("json", "binary")]
+    fn prost_rejects_wrong_encoding(#[case] decode_format: &str, #[case] encode_format: &str) {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let payload = serialize_as(encode_format, &test_wf_exec(), &ctx);
+        let result = deserialize_as(decode_format, payload, &ctx);
+        assert!(matches!(result, Err(PayloadConversionError::WrongEncoding)));
+    }
+
+    #[rstest]
+    #[case::binary("binary", b"binary/protobuf")]
+    #[case::json("json", b"json/protobuf")]
+    fn prost_through_composite_converter(#[case] format: &str, #[case] expected_encoding: &[u8]) {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+        let wf = test_wf_exec();
+
+        let payloads = match format {
+            "binary" => converter
+                .to_payloads(&ctx, &ProstSerializable(wf.clone()))
+                .unwrap(),
+            "json" => converter
+                .to_payloads(&ctx, &ProstJsonSerializable(wf.clone()))
+                .unwrap(),
+            _ => unreachable!(),
+        };
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(
+            payloads[0].metadata.get("encoding").unwrap().as_slice(),
+            expected_encoding,
+        );
+
+        let result = deserialize_as(format, payloads.into_iter().next().unwrap(), &ctx).unwrap();
+        assert_eq!(result, wf);
     }
 }
