@@ -584,15 +584,6 @@ pub trait ErasedSerdePayloadConverter: Send + Sync {
 /// using `binary/protobuf` encoding.
 ///
 /// Use this when you want compact binary protobuf wire format for your proto types.
-///
-/// # Example
-/// ```ignore
-/// let input = ProstSerializable(my_proto_message);
-/// ctx.execute_activity::<my_activities::DoSomething>(input).await?;
-///
-/// let result: ProstSerializable<MyProtoType> = activity_input;
-/// let inner: MyProtoType = result.0;
-/// ```
 pub struct ProstSerializable<T: prost::Message>(pub T);
 impl<T> TemporalSerializable for ProstSerializable<T>
 where
@@ -648,15 +639,6 @@ impl<T: prost::Message> ProstSerializable<T> {
 ///
 /// Use this when you want human-readable JSON protobuf format (proto3 JSON mapping with
 /// camelCase field names and string enums).
-///
-/// # Example
-/// ```ignore
-/// let input = ProstJsonSerializable(my_proto_message);
-/// ctx.execute_activity::<my_activities::DoSomething>(input).await?;
-///
-/// let result: ProstJsonSerializable<MyProtoType> = activity_input;
-/// let inner: MyProtoType = result.0;
-/// ```
 pub struct ProstJsonSerializable<T: prost::Message>(pub T);
 impl<T> TemporalSerializable for ProstJsonSerializable<T>
 where
