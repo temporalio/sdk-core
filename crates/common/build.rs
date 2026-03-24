@@ -60,8 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
     let mut builder = tonic_prost_build::configure()
-        // Enable server build to preserve extension metadata in method options
-        .build_server(true)
+        .build_server(false)
         .build_client(true)
         // Make conversions easier for some types
         .type_attribute(
