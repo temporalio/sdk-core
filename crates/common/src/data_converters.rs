@@ -158,9 +158,6 @@ impl PayloadConverter {
     pub fn serde_json() -> Self {
         Self::Serde(Arc::new(SerdeJsonPayloadConverter))
     }
-    // Proto binary and JSON protobuf encoding are handled via wrapper types
-    // (`ProstSerializable<T>` and `ProstJsonSerializable<T>`) through the `UseWrappers`
-    // variant, not through dedicated converter variants.
 }
 
 impl Default for PayloadConverter {
@@ -590,6 +587,7 @@ where
     T: prost::Message + prost::Name + Default + 'static,
 {
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
+        let as_proto = prost::Message::encode_to_vec(&self.0);
         Ok(Payload {
             metadata: {
                 let mut hm = HashMap::new();
@@ -597,7 +595,7 @@ where
                 hm.insert("messageType".to_string(), T::full_name().into_bytes());
                 hm
             },
-            data: prost::Message::encode_to_vec(&self.0),
+            data: as_proto,
             external_payloads: vec![],
         })
     }
@@ -645,7 +643,7 @@ where
     T: prost::Message + prost::Name + serde::Serialize + Default + 'static,
 {
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
-        let json_bytes = serde_json::to_vec(&self.0)
+        let as_json = serde_json::to_vec(&self.0)
             .map_err(|e| PayloadConversionError::EncodingError(e.into()))?;
         Ok(Payload {
             metadata: {
@@ -654,7 +652,7 @@ where
                 hm.insert("messageType".to_string(), T::full_name().into_bytes());
                 hm
             },
-            data: json_bytes,
+            data: as_json,
             external_payloads: vec![],
         })
     }
