@@ -599,11 +599,13 @@ where
     T: prost::Message + prost::Name + Default + 'static,
 {
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
-        let mut metadata = HashMap::new();
-        metadata.insert("encoding".to_string(), b"binary/protobuf".to_vec());
-        metadata.insert("messageType".to_string(), T::full_name().into_bytes());
         Ok(Payload {
-            metadata,
+            metadata: {
+                let mut hm = HashMap::new();
+                hm.insert("encoding".to_string(), b"binary/protobuf".to_vec());
+                hm.insert("messageType".to_string(), T::full_name().into_bytes());
+                hm
+            },
             data: prost::Message::encode_to_vec(&self.0),
             external_payloads: vec![],
         })
@@ -635,6 +637,7 @@ impl<T: prost::Message> From<T> for ProstSerializable<T> {
     }
 }
 impl<T: prost::Message> ProstSerializable<T> {
+    /// Consumes the wrapper, returning the inner protobuf message.
     pub fn into_inner(self) -> T {
         self.0
     }
@@ -662,11 +665,13 @@ where
     fn to_payload(&self, _: &SerializationContext<'_>) -> Result<Payload, PayloadConversionError> {
         let json_bytes = serde_json::to_vec(&self.0)
             .map_err(|e| PayloadConversionError::EncodingError(e.into()))?;
-        let mut metadata = HashMap::new();
-        metadata.insert("encoding".to_string(), b"json/protobuf".to_vec());
-        metadata.insert("messageType".to_string(), T::full_name().into_bytes());
         Ok(Payload {
-            metadata,
+            metadata: {
+                let mut hm = HashMap::new();
+                hm.insert("encoding".to_string(), b"json/protobuf".to_vec());
+                hm.insert("messageType".to_string(), T::full_name().into_bytes());
+                hm
+            },
             data: json_bytes,
             external_payloads: vec![],
         })
@@ -698,6 +703,7 @@ impl<T: prost::Message> From<T> for ProstJsonSerializable<T> {
     }
 }
 impl<T: prost::Message> ProstJsonSerializable<T> {
+    /// Consumes the wrapper, returning the inner protobuf message.
     pub fn into_inner(self) -> T {
         self.0
     }
@@ -815,6 +821,9 @@ impl_multi_args!(MultiArgs6; 6; 0: A, 1: B, 2: C, 3: D, 4: E, 5: F);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protos::temporal::api::common::v1::WorkflowExecution;
+    use prost::Name;
+    use rstest::rstest;
 
     #[test]
     fn test_empty_payloads_as_unit_type() {
@@ -852,10 +861,20 @@ mod tests {
         assert_eq!(args, MultiArgs2("hello".to_string(), 42));
     }
 
-    use crate::protos::temporal::api::common::v1::WorkflowExecution;
-    use rstest::rstest;
+    #[derive(Clone, Copy)]
+    enum EncodingFormat {
+        Binary,
+        Json,
+    }
 
-    const WF_EXEC_TYPE_NAME: &[u8] = b"temporal.api.common.v1.WorkflowExecution";
+    impl EncodingFormat {
+        fn expected_encoding(self) -> &'static [u8] {
+            match self {
+                Self::Binary => b"binary/protobuf",
+                Self::Json => b"json/protobuf",
+            }
+        }
+    }
 
     fn test_wf_exec() -> WorkflowExecution {
         WorkflowExecution {
@@ -864,39 +883,35 @@ mod tests {
         }
     }
 
-    /// Serialize a WorkflowExecution, returning the payload and expected encoding.
     fn serialize_as(
-        format: &str,
+        format: EncodingFormat,
         wf: &WorkflowExecution,
         ctx: &SerializationContext<'_>,
     ) -> Payload {
         match format {
-            "binary" => ProstSerializable(wf.clone()).to_payload(ctx).unwrap(),
-            "json" => ProstJsonSerializable(wf.clone()).to_payload(ctx).unwrap(),
-            _ => unreachable!(),
+            EncodingFormat::Binary => ProstSerializable(wf.clone()).to_payload(ctx).unwrap(),
+            EncodingFormat::Json => ProstJsonSerializable(wf.clone()).to_payload(ctx).unwrap(),
         }
     }
 
-    /// Deserialize a payload back into a WorkflowExecution.
     fn deserialize_as(
-        format: &str,
+        format: EncodingFormat,
         payload: Payload,
         ctx: &SerializationContext<'_>,
     ) -> Result<WorkflowExecution, PayloadConversionError> {
         match format {
-            "binary" => {
+            EncodingFormat::Binary => {
                 ProstSerializable::from_payload(ctx, payload).map(|w: ProstSerializable<_>| w.0)
             }
-            "json" => ProstJsonSerializable::from_payload(ctx, payload)
+            EncodingFormat::Json => ProstJsonSerializable::from_payload(ctx, payload)
                 .map(|w: ProstJsonSerializable<_>| w.0),
-            _ => unreachable!(),
         }
     }
 
     #[rstest]
-    #[case::binary("binary", b"binary/protobuf")]
-    #[case::json("json", b"json/protobuf")]
-    fn prost_round_trip(#[case] format: &str, #[case] expected_encoding: &[u8]) {
+    #[case::binary(EncodingFormat::Binary)]
+    #[case::json(EncodingFormat::Json)]
+    fn prost_round_trip(#[case] format: EncodingFormat) {
         let converter = PayloadConverter::default();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
@@ -907,11 +922,11 @@ mod tests {
         let payload = serialize_as(format, &wf, &ctx);
         assert_eq!(
             payload.metadata.get("encoding").unwrap().as_slice(),
-            expected_encoding,
+            format.expected_encoding(),
         );
         assert_eq!(
             payload.metadata.get("messageType").unwrap().as_slice(),
-            WF_EXEC_TYPE_NAME,
+            WorkflowExecution::full_name().as_bytes(),
         );
 
         let result = deserialize_as(format, payload, &ctx).unwrap();
@@ -938,9 +953,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case::binary_rejects_json("binary", "json")]
-    #[case::json_rejects_binary("json", "binary")]
-    fn prost_rejects_wrong_encoding(#[case] decode_format: &str, #[case] encode_format: &str) {
+    #[case::binary_rejects_json(EncodingFormat::Binary, EncodingFormat::Json)]
+    #[case::json_rejects_binary(EncodingFormat::Json, EncodingFormat::Binary)]
+    fn prost_rejects_wrong_encoding(
+        #[case] decode_format: EncodingFormat,
+        #[case] encode_format: EncodingFormat,
+    ) {
         let converter = PayloadConverter::default();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
@@ -953,9 +971,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::binary("binary", b"binary/protobuf")]
-    #[case::json("json", b"json/protobuf")]
-    fn prost_through_composite_converter(#[case] format: &str, #[case] expected_encoding: &[u8]) {
+    #[case::binary(EncodingFormat::Binary)]
+    #[case::json(EncodingFormat::Json)]
+    fn prost_through_composite_converter(#[case] format: EncodingFormat) {
         let converter = PayloadConverter::default();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
@@ -964,18 +982,17 @@ mod tests {
         let wf = test_wf_exec();
 
         let payloads = match format {
-            "binary" => converter
+            EncodingFormat::Binary => converter
                 .to_payloads(&ctx, &ProstSerializable(wf.clone()))
                 .unwrap(),
-            "json" => converter
+            EncodingFormat::Json => converter
                 .to_payloads(&ctx, &ProstJsonSerializable(wf.clone()))
                 .unwrap(),
-            _ => unreachable!(),
         };
         assert_eq!(payloads.len(), 1);
         assert_eq!(
             payloads[0].metadata.get("encoding").unwrap().as_slice(),
-            expected_encoding,
+            format.expected_encoding(),
         );
 
         let result = deserialize_as(format, payloads.into_iter().next().unwrap(), &ctx).unwrap();
