@@ -1,8 +1,10 @@
 use prost::Message;
+use prost_reflect::ReflectMessage;
 use prost_types::{
     DescriptorProto, FieldDescriptorProto, FileDescriptorSet, MessageOptions,
     field_descriptor_proto::{Label, Type},
 };
+use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -58,9 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
     let mut builder = tonic_prost_build::configure()
-        // We don't actually want to build the grpc definitions - we don't need them (for now).
-        // Just build the message structs.
-        .build_server(false)
+        // Enable server build to preserve extension metadata in method options
+        .build_server(true)
         .build_client(true)
         // Make conversions easier for some types
         .type_attribute(
@@ -177,6 +178,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
     generate_payload_visitor(&out, &descriptor_file)?;
+    generate_request_headers(&out, &descriptor_file)?;
     // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization
     let descriptors = std::fs::read(&descriptor_file)?;
     pbjson_build::Builder::new()
@@ -854,4 +856,344 @@ fn is_map_entry(options: &Option<MessageOptions>) -> bool {
     options
         .as_ref()
         .is_some_and(|o| o.map_entry.unwrap_or(false))
+}
+
+/// Generate request header extraction implementations by parsing proto descriptors.
+fn generate_request_headers(
+    out_dir: &Path,
+    descriptor_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut descriptor_bytes = Vec::new();
+    File::open(descriptor_path)?.read_to_end(&mut descriptor_bytes)?;
+
+    // Use prost_reflect to parse descriptors with extension support
+    let descriptor_set = prost_reflect::DescriptorPool::decode(descriptor_bytes.as_slice())
+        .map_err(|e| format!("Failed to decode descriptor pool: {}", e))?;
+
+    let mut generator = RequestHeaderGenerator::new();
+    generator.process_descriptors_reflect(&descriptor_set)?;
+
+    let output_path = out_dir.join("request_header_impl.rs");
+    let mut file = File::create(&output_path)?;
+    file.write_all(generator.generate().as_bytes())?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct MethodHeaderInfo {
+    request_type: String,
+    request_rust_type: String,
+    headers: Vec<HeaderInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderInfo {
+    header_name: String,
+    value_template: String,
+    field_paths: Vec<String>,
+}
+
+/// Generator for request header extraction implementations.
+struct RequestHeaderGenerator {
+    /// Methods that have request_header annotations
+    method_headers: Vec<MethodHeaderInfo>,
+}
+
+impl RequestHeaderGenerator {
+    fn new() -> Self {
+        Self {
+            method_headers: Vec::new(),
+        }
+    }
+
+    fn process_descriptors_reflect(
+        &mut self,
+        descriptor_pool: &prost_reflect::DescriptorPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Look for the request_header extension
+        let request_header_ext = descriptor_pool
+            .get_extension_by_name("temporal.api.protometa.v1.request_header")
+            .ok_or("Could not find request_header extension")?;
+
+        // Process all services
+        for service in descriptor_pool.services() {
+            for method in service.methods() {
+                // Check if method has the request_header extension
+                let method_options = method.options();
+                if method_options.has_extension(&request_header_ext) {
+                    // Get the extension value
+                    let extension_value = method_options.get_extension(&request_header_ext);
+
+                    // Parse the extension data as RequestHeaderAnnotation
+                    if let Some(method_info) =
+                        self.process_method_reflect(&method, &extension_value)?
+                    {
+                        self.method_headers.push(method_info);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn process_method_reflect(
+        &self,
+        method: &prost_reflect::MethodDescriptor,
+        extension_value: &prost_reflect::Value,
+    ) -> Result<Option<MethodHeaderInfo>, Box<dyn std::error::Error>> {
+        let input_type = method.input().full_name().to_string();
+        let request_rust_type = self.proto_to_rust_type(&input_type);
+
+        let mut headers = Vec::new();
+
+        // The extension value should be a repeated list of RequestHeaderAnnotation messages
+        match extension_value {
+            prost_reflect::Value::List(annotations) => {
+                for annotation in annotations {
+                    if let Some(header_info) = self.parse_annotation_reflect(annotation)? {
+                        headers.push(header_info);
+                    }
+                }
+            }
+            prost_reflect::Value::Message(msg) => {
+                // Single annotation
+                if let Some(header_info) =
+                    self.parse_annotation_reflect(&prost_reflect::Value::Message(msg.clone()))?
+                {
+                    headers.push(header_info);
+                }
+            }
+            _ => {
+                // Ignore unexpected extension value types
+            }
+        }
+
+        if headers.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(MethodHeaderInfo {
+            request_type: input_type,
+            request_rust_type,
+            headers,
+        }))
+    }
+
+    fn parse_annotation_reflect(
+        &self,
+        annotation_value: &prost_reflect::Value,
+    ) -> Result<Option<HeaderInfo>, Box<dyn std::error::Error>> {
+        match annotation_value {
+            prost_reflect::Value::Message(msg) => {
+                let header_field = msg
+                    .descriptor()
+                    .get_field_by_name("header")
+                    .ok_or("Missing header field")?;
+                let value_field = msg
+                    .descriptor()
+                    .get_field_by_name("value")
+                    .ok_or("Missing value field")?;
+
+                let header_name = msg
+                    .get_field(&header_field)
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let value_template = msg
+                    .get_field(&value_field)
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+
+                if header_name.is_empty() || value_template.is_empty() {
+                    return Ok(None);
+                }
+
+                let field_paths = self.parse_field_paths(&value_template);
+
+                Ok(Some(HeaderInfo {
+                    header_name,
+                    value_template,
+                    field_paths,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn parse_field_paths(&self, template: &str) -> Vec<String> {
+        let re = Regex::new(r"\{([^}]+)\}").unwrap();
+        re.captures_iter(template)
+            .map(|cap| cap[1].to_string())
+            .collect()
+    }
+
+    fn proto_to_rust_type(&self, proto_name: &str) -> String {
+        let parts: Vec<&str> = proto_name.split('.').collect();
+        let mut rust_parts = Vec::new();
+
+        // Handle the package -> module mapping
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part is the type name - keep PascalCase
+                rust_parts.push((*part).to_string());
+            } else {
+                // Package parts become snake_case modules
+                rust_parts.push(Self::to_snake_case(part));
+            }
+        }
+
+        // The protos module structure
+        let path = rust_parts.join("::");
+        format!("crate::protos::{}", path)
+    }
+
+    fn to_snake_case(s: &str) -> String {
+        let mut result = String::new();
+        for (i, c) in s.chars().enumerate() {
+            if c.is_uppercase() {
+                if i > 0 {
+                    result.push('_');
+                }
+                result.push(c.to_ascii_lowercase());
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    fn generate(&self) -> String {
+        let mut output = String::new();
+        output.push_str("// Generated from descriptors.bin - DO NOT EDIT\n\n");
+        // Don't add imports since they're already in the including module
+
+        // Generate the main extraction function
+        output.push_str(&self.generate_extraction_function());
+
+        output
+    }
+
+    fn generate_extraction_function(&self) -> String {
+        let mut output = String::new();
+
+        output.push_str(
+            r#"
+/// Extract headers from request messages based on proto annotations
+pub fn extract_temporal_request_headers(
+    request: &dyn Any,
+    existing_metadata: Option<&MetadataMap>,
+) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    
+    // Extract headers from proto annotations
+"#,
+        );
+
+        // Add type-based dispatch for each method with headers
+        if !self.method_headers.is_empty() {
+            for method_info in &self.method_headers {
+                output.push_str(&format!(
+                    r#"    if let Some(req) = request.downcast_ref::<{}>() {{
+        {}
+    }}
+"#,
+                    method_info.request_rust_type,
+                    self.generate_header_extraction_for_method(method_info)
+                ));
+            }
+        }
+
+        output.push_str("    headers\n}\n");
+
+        output
+    }
+
+    fn generate_header_extraction_for_method(&self, method_info: &MethodHeaderInfo) -> String {
+        let mut output = String::new();
+
+        for header_info in &method_info.headers {
+            if header_info.field_paths.is_empty() {
+                // Static header value
+                output.push_str(&format!(
+                    r#"        if existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
+            headers.push(("{}".to_string(), "{}".to_string()));
+        }}
+"#,
+                    header_info.header_name, header_info.header_name, header_info.value_template
+                ));
+            } else {
+                // Template with field interpolation
+                for field_path in &header_info.field_paths {
+                    let accessor =
+                        self.generate_field_accessor(field_path, &method_info.request_type);
+                    let template_with_placeholder = header_info
+                        .value_template
+                        .replace(&format!("{{{}}}", field_path), "{}");
+
+                    // Check if this is a simple field (no dots) - those return &str directly
+                    let parts: Vec<&str> = field_path.split('.').collect();
+                    if parts.len() == 1 {
+                        // Simple field - accessor returns &str, not Option<&str>
+                        output.push_str(&format!(
+                            r#"        let val = {};
+            if !val.is_empty() && existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
+                headers.push(("{}".to_string(), format!("{}", val)));
+            }}
+"#,
+                            accessor,
+                            header_info.header_name,
+                            header_info.header_name,
+                            template_with_placeholder
+                        ));
+                    } else {
+                        // Nested field - accessor returns Option<&str>
+                        output.push_str(&format!(
+                            r#"        if let Some(val) = {} {{
+            if !val.is_empty() && existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
+                headers.push(("{}".to_string(), format!("{}", val)));
+            }}
+        }}
+"#,
+                            accessor,
+                            header_info.header_name,
+                            header_info.header_name,
+                            template_with_placeholder
+                        ));
+                    }
+                }
+            }
+        }
+
+        output
+    }
+
+    fn generate_field_accessor(&self, field_path: &str, _request_type: &str) -> String {
+        let parts: Vec<&str> = field_path.split('.').collect();
+
+        if parts.len() == 1 {
+            // Simple field access - protobuf String fields return &str directly
+            let snake_case_field = Self::to_snake_case(parts[0]);
+            format!("req.{}.as_str()", snake_case_field)
+        } else {
+            // Nested field access - need to chain Option handling properly
+            let mut accessor = "req".to_string();
+
+            for (i, part) in parts.iter().enumerate() {
+                let snake_case_field = Self::to_snake_case(part);
+                if i == parts.len() - 1 {
+                    // Last field - this should be the string field we want, use .as_str()
+                    accessor = format!("{}.{}.as_str()", accessor, snake_case_field);
+                } else {
+                    // Intermediate field - assume it's an Option<Box<MessageType>>
+                    accessor = format!("{}.{}.as_ref()?", accessor, snake_case_field);
+                }
+            }
+
+            // Wrap in an Option-returning closure for the ? operator to work
+            format!("(|| -> Option<&str> {{ Some({}) }})()", accessor)
+        }
+    }
 }

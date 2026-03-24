@@ -85,9 +85,9 @@ impl PendingActivityCancel {
 /// Contains details that core wants to store while an activity is running.
 #[derive(Debug)]
 struct InFlightActInfo {
+    activity_id: String,
     activity_type: String,
     workflow_type: String,
-    /// Only kept for logging reasons
     workflow_id: String,
     /// Only kept for logging reasons
     workflow_run_id: String,
@@ -122,6 +122,7 @@ impl RemoteInFlightActInfo {
         let wec = poll_resp.workflow_execution.clone().unwrap_or_default();
         Self {
             base: InFlightActInfo {
+                activity_id: poll_resp.activity_id.clone(),
                 activity_type: poll_resp.activity_type.clone().unwrap_or_default().name,
                 workflow_type: poll_resp.workflow_type.clone().unwrap_or_default().name,
                 workflow_id: wec.workflow_id,
@@ -135,6 +136,16 @@ impl RemoteInFlightActInfo {
             local_timeouts_task: None,
             timeout_resetter: None,
             _permit: permit,
+        }
+    }
+    
+    fn resource_id(&self) -> String {
+        if !self.base.workflow_id.is_empty() {
+            format!("workflow:{}", self.base.workflow_id)
+        } else if !self.base.activity_id.is_empty() {
+            format!("activity:{}", self.base.activity_id)
+        } else {
+            String::new()
         }
     }
 }
@@ -321,11 +332,12 @@ impl WorkerActivityTasks {
         client: &dyn WorkerClient,
     ) {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
+            let resource_id = act_info.resource_id();
             let act_metrics = self.metrics.with_new_attrs([
                 activity_type(act_info.base.activity_type),
                 workflow_type(act_info.base.workflow_type),
             ]);
-            Span::current().record("workflow_id", act_info.base.workflow_id);
+            Span::current().record("workflow_id", act_info.base.workflow_id.clone());
             Span::current().record("run_id", act_info.base.workflow_run_id);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             let known_not_found = act_info.known_not_found;
@@ -341,7 +353,7 @@ impl WorkerActivityTasks {
             self.heartbeat_manager
                 .evict(task_token.clone(), should_flush)
                 .await;
-
+            
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
                 let _flushing_guard = self.completers_lock.read().await;
@@ -356,7 +368,7 @@ impl WorkerActivityTasks {
                             act_metrics.act_execution_succeeded(sched_time);
                         }
                         client
-                            .complete_activity_task(task_token.clone(), result.map(Into::into))
+                            .complete_activity_task(task_token.clone(), result.map(Into::into), resource_id)
                             .await
                             .err()
                     }
@@ -365,7 +377,7 @@ impl WorkerActivityTasks {
                             act_metrics.act_execution_failed();
                         }
                         client
-                            .fail_activity_task(task_token.clone(), failure)
+                            .fail_activity_task(task_token.clone(), failure, resource_id)
                             .await
                             .err()
                     }
@@ -381,6 +393,7 @@ impl WorkerActivityTasks {
                                 .fail_activity_task(
                                     task_token.clone(),
                                     Some(worker_shutdown_failure()),
+                                    resource_id
                                 )
                                 .await
                                 .err()
@@ -400,7 +413,7 @@ impl WorkerActivityTasks {
                                 None
                             };
                             client
-                                .cancel_activity_task(task_token.clone(), details)
+                                .cancel_activity_task(task_token.clone(), details, resource_id)
                                 .await
                                 .err()
                         }
@@ -457,7 +470,7 @@ impl WorkerActivityTasks {
         let throttle_interval =
             std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
         self.heartbeat_manager
-            .record(details, throttle_interval, at_info.timeout_resetter.clone())
+            .record(details, throttle_interval, at_info.timeout_resetter.clone(), at_info.resource_id())
     }
 
     /// Returns a handle that the workflows management side can use to interact with this manager
