@@ -19,12 +19,10 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.90.0
       - name: Install protoc
         uses: arduino/setup-protoc@v3
         with:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
-          version: '23.x'
+          version: "23.x"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo integ-test -c "--release" -t heavy_tests -- --test-threads 1
