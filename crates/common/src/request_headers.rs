@@ -6,34 +6,6 @@
 use std::any::Any;
 use tonic::metadata::MetadataMap;
 
-/// Options for extracting headers from request messages.
-pub struct HeaderExtractionOptions<'a> {
-    /// Existing metadata to check for duplicates.
-    /// If provided, headers that already exist will not be added again.
-    /// If None, no duplicate checking is performed.
-    pub existing_metadata: Option<&'a MetadataMap>,
-    /// Whether to include the temporal-namespace header if present.
-    pub include_namespace: bool,
-}
-
-impl<'a> Default for HeaderExtractionOptions<'a> {
-    fn default() -> Self {
-        Self {
-            existing_metadata: None,
-            include_namespace: true,
-        }
-    }
-}
-
-/// Extract headers from request messages based on proto annotations.
-/// Returns a vector of (header_name, header_value) pairs.
-pub fn extract_request_headers(
-    request: &dyn Any,
-    opts: HeaderExtractionOptions<'_>,
-) -> Vec<(String, String)> {
-    extract_temporal_request_headers(request, opts.existing_metadata)
-}
-
 // Include the generated implementation
 include!(concat!(env!("OUT_DIR"), "/request_header_impl.rs"));
 
@@ -41,21 +13,6 @@ include!(concat!(env!("OUT_DIR"), "/request_header_impl.rs"));
 mod tests {
     use super::*;
     use crate::protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
-
-    #[test]
-    fn test_extract_headers_with_no_annotations() {
-        let request = StartWorkflowExecutionRequest {
-            namespace: "test-namespace".to_string(),
-            workflow_id: "test-workflow-id".to_string(),
-            ..Default::default()
-        };
-
-        let headers =
-            extract_request_headers(&request as &dyn Any, HeaderExtractionOptions::default());
-
-        // Since we don't have any actual annotations parsed yet, this should return empty
-        assert_eq!(headers.len(), 0);
-    }
 
     #[test]
     fn test_extract_headers_with_existing_metadata() {
@@ -66,17 +23,11 @@ mod tests {
         };
 
         let mut metadata = MetadataMap::new();
-        metadata.insert("existing-header", "existing-value".parse().unwrap());
+        metadata.insert("temporal-resource-id", "existing-value".parse().unwrap());
 
-        let headers = extract_request_headers(
-            &request as &dyn Any,
-            HeaderExtractionOptions {
-                existing_metadata: Some(&metadata),
-                include_namespace: false,
-            },
-        );
+        let headers = extract_temporal_request_headers(&request as &dyn Any, Some(&metadata));
 
-        // Should still return empty since no annotations are parsed
+        // Should return empty since the header already exists in metadata
         assert_eq!(headers.len(), 0);
     }
 
@@ -98,10 +49,8 @@ mod tests {
             ..Default::default()
         };
 
-        let headers =
-            extract_request_headers(&request as &dyn Any, HeaderExtractionOptions::default());
+        let headers = extract_temporal_request_headers(&request as &dyn Any, None);
 
-        // Should find the temporal-resource-id header from the proto annotation
         let resource_header = headers
             .iter()
             .find(|(key, _)| key == "temporal-resource-id");

@@ -406,18 +406,7 @@ impl PayloadVisitorGenerator {
     }
 
     fn to_map_entry_name(field_name: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in field_name.chars() {
-            if c == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
+        let mut result = to_pascal_case(field_name);
         result.push_str("Entry");
         result
     }
@@ -600,7 +589,7 @@ impl PayloadVisitorGenerator {
     }
 
     fn generate_impl(&self, proto_name: &str, fields: &[PayloadFieldInfo]) -> String {
-        let rust_path = self.proto_to_rust_path(proto_name);
+        let rust_path = proto_to_rust_path(proto_name);
 
         let mut impl_body = String::new();
 
@@ -635,7 +624,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
         proto_path: &str,
         kind: &PayloadFieldKind,
     ) -> String {
-        let rust_field = Self::to_snake_case(field_name);
+        let rust_field = to_snake_case(field_name);
 
         match kind {
             PayloadFieldKind::SinglePayload => {
@@ -736,12 +725,12 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 // Get the full rust path to the oneof enum
                 let enum_path = self.proto_to_rust_oneof_enum_path(parent_proto_name, oneof_name);
                 // The field in the struct is snake_case of the oneof field name
-                let rust_field = Self::to_snake_case(oneof_name);
+                let rust_field = to_snake_case(oneof_name);
 
                 let mut arms = String::new();
 
                 for variant in variants {
-                    let variant_name = Self::to_pascal_case(&variant.name);
+                    let variant_name = to_pascal_case(&variant.name);
                     arms.push_str(&format!(
                         "                {enum_path}::{variant}(msg) => msg.visit_payloads_mut(visitor).await,\n",
                         enum_path = enum_path,
@@ -774,74 +763,71 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
         }
     }
 
-    fn proto_to_rust_path(&self, proto_name: &str) -> String {
-        let parts: Vec<&str> = proto_name.split('.').collect();
-        let mut rust_parts = Vec::new();
-
-        // Handle the package -> module mapping
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part is the type name - keep PascalCase
-                rust_parts.push((*part).to_string());
-            } else {
-                // Package parts become snake_case modules
-                rust_parts.push(Self::to_snake_case(part));
-            }
-        }
-
-        // The protos module structure
-        let path = rust_parts.join("::");
-
-        // Map to the actual crate paths
-        format!("crate::protos::{}", path)
-    }
-
     fn proto_to_rust_oneof_enum_path(&self, parent_proto_name: &str, oneof_name: &str) -> String {
         let parts: Vec<&str> = parent_proto_name.split('.').collect();
         let mut rust_parts = Vec::new();
 
         // All parts become snake_case modules (struct name becomes a module containing the enum)
         for part in parts.iter() {
-            rust_parts.push(Self::to_snake_case(part));
+            rust_parts.push(to_snake_case(part));
         }
 
         let module_path = rust_parts.join("::");
         // The enum name is PascalCase of the oneof field name
-        let enum_name = Self::to_pascal_case(oneof_name);
+        let enum_name = to_pascal_case(oneof_name);
 
         format!("crate::protos::{}::{}", module_path, enum_name)
     }
+}
 
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() {
-                if i > 0 {
-                    result.push('_');
-                }
-                result.push(c.to_ascii_lowercase());
-            } else {
-                result.push(c);
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
             }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
         }
-        result
+    }
+    result
+}
+
+fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Convert a proto fully-qualified name to a Rust type path under `crate::protos::`.
+fn proto_to_rust_path(proto_name: &str) -> String {
+    let parts: Vec<&str> = proto_name.split('.').collect();
+    let mut rust_parts = Vec::new();
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // Last part is the type name - keep PascalCase
+            rust_parts.push((*part).to_string());
+        } else {
+            // Package parts become snake_case modules
+            rust_parts.push(to_snake_case(part));
+        }
     }
 
-    fn to_pascal_case(s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in s.chars() {
-            if c == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    }
+    let path = rust_parts.join("::");
+    format!("crate::protos::{}", path)
 }
 
 fn is_message_type(field: &FieldDescriptorProto) -> bool {
@@ -944,7 +930,7 @@ impl RequestHeaderGenerator {
         extension_value: &prost_reflect::Value,
     ) -> Result<Option<MethodHeaderInfo>, Box<dyn std::error::Error>> {
         let input_type = method.input().full_name().to_string();
-        let request_rust_type = self.proto_to_rust_type(&input_type);
+        let request_rust_type = proto_to_rust_path(&input_type);
 
         let mut headers = Vec::new();
 
@@ -1028,41 +1014,6 @@ impl RequestHeaderGenerator {
         re.captures_iter(template)
             .map(|cap| cap[1].to_string())
             .collect()
-    }
-
-    fn proto_to_rust_type(&self, proto_name: &str) -> String {
-        let parts: Vec<&str> = proto_name.split('.').collect();
-        let mut rust_parts = Vec::new();
-
-        // Handle the package -> module mapping
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part is the type name - keep PascalCase
-                rust_parts.push((*part).to_string());
-            } else {
-                // Package parts become snake_case modules
-                rust_parts.push(Self::to_snake_case(part));
-            }
-        }
-
-        // The protos module structure
-        let path = rust_parts.join("::");
-        format!("crate::protos::{}", path)
-    }
-
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() {
-                if i > 0 {
-                    result.push('_');
-                }
-                result.push(c.to_ascii_lowercase());
-            } else {
-                result.push(c);
-            }
-        }
-        result
     }
 
     fn generate(&self) -> String {
@@ -1175,14 +1126,14 @@ pub fn extract_temporal_request_headers(
 
         if parts.len() == 1 {
             // Simple field access - protobuf String fields return &str directly
-            let snake_case_field = Self::to_snake_case(parts[0]);
+            let snake_case_field = to_snake_case(parts[0]);
             format!("req.{}.as_str()", snake_case_field)
         } else {
             // Nested field access - need to chain Option handling properly
             let mut accessor = "req".to_string();
 
             for (i, part) in parts.iter().enumerate() {
-                let snake_case_field = Self::to_snake_case(part);
+                let snake_case_field = to_snake_case(part);
                 if i == parts.len() - 1 {
                     // Last field - this should be the string field we want, use .as_str()
                     accessor = format!("{}.{}.as_str()", accessor, snake_case_field);

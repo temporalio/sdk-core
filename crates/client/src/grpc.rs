@@ -568,9 +568,7 @@ macro_rules! proxier {
 
 macro_rules! request_with_headers {
     ($req:ident) => {{
-        use temporalio_common::request_headers::{
-            HeaderExtractionOptions, extract_request_headers,
-        };
+        use temporalio_common::request_headers::extract_temporal_request_headers;
 
         let ns_str = $req.get_ref().namespace.clone();
 
@@ -584,12 +582,8 @@ macro_rules! request_with_headers {
         );
 
         // Extract and attach additional headers from proto annotations
-        let headers = extract_request_headers(
-            $req.get_ref() as &dyn std::any::Any,
-            HeaderExtractionOptions {
-                existing_metadata: Some($req.metadata()),
-                include_namespace: false, // namespace already handled above
-            },
+        let headers = extract_temporal_request_headers(
+            $req.get_ref() as &dyn std::any::Any, Some($req.metadata()),
         );
 
         for (key, value) in headers {
