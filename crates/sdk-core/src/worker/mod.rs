@@ -451,6 +451,7 @@ pub(crate) struct WorkerTelemetry {
 }
 
 impl WorkerTelemetry {
+    #[cfg(any(feature = "test-utilities", test))]
     pub(crate) fn from_meter(meter: TemporalMeter) -> Self {
         Self {
             temporal_metric_meter: Some(meter),
