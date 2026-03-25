@@ -32,7 +32,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporalio_common::{
-    ActivityDefinition,
+    ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData, TemporalDeserializable,
@@ -482,6 +482,79 @@ impl BaseWorkflowContext {
         )
     }
 
+    /// Start a child workflow with typed input/output.
+    fn child_workflow<WD: WorkflowDefinition>(
+        &self,
+        workflow: WD,
+        input: impl Into<WD::Input>,
+        opts: ChildWorkflowOptions,
+    ) -> impl CancellableFutureWithReason<PendingChildWorkflow<WD>>
+    where
+        WD::Output: TemporalDeserializable,
+    {
+        let input = input.into();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.inner.payload_converter,
+        };
+        let payloads = match self.inner.payload_converter.to_payloads(&ctx, &input) {
+            Ok(p) => p,
+            Err(e) => {
+                panic!("Child workflow input serialization failed: {e}");
+            }
+        };
+        let workflow_type = workflow.name().to_string();
+
+        let child_seq = self.inner.seq_nums.borrow_mut().next_child_workflow_seq();
+        // Immediately create the command/future for the result, otherwise if the user does
+        // not await the result until *after* we receive an activation for it, there will be nothing
+        // to match when unblocking.
+        let cancel_seq = self
+            .inner
+            .seq_nums
+            .borrow_mut()
+            .next_cancel_external_wf_seq();
+        let (result_cmd, unblocker) = CancellableWFCommandFut::new(
+            CancellableIDWithReason::ExternalWorkflow {
+                seqnum: cancel_seq,
+                execution: NamespacedWorkflowExecution {
+                    workflow_id: opts.workflow_id.clone(),
+                    ..Default::default()
+                },
+            },
+            self.clone(),
+        );
+        self.send(
+            CommandSubscribeChildWorkflowCompletion {
+                seq: child_seq,
+                unblocker,
+            }
+            .into(),
+        );
+
+        let common = ChildWfCommon {
+            workflow_id: opts.workflow_id.clone(),
+            result_future: result_cmd,
+            base_ctx: self.clone(),
+            payload_converter: self.inner.payload_converter.clone(),
+        };
+
+        let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
+            CancellableIDWithReason::ChildWorkflow { seqnum: child_seq },
+            common,
+            self.clone(),
+        );
+        self.send(
+            CommandCreateRequest {
+                cmd: opts.into_command(workflow_type, payloads, child_seq),
+                unblocker,
+            }
+            .into(),
+        );
+
+        cmd
+    }
+
     /// Request to run a local activity with no implementation of timer-backoff based retrying.
     fn local_activity_no_timer_retry(
         self,
@@ -670,12 +743,18 @@ impl<W> SyncWorkflowContext<W> {
         self.base.start_local_activity(activity, input, opts)
     }
 
-    /// Creates a child workflow stub with the provided options
-    pub fn child_workflow(&self, opts: ChildWorkflowOptions) -> ChildWorkflow {
-        ChildWorkflow {
-            opts,
-            base_ctx: self.base.clone(),
-        }
+    /// Start a child workflow. Returns a future that resolves to a [PendingChildWorkflow] which
+    /// can be converted to a [StartedChildWorkflow] to await the result.
+    pub fn child_workflow<WD: WorkflowDefinition>(
+        &self,
+        workflow: WD,
+        input: impl Into<WD::Input>,
+        opts: ChildWorkflowOptions,
+    ) -> impl CancellableFutureWithReason<PendingChildWorkflow<WD>>
+    where
+        WD::Output: TemporalDeserializable,
+    {
+        self.base.child_workflow(workflow, input, opts)
     }
 
     /// Check (or record) that this workflow history was created with the provided patch
@@ -970,9 +1049,17 @@ impl<W> WorkflowContext<W> {
         self.sync.start_local_activity(activity, input, opts)
     }
 
-    /// Creates a child workflow stub with the provided options
-    pub fn child_workflow(&self, opts: ChildWorkflowOptions) -> ChildWorkflow {
-        self.sync.child_workflow(opts)
+    /// Start a child workflow. See [SyncWorkflowContext::child_workflow] for details.
+    pub fn child_workflow<WD: WorkflowDefinition>(
+        &self,
+        workflow: WD,
+        input: impl Into<WD::Input>,
+        opts: ChildWorkflowOptions,
+    ) -> impl CancellableFutureWithReason<PendingChildWorkflow<WD>>
+    where
+        WD::Output: TemporalDeserializable,
+    {
+        self.sync.child_workflow(workflow, input, opts)
     }
 
     /// Check (or record) that this workflow history was created with the provided patch
@@ -1500,119 +1587,172 @@ where
     }
 }
 
-/// A stub representing an unstarted child workflow.
-#[derive(Clone, derive_more::Debug)]
-pub struct ChildWorkflow {
-    opts: ChildWorkflowOptions,
-    #[debug(skip)]
-    base_ctx: BaseWorkflowContext,
-}
-
 pub(crate) struct ChildWfCommon {
     workflow_id: String,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
+    payload_converter: PayloadConverter,
 }
 
-/// Child workflow in pending state
+/// Child workflow in pending state, parameterized by the workflow definition for type safety.
 #[derive(derive_more::Debug)]
-pub struct PendingChildWorkflow {
+pub struct PendingChildWorkflow<WD: WorkflowDefinition> {
     /// The status of the child workflow start
     pub status: ChildWorkflowStartStatus,
     #[debug(skip)]
     pub(crate) common: ChildWfCommon,
+    pub(crate) _phantom: PhantomData<WD>,
 }
 
-impl PendingChildWorkflow {
+impl<WD: WorkflowDefinition> PendingChildWorkflow<WD> {
     /// Returns `None` if the child did not start successfully. The returned [StartedChildWorkflow]
     /// can be used to wait on, signal, or cancel the child workflow.
-    pub fn into_started(self) -> Option<StartedChildWorkflow> {
+    pub fn into_started(self) -> Option<StartedChildWorkflow<WD>> {
         match self.status {
             ChildWorkflowStartStatus::Succeeded(s) => Some(StartedChildWorkflow {
                 run_id: s.run_id,
                 common: self.common,
+                _phantom: PhantomData,
             }),
             _ => None,
         }
     }
 }
 
-/// Child workflow in started state
+/// Child workflow in started state, parameterized by the workflow definition for type safety.
 #[derive(derive_more::Debug)]
-pub struct StartedChildWorkflow {
+pub struct StartedChildWorkflow<WD: WorkflowDefinition> {
     /// Run ID of the child workflow
     pub run_id: String,
     #[debug(skip)]
     common: ChildWfCommon,
+    _phantom: PhantomData<WD>,
 }
 
-impl ChildWorkflow {
-    /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(self) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
-        let child_seq = self
-            .base_ctx
-            .inner
-            .seq_nums
-            .borrow_mut()
-            .next_child_workflow_seq();
-        // Immediately create the command/future for the result, otherwise if the user does
-        // not await the result until *after* we receive an activation for it, there will be nothing
-        // to match when unblocking.
-        let cancel_seq = self
-            .base_ctx
-            .inner
-            .seq_nums
-            .borrow_mut()
-            .next_cancel_external_wf_seq();
-        let (result_cmd, unblocker) = CancellableWFCommandFut::new(
-            CancellableIDWithReason::ExternalWorkflow {
-                seqnum: cancel_seq,
-                execution: NamespacedWorkflowExecution {
-                    workflow_id: self.opts.workflow_id.clone(),
-                    ..Default::default()
-                },
+/// Future for child workflow results. Wraps the raw result future and deserializes
+/// the output on completion.
+enum ChildWorkflowFut<F, Output> {
+    Running {
+        inner: F,
+        payload_converter: PayloadConverter,
+        _phantom: PhantomData<Output>,
+    },
+    Terminated,
+}
+
+impl<F, Output> Unpin for ChildWorkflowFut<F, Output> where F: Unpin {}
+
+impl<F, Output> Future for ChildWorkflowFut<F, Output>
+where
+    F: Future<Output = ChildWorkflowResult> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    type Output = Result<Output, ChildWorkflowExecutionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let poll = match this {
+            ChildWorkflowFut::Running {
+                inner,
+                payload_converter,
+                ..
+            } => match Pin::new(inner).poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(result) => Poll::Ready({
+                    use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
+                    let status = result.status.ok_or_else(|| {
+                        ChildWorkflowExecutionError::Failed(Box::new(Failure {
+                            message: "Child workflow completed without a status".to_string(),
+                            ..Default::default()
+                        }))
+                    })?;
+                    match status {
+                        child_workflow_result::Status::Completed(success) => {
+                            let payload = success.result.unwrap_or_default();
+                            let ctx = SerializationContext {
+                                data: &SerializationContextData::Workflow,
+                                converter: payload_converter,
+                            };
+                            payload_converter
+                                .from_payload::<Output>(&ctx, payload)
+                                .map_err(ChildWorkflowExecutionError::Serialization)
+                        }
+                        child_workflow_result::Status::Failed(f) => {
+                            Err(ChildWorkflowExecutionError::Failed(Box::new(
+                                f.failure.unwrap_or_default(),
+                            )))
+                        }
+                        child_workflow_result::Status::Cancelled(c) => {
+                            Err(ChildWorkflowExecutionError::Cancelled(Box::new(
+                                c.failure.unwrap_or_default(),
+                            )))
+                        }
+                    }
+                }),
             },
-            self.base_ctx.clone(),
-        );
-        self.base_ctx.send(
-            CommandSubscribeChildWorkflowCompletion {
-                seq: child_seq,
-                unblocker,
-            }
-            .into(),
-        );
-
-        let common = ChildWfCommon {
-            workflow_id: self.opts.workflow_id.clone(),
-            result_future: result_cmd,
-            base_ctx: self.base_ctx.clone(),
+            ChildWorkflowFut::Terminated => panic!("polled after termination"),
         };
-
-        let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
-            CancellableIDWithReason::ChildWorkflow { seqnum: child_seq },
-            common,
-            self.base_ctx.clone(),
-        );
-        self.base_ctx.send(
-            CommandCreateRequest {
-                cmd: self.opts.into_command(child_seq),
-                unblocker,
-            }
-            .into(),
-        );
-
-        cmd
+        if poll.is_ready() {
+            *this = ChildWorkflowFut::Terminated;
+        }
+        poll
     }
 }
 
-impl StartedChildWorkflow {
-    /// Consumes self and returns a future that will wait until completion of this child workflow
-    /// execution
-    pub fn result(self) -> impl CancellableFutureWithReason<ChildWorkflowResult> {
-        self.common.result_future
+impl<F, Output> FusedFuture for ChildWorkflowFut<F, Output>
+where
+    F: Future<Output = ChildWorkflowResult> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    fn is_terminated(&self) -> bool {
+        matches!(self, ChildWorkflowFut::Terminated)
+    }
+}
+
+impl<F, Output> CancellableFutureWithReason<Result<Output, ChildWorkflowExecutionError>>
+    for ChildWorkflowFut<F, Output>
+where
+    F: CancellableFutureWithReason<ChildWorkflowResult> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    fn cancel_with_reason(&self, reason: String) {
+        if let ChildWorkflowFut::Running { inner, .. } = self {
+            inner.cancel_with_reason(reason)
+        }
+    }
+}
+
+impl<F, Output> CancellableFuture<Result<Output, ChildWorkflowExecutionError>>
+    for ChildWorkflowFut<F, Output>
+where
+    F: CancellableFutureWithReason<ChildWorkflowResult> + Unpin,
+    Output: TemporalDeserializable + 'static,
+{
+    fn cancel(&self) {
+        if let ChildWorkflowFut::Running { inner, .. } = self {
+            inner.cancel()
+        }
+    }
+}
+
+impl<WD: WorkflowDefinition> StartedChildWorkflow<WD>
+where
+    WD::Output: TemporalDeserializable + 'static,
+{
+    /// Consumes self and returns a future that deserializes the child workflow result
+    /// into `WD::Output`.
+    pub fn result(
+        self,
+    ) -> impl CancellableFutureWithReason<Result<WD::Output, ChildWorkflowExecutionError>> {
+        ChildWorkflowFut::Running {
+            inner: self.common.result_future,
+            payload_converter: self.common.payload_converter,
+            _phantom: PhantomData,
+        }
     }
 
-    /// Cancel the child workflow
+    /// TODO: Remove — other SDKs omit cancel from child handles.
+    #[doc(hidden)]
     pub fn cancel(&self, reason: String) {
         self.common.base_ctx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {
@@ -1623,16 +1763,24 @@ impl StartedChildWorkflow {
         ));
     }
 
-    /// Signal the child workflow
-    pub fn signal<S: Into<Signal>>(
+    /// Send a typed signal to the child workflow.
+    pub fn signal<S: SignalDefinition<Workflow = WD>>(
         &self,
-        data: S,
+        signal: S,
+        input: S::Input,
     ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.common.payload_converter,
+        };
+        let payloads = self
+            .common
+            .payload_converter
+            .to_payloads(&ctx, &input)
+            .expect("Signal input serialization should not fail");
+        let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        self.common
-            .base_ctx
-            .clone()
-            .send_signal_wf(target, data.into())
+        self.common.base_ctx.clone().send_signal_wf(target, signal)
     }
 }
 

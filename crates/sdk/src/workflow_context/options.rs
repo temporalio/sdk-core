@@ -214,14 +214,10 @@ impl LocalActivityOptions {
 pub struct ChildWorkflowOptions {
     /// Workflow ID
     pub workflow_id: String,
-    /// Type of workflow to schedule
-    pub workflow_type: String,
     /// Task queue to schedule the workflow in
     ///
     /// If `None`, use the same task queue as the parent workflow.
     pub task_queue: Option<String>,
-    /// Input to send the child Workflow
-    pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
     pub cancel_type: ChildWorkflowCancellationType,
     /// How to respond to parent workflow ending
@@ -246,8 +242,13 @@ pub struct ChildWorkflowOptions {
     pub priority: Option<Priority>,
 }
 
-impl IntoWorkflowCommand for ChildWorkflowOptions {
-    fn into_command(self, seq: u32) -> WorkflowCommand {
+impl ChildWorkflowOptions {
+    pub(crate) fn into_command(
+        self,
+        workflow_type: String,
+        input: Vec<Payload>,
+        seq: u32,
+    ) -> WorkflowCommand {
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
                 summary: self.static_summary.map(Into::into),
@@ -261,9 +262,9 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                 StartChildWorkflowExecution {
                     seq,
                     workflow_id: self.workflow_id,
-                    workflow_type: self.workflow_type,
+                    workflow_type,
                     task_queue: self.task_queue.unwrap_or_default(),
-                    input: self.input,
+                    input,
                     cancellation_type: self.cancel_type as i32,
                     workflow_id_reuse_policy: self.id_reuse_policy as i32,
                     workflow_execution_timeout: self

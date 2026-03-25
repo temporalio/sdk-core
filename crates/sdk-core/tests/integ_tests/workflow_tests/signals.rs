@@ -19,7 +19,7 @@ use temporalio_common::protos::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, Signal, SignalWorkflowOptions, SyncWorkflowContext,
+    CancellableFuture, ChildWorkflowOptions, SignalWorkflowOptions, SyncWorkflowContext,
     WorkflowContext, WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
@@ -195,21 +195,44 @@ impl SignalsChild {
     #[run(name = "child_signaler")]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let started_child = ctx
-            .child_workflow(ChildWorkflowOptions {
-                workflow_id: "my_precious_child".to_string(),
-                workflow_type: "receiver".to_string(),
-                input: vec![().as_json_payload().unwrap()],
-                ..Default::default()
-            })
-            .start()
+            .child_workflow(
+                ChildSignalReceiver::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: "my_precious_child".to_string(),
+                    ..Default::default()
+                },
+            )
             .await
             .into_started()
             .expect("Must start ok");
-        let mut sig = Signal::new(SIGNAME, ["hi!".to_string().as_json_payload().unwrap()]);
-        sig.data.with_header("tupac", b"shakur");
-        started_child.signal(sig).await.unwrap();
-        started_child.result().await.status.unwrap();
+        started_child
+            .signal(ChildSignalReceiver::handle_signal, "hi!".into())
+            .await
+            .expect("child wf sent signal");
+        started_child.result().await.expect("child wf result is ok");
         Ok(())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ChildSignalReceiver {
+    received: bool,
+}
+
+#[workflow_methods]
+impl ChildSignalReceiver {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.wait_condition(|s| s.received).await;
+        Ok(())
+    }
+
+    #[signal]
+    fn handle_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, input: String) {
+        assert_eq!(input, "hi!");
+        self.received = true;
     }
 }
 
@@ -219,7 +242,7 @@ async fn sends_signal_to_child() {
     starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
     let mut worker = starter.worker().await;
     worker.register_workflow::<SignalsChild>();
-    worker.register_workflow::<SignalReceiver>();
+    worker.register_workflow::<ChildSignalReceiver>();
 
     let task_queue = starter.get_task_queue().to_owned();
     worker

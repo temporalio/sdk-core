@@ -97,7 +97,7 @@ use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
+    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions,
     ParentWorkflowInfo, PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData,
     SignalWorkflowOptions, StartedChildWorkflow, SyncWorkflowContext, TimerOptions,
@@ -121,6 +121,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter},
     future::Future,
+    marker::PhantomData,
     panic::AssertUnwindSafe,
     sync::Arc,
     time::Duration,
@@ -1055,14 +1056,14 @@ impl Unblockable for ActivityResolution {
     }
 }
 
-impl Unblockable for PendingChildWorkflow {
-    // Other data here is workflow id
+impl<WD: WorkflowDefinition> Unblockable for PendingChildWorkflow<WD> {
     type OtherDat = ChildWfCommon;
     fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowStart(_, result) => Self {
                 status: *result,
                 common: od,
+                _phantom: PhantomData,
             },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
