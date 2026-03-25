@@ -568,7 +568,8 @@ impl Workflows {
             return Ok(());
         } else {
             return Err(CompleteWfError::MalformedWorkflowCompletion {
-                reason: "Send half of activation complete response channel went missing".to_string(),
+                reason: "Send half of activation complete response channel went missing"
+                    .to_string(),
                 run_id,
             });
         };
