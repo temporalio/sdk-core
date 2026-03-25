@@ -98,9 +98,10 @@ use workflow_future::WorkflowFunction;
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
-    ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
-    PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
-    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
+    ChildWorkflowExecutionError, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions,
+    ParentWorkflowInfo, PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData,
+    SignalWorkflowOptions, StartedChildWorkflow, SyncWorkflowContext, TimerOptions,
+    WorkflowContext, WorkflowContextView,
 };
 
 use crate::{

@@ -302,6 +302,20 @@ impl ActivityExecutionError {
     }
 }
 
+/// Error returned when a child workflow execution fails.
+#[derive(Debug, thiserror::Error)]
+pub enum ChildWorkflowExecutionError {
+    /// The child workflow failed.
+    #[error("Child workflow failed: {}", .0.message)]
+    Failed(Box<Failure>),
+    /// The child workflow was cancelled.
+    #[error("Child workflow cancelled: {}", .0.message)]
+    Cancelled(Box<Failure>),
+    /// Failed to deserialize the child workflow result payload.
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
+}
+
 impl BaseWorkflowContext {
     /// Create a new base context, returning the context itself and a receiver which outputs commands
     /// sent from the workflow.
