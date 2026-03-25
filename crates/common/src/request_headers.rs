@@ -12,58 +12,237 @@ include!(concat!(env!("OUT_DIR"), "/request_header_impl.rs"));
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protos::temporal::api::workflowservice::v1::StartWorkflowExecutionRequest;
+    use crate::protos::temporal::api::workflowservice::v1::*;
 
-    #[test]
-    fn test_extract_headers_with_existing_metadata() {
-        let request = StartWorkflowExecutionRequest {
-            namespace: "test-namespace".to_string(),
-            workflow_id: "test-workflow-id".to_string(),
-            ..Default::default()
-        };
-
-        let mut metadata = MetadataMap::new();
-        metadata.insert("temporal-resource-id", "existing-value".parse().unwrap());
-
-        let headers = extract_temporal_request_headers(&request as &dyn Any, Some(&metadata));
-
-        // Should return empty since the header already exists in metadata
-        assert_eq!(headers.len(), 0);
+    /// Helper to extract the temporal-resource-id header value from a request.
+    fn extract_resource_id(request: &dyn Any) -> Option<String> {
+        extract_temporal_request_headers(request, None)
+            .into_iter()
+            .find(|(k, _)| k == "temporal-resource-id")
+            .map(|(_, v)| v)
     }
 
     #[test]
-    fn test_extract_headers_from_annotated_request() {
-        // StartWorkflowExecutionRequest should have a request_header annotation
-        // that generates "temporal-resource-id" header with value "workflow:{workflow_id}"
+    fn existing_metadata_prevents_duplicate_header() {
         let request = StartWorkflowExecutionRequest {
-            namespace: "test-namespace".to_string(),
-            workflow_id: "my-test-workflow".to_string(),
-            workflow_type: Some(crate::protos::temporal::api::common::v1::WorkflowType {
-                name: "TestWorkflow".to_string(),
-            }),
-            task_queue: Some(crate::protos::temporal::api::taskqueue::v1::TaskQueue {
-                name: "test-task-queue".to_string(),
-                kind: 0,
-                normal_name: "test-task-queue".to_string(),
-            }),
+            workflow_id: "wf-1".to_string(),
             ..Default::default()
         };
+        let mut metadata = MetadataMap::new();
+        metadata.insert("temporal-resource-id", "existing".parse().unwrap());
 
-        let headers = extract_temporal_request_headers(&request as &dyn Any, None);
+        let headers =
+            extract_temporal_request_headers(&request as &dyn Any, Some(&metadata));
+        assert!(headers.is_empty());
+    }
 
-        let resource_header = headers
-            .iter()
-            .find(|(key, _)| key == "temporal-resource-id");
+    #[test]
+    fn empty_field_produces_no_header() {
+        let request = StartWorkflowExecutionRequest::default();
+        assert_eq!(extract_resource_id(&request), None);
+    }
 
-        assert!(
-            resource_header.is_some(),
-            "Expected to find temporal-resource-id header from proto annotation"
-        );
+    // --- Workflow request headers (annotation extracts from workflow_id or resource_id) ---
 
-        let (_, value) = resource_header.unwrap();
+    #[test]
+    fn start_workflow_execution() {
+        let request = StartWorkflowExecutionRequest {
+            workflow_id: "my-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(extract_resource_id(&request), Some("workflow:my-wf".into()));
+    }
+
+    #[test]
+    fn signal_workflow_execution() {
+        let request = SignalWorkflowExecutionRequest {
+            workflow_execution: Some(
+                crate::protos::temporal::api::common::v1::WorkflowExecution {
+                    workflow_id: "sig-wf".to_string(),
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        };
         assert_eq!(
-            value, "workflow:my-test-workflow",
-            "Expected header value to be interpolated template 'workflow:my-test-workflow'"
+            extract_resource_id(&request),
+            Some("workflow:sig-wf".into())
         );
+    }
+
+    // --- Workflow task requests (resource_id field, annotation: "{resource_id}") ---
+    // The SDK sets resource_id with prefix already applied (e.g., "workflow:wf-id"),
+    // and the annotation passes it through as-is.
+
+    #[test]
+    fn respond_workflow_task_completed() {
+        let request = RespondWorkflowTaskCompletedRequest {
+            resource_id: "workflow:wf-completed".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:wf-completed".into())
+        );
+    }
+
+    #[test]
+    fn respond_workflow_task_failed() {
+        let request = RespondWorkflowTaskFailedRequest {
+            resource_id: "workflow:wf-456".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:wf-456".into())
+        );
+    }
+
+    // --- Activity task requests (resource_id field, annotation: "{resource_id}") ---
+
+    #[test]
+    fn respond_activity_task_completed() {
+        let request = RespondActivityTaskCompletedRequest {
+            resource_id: "workflow:act-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:act-wf".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_completed_standalone() {
+        let request = RespondActivityTaskCompletedRequest {
+            resource_id: "activity:standalone-act".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("activity:standalone-act".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_failed() {
+        let request = RespondActivityTaskFailedRequest {
+            resource_id: "workflow:fail-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:fail-wf".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_canceled() {
+        let request = RespondActivityTaskCanceledRequest {
+            resource_id: "workflow:cancel-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:cancel-wf".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_completed_by_id() {
+        let request = RespondActivityTaskCompletedByIdRequest {
+            resource_id: "workflow:byid-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:byid-wf".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_failed_by_id() {
+        let request = RespondActivityTaskFailedByIdRequest {
+            resource_id: "activity:byid-act".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("activity:byid-act".into())
+        );
+    }
+
+    #[test]
+    fn respond_activity_task_canceled_by_id() {
+        let request = RespondActivityTaskCanceledByIdRequest {
+            resource_id: "workflow:cancel-byid-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:cancel-byid-wf".into())
+        );
+    }
+
+    // --- Heartbeat requests ---
+
+    #[test]
+    fn record_activity_task_heartbeat() {
+        let request = RecordActivityTaskHeartbeatRequest {
+            resource_id: "workflow:hb-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:hb-wf".into())
+        );
+    }
+
+    #[test]
+    fn record_activity_task_heartbeat_by_id() {
+        let request = RecordActivityTaskHeartbeatByIdRequest {
+            resource_id: "activity:hb-act".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("activity:hb-act".into())
+        );
+    }
+
+    // --- Worker heartbeat (annotation: "{resource_id}", SDK prefixes with "worker:") ---
+
+    #[test]
+    fn record_worker_heartbeat() {
+        let request = RecordWorkerHeartbeatRequest {
+            resource_id: "worker:some-grouping-key".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("worker:some-grouping-key".into())
+        );
+    }
+
+    // --- Batch operation (annotation: "{resource_id}", SDK prefixes with "workflow:") ---
+
+    #[test]
+    fn execute_multi_operation() {
+        let request = ExecuteMultiOperationRequest {
+            resource_id: "workflow:multi-op-wf".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_resource_id(&request),
+            Some("workflow:multi-op-wf".into())
+        );
+    }
+
+    // --- Empty resource_id produces no header ---
+
+    #[test]
+    fn empty_resource_id_produces_no_header() {
+        let request = RespondActivityTaskCompletedRequest::default();
+        assert_eq!(extract_resource_id(&request), None);
     }
 }
