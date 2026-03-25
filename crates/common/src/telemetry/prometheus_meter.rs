@@ -4,7 +4,7 @@ use crate::{
         CoreMeter, Counter, CounterBase, Gauge, GaugeBase, GaugeF64, GaugeF64Base, Histogram,
         HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
         MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, OrderedPromLabelSet,
-        default_buckets_for,
+        UpDownCounter, UpDownCounterBase, default_buckets_for,
     },
 };
 use anyhow::anyhow;
@@ -385,6 +385,29 @@ impl MetricAttributable<Box<dyn GaugeBase>> for PromMetric<IntGaugeVec> {
     }
 }
 
+impl UpDownCounterBase for CorePromIntGauge {
+    fn adds(&self, value: i64) {
+        self.0.add(value);
+    }
+}
+impl MetricAttributable<Box<dyn UpDownCounterBase>> for PromMetric<IntGaugeVec> {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn UpDownCounterBase>, Box<dyn std::error::Error>> {
+        let labels = self.extract_prometheus_labels(attributes)?;
+        let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
+            let opts = Opts::new(name, desc);
+            IntGaugeVec::new(opts, label_names).map_err(Into::into)
+        })?;
+        if let Ok(g) = vector.get_metric_with(&labels.as_prom_labels()) {
+            Ok(Box::new(CorePromIntGauge(g)))
+        } else {
+            Err(self.label_mismatch_err(attributes).into())
+        }
+    }
+}
+
 struct CorePromGauge(prometheus::Gauge);
 impl GaugeF64Base for CorePromGauge {
     fn records(&self, value: f64) {
@@ -575,6 +598,15 @@ impl CoreMeter for CorePrometheusMeter {
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         let metric_name = params.name.to_string();
         GaugeF64::new(Arc::new(PromMetric::<GaugeVec>::new(
+            metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+        )))
+    }
+
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter {
+        let metric_name = params.name.to_string();
+        UpDownCounter::new(Arc::new(PromMetric::<IntGaugeVec>::new(
             metric_name,
             params.description.to_string(),
             self.registry.clone(),

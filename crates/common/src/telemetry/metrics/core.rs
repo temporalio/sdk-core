@@ -63,6 +63,8 @@ pub enum MetricKind {
     HistogramF64,
     /// A histogram that records [`Duration`] values.
     HistogramDuration,
+    /// An `i64` counter that can go up or down (e.g. inflight counts).
+    UpDownCounter,
 }
 /// The value to record when updating a metric instrument.
 #[derive(Debug, Clone, Copy)]
@@ -77,6 +79,8 @@ pub enum MetricUpdateVal {
     ValueF64(f64),
     /// A duration observation (for duration histograms).
     Duration(Duration),
+    /// A signed `i64` delta (for up-down counters).
+    SignedDelta(i64),
 }
 
 /// Collects buffered metric events for later replay into a real metrics backend.

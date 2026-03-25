@@ -900,6 +900,12 @@ where
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::GaugeF64)))
     }
+
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter {
+        UpDownCounter::new(Arc::new(
+            self.new_instrument(params, MetricKind::UpDownCounter),
+        ))
+    }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
 where
@@ -1030,6 +1036,22 @@ where
         }))
     }
 }
+
+impl<I> MetricAttributable<Box<dyn UpDownCounterBase>> for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn UpDownCounterBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
+    }
+}
+
 impl<I> CounterBase for InstrumentWithAttributes<BufferInstrument<I>>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
@@ -1082,6 +1104,16 @@ where
     fn records(&self, value: Duration) {
         self.inner
             .send(MetricUpdateVal::Duration(value), &self.attributes)
+    }
+}
+
+impl<I> UpDownCounterBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn adds(&self, value: i64) {
+        self.inner
+            .send(MetricUpdateVal::SignedDelta(value), &self.attributes)
     }
 }
 
