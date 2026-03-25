@@ -1340,3 +1340,181 @@ async fn heartbeat_response_can_be_paused() {
 
     core.drain_activity_poller_and_shutdown().await;
 }
+
+#[tokio::test]
+async fn activity_completion_sets_workflow_resource_id() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_complete_activity_task()
+        .withf(|_, _, resource_id| resource_id == "workflow:test-wf-id")
+        .times(1)
+        .returning(|_, _, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            workflow_execution: Some(
+                temporalio_common::protos::temporal::api::common::v1::WorkflowExecution {
+                    workflow_id: "test-wf-id".to_string(),
+                    run_id: "run-1".to_string(),
+                },
+            ),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+    core.drain_activity_poller_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_completion_sets_activity_resource_id_for_standalone() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_complete_activity_task()
+        .withf(|_, _, resource_id| resource_id == "activity:standalone-act")
+        .times(1)
+        .returning(|_, _, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "standalone-act".to_string(),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+    core.drain_activity_poller_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_failure_sets_resource_id() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_fail_activity_task()
+        .withf(|_, _, resource_id| resource_id == "workflow:fail-wf")
+        .times(1)
+        .returning(|_, _, _| Ok(RespondActivityTaskFailedResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            workflow_execution: Some(
+                temporalio_common::protos::temporal::api::common::v1::WorkflowExecution {
+                    workflow_id: "fail-wf".to_string(),
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::fail("boom".into())),
+    })
+    .await
+    .unwrap();
+    core.drain_activity_poller_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_heartbeat_sets_resource_id() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_record_activity_heartbeat()
+        .withf(|_, _, resource_id| resource_id == "workflow:hb-wf")
+        .times(1)
+        .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()));
+    mock_client
+        .expect_complete_activity_task()
+        .returning(|_, _, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(prost_dur!(from_millis(1))),
+            workflow_execution: Some(
+                temporalio_common::protos::temporal::api::common::v1::WorkflowExecution {
+                    workflow_id: "hb-wf".to_string(),
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token.clone(),
+        details: vec![vec![1_u8].into()],
+    });
+    sleep(Duration::from_millis(10)).await;
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+    core.drain_activity_poller_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn activity_cancellation_sets_resource_id() {
+    let mut mock_client = mock_worker_client();
+    mock_client
+        .expect_cancel_activity_task()
+        .withf(|_, _, resource_id| resource_id == "workflow:cancel-wf")
+        .times(1)
+        .returning(|_, _, _| Ok(RespondActivityTaskCanceledResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            workflow_execution: Some(
+                temporalio_common::protos::temporal::api::common::v1::WorkflowExecution {
+                    workflow_id: "cancel-wf".to_string(),
+                    ..Default::default()
+                },
+            ),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
+    core.drain_activity_poller_and_shutdown().await;
+}
