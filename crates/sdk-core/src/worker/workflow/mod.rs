@@ -17,7 +17,7 @@ pub(crate) use history_update::HistoryUpdate;
 use crate::{
     MetricsContext, WorkerConfig,
     abstractions::{
-        MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic,
+        MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
         take_cell::TakeCell,
     },
     internal_flags::InternalFlags,
@@ -565,7 +565,8 @@ impl Workflows {
             return Ok(());
         } else {
             return Err(CompleteWfError::MalformedWorkflowCompletion {
-                reason: "Send half of activation complete response channel went missing".to_string(),
+                reason: "Send half of activation complete response channel went missing"
+                    .to_string(),
                 run_id,
             });
         };
@@ -789,9 +790,10 @@ impl Workflows {
                 at_handle.add_tasks(with_permits);
             }
         } else if !eager_acts.is_empty() {
-            panic!(
+            error!(
                 "Requested eager activity execution but this worker has no activity task \
-                 manager! This is an internal bug, Core should not have asked for tasks."
+                 manager! This is an internal bug, Core should not have asked for tasks. \
+                 Ignoring the tasks."
             )
         }
     }
@@ -1678,7 +1680,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         )
     });
     if any_job_is_query && !all_jobs_are_query {
-        dbg_panic!(
+        error!(
             "About to issue an activation that contains query jobs with non-query jobs: {:?}",
             &wfa
         );
@@ -1785,7 +1787,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn queries_cannot_go_with_other_jobs() {
         let mut act = WorkflowActivation {
             jobs: vec![

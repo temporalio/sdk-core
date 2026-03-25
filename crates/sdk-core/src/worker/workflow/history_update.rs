@@ -1668,7 +1668,7 @@ mod tests {
         // The first task remains a boundary.
         assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 3);
-        // The second heartbeat-like task IS NOT collapsed here because it is part of the 
+        // The second heartbeat-like task IS NOT collapsed here because it is part of the
         // sequencing window for the update.
         assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 6);
