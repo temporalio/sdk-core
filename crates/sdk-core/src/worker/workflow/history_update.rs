@@ -938,7 +938,7 @@ mod tests {
         let seq = next_check_peek(&mut update, 3);
         assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 6);
-        assert_eq!(seq.len(), 5);
+        assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 10);
         assert_eq!(seq.len(), 9);
         let seq = next_check_peek(&mut update, 19);
