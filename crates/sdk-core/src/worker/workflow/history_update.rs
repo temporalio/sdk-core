@@ -934,9 +934,11 @@ mod tests {
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
-        assert_eq!(seq.len(), 6);
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 6);
-        assert_eq!(seq.len(), 4);
+        assert_eq!(seq.len(), 5);
         let seq = next_check_peek(&mut update, 10);
         assert_eq!(seq.len(), 9);
         let seq = next_check_peek(&mut update, 19);
@@ -1663,11 +1665,13 @@ mod tests {
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
-        // Empty heartbeat-like WFTs should not become update sequencing boundaries. Keeping that
-        // out of the lookup path avoids collapse differences between incremental windows and
-        // replay-after-cache-miss windows.
-        assert_eq!(seq.len(), 6);
+        // The first task remains a boundary.
+        assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 3);
+        // The second heartbeat-like task IS NOT collapsed here because it is part of the 
+        // sequencing window for the update.
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 6);
         assert_eq!(seq.len(), 7);
     }
 }
