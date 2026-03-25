@@ -1235,7 +1235,7 @@ async fn fail_wft_then_recover() {
     );
     mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
-        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
+        Box::new(|_, cause, _, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
@@ -1293,7 +1293,7 @@ async fn default_wft_fail_cause_is_worker_unhandled() {
         mock_worker_client(),
     );
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, _| {
+    mh.expect_fail_wft_matcher = Box::new(|_, cause, _, _| {
         matches!(
             cause,
             WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
@@ -1334,7 +1334,7 @@ async fn poll_response_triggers_wf_error() {
     );
     // Fail wft will be called when auto-failing.
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(move |_, cause, _| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, _, _| {
         matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
     });
     let mock = build_mock_pollers(mh);
@@ -2317,7 +2317,7 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
         })
         .times(1);
     mock.expect_fail_workflow_task()
-        .returning(|_, _, _| Ok(Default::default()))
+        .returning(|_, _, _, _| Ok(Default::default()))
         .times(1);
 
     let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::Raw(first_poll)], mock, true);

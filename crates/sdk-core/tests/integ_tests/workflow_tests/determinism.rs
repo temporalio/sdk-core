@@ -178,7 +178,7 @@ async fn test_panic_wf_task_rejected_properly() {
     // We should see one wft failure which has the default cause, since panics don't have a defined
     // type.
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, _| {
+    mh.expect_fail_wft_matcher = Box::new(|_, cause, _, _| {
         matches!(
             cause,
             WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
@@ -238,7 +238,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
     );
     mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
-        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
+        Box::new(|_, cause, _, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         if use_cache {
             cfg.max_cached_workflows = 2;
@@ -336,7 +336,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
         mock,
     );
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f, _| {
         let should_contain = if id_change {
             "does not match activity id"
         } else {
@@ -413,7 +413,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         mock,
     );
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f, _| {
         let should_contain = if id_change {
             "does not match child workflow id"
         } else {

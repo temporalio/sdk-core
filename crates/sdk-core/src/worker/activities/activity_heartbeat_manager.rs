@@ -451,7 +451,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -473,7 +473,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(3);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -492,7 +492,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -512,7 +512,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -530,7 +530,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -551,7 +551,7 @@ mod test {
         let mut mock_client = mock_worker_client();
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -567,7 +567,7 @@ mod test {
         // Should only expect 1 heartbeat call, not 2 (the second would be from evict flushing)
         mock_client
             .expect_record_activity_heartbeat()
-            .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
+            .returning(|_, _, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
         let (cancel_tx, _cancel_rx) = unbounded_channel();
         let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
@@ -610,6 +610,7 @@ mod test {
             // Mimic the same delay we would apply in activity task manager
             throttle_interval,
             None,
+            String::new(),
         )
         .expect("hearbeat recording should not fail");
     }

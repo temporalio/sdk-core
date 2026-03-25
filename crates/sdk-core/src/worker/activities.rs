@@ -777,7 +777,7 @@ mod tests {
         mock_client
             .expect_complete_activity_task()
             .times(2)
-            .returning(|_, _| Ok(Default::default()));
+            .returning(|_, _, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
         let sem = fixed_size_permit_dealer(10);
         let shutdown_token = CancellationToken::new();
@@ -946,7 +946,7 @@ mod tests {
         mock_client
             .expect_record_activity_heartbeat()
             .times(2)
-            .returning(|_, _| Ok(Default::default()));
+            .returning(|_, _, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
         let sem = fixed_size_permit_dealer(1);
         let shutdown_token = CancellationToken::new();
