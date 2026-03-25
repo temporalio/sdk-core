@@ -4,7 +4,6 @@ use prost_types::{
     DescriptorProto, FieldDescriptorProto, FileDescriptorSet, MessageOptions,
     field_descriptor_proto::{Label, Type},
 };
-use regex::Regex;
 use std::{
     collections::{HashMap, HashSet},
     env,
@@ -1009,10 +1008,17 @@ impl RequestHeaderGenerator {
     }
 
     fn parse_field_paths(&self, template: &str) -> Vec<String> {
-        let re = Regex::new(r"\{([^}]+)\}").unwrap();
-        re.captures_iter(template)
-            .map(|cap| cap[1].to_string())
-            .collect()
+        let mut paths = Vec::new();
+        let mut chars = template.chars();
+        while let Some(c) = chars.next() {
+            if c == '{' {
+                let path: String = chars.by_ref().take_while(|&c| c != '}').collect();
+                if !path.is_empty() {
+                    paths.push(path);
+                }
+            }
+        }
+        paths
     }
 
     fn generate(&self) -> String {
