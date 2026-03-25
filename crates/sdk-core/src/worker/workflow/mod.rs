@@ -238,9 +238,13 @@ impl Workflows {
                                 }
                             }
                             Err(e) => {
-                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
-                                    error!(activation=?e.0, "Activation processor channel dropped");
-                                });
+                                if let Err(e) = activation_tx.send(Err(e)) {
+                                    error!(
+                                        activation=?e.0,
+                                        "Activation processor channel dropped, stopping workflow processing"
+                                    );
+                                    return;
+                                }
                             }
                         }
                     }
@@ -549,10 +553,7 @@ impl Workflows {
                 // Empty complete which is likely an evict reply, we can just ignore.
                 return Ok(());
             }
-            panic!(
-                "A non-empty completion was not processed. Workflow processing may have \
-                 terminated unexpectedly. This is a bug."
-            );
+            return Err(CompleteWfError::WorkflowNotEnabled);
         }
 
         let completion_outcome = if let Ok(c) = rx.await {
@@ -563,13 +564,10 @@ impl Workflows {
             // Empty complete which is likely an evict reply, we can just ignore as above.
             return Ok(());
         } else {
-            dbg_panic!("Send half of activation complete response channel went missing");
-            self.request_eviction(
+            return Err(CompleteWfError::MalformedWorkflowCompletion {
+                reason: "Send half of activation complete response channel went missing".to_string(),
                 run_id,
-                "Send half of activation complete response channel went missing",
-                EvictionReason::Fatal,
-            );
-            return Ok(());
+            });
         };
         let replaying = completion_outcome.replaying;
 

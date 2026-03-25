@@ -697,7 +697,6 @@ fn find_end_index_of_next_wft_seq(
     }
     let mut last_index = 0;
     let mut saw_command_or_started = false;
-    let mut saw_command = false;
     let mut wft_started_event_id_to_index = vec![];
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
@@ -709,7 +708,6 @@ fn find_end_index_of_next_wft_seq(
         }
 
         if e.is_command_event() {
-            saw_command = true;
             saw_command_or_started = true;
         }
         if e.event_type() == EventType::WorkflowExecutionStarted {
@@ -739,7 +737,7 @@ fn find_end_index_of_next_wft_seq(
                     continue;
                 } else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
-                        if !saw_command
+                        if !saw_command_or_started
                             && next_next_event.event_type() == EventType::WorkflowTaskScheduled
                         {
                             // If we've never seen an interesting event and the next two events are
@@ -931,9 +929,11 @@ mod tests {
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
-        assert_eq!(seq.len(), 6);
-        let seq = next_check_peek(&mut update, 6);
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 3);
         assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 6);
+        assert_eq!(seq.len(), 5);
         let seq = next_check_peek(&mut update, 10);
         assert_eq!(seq.len(), 9);
         let seq = next_check_peek(&mut update, 19);
