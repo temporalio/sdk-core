@@ -337,7 +337,7 @@ impl WorkerActivityTasks {
                 activity_type(act_info.base.activity_type),
                 workflow_type(act_info.base.workflow_type),
             ]);
-            Span::current().record("workflow_id", act_info.base.workflow_id.clone());
+            Span::current().record("workflow_id", act_info.base.workflow_id.as_str());
             Span::current().record("run_id", act_info.base.workflow_run_id);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             let known_not_found = act_info.known_not_found;
