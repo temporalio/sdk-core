@@ -234,19 +234,19 @@ impl Workflows {
                         match output {
                             Ok(o) => {
                                 for fetchreq in o.fetch_histories {
-                                    fetch_tx
-                                        .send(fetchreq)
-                                        .expect("Fetch channel must not be dropped");
+                                    let _ = fetch_tx.send(fetchreq).inspect_err(|_| {
+                                        warn!("Fetch channel dropped, can't send fetch request");
+                                    });
                                 }
                                 for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
+                                    let _ = activation_tx.send(Ok(act)).inspect_err(|_| {
+                                        warn!("Activation channel dropped, can't send activation");
+                                    });
                                 }
                             }
                             Err(e) => {
-                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
-                                    error!(activation=?e.0, "Activation processor channel dropped");
+                                let _ = activation_tx.send(Err(e)).inspect_err(|_| {
+                                    warn!("Activation channel dropped, can't send error");
                                 });
                             }
                         }
@@ -556,10 +556,7 @@ impl Workflows {
                 // Empty complete which is likely an evict reply, we can just ignore.
                 return Ok(());
             }
-            panic!(
-                "A non-empty completion was not processed. Workflow processing may have \
-                 terminated unexpectedly. This is a bug."
-            );
+            return Err(CompleteWfError::WorkflowNotEnabled);
         }
 
         let completion_outcome = if let Ok(c) = rx.await {
@@ -570,13 +567,10 @@ impl Workflows {
             // Empty complete which is likely an evict reply, we can just ignore as above.
             return Ok(());
         } else {
-            dbg_panic!("Send half of activation complete response channel went missing");
-            self.request_eviction(
+            return Err(CompleteWfError::MalformedWorkflowCompletion {
+                reason: "Send half of activation complete response channel went missing".to_string(),
                 run_id,
-                "Send half of activation complete response channel went missing",
-                EvictionReason::Fatal,
-            );
-            return Ok(());
+            });
         };
         let replaying = completion_outcome.replaying;
 
