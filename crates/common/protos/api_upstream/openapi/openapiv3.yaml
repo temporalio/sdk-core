@@ -10193,6 +10193,10 @@ components:
           items:
             $ref: '#/components/schemas/Link'
           description: Links associated with the event.
+        principal:
+          allOf:
+            - $ref: '#/components/schemas/Principal'
+          description: Server-computed authenticated caller identity associated with this event.
         workflowExecutionStartedEventAttributes:
           $ref: '#/components/schemas/WorkflowExecutionStartedEventAttributes'
         workflowExecutionCompletedEventAttributes:
@@ -10767,6 +10771,9 @@ components:
              poll requests and call ShutdownWorker with the same WorkerInstanceKey. The poll will return
              an empty response. When this flag is true, workers should allow polls to return gracefully
              rather than terminating any open polls on shutdown.
+        pollerAutoscaling:
+          type: boolean
+          description: True if the namespace supports poller autoscaling
       description: Namespace capability details. Should contain what features are enabled in a namespace.
     NamespaceInfo_Limits:
       type: object
@@ -11724,6 +11731,18 @@ components:
       description: |-
         UpdateWorkflowOptions represents updating workflow execution options after a workflow reset.
          Keep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest.
+    Principal:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Low-cardinality category of the principal (e.g., "jwt", "users").
+        name:
+          type: string
+          description: Identifier within that category (e.g., sub JWT claim, email address).
+      description: |-
+        Principal is an authenticated caller identity computed by the server from trusted
+         authentication context.
     Priority:
       type: object
       properties:
