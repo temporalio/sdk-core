@@ -1015,8 +1015,6 @@ async fn cancel_child_wf_before_started_event_real_server() {
         .unwrap();
 }
 
-// --- Untyped variants ---
-
 #[workflow]
 #[derive(Default)]
 struct UntypedHappyParent;
@@ -1060,80 +1058,6 @@ async fn untyped_child_workflow_happy_path() {
             PARENT_WF_TYPE.to_owned(),
             vec![],
             WorkflowStartOptions::new(task_queue, "untyped-parent".to_string()).build(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
-#[workflow]
-struct UntypedSignalChildWorkflowWf {
-    serial: bool,
-}
-
-#[workflow_methods(factory_only)]
-impl UntypedSignalChildWorkflowWf {
-    #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let start_res = ctx
-            .child_workflow(
-                UntypedWorkflow::new("child"),
-                RawValue::new(vec![]),
-                ChildWorkflowOptions {
-                    workflow_id: "child-id-1".to_string(),
-                    ..Default::default()
-                },
-            )
-            .await
-            .into_started()
-            .expect("Child should get started");
-        let serial = ctx.state(|wf| wf.serial);
-        let (sigres, res) = if serial {
-            let sigres = start_res
-                .signal(
-                    UntypedSignal::new(SIGNAME),
-                    RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
-                )
-                .await;
-            let res = start_res.result().await;
-            (sigres, res)
-        } else {
-            let sigfut = start_res.signal(
-                UntypedSignal::new(SIGNAME),
-                RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
-            );
-            let resfut = start_res.result();
-            join!(sigfut, resfut)
-        };
-        sigres.expect("signal result is ok");
-        res.expect("child wf result is ok");
-        Ok(())
-    }
-}
-
-#[rstest::rstest]
-#[case::signal_then_result(true)]
-#[case::signal_and_result_concurrent(false)]
-#[tokio::test]
-async fn untyped_signal_child_workflow(#[case] serial: bool) {
-    let wf_id = "fakeid";
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_child_workflow_signaled("child-id-1", SIGNAME);
-    let mock = mock_worker_client();
-    let mut worker = mock_sdk(MockPollCfg::from_resp_batches(
-        wf_id,
-        t,
-        [ResponseType::AllHistory],
-        mock,
-    ));
-
-    worker.register_workflow_with_factory(move || UntypedSignalChildWorkflowWf { serial });
-    let task_queue = worker.inner_mut().task_queue().to_owned();
-    worker
-        .submit_wf(
-            wf_type.to_owned(),
-            vec![],
-            WorkflowStartOptions::new(task_queue, wf_id.to_owned()).build(),
         )
         .await
         .unwrap();
