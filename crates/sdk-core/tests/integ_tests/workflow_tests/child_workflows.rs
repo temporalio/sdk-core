@@ -1251,7 +1251,7 @@ impl UnitChildParentWf {
 
 /// Parent that starts a typed child returning () and awaits its result.
 /// With a canned history whose completion is missing a result (simulating a
-/// non-Rust child workflow that might not have a result payload).#[tokio::test]
+/// non-Rust child workflow that might not have a result payload).
 #[tokio::test]
 async fn child_workflow_unit_result_none_payload() {
     // single_child_workflow produces a completion with result: None
