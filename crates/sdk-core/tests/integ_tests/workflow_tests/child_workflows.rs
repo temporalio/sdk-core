@@ -2,7 +2,7 @@ use crate::common::{CoreWfStarter, WorkflowHandleExt, build_fake_sdk, mock_sdk, 
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
-use temporalio_client::{UntypedSignal, WorkflowCancelOptions, WorkflowStartOptions};
+use temporalio_client::{WorkflowCancelOptions, WorkflowStartOptions};
 use temporalio_common::{
     UntypedWorkflow,
     data_converters::RawValue,
@@ -21,7 +21,6 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            common::v1::Payload,
             enums::v1::{CommandType, EventType, ParentClosePolicy, WorkflowTaskFailedCause},
             history::v1::{
                 StartChildWorkflowExecutionFailedEventAttributes,
@@ -381,8 +380,8 @@ impl SignalChildWorkflowWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let start_res = ctx
             .child_workflow(
-                UntypedWorkflow::new("child"),
-                RawValue::new(vec![]),
+                UnusedChildWf::run,
+                (),
                 ChildWorkflowOptions {
                     workflow_id: "child-id-1".to_string(),
                     ..Default::default()
@@ -393,24 +392,35 @@ impl SignalChildWorkflowWf {
         let serial = ctx.state(|wf| wf.serial);
         if serial {
             start_res
-                .signal(
-                    UntypedSignal::new(SIGNAME),
-                    RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
-                )
-                .await
-                .map_err(|e| anyhow!(e))?;
-            start_res.result().await.map_err(|e| anyhow!(e))?;
+                .signal(UnusedChildWf::signal, "Hi!".to_string())
+                .await?;
+            start_res.result().await?;
         } else {
-            let sigfut = start_res.signal(
-                UntypedSignal::new(SIGNAME),
-                RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
-            );
+            let sigfut = start_res.signal(UnusedChildWf::signal, "Hi!".to_string());
             let resfut = start_res.result();
             let (sigres, res) = join!(sigfut, resfut);
-            sigres.map_err(|e| anyhow!(e))?;
-            res.map_err(|e| anyhow!(e))?;
+            sigres?;
+            res?;
         };
         Ok(())
+    }
+}
+
+/// Workflow never expected to be used, just exists to match child workflow type in canned history
+#[derive(Debug, Default)]
+#[workflow]
+struct UnusedChildWf;
+
+#[workflow_methods]
+impl UnusedChildWf {
+    #[run(name = "child")]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        panic!("Should never get run")
+    }
+
+    #[signal(name = SIGNAME)]
+    fn signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _input: String) {
+        panic!("Should never get called")
     }
 }
 
@@ -1203,8 +1213,6 @@ async fn child_workflow_signal_serialization_failure_returns_error() {
     worker.run_until_done().await.unwrap();
 }
 
-/// A typed child workflow returning (). Used to test deserialization when the
-/// server sends a completion with no result payload.
 #[workflow]
 #[derive(Default)]
 struct UnitChildWf;
@@ -1217,12 +1225,6 @@ impl UnitChildWf {
     }
 }
 
-/// Parent that starts a typed child returning () and awaits its result.
-/// With a canned history whose completion has result=None (simulating a
-/// non-Rust child that returns void without sending a payload), this triggers
-/// the unwrap_or_default bug: Payload::default() has no encoding metadata,
-/// so is_unit_payloads returns false and deserialization fails with
-/// WrongEncoding.
 #[workflow]
 #[derive(Default)]
 struct UnitChildParentWf;
@@ -1247,9 +1249,9 @@ impl UnitChildParentWf {
     }
 }
 
-/// Regression: when a child workflow completes with result=None (no payload),
-/// deserializing Output=() should succeed. Currently fails with WrongEncoding
-/// because unwrap_or_default() yields a Payload with no encoding metadata.
+/// Parent that starts a typed child returning () and awaits its result.
+/// With a canned history whose completion is missing a result (simulating a
+/// non-Rust child workflow that might not have a result payload).#[tokio::test]
 #[tokio::test]
 async fn child_workflow_unit_result_none_payload() {
     // single_child_workflow produces a completion with result: None
@@ -1259,10 +1261,7 @@ async fn child_workflow_unit_result_none_payload() {
     worker.run().await.unwrap();
 }
 
-/// Parent that starts a child, then cancels the result future (not the child
-/// handle). This emits RequestCancelExternalWorkflowExecution with a seq that
-/// was never registered in command_status, causing a WFT failure when the
-/// server responds with ResolveRequestCancelExternalWorkflow.
+/// Parent that starts a child, then cancels the result future
 #[workflow]
 #[derive(Default)]
 struct CancelResultFutureParent;
@@ -1281,24 +1280,15 @@ impl CancelResultFutureParent {
                     ..Default::default()
                 },
             )
-            .await
-            .expect("Child should start OK");
+            .await?;
 
         let result_fut = started.result();
-        // Cancel via the result future's CancellableFuture impl, not
-        // StartedChildWorkflow::cancel(). This goes through the ExternalWorkflow
-        // cancel ID path, which emits RequestCancelExternalWorkflowExecution.
         result_fut.cancel();
         let _ = result_fut.await;
         Ok(())
     }
 }
 
-/// Regression: cancelling the future from result() sends
-/// RequestCancelExternalWorkflowExecution with an unregistered seq, causing
-/// a WFT failure when the server responds. The workflow gets stuck in an
-/// infinite WFT failure loop with "Command CancelExternal(1) not found to
-/// unblock!".
 #[tokio::test]
 async fn cancel_child_result_future_does_not_fail_wft() {
     let wf_name = "cancel-child-result-future";
@@ -1390,9 +1380,6 @@ impl CancelExternalThenChildParent {
     }
 }
 
-/// Regression test: cancel_external() before child_workflow() diverges two
-/// sequence counters. The child cancel must use child_seq (not
-/// cancel_external_wf_seq) or we get NDE.
 #[tokio::test]
 async fn cancel_child_after_cancel_external_uses_correct_seq() {
     let wf_name = "cancel-child-after-cancel-external";

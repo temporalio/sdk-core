@@ -1620,7 +1620,7 @@ pub(crate) struct PendingChildWorkflow<WD: WorkflowDefinition> {
     pub(crate) _phantom: PhantomData<WD>,
 }
 
-/// Child workflow in started state, parameterized by the workflow definition for type safety.
+/// Child workflow in started state.
 #[derive(derive_more::Debug)]
 pub struct StartedChildWorkflow<WD: WorkflowDefinition> {
     /// Run ID of the child workflow
