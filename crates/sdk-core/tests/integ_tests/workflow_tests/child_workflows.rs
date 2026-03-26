@@ -1202,3 +1202,104 @@ async fn child_workflow_signal_serialization_failure_returns_error() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
+
+#[workflow]
+#[derive(Default)]
+struct CancelExternalTarget;
+
+#[workflow_methods]
+impl CancelExternalTarget {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        let r = ctx.cancelled().await;
+        Ok(r)
+    }
+}
+
+/// Cancels an external workflow, then starts a child and cancels it.
+///
+/// This diverges the `cancel_external_wf_seq` counter from the
+/// `child_workflow_seq` counter. Previously, `started.cancel()` read the
+/// cancel-external seq instead of the child seq, triggering NDE.
+#[workflow]
+#[derive(Default)]
+struct CancelExternalThenChildParent;
+
+#[workflow_methods]
+impl CancelExternalThenChildParent {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        // Advance cancel_external_wf_seq without touching child_workflow_seq.
+        let cancel_target_id = format!("{}-cancel-target", ctx.task_queue());
+        ctx.cancel_external(
+            temporalio_common::protos::coresdk::common::NamespacedWorkflowExecution {
+                workflow_id: cancel_target_id,
+                namespace: ctx.namespace().to_string(),
+                ..Default::default()
+            },
+            "superseded".to_string(),
+        )
+        .await
+        .unwrap();
+
+        // Now start a child — child_seq=1, but cancel_external_wf_seq=3.
+        let started = ctx
+            .child_workflow(
+                CancelledChildGetsReasonChild::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-child", ctx.task_queue()),
+                    cancel_type: ChildWorkflowCancellationType::WaitCancellationRequested,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("Child should start OK");
+
+        started.cancel("no longer needed".to_string());
+        let reason: String = started.result().await.expect("Child should complete OK");
+        assert!(
+            reason.contains("no longer needed"),
+            "Expected cancel reason in child result, got: {reason}",
+        );
+        Ok(())
+    }
+}
+
+/// Regression test: cancel_external() before child_workflow() diverges two
+/// sequence counters. The child cancel must use child_seq (not
+/// cancel_external_wf_seq) or we get NDE.
+#[tokio::test]
+async fn cancel_child_after_cancel_external_uses_correct_seq() {
+    let wf_name = "cancel-child-after-cancel-external";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<CancelExternalThenChildParent>();
+    worker.register_workflow::<CancelledChildGetsReasonChild>();
+    worker.register_workflow::<CancelExternalTarget>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+
+    worker
+        .submit_workflow(
+            CancelExternalTarget::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), format!("{task_queue}-cancel-target"))
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    worker
+        .submit_workflow(
+            CancelExternalThenChildParent::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+
+    worker.run_until_done().await.unwrap();
+}
