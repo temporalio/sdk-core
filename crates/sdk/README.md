@@ -190,9 +190,7 @@ let started = ctx
             ..Default::default()
         },
     )
-    .await
-    .into_started()
-    .unwrap();
+    .await?;
 let result = started.result().await?;
 ```
 

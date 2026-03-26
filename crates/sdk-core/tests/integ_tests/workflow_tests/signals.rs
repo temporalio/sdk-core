@@ -206,8 +206,7 @@ impl SignalsChild {
             .await?;
         started_child
             .signal(ChildSignalReceiver::handle_signal, "hi!".into())
-            .await?
-            .expect("child wf sent signal");
+            .await?;
         started_child.result().await.expect("child wf result is ok");
         Ok(())
     }

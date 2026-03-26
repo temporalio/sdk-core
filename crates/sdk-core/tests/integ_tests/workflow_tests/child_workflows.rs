@@ -34,8 +34,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, SyncWorkflowContext,
-    WorkflowContext, WorkflowResult, WorkflowTermination,
+    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
+    SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -391,16 +391,15 @@ impl SignalChildWorkflowWf {
             .await
             .expect("Child should get started");
         let serial = ctx.state(|wf| wf.serial);
-        let (sigres, res) = if serial {
-            let sigres = start_res
+        if serial {
+            start_res
                 .signal(
                     UntypedSignal::new(SIGNAME),
                     RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
                 )
                 .await
                 .map_err(|e| anyhow!(e))?;
-            let res = start_res.result().await;
-            (sigres, res)
+            start_res.result().await.map_err(|e| anyhow!(e))?;
         } else {
             let sigfut = start_res.signal(
                 UntypedSignal::new(SIGNAME),
@@ -408,10 +407,9 @@ impl SignalChildWorkflowWf {
             );
             let resfut = start_res.result();
             let (sigres, res) = join!(sigfut, resfut);
-            (sigres.map_err(|e| anyhow!(e))?, res)
+            sigres.map_err(|e| anyhow!(e))?;
+            res.map_err(|e| anyhow!(e))?;
         };
-        sigres.expect("signal result is ok");
-        res.expect("child wf result is ok");
         Ok(())
     }
 }
@@ -722,12 +720,11 @@ impl ParentWf {
                 },
             )
             .await;
-        match expectation {
-            Expectation::StartFailure => match start_res {
+        if let Expectation::StartFailure = expectation {
+            match start_res {
                 Err(ChildWorkflowExecutionError::StartFailed { .. }) => return Ok(()),
                 _ => return Err(anyhow!("Expected start failure").into()),
-            },
-            _ => {}
+            }
         }
         let started = start_res.map_err(|e| anyhow!(e))?;
         match (expectation, started.result().await) {
@@ -1175,7 +1172,7 @@ impl ChildSignalSerializationFailParent {
             .await;
         assert_matches!(
             signal_result,
-            Err(ChildWorkflowExecutionError::Serialization(_))
+            Err(ChildWorkflowSignalError::Serialization(_))
         );
 
         // Cancel child so parent can complete cleanly.

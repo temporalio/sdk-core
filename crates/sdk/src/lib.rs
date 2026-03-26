@@ -98,8 +98,9 @@ use workflow_future::WorkflowFunction;
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
-    ChildWorkflowExecutionError, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions,
-    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
+    ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
+    LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal,
+    SignalData, SignalWorkflowOptions, StartChildWorkflowExecutionFailedCause,
     StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
@@ -1286,6 +1287,12 @@ impl From<ActivityExecutionError> for WorkflowTermination {
 
 impl From<ChildWorkflowExecutionError> for WorkflowTermination {
     fn from(value: ChildWorkflowExecutionError) -> Self {
+        Self::failed(value)
+    }
+}
+
+impl From<ChildWorkflowSignalError> for WorkflowTermination {
+    fn from(value: ChildWorkflowSignalError) -> Self {
         Self::failed(value)
     }
 }
