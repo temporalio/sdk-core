@@ -386,7 +386,7 @@ impl ChildWfIdOrTypeChangeWf {
                     ..Default::default()
                 },
             )
-            .await;
+            .await?;
         } else {
             ctx.child_workflow(
                 UntypedWorkflow::new("not the child wf type"),
@@ -396,7 +396,7 @@ impl ChildWfIdOrTypeChangeWf {
                     ..Default::default()
                 },
             )
-            .await;
+            .await?;
         }
         Ok(())
     }

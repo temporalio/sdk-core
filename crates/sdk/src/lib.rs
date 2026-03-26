@@ -99,9 +99,8 @@ pub use temporalio_client::Namespace;
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions,
-    ParentWorkflowInfo, PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData,
-    SignalWorkflowOptions, StartedChildWorkflow, SyncWorkflowContext, TimerOptions,
-    WorkflowContext, WorkflowContextView,
+    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
+    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{
@@ -110,7 +109,9 @@ use crate::{
         ExecutableActivity,
     },
     interceptors::WorkerInterceptor,
-    workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
+    workflow_context::{
+        ChildWfCommon, NexusUnblockData, PendingChildWorkflow, StartedNexusOperation,
+    },
     workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
@@ -1279,6 +1280,12 @@ impl From<anyhow::Error> for WorkflowTermination {
 
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
+        Self::failed(value)
+    }
+}
+
+impl From<ChildWorkflowExecutionError> for WorkflowTermination {
+    fn from(value: ChildWorkflowExecutionError) -> Self {
         Self::failed(value)
     }
 }

@@ -70,9 +70,7 @@ pub(crate) async fn priority_values_sent_to_server() {
                         ..Default::default()
                     },
                 )
-                .await
-                .into_started()
-                .expect("Child should start OK");
+                .await?;
             let activity = ctx.start_activity(
                 PriorityActivities::echo,
                 "hello".to_string(),

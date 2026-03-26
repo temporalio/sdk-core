@@ -13,11 +13,7 @@ use temporalio_common::{
             child_workflow::{
                 ChildWorkflowCancellationType, StartChildWorkflowExecutionFailedCause,
             },
-            workflow_activation::{
-                WorkflowActivationJob,
-                resolve_child_workflow_execution_start::Status as StartStatus,
-                workflow_activation_job,
-            },
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
             workflow_commands::{
                 CancelChildWorkflowExecution, CancelWorkflowExecution, CompleteWorkflowExecution,
                 StartChildWorkflowExecution,
@@ -38,8 +34,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, WorkflowContext,
-    WorkflowResult, WorkflowTermination,
+    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, SyncWorkflowContext,
+    WorkflowContext, WorkflowResult, WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -96,7 +92,6 @@ impl HappyParent {
                 },
             )
             .await
-            .into_started()
             .expect("Child should start OK");
         started.result().await.map_err(|e| anyhow!(e).into())
     }
@@ -144,7 +139,6 @@ impl AbandonedChildBugReproParent {
                 },
             )
             .await
-            .into_started()
             .expect("Child should start OK");
         let barr = ctx.state(|wf| wf.barr.clone());
         barr.wait().await;
@@ -232,7 +226,6 @@ impl AbandonedChildResolvesPostCancelParent {
                 },
             )
             .await
-            .into_started()
             .expect("Child should start OK");
         let barr = ctx.state(|wf| wf.barr.clone());
         barr.wait().await;
@@ -334,7 +327,6 @@ impl CancelledChildGetsReasonParent {
                 },
             )
             .await
-            .into_started()
             .expect("Child should start OK");
         started.cancel("Die reason".to_string());
         let r: String = started.result().await.expect("Child should complete OK");
@@ -397,7 +389,6 @@ impl SignalChildWorkflowWf {
                 },
             )
             .await
-            .into_started()
             .expect("Child should get started");
         let serial = ctx.state(|wf| wf.serial);
         let (sigres, res) = if serial {
@@ -406,7 +397,8 @@ impl SignalChildWorkflowWf {
                     UntypedSignal::new(SIGNAME),
                     RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
                 )
-                .await;
+                .await
+                .map_err(|e| anyhow!(e))?;
             let res = start_res.result().await;
             (sigres, res)
         } else {
@@ -415,7 +407,8 @@ impl SignalChildWorkflowWf {
                 RawValue::new(vec![Payload::from(b"Hi!" as &[u8])]),
             );
             let resfut = start_res.result();
-            join!(sigfut, resfut)
+            let (sigres, res) = join!(sigfut, resfut);
+            (sigres.map_err(|e| anyhow!(e))?, res)
         };
         sigres.expect("signal result is ok");
         res.expect("child wf result is ok");
@@ -471,7 +464,6 @@ impl ParentCancelsChildWf {
                 },
             )
             .await
-            .into_started()
             .expect("Child should get started");
         start_res.cancel("cancel reason".to_string());
         let err = start_res
@@ -627,7 +619,8 @@ impl PassChildWorkflowSummaryToMetadata {
                 ..Default::default()
             },
         )
-        .await;
+        .await
+        .map_err(|e| anyhow!(e))?;
         Ok(())
     }
 }
@@ -729,15 +722,15 @@ impl ParentWf {
                 },
             )
             .await;
-        match (expectation, &start_res.status) {
-            (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
-            (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(()),
-            _ => return Err(anyhow!("Unexpected start status").into()),
-        };
-        match (
-            expectation,
-            start_res.into_started().unwrap().result().await,
-        ) {
+        match expectation {
+            Expectation::StartFailure => match start_res {
+                Err(ChildWorkflowExecutionError::StartFailed { .. }) => return Ok(()),
+                _ => return Err(anyhow!("Expected start failure").into()),
+            },
+            _ => {}
+        }
+        let started = start_res.map_err(|e| anyhow!(e))?;
+        match (expectation, started.result().await) {
             (Expectation::Success, Ok(_)) => Ok(()),
             (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed(_))) => Ok(()),
             _ => Err(anyhow!("Unexpected child WF status").into()),
@@ -841,8 +834,8 @@ impl CancelBeforeSendWf {
             },
         );
         start.cancel();
-        match start.await.status {
-            StartStatus::Cancelled(_) => Ok(()),
+        match start.await {
+            Err(ChildWorkflowExecutionError::Cancelled(_)) => Ok(()),
             _ => Err(anyhow!("Unexpected start status").into()),
         }
     }
@@ -1033,8 +1026,7 @@ impl UntypedHappyParent {
                 },
             )
             .await
-            .into_started()
-            .expect("Child should start OK");
+            .map_err(|e| anyhow!(e))?;
         started
             .result()
             .await
@@ -1058,6 +1050,156 @@ async fn untyped_child_workflow_happy_path() {
             PARENT_WF_TYPE.to_owned(),
             vec![],
             WorkflowStartOptions::new(task_queue, "untyped-parent".to_string()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+// --- Serialization failure tests ---
+
+/// Input type whose `Serialize` impl always fails.
+struct AlwaysFailsSerialize;
+
+impl serde::Serialize for AlwaysFailsSerialize {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "intentional serialization failure",
+        ))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AlwaysFailsSerialize {
+    fn deserialize<D: serde::Deserializer<'de>>(_deserializer: D) -> Result<Self, D::Error> {
+        Ok(AlwaysFailsSerialize)
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct UnserializableStartInputChild;
+
+#[workflow_methods]
+impl UnserializableStartInputChild {
+    #[run]
+    async fn run(
+        _ctx: &mut WorkflowContext<Self>,
+        _input: AlwaysFailsSerialize,
+    ) -> WorkflowResult<()> {
+        Ok(())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct UnserializableSignalChild;
+
+#[workflow_methods]
+impl UnserializableSignalChild {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.cancelled().await;
+        Err(WorkflowTermination::Cancelled)
+    }
+
+    #[signal]
+    fn bad_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _input: AlwaysFailsSerialize) {}
+}
+
+#[workflow]
+#[derive(Default)]
+struct ChildStartSerializationFailParent;
+
+#[workflow_methods]
+impl ChildStartSerializationFailParent {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let result = ctx
+            .child_workflow(
+                UnserializableStartInputChild::run,
+                AlwaysFailsSerialize,
+                ChildWorkflowOptions {
+                    workflow_id: "unserializable-child".to_owned(),
+                    ..Default::default()
+                },
+            )
+            .await;
+        assert_matches!(result, Err(ChildWorkflowExecutionError::Serialization(_)));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn child_workflow_start_serialization_failure_returns_error() {
+    let mut starter = CoreWfStarter::new("child-wf-start-ser-fail");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<ChildStartSerializationFailParent>();
+    worker.register_workflow::<UnserializableStartInputChild>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_wf(
+            "ChildStartSerializationFailParent".to_owned(),
+            vec![],
+            WorkflowStartOptions::new(task_queue, "ser-fail-parent".to_string()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct ChildSignalSerializationFailParent;
+
+#[workflow_methods]
+impl ChildSignalSerializationFailParent {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                UnserializableSignalChild::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: "signal-ser-fail-child".to_owned(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow!(e))?;
+
+        let signal_result = started
+            .signal(UnserializableSignalChild::bad_signal, AlwaysFailsSerialize)
+            .await;
+        assert_matches!(
+            signal_result,
+            Err(ChildWorkflowExecutionError::Serialization(_))
+        );
+
+        // Cancel child so parent can complete cleanly.
+        started.cancel("test done".to_string());
+        let _ = started.result().await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn child_workflow_signal_serialization_failure_returns_error() {
+    let mut starter = CoreWfStarter::new("child-wf-signal-ser-fail");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<ChildSignalSerializationFailParent>();
+    worker.register_workflow::<UnserializableSignalChild>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_wf(
+            "ChildSignalSerializationFailParent".to_owned(),
+            vec![],
+            WorkflowStartOptions::new(task_queue, "signal-ser-fail-parent".to_string()).build(),
         )
         .await
         .unwrap();
