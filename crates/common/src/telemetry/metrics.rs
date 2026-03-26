@@ -1332,9 +1332,7 @@ mod otel {
         }
     }
 
-    impl MetricAttributable<Box<dyn UpDownCounterBase>>
-        for opentelemetry::metrics::UpDownCounter<i64>
-    {
+    impl MetricAttributable<Box<dyn UpDownCounterBase>> for opentelemetry::metrics::UpDownCounter<i64> {
         fn with_attributes(
             &self,
             attributes: &MetricAttributes,
@@ -1346,9 +1344,7 @@ mod otel {
         }
     }
 
-    impl UpDownCounterBase
-        for InstrumentWithAttributes<opentelemetry::metrics::UpDownCounter<i64>>
-    {
+    impl UpDownCounterBase for InstrumentWithAttributes<opentelemetry::metrics::UpDownCounter<i64>> {
         fn adds(&self, value: i64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.add(value, kvs);
