@@ -10,6 +10,8 @@ use std::{
 };
 use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
+    UntypedWorkflow,
+    data_converters::RawValue,
     protos::{
         TestHistoryBuilder, canned_histories,
         coresdk::AsJsonPayloadExt,
@@ -375,21 +377,27 @@ struct ChildWfIdOrTypeChangeWf;
 impl ChildWfIdOrTypeChangeWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>, id_change: bool) -> WorkflowResult<()> {
-        ctx.child_workflow(if id_change {
-            ChildWorkflowOptions {
-                workflow_id: "I'm bad and wrong!".to_string(),
-                workflow_type: "child".to_string(),
-                ..Default::default()
-            }
+        if id_change {
+            ctx.child_workflow(
+                UntypedWorkflow::new("child"),
+                RawValue::new(vec![]),
+                ChildWorkflowOptions {
+                    workflow_id: "I'm bad and wrong!".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await?;
         } else {
-            ChildWorkflowOptions {
-                workflow_id: "1".to_string(),
-                workflow_type: "not the child wf type".to_string(),
-                ..Default::default()
-            }
-        })
-        .start()
-        .await;
+            ctx.child_workflow(
+                UntypedWorkflow::new("not the child wf type"),
+                RawValue::new(vec![]),
+                ChildWorkflowOptions {
+                    workflow_id: "1".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        }
         Ok(())
     }
 }

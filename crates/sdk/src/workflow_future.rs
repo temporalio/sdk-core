@@ -26,8 +26,7 @@ use temporalio_common::{
             workflow_commands::{
                 CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
                 CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
-                QueryResult, QuerySuccess, RequestCancelActivity,
-                RequestCancelExternalWorkflowExecution, RequestCancelLocalActivity,
+                QueryResult, QuerySuccess, RequestCancelActivity, RequestCancelLocalActivity,
                 RequestCancelNexusOperation, ScheduleActivity, ScheduleLocalActivity, StartTimer,
                 UpdateResponse, WorkflowCommand, query_result, update_response, workflow_command,
             },
@@ -612,17 +611,6 @@ impl WorkflowFuture {
                                 seq,
                             })
                         }
-                        CancellableID::ExternalWorkflow {
-                            seqnum,
-                            execution,
-                            reason,
-                        } => workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                            RequestCancelExternalWorkflowExecution {
-                                seq: seqnum,
-                                workflow_execution: Some(execution),
-                                reason,
-                            },
-                        ),
                         CancellableID::NexusOp(seq) => {
                             workflow_command::Variant::RequestCancelNexusOperation(
                                 RequestCancelNexusOperation { seq },

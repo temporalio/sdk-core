@@ -214,14 +214,10 @@ impl LocalActivityOptions {
 pub struct ChildWorkflowOptions {
     /// Workflow ID
     pub workflow_id: String,
-    /// Type of workflow to schedule
-    pub workflow_type: String,
     /// Task queue to schedule the workflow in
     ///
     /// If `None`, use the same task queue as the parent workflow.
     pub task_queue: Option<String>,
-    /// Input to send the child Workflow
-    pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
     pub cancel_type: ChildWorkflowCancellationType,
     /// How to respond to parent workflow ending
@@ -246,8 +242,13 @@ pub struct ChildWorkflowOptions {
     pub priority: Option<Priority>,
 }
 
-impl IntoWorkflowCommand for ChildWorkflowOptions {
-    fn into_command(self, seq: u32) -> WorkflowCommand {
+impl ChildWorkflowOptions {
+    pub(crate) fn into_command(
+        self,
+        workflow_type: String,
+        input: Vec<Payload>,
+        seq: u32,
+    ) -> WorkflowCommand {
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
                 summary: self.static_summary.map(Into::into),
@@ -261,15 +262,15 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                 StartChildWorkflowExecution {
                     seq,
                     workflow_id: self.workflow_id,
-                    workflow_type: self.workflow_type,
+                    workflow_type,
                     task_queue: self.task_queue.unwrap_or_default(),
-                    input: self.input,
+                    input,
                     cancellation_type: self.cancel_type as i32,
                     workflow_id_reuse_policy: self.id_reuse_policy as i32,
                     workflow_execution_timeout: self
                         .execution_timeout
                         .and_then(|d| d.try_into().ok()),
-                    workflow_run_timeout: self.execution_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: self.run_timeout.and_then(|d| d.try_into().ok()),
                     workflow_task_timeout: self.task_timeout.and_then(|d| d.try_into().ok()),
                     search_attributes: self
                         .search_attributes
@@ -463,5 +464,49 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                 .into(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_workflow_run_timeout_uses_run_timeout_field() {
+        let opts = ChildWorkflowOptions {
+            workflow_id: "test-wf".to_string(),
+            execution_timeout: Some(Duration::from_secs(60)),
+            run_timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        let cmd = opts.into_command("TestWorkflow".to_string(), vec![], 1);
+        let variant = cmd.variant.unwrap();
+        let start_cmd: StartChildWorkflowExecution = match variant {
+            temporalio_common::protos::coresdk::workflow_commands::workflow_command::Variant::StartChildWorkflowExecution(s) => s,
+            other => panic!("Expected StartChildWorkflowExecution, got {other:?}"),
+        };
+
+        let exec_timeout = start_cmd.workflow_execution_timeout.unwrap();
+        let run_timeout = start_cmd.workflow_run_timeout.unwrap();
+        assert_eq!(exec_timeout.seconds, 60);
+        assert_eq!(run_timeout.seconds, 10);
+    }
+
+    #[test]
+    fn child_workflow_run_timeout_none_when_unset() {
+        let opts = ChildWorkflowOptions {
+            workflow_id: "test-wf".to_string(),
+            execution_timeout: Some(Duration::from_secs(60)),
+            ..Default::default()
+        };
+        let cmd = opts.into_command("TestWorkflow".to_string(), vec![], 1);
+        let variant = cmd.variant.unwrap();
+        let start_cmd: StartChildWorkflowExecution = match variant {
+            temporalio_common::protos::coresdk::workflow_commands::workflow_command::Variant::StartChildWorkflowExecution(s) => s,
+            other => panic!("Expected StartChildWorkflowExecution, got {other:?}"),
+        };
+
+        assert_eq!(start_cmd.workflow_execution_timeout.unwrap().seconds, 60);
+        assert!(start_cmd.workflow_run_timeout.is_none());
     }
 }
