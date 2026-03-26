@@ -10,7 +10,7 @@ use crate::{
 };
 use std::{fmt::Debug, marker::PhantomData};
 use temporalio_common::{
-    QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
+    HasWorkflowDefinition, QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{RawValue, SerializationContextData},
     protos::{
         coresdk::FromPayloadsExt,
@@ -166,6 +166,10 @@ impl WorkflowDefinition for UntypedWorkflow {
     }
 }
 
+impl HasWorkflowDefinition for UntypedWorkflow {
+    type Run = Self;
+}
+
 /// Marker type for sending untyped signals. Stores the signal name for runtime lookup.
 ///
 /// Use with `handle.signal(UntypedSignal::new("signal_name"), raw_payload)`.
@@ -252,7 +256,7 @@ impl<W: WorkflowDefinition> UpdateDefinition for UntypedUpdate<W> {
 impl<CT, W> WorkflowHandle<CT, W>
 where
     CT: WorkflowService + Clone,
-    W: WorkflowDefinition,
+    W: HasWorkflowDefinition,
 {
     /// Create a workflow handle from a client and identifying information.
     pub fn new(client: CT, info: WorkflowExecutionInfo) -> Self {
@@ -401,7 +405,7 @@ where
     ) -> Result<(), WorkflowInteractionError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
-        S: SignalDefinition<Workflow = W>,
+        S: SignalDefinition<Workflow = W::Run>,
         S::Input: Send,
     {
         let payloads = self
@@ -442,7 +446,7 @@ where
     ) -> Result<Q::Output, WorkflowQueryError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
-        Q: QueryDefinition<Workflow = W>,
+        Q: QueryDefinition<Workflow = W::Run>,
         Q::Input: Send,
     {
         let dc = self.client.data_converter();
@@ -496,7 +500,7 @@ where
     ) -> Result<U::Output, WorkflowUpdateError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
-        U: UpdateDefinition<Workflow = W>,
+        U: UpdateDefinition<Workflow = W::Run>,
         U::Input: Send,
         U::Output: 'static,
     {
@@ -524,7 +528,7 @@ where
     ) -> Result<WorkflowUpdateHandle<CT, U::Output>, WorkflowUpdateError>
     where
         CT: WorkflowService + NamespacedClient + Clone,
-        U: UpdateDefinition<Workflow = W>,
+        U: UpdateDefinition<Workflow = W::Run>,
         U::Input: Send,
     {
         let dc = self.client.data_converter();

@@ -1322,6 +1322,63 @@ pub fn single_child_workflow_try_cancelled(child_wf_id: &str) -> TestHistoryBuil
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED  <-- cancel before child started
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+/// 11: EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+/// 12: EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+/// 13: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 15: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 16: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 17: EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+pub fn cancel_child_workflow_before_started_event(child_wf_id: &str) -> TestHistoryBuilder {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let initiated_event_id = t.add(StartChildWorkflowExecutionInitiatedEventAttributes {
+        workflow_id: child_wf_id.to_owned(),
+        workflow_type: Some("child".into()),
+        ..Default::default()
+    });
+    // Cancel arrives before ChildWorkflowExecutionStarted
+    t.add_cancel_requested();
+    t.add_full_wf_task();
+    // Now the child started event arrives
+    let started_event_id = t.add(ChildWorkflowExecutionStartedEventAttributes {
+        initiated_event_id,
+        workflow_execution: Some(WorkflowExecution {
+            workflow_id: child_wf_id.to_owned(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    let cancel_ext_id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+        workflow_id: child_wf_id.to_string(),
+        ..Default::default()
+    });
+    t.add_cancel_external_wf_completed(cancel_ext_id);
+    t.add(
+        history_event::Attributes::ChildWorkflowExecutionCanceledEventAttributes(
+            ChildWorkflowExecutionCanceledEventAttributes {
+                initiated_event_id,
+                started_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+    t.add_full_wf_task();
+    t.add_cancelled();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  7: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED

@@ -27,6 +27,7 @@ pub(crate) fn make_wft_poller(
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     graceful_poll_shutdown: Arc<AtomicBool>,
+    server_supports_autoscaling: Arc<AtomicBool>,
 ) -> impl Stream<
     Item = Result<
         (
@@ -61,6 +62,7 @@ pub(crate) fn make_wft_poller(
         },
         last_successful_poll_time,
         graceful_poll_shutdown.clone(),
+        server_supports_autoscaling.clone(),
     );
     let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
         let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
@@ -77,6 +79,7 @@ pub(crate) fn make_wft_poller(
             WorkflowTaskOptions { wft_poller_shared },
             sticky_last_successful_poll_time,
             graceful_poll_shutdown,
+            server_supports_autoscaling,
         )
     });
     let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(

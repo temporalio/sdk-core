@@ -429,6 +429,18 @@ impl GenericPayloadConverter for PayloadConverter {
         context: &SerializationContext<'_>,
         val: &T,
     ) -> Result<Payload, PayloadConversionError> {
+        // If a single payload is explicitly needed for `()`, then produce a null payload
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<()>() {
+            return Ok(Payload {
+                metadata: {
+                    let mut hm = HashMap::new();
+                    hm.insert("encoding".to_string(), b"binary/null".to_vec());
+                    hm
+                },
+                data: vec![],
+                external_payloads: vec![],
+            });
+        }
         let mut payloads = self.to_payloads(context, val)?;
         if payloads.len() != 1 {
             return Err(PayloadConversionError::WrongEncoding);
@@ -450,7 +462,15 @@ impl GenericPayloadConverter for PayloadConverter {
         val: &T,
     ) -> Result<Vec<Payload>, PayloadConversionError> {
         match self {
-            PayloadConverter::Serde(pc) => Ok(vec![pc.to_payload(context.data, val.as_serde()?)?]),
+            PayloadConverter::Serde(pc) => {
+                // Since Rust SDK uses () to denote no input, we must match other SDKs by producing
+                // no payloads for it.
+                if std::any::TypeId::of::<T>() == std::any::TypeId::of::<()>() {
+                    Ok(Vec::new())
+                } else {
+                    Ok(vec![pc.to_payload(context.data, val.as_serde()?)?])
+                }
+            }
             PayloadConverter::UseWrappers => T::to_payloads(val, context),
             PayloadConverter::Composite(composite) => {
                 for converter in &composite.converters {
@@ -470,8 +490,11 @@ impl GenericPayloadConverter for PayloadConverter {
         context: &SerializationContext<'_>,
         payloads: Vec<Payload>,
     ) -> Result<T, PayloadConversionError> {
-        // Handle empty payloads as unit type ()
-        if payloads.is_empty() && std::any::TypeId::of::<T>() == std::any::TypeId::of::<()>() {
+        // Accept empty payloads (no args) and a single binary/null payload (result from a
+        // workflow/update with () return type as ().
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<()>()
+            && is_unit_payloads(&payloads)
+        {
             let boxed: Box<dyn std::any::Any> = Box::new(());
             return Ok(*boxed.downcast::<T>().unwrap());
         }
@@ -495,6 +518,21 @@ impl GenericPayloadConverter for PayloadConverter {
                 Err(PayloadConversionError::WrongEncoding)
             }
         }
+    }
+}
+
+fn is_unit_payloads(payloads: &[Payload]) -> bool {
+    match payloads {
+        [] => true,
+        [payload] => {
+            payload.data.is_empty()
+                && payload
+                    .metadata
+                    .get("encoding")
+                    .map(|encoding| encoding == b"binary/null")
+                    .unwrap_or(false)
+        }
+        _ => false,
     }
 }
 
@@ -744,6 +782,67 @@ mod tests {
         let result: Result<(), _> = converter.from_payloads(&ctx, empty_payloads);
 
         assert!(result.is_ok(), "Empty payloads should deserialize as ()");
+    }
+
+    #[test]
+    fn test_unit_type_roundtrip_serde() {
+        let converter = PayloadConverter::serde_json();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let payloads = converter.to_payloads(&ctx, &()).unwrap();
+        assert!(payloads.is_empty());
+
+        let result: () = converter.from_payloads(&ctx, payloads).unwrap();
+        assert_eq!(result, ());
+    }
+
+    #[test]
+    fn test_unit_composite_roundtrip() {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let payloads = converter.to_payloads(&ctx, &()).unwrap();
+        assert!(payloads.is_empty());
+
+        let result: () = converter.from_payloads(&ctx, payloads).unwrap();
+        assert_eq!(result, ());
+    }
+
+    #[test]
+    fn test_unit_to_payload_roundtrip() {
+        let converter = PayloadConverter::default();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let mut payloads = vec![converter.to_payload(&ctx, &()).unwrap()];
+        assert!(is_unit_payloads(&payloads));
+        let result: () = converter
+            .from_payload(&ctx, payloads.pop().unwrap())
+            .unwrap();
+        assert_eq!(result, ());
+    }
+
+    #[test]
+    fn test_unit_use_wrappers_returns_wrong_encoding() {
+        let converter = PayloadConverter::UseWrappers;
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &converter,
+        };
+
+        let result = converter.to_payloads(&ctx, &());
+        assert!(
+            matches!(result, Err(PayloadConversionError::WrongEncoding)),
+            "{result:?}"
+        );
     }
 
     #[test]

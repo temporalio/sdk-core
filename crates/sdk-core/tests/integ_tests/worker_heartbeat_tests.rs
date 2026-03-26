@@ -24,7 +24,7 @@ use temporalio_common::{
         temporal::api::{
             common::v1::RetryPolicy,
             enums::v1::WorkerStatus,
-            worker::v1::{PluginInfo, WorkerHeartbeat},
+            worker::v1::{PluginInfo, StorageDriverInfo, WorkerHeartbeat},
             workflowservice::v1::{DescribeWorkerRequest, ListWorkersRequest},
         },
     },
@@ -74,7 +74,7 @@ fn to_system_time(ts: Timestamp) -> SystemTime {
 
 async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Vec<WorkerHeartbeat> {
     let mut raw_client = client.clone();
-    WorkflowService::list_workers(
+    let response = WorkflowService::list_workers(
         &mut raw_client,
         ListWorkersRequest {
             namespace: client.namespace().to_owned(),
@@ -86,11 +86,13 @@ async fn list_worker_heartbeats(client: &Client, query: impl Into<String>) -> Ve
     )
     .await
     .unwrap()
-    .into_inner()
-    .workers_info
-    .into_iter()
-    .filter_map(|info| info.worker_heartbeat)
-    .collect()
+    .into_inner();
+    #[allow(deprecated)]
+    let workers_info = response.workers_info;
+    workers_info
+        .into_iter()
+        .filter_map(|info| info.worker_heartbeat)
+        .collect()
 }
 
 // Tests that rely on Prometheus running in a docker container need to start
@@ -145,6 +147,16 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
             PluginInfo {
                 name: "plugin2".to_string(),
                 version: "2".to_string(),
+            },
+        ]
+        .into_iter()
+        .collect();
+        c.storage_drivers = vec![
+            StorageDriverInfo {
+                r#type: "driver1".to_string(),
+            },
+            StorageDriverInfo {
+                r#type: "driver2".to_string(),
             },
         ]
         .into_iter()
@@ -229,6 +241,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
         .await
         .unwrap()
         .into_inner();
+        #[allow(deprecated)]
         let worker_info = workers_list
             .workers_info
             .iter()
@@ -271,6 +284,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
     .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
+    #[allow(deprecated)]
     let worker_info = workers_list
         .workers_info
         .iter()
@@ -376,6 +390,7 @@ async fn docker_worker_heartbeat_tuner() {
     .into_inner();
     // Since list_workers finds all workers in the namespace, must find specific worker used in this
     // test
+    #[allow(deprecated)]
     let worker_info = workers_list
         .workers_info
         .iter()
@@ -570,6 +585,17 @@ fn after_shutdown_checks(
             PluginInfo {
                 name: "plugin2".to_string(),
                 version: "2".to_string()
+            }
+        ]
+    );
+    assert_eq!(
+        heartbeat.drivers,
+        vec![
+            StorageDriverInfo {
+                r#type: "driver1".to_string()
+            },
+            StorageDriverInfo {
+                r#type: "driver2".to_string()
             }
         ]
     );
@@ -945,6 +971,7 @@ async fn worker_heartbeat_failure_metrics() {
                 .await
                 .unwrap()
                 .into_inner();
+                #[allow(deprecated)]
                 let worker_info = workers_list
                     .workers_info
                     .iter()
@@ -990,6 +1017,7 @@ async fn worker_heartbeat_failure_metrics() {
                 .await
                 .unwrap()
                 .into_inner();
+                #[allow(deprecated)]
                 let worker_info = workers_list
                     .workers_info
                     .iter()
@@ -1102,6 +1130,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
     .into_inner();
 
     // Ensure worker has not ever heartbeated
+    #[allow(deprecated)]
     let heartbeat = workers_list.workers_info.iter().find(|worker_info| {
         if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
             hb.worker_instance_key == worker_instance_key.to_string()
@@ -1174,6 +1203,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
     .into_inner();
 
     // Ensure worker still heartbeats
+    #[allow(deprecated)]
     let heartbeat = workers_list.workers_info.iter().find(|worker_info| {
         if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
             hb.worker_instance_key == worker_instance_key.to_string()

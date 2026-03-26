@@ -72,6 +72,8 @@ async fn main() -> Result<(), anyhow::Error> {
         "test-utilities",
         "--features",
         "ephemeral-server",
+        "--features",
+        "temporalio-sdk-core/otel",
         "--test",
         &test_name,
     ]

@@ -22,6 +22,8 @@ document as your quick reference when submitting pull requests.
   integration tests with `timeout 180`, as it is possible to introduce test hangs.
 - DO NOT put use statements in function scope. Always put them at the top of the file, unless doing
   so helps prevent ambiguous method resolution because of traits. Putting them at the top of a tests module is also acceptable.
+- If you want to format, don't bother checking first. Just run formatting, and run it by using
+  `cargo +nightly fmt`, because some settings require the nightly formatter.
 
 
 ## Repo Specific Utilities

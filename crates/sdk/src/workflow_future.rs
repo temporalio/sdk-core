@@ -471,51 +471,61 @@ impl Future for WorkflowFuture {
                 }
             }
 
-            // Handle signals first
-            let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
-                .into_iter()
-                .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
-                    Poll::Ready(Ok(())) => None,
-                    Poll::Ready(Err(e)) => Some(Err(e)),
-                    Poll::Pending => Some(Ok(sig_fut)),
-                })
-                .collect();
-            match signal_result {
-                Ok(remaining) => self.signal_futures = remaining,
-                Err(e) => {
-                    self.fail_wft(run_id, anyhow!("Signal handler error: {}", e));
+            // Re-poll all futures after state changes: a state_mut call in
+            // any future can unblock a wait_condition in another.
+            self.base_ctx.take_state_mutated();
+            loop {
+                // Poll signals
+                let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
+                    .into_iter()
+                    .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
+                        Poll::Ready(Ok(())) => None,
+                        Poll::Ready(Err(e)) => Some(Err(e)),
+                        Poll::Pending => Some(Ok(sig_fut)),
+                    })
+                    .collect();
+                match signal_result {
+                    Ok(remaining) => self.signal_futures = remaining,
+                    Err(e) => {
+                        self.fail_wft(run_id, anyhow!("Signal handler error: {}", e));
+                        continue 'activations;
+                    }
+                }
+
+                // Poll updates
+                self.update_futures = std::mem::take(&mut self.update_futures)
+                    .into_iter()
+                    .filter_map(
+                        |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
+                            Poll::Ready(v) => {
+                                // Push into the command channel here rather than
+                                // activation_cmds directly to avoid completing an update
+                                // before any final un-awaited commands started from within
+                                // it.
+                                self.base_ctx.send(
+                                    update_response(
+                                        instance_id,
+                                        match v {
+                                            Ok(v) => update_response::Response::Completed(v),
+                                            Err(e) => update_response::Response::Rejected(e.into()),
+                                        },
+                                    )
+                                    .into(),
+                                );
+                                None
+                            }
+                            Poll::Pending => Some((instance_id, update_fut)),
+                        },
+                    )
+                    .collect();
+
+                if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                     continue 'activations;
                 }
-            }
 
-            // Then updates
-            self.update_futures = std::mem::take(&mut self.update_futures)
-                .into_iter()
-                .filter_map(
-                    |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
-                        Poll::Ready(v) => {
-                            // Push into the command channel here rather than activation_cmds
-                            // directly to avoid completing an update before any final un-awaited
-                            // commands started from within it.
-                            self.base_ctx.send(
-                                update_response(
-                                    instance_id,
-                                    match v {
-                                        Ok(v) => update_response::Response::Completed(v),
-                                        Err(e) => update_response::Response::Rejected(e.into()),
-                                    },
-                                )
-                                .into(),
-                            );
-                            None
-                        }
-                        Poll::Pending => Some((instance_id, update_fut)),
-                    },
-                )
-                .collect();
-
-            if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
-                continue;
+                if !self.base_ctx.take_state_mutated() {
+                    break;
+                }
             }
 
             // TODO: deadlock detector

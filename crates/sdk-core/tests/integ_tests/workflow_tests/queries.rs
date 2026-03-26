@@ -2,7 +2,7 @@
 
 use crate::common::build_fake_sdk;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, future::poll_fn, task::Poll, time::Duration};
+use std::{cell::Cell, collections::HashMap, future::poll_fn, task::Poll, time::Duration};
 use temporalio_common::protos::{
     DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::workflow_commands::query_result,
@@ -21,12 +21,11 @@ use temporalio_sdk_core::test_help::{
 };
 
 /// A workflow that returns Pending on first poll and Ready on second poll.
-/// Uses workflow state to track whether it has been polled before.
+/// Uses Cell to avoid state_mut which triggers re-polling.
 #[workflow]
 #[derive(Default)]
 struct CompleteOnSecondPollWf {
-    polled_once: bool,
-    value: u32,
+    polled_once: Cell<bool>,
 }
 
 #[workflow_methods]
@@ -34,10 +33,10 @@ impl CompleteOnSecondPollWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<u32> {
         poll_fn(|_| {
-            if ctx.state(|s| s.polled_once) {
+            if ctx.state(|s| s.polled_once.get()) {
                 Poll::Ready(())
             } else {
-                ctx.state_mut(|s| s.polled_once = true);
+                ctx.state(|s| s.polled_once.set(true));
                 Poll::Pending
             }
         })
@@ -46,8 +45,8 @@ impl CompleteOnSecondPollWf {
     }
 
     #[query]
-    fn get_value(&self, _ctx: &WorkflowContextView) -> u32 {
-        self.value
+    fn get_value(&self, _ctx: &WorkflowContextView) -> bool {
+        self.polled_once.get()
     }
 }
 

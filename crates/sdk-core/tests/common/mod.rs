@@ -36,7 +36,7 @@ use temporalio_client::{
     grpc::WorkflowService,
 };
 use temporalio_common::{
-    WorkflowDefinition,
+    HasWorkflowDefinition, WorkflowDefinition,
     data_converters::{DataConverter, RawValue},
     protos::{
         coresdk::{
@@ -593,7 +593,7 @@ impl TestWorker {
         mut options: WorkflowStartOptions,
     ) -> Result<WorkflowHandle<Client, W>, WorkflowStartError>
     where
-        W: WorkflowDefinition,
+        W: HasWorkflowDefinition,
         W::Input: Send,
     {
         let c = self.client.as_ref().expect("client must be set");
@@ -887,7 +887,7 @@ pub(crate) trait WorkflowHandleExt {
 #[async_trait::async_trait(?Send)]
 impl<W> WorkflowHandleExt for WorkflowHandle<Client, W>
 where
-    W: WorkflowDefinition,
+    W: HasWorkflowDefinition,
 {
     async fn fetch_history_and_replay(
         &self,
