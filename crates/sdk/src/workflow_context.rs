@@ -533,19 +533,8 @@ impl BaseWorkflowContext {
         // Immediately create the command/future for the result, otherwise if the user does
         // not await the result until *after* we receive an activation for it, there will be nothing
         // to match when unblocking.
-        let cancel_seq = self
-            .inner
-            .seq_nums
-            .borrow_mut()
-            .next_cancel_external_wf_seq();
         let (result_cmd, unblocker) = CancellableWFCommandFut::new(
-            CancellableIDWithReason::ExternalWorkflow {
-                seqnum: cancel_seq,
-                execution: NamespacedWorkflowExecution {
-                    workflow_id: opts.workflow_id.clone(),
-                    ..Default::default()
-                },
-            },
+            CancellableIDWithReason::ChildWorkflow { seqnum: child_seq },
             self.clone(),
         );
         self.send(
@@ -1680,13 +1669,13 @@ where
                     })?;
                     match status {
                         child_workflow_result::Status::Completed(success) => {
-                            let payload = success.result.unwrap_or_default();
+                            let payloads = success.result.into_iter().collect();
                             let ctx = SerializationContext {
                                 data: &SerializationContextData::Workflow,
                                 converter: payload_converter,
                             };
                             payload_converter
-                                .from_payload::<Output>(&ctx, payload)
+                                .from_payloads::<Output>(&ctx, payloads)
                                 .map_err(ChildWorkflowExecutionError::Serialization)
                         }
                         child_workflow_result::Status::Failed(f) => {
@@ -1935,8 +1924,7 @@ where
         }
     }
 
-    /// TODO: Remove — other SDKs omit cancel from child handles.
-    #[doc(hidden)]
+    /// Cancel the child workflow
     pub fn cancel(&self, reason: String) {
         self.common.base_ctx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {

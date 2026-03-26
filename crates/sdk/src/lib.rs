@@ -140,7 +140,6 @@ use temporalio_common::{
             activity_result::{ActivityExecutionResult, ActivityResolution},
             activity_task::{ActivityTask, activity_task},
             child_workflow::ChildWorkflowResult,
-            common::NamespacedWorkflowExecution,
             nexus::NexusOperationResult,
             workflow_activation::{
                 WorkflowActivation,
@@ -1153,11 +1152,6 @@ pub(crate) enum CancellableID {
         reason: String,
     },
     SignalExternalWorkflow(u32),
-    ExternalWorkflow {
-        seqnum: u32,
-        execution: NamespacedWorkflowExecution,
-        reason: String,
-    },
     /// A nexus operation (waiting for start)
     NexusOp(u32),
 }
@@ -1169,26 +1163,13 @@ pub(crate) trait SupportsCancelReason {
 }
 #[derive(Debug, Clone)]
 pub(crate) enum CancellableIDWithReason {
-    ChildWorkflow {
-        seqnum: u32,
-    },
-    ExternalWorkflow {
-        seqnum: u32,
-        execution: NamespacedWorkflowExecution,
-    },
+    ChildWorkflow { seqnum: u32 },
 }
 impl SupportsCancelReason for CancellableIDWithReason {
     fn with_reason(self, reason: String) -> CancellableID {
         match self {
             CancellableIDWithReason::ChildWorkflow { seqnum } => {
                 CancellableID::ChildWorkflow { seqnum, reason }
-            }
-            CancellableIDWithReason::ExternalWorkflow { seqnum, execution } => {
-                CancellableID::ExternalWorkflow {
-                    seqnum,
-                    execution,
-                    reason,
-                }
             }
         }
     }
