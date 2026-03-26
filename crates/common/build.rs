@@ -866,7 +866,6 @@ fn generate_request_headers(
 
 #[derive(Debug, Clone)]
 struct MethodHeaderInfo {
-    request_type: String,
     request_rust_type: String,
     headers: Vec<HeaderInfo>,
 }
@@ -959,7 +958,6 @@ impl RequestHeaderGenerator {
         }
 
         Ok(Some(MethodHeaderInfo {
-            request_type: input_type,
             request_rust_type,
             headers,
         }))
@@ -1049,17 +1047,8 @@ pub fn extract_temporal_request_headers(
         );
 
         // Add type-based dispatch for each method with headers
-        if !self.method_headers.is_empty() {
-            for method_info in &self.method_headers {
-                output.push_str(&format!(
-                    r#"    if let Some(req) = request.downcast_ref::<{}>() {{
-        {}
-    }}
-"#,
-                    method_info.request_rust_type,
-                    self.generate_header_extraction_for_method(method_info)
-                ));
-            }
+        for method_info in &self.method_headers {
+            output.push_str(&self.generate_type_dispatch(method_info));
         }
 
         output.push_str("    headers\n}\n");
@@ -1067,56 +1056,75 @@ pub fn extract_temporal_request_headers(
         output
     }
 
-    fn generate_header_extraction_for_method(&self, method_info: &MethodHeaderInfo) -> String {
+    fn generate_type_dispatch(&self, method_info: &MethodHeaderInfo) -> String {
         let mut output = String::new();
 
         for header_info in &method_info.headers {
             if header_info.field_paths.is_empty() {
                 // Static header value
                 output.push_str(&format!(
-                    r#"        if existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
+                    r#"    if request.downcast_ref::<{}>().is_some()
+        && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
             headers.push(("{}".to_string(), "{}".to_string()));
-        }}
+    }}
 "#,
-                    header_info.header_name, header_info.header_name, header_info.value_template
+                    method_info.request_rust_type,
+                    header_info.header_name,
+                    header_info.header_name,
+                    header_info.value_template
                 ));
             } else {
-                // Template with field interpolation
                 for field_path in &header_info.field_paths {
-                    let accessor =
-                        self.generate_field_accessor(field_path, &method_info.request_type);
                     let template_with_placeholder = header_info
                         .value_template
                         .replace(&format!("{{{}}}", field_path), "{}");
+                    let value_expr = if template_with_placeholder == "{}" {
+                        "val.to_string()".to_string()
+                    } else {
+                        format!("format!(\"{}\", val)", template_with_placeholder)
+                    };
 
-                    // Check if this is a simple field (no dots) - those return &str directly
                     let parts: Vec<&str> = field_path.split('.').collect();
                     if parts.len() == 1 {
-                        // Simple field - accessor returns &str, not Option<&str>
+                        let snake_field = to_snake_case(parts[0]);
                         output.push_str(&format!(
-                            r#"        let val = {};
-            if !val.is_empty() && existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
-                headers.push(("{}".to_string(), format!("{}", val)));
-            }}
+                            r#"    if let Some(req) = request.downcast_ref::<{}>() {{
+        let val = req.{}.as_str();
+        if !val.is_empty() && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
+            headers.push(("{}".to_string(), {}));
+        }}
+    }}
 "#,
-                            accessor,
+                            method_info.request_rust_type,
+                            snake_field,
                             header_info.header_name,
                             header_info.header_name,
-                            template_with_placeholder
+                            value_expr
                         ));
                     } else {
-                        // Nested field - accessor returns Option<&str>
+                        // Build chained Option accessor for nested fields
+                        let mut chain = "req".to_string();
+                        for (i, part) in parts.iter().enumerate() {
+                            let snake = to_snake_case(part);
+                            if i == parts.len() - 1 {
+                                chain = format!("{}.{}.as_str()", chain, snake);
+                            } else {
+                                chain = format!("{}.{}.as_ref()?", chain, snake);
+                            }
+                        }
                         output.push_str(&format!(
-                            r#"        if let Some(val) = {} {{
-            if !val.is_empty() && existing_metadata.map_or(true, |md| md.get("{}").is_none()) {{
-                headers.push(("{}".to_string(), format!("{}", val)));
-            }}
-        }}
+                            r#"    if let Some(req) = request.downcast_ref::<{}>()
+        && let Some(val) = (|| -> Option<&str> {{ Some({}) }})()
+        && !val.is_empty()
+        && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
+            headers.push(("{}".to_string(), {}));
+    }}
 "#,
-                            accessor,
+                            method_info.request_rust_type,
+                            chain,
                             header_info.header_name,
                             header_info.header_name,
-                            template_with_placeholder
+                            value_expr
                         ));
                     }
                 }
@@ -1124,32 +1132,5 @@ pub fn extract_temporal_request_headers(
         }
 
         output
-    }
-
-    fn generate_field_accessor(&self, field_path: &str, _request_type: &str) -> String {
-        let parts: Vec<&str> = field_path.split('.').collect();
-
-        if parts.len() == 1 {
-            // Simple field access - protobuf String fields return &str directly
-            let snake_case_field = to_snake_case(parts[0]);
-            format!("req.{}.as_str()", snake_case_field)
-        } else {
-            // Nested field access - need to chain Option handling properly
-            let mut accessor = "req".to_string();
-
-            for (i, part) in parts.iter().enumerate() {
-                let snake_case_field = to_snake_case(part);
-                if i == parts.len() - 1 {
-                    // Last field - this should be the string field we want, use .as_str()
-                    accessor = format!("{}.{}.as_str()", accessor, snake_case_field);
-                } else {
-                    // Intermediate field - assume it's an Option<Box<MessageType>>
-                    accessor = format!("{}.{}.as_ref()?", accessor, snake_case_field);
-                }
-            }
-
-            // Wrap in an Option-returning closure for the ? operator to work
-            format!("(|| -> Option<&str> {{ Some({}) }})()", accessor)
-        }
     }
 }
