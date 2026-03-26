@@ -1203,6 +1203,130 @@ async fn child_workflow_signal_serialization_failure_returns_error() {
     worker.run_until_done().await.unwrap();
 }
 
+/// A typed child workflow returning (). Used to test deserialization when the
+/// server sends a completion with no result payload.
+#[workflow]
+#[derive(Default)]
+struct UnitChildWf;
+
+#[workflow_methods]
+impl UnitChildWf {
+    #[run(name = "child")]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Ok(())
+    }
+}
+
+/// Parent that starts a typed child returning () and awaits its result.
+/// With a canned history whose completion has result=None (simulating a
+/// non-Rust child that returns void without sending a payload), this triggers
+/// the unwrap_or_default bug: Payload::default() has no encoding metadata,
+/// so is_unit_payloads returns false and deserialization fails with
+/// WrongEncoding.
+#[workflow]
+#[derive(Default)]
+struct UnitChildParentWf;
+
+#[workflow_methods]
+impl UnitChildParentWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                UnitChildWf::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: "child-id-1".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow!(e))?;
+        started.result().await?;
+        Ok(())
+    }
+}
+
+/// Regression: when a child workflow completes with result=None (no payload),
+/// deserializing Output=() should succeed. Currently fails with WrongEncoding
+/// because unwrap_or_default() yields a Payload with no encoding metadata.
+#[tokio::test]
+async fn child_workflow_unit_result_none_payload() {
+    // single_child_workflow produces a completion with result: None
+    let t = canned_histories::single_child_workflow("child-id-1");
+    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+    worker.register_workflow::<UnitChildParentWf>();
+    worker.run().await.unwrap();
+}
+
+/// Parent that starts a child, then cancels the result future (not the child
+/// handle). This emits RequestCancelExternalWorkflowExecution with a seq that
+/// was never registered in command_status, causing a WFT failure when the
+/// server responds with ResolveRequestCancelExternalWorkflow.
+#[workflow]
+#[derive(Default)]
+struct CancelResultFutureParent;
+
+#[workflow_methods]
+impl CancelResultFutureParent {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                CancelledChildGetsReasonChild::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-child", ctx.task_queue()),
+                    cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("Child should start OK");
+
+        let result_fut = started.result();
+        // Cancel via the result future's CancellableFuture impl, not
+        // StartedChildWorkflow::cancel(). This goes through the ExternalWorkflow
+        // cancel ID path, which emits RequestCancelExternalWorkflowExecution.
+        result_fut.cancel();
+        let _ = result_fut.await;
+        Ok(())
+    }
+}
+
+/// Regression: cancelling the future from result() sends
+/// RequestCancelExternalWorkflowExecution with an unregistered seq, causing
+/// a WFT failure when the server responds. The workflow gets stuck in an
+/// infinite WFT failure loop with "Command CancelExternal(1) not found to
+/// unblock!".
+#[tokio::test]
+async fn cancel_child_result_future_does_not_fail_wft() {
+    let wf_name = "cancel-child-result-future";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<CancelResultFutureParent>();
+    worker.register_workflow::<CancelledChildGetsReasonChild>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+
+    worker
+        .submit_workflow(
+            CancelResultFutureParent::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+
+    // The bug causes an infinite WFT failure loop; timeout detects it.
+    tokio::time::timeout(Duration::from_secs(30), worker.run_until_done())
+        .await
+        .expect("Timed out — workflow stuck in WFT failure loop")
+        .unwrap();
+}
+
 #[workflow]
 #[derive(Default)]
 struct CancelExternalTarget;
