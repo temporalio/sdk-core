@@ -63,7 +63,7 @@ pub enum MetricKind {
     HistogramF64,
     /// A histogram that records [`Duration`] values.
     HistogramDuration,
-    /// An `i64` counter that can go up or down (e.g. inflight counts).
+    /// An `i64` counter that can go up or down.
     UpDownCounter,
 }
 /// The value to record when updating a metric instrument.
