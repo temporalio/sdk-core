@@ -440,7 +440,7 @@ impl ManagedRun {
                         result: Box::new(qr),
                     },
                     metrics: self.metrics.clone(),
-                    workflow_id: self.workflow_id().to_owned()
+                    workflow_id: self.workflow_id().to_owned(),
                 }),
                 resp_chan,
             );
@@ -643,7 +643,10 @@ impl ManagedRun {
                     });
             } else {
                 ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
-                    tt, cause, failure, self.workflow_id().to_string(),
+                    tt,
+                    cause,
+                    failure,
+                    self.workflow_id().to_string(),
                 ))
             }
         } else {

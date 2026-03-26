@@ -122,7 +122,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         activity_id: activity_id.clone(),
                         result,
                         identity: self.client.identity(),
-                        resource_id: generate_resource_id(workflow_id, activity_id)
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                     }
                     .into_request(),
                 )
@@ -171,7 +171,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         failure: Some(failure),
                         identity: self.client.identity(),
                         last_heartbeat_details,
-                        resource_id: generate_resource_id(workflow_id, activity_id)
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                     }
                     .into_request(),
                 )

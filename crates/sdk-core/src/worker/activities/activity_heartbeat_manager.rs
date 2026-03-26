@@ -420,7 +420,7 @@ impl HeartbeatStreamState {
                 return Some(HeartbeatExecutorAction::Report {
                     task_token: tt,
                     details: last_deets,
-                    resource_id: state.resource_id
+                    resource_id: state.resource_id,
                 });
             } else if state.is_record_in_flight {
                 self.tt_needs_flush.insert(tt, on_complete);

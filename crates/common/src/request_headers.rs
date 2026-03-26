@@ -31,8 +31,7 @@ mod tests {
         let mut metadata = MetadataMap::new();
         metadata.insert("temporal-resource-id", "existing".parse().unwrap());
 
-        let headers =
-            extract_temporal_request_headers(&request as &dyn Any, Some(&metadata));
+        let headers = extract_temporal_request_headers(&request as &dyn Any, Some(&metadata));
         assert!(headers.is_empty());
     }
 
@@ -192,10 +191,7 @@ mod tests {
             resource_id: "workflow:hb-wf".to_string(),
             ..Default::default()
         };
-        assert_eq!(
-            extract_resource_id(&request),
-            Some("workflow:hb-wf".into())
-        );
+        assert_eq!(extract_resource_id(&request), Some("workflow:hb-wf".into()));
     }
 
     #[test]

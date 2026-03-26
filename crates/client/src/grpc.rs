@@ -583,7 +583,8 @@ macro_rules! request_with_headers {
 
         // Extract and attach additional headers from proto annotations
         let headers = extract_temporal_request_headers(
-            $req.get_ref() as &dyn std::any::Any, Some($req.metadata()),
+            $req.get_ref() as &dyn std::any::Any,
+            Some($req.metadata()),
         );
 
         for (key, value) in headers {

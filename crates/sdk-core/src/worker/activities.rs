@@ -138,7 +138,7 @@ impl RemoteInFlightActInfo {
             _permit: permit,
         }
     }
-    
+
     fn resource_id(&self) -> String {
         if !self.base.workflow_id.is_empty() {
             format!("workflow:{}", self.base.workflow_id)
@@ -353,7 +353,7 @@ impl WorkerActivityTasks {
             self.heartbeat_manager
                 .evict(task_token.clone(), should_flush)
                 .await;
-            
+
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
                 let _flushing_guard = self.completers_lock.read().await;
@@ -368,7 +368,11 @@ impl WorkerActivityTasks {
                             act_metrics.act_execution_succeeded(sched_time);
                         }
                         client
-                            .complete_activity_task(task_token.clone(), result.map(Into::into), resource_id)
+                            .complete_activity_task(
+                                task_token.clone(),
+                                result.map(Into::into),
+                                resource_id,
+                            )
                             .await
                             .err()
                     }
@@ -393,7 +397,7 @@ impl WorkerActivityTasks {
                                 .fail_activity_task(
                                     task_token.clone(),
                                     Some(worker_shutdown_failure()),
-                                    resource_id
+                                    resource_id,
                                 )
                                 .await
                                 .err()
@@ -469,8 +473,12 @@ impl WorkerActivityTasks {
         };
         let throttle_interval =
             std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
-        self.heartbeat_manager
-            .record(details, throttle_interval, at_info.timeout_resetter.clone(), at_info.resource_id())
+        self.heartbeat_manager.record(
+            details,
+            throttle_interval,
+            at_info.timeout_resetter.clone(),
+            at_info.resource_id(),
+        )
     }
 
     /// Returns a handle that the workflows management side can use to interact with this manager
@@ -1015,5 +1023,4 @@ mod tests {
         assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
-
 }
