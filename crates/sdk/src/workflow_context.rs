@@ -558,6 +558,7 @@ impl BaseWorkflowContext {
 
         let common = ChildWfCommon {
             workflow_id: opts.workflow_id.clone(),
+            child_seq,
             result_future: result_cmd,
             base_ctx: self.clone(),
             payload_converter: self.inner.payload_converter.clone(),
@@ -1613,6 +1614,7 @@ where
 
 pub(crate) struct ChildWfCommon {
     workflow_id: String,
+    child_seq: u32,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
     payload_converter: PayloadConverter,
@@ -1938,7 +1940,7 @@ where
     pub fn cancel(&self, reason: String) {
         self.common.base_ctx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {
-                child_workflow_seq: self.common.result_future.cancellable_id.seq_num(),
+                child_workflow_seq: self.common.child_seq,
                 reason,
             }
             .into(),

@@ -270,7 +270,7 @@ impl ChildWorkflowOptions {
                     workflow_execution_timeout: self
                         .execution_timeout
                         .and_then(|d| d.try_into().ok()),
-                    workflow_run_timeout: self.execution_timeout.and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: self.run_timeout.and_then(|d| d.try_into().ok()),
                     workflow_task_timeout: self.task_timeout.and_then(|d| d.try_into().ok()),
                     search_attributes: self
                         .search_attributes
@@ -464,5 +464,49 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                 .into(),
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn child_workflow_run_timeout_uses_run_timeout_field() {
+        let opts = ChildWorkflowOptions {
+            workflow_id: "test-wf".to_string(),
+            execution_timeout: Some(Duration::from_secs(60)),
+            run_timeout: Some(Duration::from_secs(10)),
+            ..Default::default()
+        };
+        let cmd = opts.into_command("TestWorkflow".to_string(), vec![], 1);
+        let variant = cmd.variant.unwrap();
+        let start_cmd: StartChildWorkflowExecution = match variant {
+            temporalio_common::protos::coresdk::workflow_commands::workflow_command::Variant::StartChildWorkflowExecution(s) => s,
+            other => panic!("Expected StartChildWorkflowExecution, got {other:?}"),
+        };
+
+        let exec_timeout = start_cmd.workflow_execution_timeout.unwrap();
+        let run_timeout = start_cmd.workflow_run_timeout.unwrap();
+        assert_eq!(exec_timeout.seconds, 60);
+        assert_eq!(run_timeout.seconds, 10);
+    }
+
+    #[test]
+    fn child_workflow_run_timeout_none_when_unset() {
+        let opts = ChildWorkflowOptions {
+            workflow_id: "test-wf".to_string(),
+            execution_timeout: Some(Duration::from_secs(60)),
+            ..Default::default()
+        };
+        let cmd = opts.into_command("TestWorkflow".to_string(), vec![], 1);
+        let variant = cmd.variant.unwrap();
+        let start_cmd: StartChildWorkflowExecution = match variant {
+            temporalio_common::protos::coresdk::workflow_commands::workflow_command::Variant::StartChildWorkflowExecution(s) => s,
+            other => panic!("Expected StartChildWorkflowExecution, got {other:?}"),
+        };
+
+        assert_eq!(start_cmd.workflow_execution_timeout.unwrap().seconds, 60);
+        assert!(start_cmd.workflow_run_timeout.is_none());
     }
 }

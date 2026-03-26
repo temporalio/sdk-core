@@ -1177,14 +1177,6 @@ pub(crate) enum CancellableIDWithReason {
         execution: NamespacedWorkflowExecution,
     },
 }
-impl CancellableIDWithReason {
-    pub(crate) fn seq_num(&self) -> u32 {
-        match self {
-            CancellableIDWithReason::ChildWorkflow { seqnum } => *seqnum,
-            CancellableIDWithReason::ExternalWorkflow { seqnum, .. } => *seqnum,
-        }
-    }
-}
 impl SupportsCancelReason for CancellableIDWithReason {
     fn with_reason(self, reason: String) -> CancellableID {
         match self {
