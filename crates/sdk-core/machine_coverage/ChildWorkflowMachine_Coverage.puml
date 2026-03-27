@@ -5,6 +5,9 @@ StartCommandCreated --> StartEventRecorded: StartChildWorkflowExecutionInitiated
 StartCommandCreated --> Cancelled: Cancel
 StartEventRecorded --> Started: ChildWorkflowExecutionStarted
 StartEventRecorded --> StartFailed: StartChildWorkflowExecutionFailed
+StartEventRecorded -[#blue]-> StartEventRecorded: Cancel
+StartEventRecorded -[#blue]-> Cancelled: Cancel
+StartEventRecorded --> StartEventRecorded: CommandRequestCancelExternalWorkflowExecution
 Started --> Completed: ChildWorkflowExecutionCompleted
 Started --> Failed: ChildWorkflowExecutionFailed
 Started --> TimedOut: ChildWorkflowExecutionTimedOut
@@ -14,6 +17,9 @@ Started --> Started: Cancel
 Started --> Cancelled: Cancel
 Started --> Started: CommandRequestCancelExternalWorkflowExecution
 Cancelled -[#blue]-> Cancelled: Cancel
+Cancelled --> Cancelled: ChildWorkflowExecutionStarted
+Cancelled --> Cancelled: StartChildWorkflowExecutionFailed
+Cancelled --> Cancelled: CommandRequestCancelExternalWorkflowExecution
 Cancelled --> Cancelled: ChildWorkflowExecutionCancelled
 Cancelled --> Cancelled: ChildWorkflowExecutionCompleted
 Cancelled --> Cancelled: ChildWorkflowExecutionFailed
