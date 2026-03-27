@@ -894,26 +894,43 @@ impl RequestHeaderGenerator {
         &mut self,
         descriptor_pool: &prost_reflect::DescriptorPool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Look for the request_header extension
         let request_header_ext = descriptor_pool
             .get_extension_by_name("temporal.api.protometa.v1.request_header")
             .ok_or("Could not find request_header extension")?;
 
-        // Process all services
         for service in descriptor_pool.services() {
             for method in service.methods() {
-                // Check if method has the request_header extension
                 let method_options = method.options();
-                if method_options.has_extension(&request_header_ext) {
-                    // Get the extension value
-                    let extension_value = method_options.get_extension(&request_header_ext);
+                if !method_options.has_extension(&request_header_ext) {
+                    continue;
+                }
+                let extension_value = method_options.get_extension(&request_header_ext);
+                let request_rust_type =
+                    proto_to_rust_path(method.input().full_name());
 
-                    // Parse the extension data as RequestHeaderAnnotation
-                    if let Some(method_info) =
-                        self.process_method_reflect(&method, &extension_value)?
-                    {
-                        self.method_headers.push(method_info);
-                    }
+                // Collect annotation messages (may be single or repeated)
+                let messages: Vec<_> = match &*extension_value {
+                    prost_reflect::Value::List(list) => list
+                        .iter()
+                        .filter_map(|v| match v {
+                            prost_reflect::Value::Message(m) => Some(m),
+                            _ => None,
+                        })
+                        .collect(),
+                    prost_reflect::Value::Message(m) => vec![m],
+                    _ => continue,
+                };
+
+                let headers: Vec<_> = messages
+                    .into_iter()
+                    .filter_map(parse_annotation)
+                    .collect();
+
+                if !headers.is_empty() {
+                    self.method_headers.push(MethodHeaderInfo {
+                        request_rust_type,
+                        headers,
+                    });
                 }
             }
         }
@@ -921,236 +938,133 @@ impl RequestHeaderGenerator {
         Ok(())
     }
 
-    fn process_method_reflect(
-        &self,
-        method: &prost_reflect::MethodDescriptor,
-        extension_value: &prost_reflect::Value,
-    ) -> Result<Option<MethodHeaderInfo>, Box<dyn std::error::Error>> {
-        let input_type = method.input().full_name().to_string();
-        let request_rust_type = proto_to_rust_path(&input_type);
-
-        let mut headers = Vec::new();
-
-        // The extension value should be a repeated list of RequestHeaderAnnotation messages
-        match extension_value {
-            prost_reflect::Value::List(annotations) => {
-                for annotation in annotations {
-                    if let Some(header_info) = self.parse_annotation_reflect(annotation)? {
-                        headers.push(header_info);
-                    }
-                }
-            }
-            prost_reflect::Value::Message(msg) => {
-                // Single annotation
-                if let Some(header_info) =
-                    self.parse_annotation_reflect(&prost_reflect::Value::Message(msg.clone()))?
-                {
-                    headers.push(header_info);
-                }
-            }
-            _ => {
-                // Ignore unexpected extension value types
-            }
-        }
-
-        if headers.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(MethodHeaderInfo {
-            request_rust_type,
-            headers,
-        }))
-    }
-
-    fn parse_annotation_reflect(
-        &self,
-        annotation_value: &prost_reflect::Value,
-    ) -> Result<Option<HeaderInfo>, Box<dyn std::error::Error>> {
-        match annotation_value {
-            prost_reflect::Value::Message(msg) => {
-                let header_field = msg
-                    .descriptor()
-                    .get_field_by_name("header")
-                    .ok_or("Missing header field")?;
-                let value_field = msg
-                    .descriptor()
-                    .get_field_by_name("value")
-                    .ok_or("Missing value field")?;
-
-                let header_name = msg
-                    .get_field(&header_field)
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-                let value_template = msg
-                    .get_field(&value_field)
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-
-                if header_name.is_empty() || value_template.is_empty() {
-                    return Ok(None);
-                }
-
-                let field_paths = self.parse_field_paths(&value_template);
-
-                Ok(Some(HeaderInfo {
-                    header_name,
-                    value_template,
-                    field_paths,
-                }))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    fn parse_field_paths(&self, template: &str) -> Vec<String> {
-        let mut paths = Vec::new();
-        let mut chars = template.chars();
-        while let Some(c) = chars.next() {
-            if c == '{' {
-                let path: String = chars.by_ref().take_while(|&c| c != '}').collect();
-                if !path.is_empty() {
-                    paths.push(path);
-                }
-            }
-        }
-        paths
-    }
-
     fn generate(&self) -> String {
-        let mut output = String::new();
-        output.push_str("// Generated from descriptors.bin - DO NOT EDIT\n\n");
-        // Don't add imports since they're already in the including module
+        let mut output = String::from(
+            r#"// Generated from descriptors.bin - DO NOT EDIT
 
-        // Generate the main extraction function
-        output.push_str(&self.generate_extraction_function());
-
-        output
-    }
-
-    fn generate_extraction_function(&self) -> String {
-        let mut output = String::new();
-
-        output.push_str(
-            r#"
 /// Extract headers from request messages based on proto annotations
 pub fn extract_temporal_request_headers(
     request: &dyn Any,
     existing_metadata: Option<&MetadataMap>,
 ) -> Vec<(String, String)> {
     let mut headers = Vec::new();
-    
+
     // Extract headers from proto annotations
 "#,
         );
 
-        // Add type-based dispatch for each method with headers
         for method_info in &self.method_headers {
-            output.push_str(&self.generate_type_dispatch(method_info));
-        }
-
-        output.push_str("    headers\n}\n");
-
-        output
-    }
-
-    fn generate_type_dispatch(&self, method_info: &MethodHeaderInfo) -> String {
-        let mut output = String::new();
-
-        for header_info in &method_info.headers {
-            if header_info.field_paths.is_empty() {
-                // Static header value
-                output.push_str(&format!(
-                    r#"    if request.downcast_ref::<{}>().is_some()
-        && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
-            headers.push(("{}".to_string(), "{}".to_string()));
-    }}
-"#,
-                    method_info.request_rust_type,
-                    header_info.header_name,
-                    header_info.header_name,
-                    header_info.value_template
+            for header in &method_info.headers {
+                output.push_str(&generate_header_check(
+                    &method_info.request_rust_type,
+                    header,
                 ));
-            } else {
-                for field_path in &header_info.field_paths {
-                    let template_with_placeholder = header_info
-                        .value_template
-                        .replace(&format!("{{{}}}", field_path), "{}");
-                    let value_expr = if template_with_placeholder == "{}" {
-                        "val.to_string()".to_string()
-                    } else {
-                        format!("format!(\"{}\", val)", template_with_placeholder)
-                    };
-
-                    let parts: Vec<&str> = field_path.split('.').collect();
-                    if parts.len() == 1 {
-                        let snake_field = to_snake_case(parts[0]);
-                        output.push_str(&format!(
-                            r#"    if let Some(req) = request.downcast_ref::<{}>() {{
-        let val = req.{}.as_str();
-        if !val.is_empty() && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
-            headers.push(("{}".to_string(), {}));
-        }}
-    }}
-"#,
-                            method_info.request_rust_type,
-                            snake_field,
-                            header_info.header_name,
-                            header_info.header_name,
-                            value_expr
-                        ));
-                    } else {
-                        // Build chained let bindings for nested fields
-                        let mut let_chain = format!(
-                            "    if let Some(req) = request.downcast_ref::<{}>()",
-                            method_info.request_rust_type
-                        );
-                        let mut current = "req".to_string();
-                        for (i, part) in parts.iter().enumerate() {
-                            let snake = to_snake_case(part);
-                            if i == parts.len() - 1 {
-                                // Last field is the string value
-                                let_chain.push_str(&format!(
-                                    "\n        && !{}.{}.is_empty()",
-                                    current, snake
-                                ));
-                            } else {
-                                let binding = format!("f{}", i);
-                                let_chain.push_str(&format!(
-                                    "\n        && let Some({}) = {}.{}.as_ref()",
-                                    binding, current, snake
-                                ));
-                                current = binding;
-                            }
-                        }
-                        let last_field = to_snake_case(parts[parts.len() - 1]);
-                        let val_access = format!("{}.{}", current, last_field);
-                        let value_with_access = if template_with_placeholder == "{}" {
-                            format!("{}.to_string()", val_access)
-                        } else {
-                            format!(
-                                "format!(\"{}\", {})",
-                                template_with_placeholder, val_access
-                            )
-                        };
-                        output.push_str(&format!(
-                            r#"{}
-        && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
-            headers.push(("{}".to_string(), {}));
-    }}
-"#,
-                            let_chain,
-                            header_info.header_name,
-                            header_info.header_name,
-                            value_with_access
-                        ));
-                    }
-                }
             }
         }
 
+        output.push_str("    headers\n}\n");
         output
     }
+}
+
+fn parse_annotation(msg: &prost_reflect::DynamicMessage) -> Option<HeaderInfo> {
+    let header_name = msg
+        .get_field(&msg.descriptor().get_field_by_name("header")?)
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let value_template = msg
+        .get_field(&msg.descriptor().get_field_by_name("value")?)
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    if header_name.is_empty() || value_template.is_empty() {
+        return None;
+    }
+
+    let field_paths = parse_field_paths(&value_template);
+    Some(HeaderInfo {
+        header_name,
+        value_template,
+        field_paths,
+    })
+}
+
+fn parse_field_paths(template: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let path: String = chars.by_ref().take_while(|&c| c != '}').collect();
+            if !path.is_empty() {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn generate_header_check(request_rust_type: &str, header: &HeaderInfo) -> String {
+    if header.field_paths.is_empty() {
+        // Static header value (no field interpolation)
+        return format!(
+            r#"    if request.downcast_ref::<{type_}>().is_some()
+        && existing_metadata.is_none_or(|md| md.get("{hdr}").is_none()) {{
+            headers.push(("{hdr}".to_string(), "{val}".to_string()));
+    }}
+"#,
+            type_ = request_rust_type,
+            hdr = header.header_name,
+            val = header.value_template
+        );
+    }
+
+    let mut output = String::new();
+    for field_path in &header.field_paths {
+        let parts: Vec<&str> = field_path.split('.').collect();
+        let template_str = header
+            .value_template
+            .replace(&format!("{{{}}}", field_path), "{}");
+
+        // Build the if-let chain: downcast, then optional intermediate fields
+        let mut conditions = format!(
+            "    if let Some(req) = request.downcast_ref::<{}>()",
+            request_rust_type
+        );
+        let mut current = "req".to_string();
+        for (i, part) in parts[..parts.len() - 1].iter().enumerate() {
+            let binding = format!("f{}", i);
+            conditions.push_str(&format!(
+                "\n        && let Some({}) = {}.{}.as_ref()",
+                binding,
+                current,
+                to_snake_case(part)
+            ));
+            current = binding;
+        }
+        let last_field = to_snake_case(parts[parts.len() - 1]);
+        let val_ref = format!("{}.{}", current, last_field);
+
+        // Value expression: passthrough or format with template
+        let value_expr = if template_str == "{}" {
+            format!("{}.to_string()", val_ref)
+        } else {
+            format!("format!(\"{}\", {})", template_str, val_ref)
+        };
+
+        output.push_str(&format!(
+            r#"{conditions}
+        && !{val_ref}.is_empty()
+        && existing_metadata.is_none_or(|md| md.get("{hdr}").is_none()) {{
+            headers.push(("{hdr}".to_string(), {value_expr}));
+    }}
+"#,
+            conditions = conditions,
+            val_ref = val_ref,
+            hdr = header.header_name,
+            value_expr = value_expr
+        ));
+    }
+    output
 }
