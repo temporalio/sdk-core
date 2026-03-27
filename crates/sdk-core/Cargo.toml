@@ -75,6 +75,7 @@ reqwest = { version = "0.13", features = [
   "json",
   "stream",
   "query",
+  "rustls",
 ], default-features = false, optional = true }
 serde = "1.0"
 serde_json = "1.0"
