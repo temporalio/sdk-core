@@ -13,7 +13,7 @@ use futures_util::{
     sink, stream,
     stream::FuturesUnordered,
 };
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use std::{
     mem,
     net::SocketAddr,
