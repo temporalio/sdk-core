@@ -1,6 +1,6 @@
 use crate::common::{CoreWfStarter, activity_functions::StdActivities};
 use futures_util::{StreamExt, sink, stream::FuturesUnordered};
-use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
+use rand::{Rng, RngExt, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{
     UntypedSignal, UntypedWorkflow, WorkflowSignalOptions, WorkflowStartOptions,

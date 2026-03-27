@@ -1,5 +1,5 @@
 use crate::ByteArrayRef;
-use rand::{Rng, SeedableRng};
+use rand::{RngExt, SeedableRng};
 use rand_pcg::Pcg64Mcg;
 
 pub struct Random {

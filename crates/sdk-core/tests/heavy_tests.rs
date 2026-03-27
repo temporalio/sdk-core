@@ -16,7 +16,7 @@ use futures_util::{
     sink, stream,
     stream::FuturesUnordered,
 };
-use rand::Rng;
+use rand::RngExt;
 use std::{
     mem,
     sync::Arc,
