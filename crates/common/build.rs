@@ -1102,29 +1102,49 @@ pub fn extract_temporal_request_headers(
                             value_expr
                         ));
                     } else {
-                        // Build chained Option accessor for nested fields
-                        let mut chain = "req".to_string();
+                        // Build chained let bindings for nested fields
+                        let mut let_chain = format!(
+                            "    if let Some(req) = request.downcast_ref::<{}>()",
+                            method_info.request_rust_type
+                        );
+                        let mut current = "req".to_string();
                         for (i, part) in parts.iter().enumerate() {
                             let snake = to_snake_case(part);
                             if i == parts.len() - 1 {
-                                chain = format!("{}.{}.as_str()", chain, snake);
+                                // Last field is the string value
+                                let_chain.push_str(&format!(
+                                    "\n        && !{}.{}.is_empty()",
+                                    current, snake
+                                ));
                             } else {
-                                chain = format!("{}.{}.as_ref()?", chain, snake);
+                                let binding = format!("f{}", i);
+                                let_chain.push_str(&format!(
+                                    "\n        && let Some({}) = {}.{}.as_ref()",
+                                    binding, current, snake
+                                ));
+                                current = binding;
                             }
                         }
+                        let last_field = to_snake_case(parts[parts.len() - 1]);
+                        let val_access = format!("{}.{}", current, last_field);
+                        let value_with_access = if template_with_placeholder == "{}" {
+                            format!("{}.to_string()", val_access)
+                        } else {
+                            format!(
+                                "format!(\"{}\", {})",
+                                template_with_placeholder, val_access
+                            )
+                        };
                         output.push_str(&format!(
-                            r#"    if let Some(req) = request.downcast_ref::<{}>()
-        && let Some(val) = (|| -> Option<&str> {{ Some({}) }})()
-        && !val.is_empty()
+                            r#"{}
         && existing_metadata.is_none_or(|md| md.get("{}").is_none()) {{
             headers.push(("{}".to_string(), {}));
     }}
 "#,
-                            method_info.request_rust_type,
-                            chain,
+                            let_chain,
                             header_info.header_name,
                             header_info.header_name,
-                            value_expr
+                            value_with_access
                         ));
                     }
                 }
