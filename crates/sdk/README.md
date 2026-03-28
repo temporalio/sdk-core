@@ -171,6 +171,37 @@ Workflow code must be deterministic. This means:
   - `join!` — deterministic join for a fixed number of futures
   - `join_all` — deterministic join for a dynamic collection of futures
 
+### Runtime Nondeterminism Detection
+
+The Rust SDK includes a runtime nondeterminism detector that monitors async wake sources inside
+workflow code. It is **enabled by default** and can be disabled via
+`WorkerOptions::detect_nondeterministic_futures(false)`.
+
+**How it works:** The SDK tracks which async wake-ups originate from SDK-provided primitives (timers,
+activities, child workflows, etc.) versus external sources. When a non-SDK wake is detected, the
+workflow task is failed with a descriptive error.
+
+**What it catches:**
+
+- `tokio::time::sleep` / `tokio::time::interval` -- use `ctx.timer()` instead
+- `tokio::net` / `tokio::fs` / any async IO -- perform IO in activities, not workflows
+- `tokio::spawn` -- do not spawn tasks from workflow code
+- `std::thread::spawn` with async channels -- all cross-thread wakes are flagged
+- Direct use of `tokio::sync` channels (oneshot, mpsc, watch) -- use `ctx.state_mut()` +
+  `ctx.wait_condition()` for inter-future coordination instead
+
+**What it does NOT catch:**
+
+- `FuturesUnordered` -- nondeterminism is in poll ordering, not wake sources. Avoid using it;
+  prefer sequential `.await` or `workflows::join!`
+- `futures::select!` without `biased` -- randomizes poll order within a single poll. Use
+  `workflows::select!` or `futures::select! { biased; ... }` for deterministic ordering
+- Any combinator that only affects the order in which ready futures are polled
+
+**Disabling detection:** Set `detect_nondeterministic_futures(false)` on `WorkerOptions`. This may
+be useful during migration or for advanced users who understand the determinism constraints and want
+to use patterns that trigger false positives.
+
 ### Timers
 
 ```rust
