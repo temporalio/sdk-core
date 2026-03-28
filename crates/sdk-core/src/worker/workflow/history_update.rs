@@ -737,8 +737,20 @@ fn find_end_index_of_next_wft_seq(
                     continue;
                 } else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
+                        let next_scheduled_eid = next_next_event.event_id;
+                        let inbound_update_sequences_to_next_wft = events.iter().skip(ix + 2).any(
+                            |e| {
+                                matches!(
+                                    &e.attributes,
+                                    Some(Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
+                                        a,
+                                    )) if a.accepted_request_sequencing_event_id == next_scheduled_eid
+                                )
+                            },
+                        );
                         if !saw_command_or_started
                             && next_next_event.event_type() == EventType::WorkflowTaskScheduled
+                            && !inbound_update_sequences_to_next_wft
                         {
                             // If we've never seen an interesting event and the next two events are
                             // a completion followed immediately again by scheduled, then this is a
@@ -747,6 +759,8 @@ fn find_end_index_of_next_wft_seq(
                             // heartbeat task to become a synthetic boundary for update sequencing,
                             // since whether that heartbeat appears in a given history window can
                             // vary between incremental processing and replay-after-cache-miss.
+                            // If an update is sequenced to that next scheduled WFT, collapsing would
+                            // change where the update handler runs (sdk-core#1146).
                             wft_started_event_id_to_index.pop();
                             continue;
                         } else {
@@ -1673,5 +1687,25 @@ mod tests {
         assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 6);
         assert_eq!(seq.len(), 7);
+    }
+
+    #[test]
+    fn empty_wft_heartbeat_not_collapsed_when_extra_heartbeat_before_update() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        let accept_id = t.add_update_accepted("1", "upd");
+        let timer_id = t.add_timer_started("1".to_string());
+        t.add_update_completed(accept_id);
+        t.add_timer_fired(timer_id, "1".to_string());
+        t.add_full_wf_task();
+
+        let mut update = t.as_history_update();
+        assert_eq!(next_check_peek(&mut update, 0).len(), 3);
+        assert_eq!(next_check_peek(&mut update, 3).len(), 3);
+        assert_eq!(next_check_peek(&mut update, 6).len(), 3);
+        assert_eq!(next_check_peek(&mut update, 9).len(), 7);
     }
 }
