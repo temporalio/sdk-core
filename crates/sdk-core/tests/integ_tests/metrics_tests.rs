@@ -56,7 +56,8 @@ use temporalio_common::{
         TaskQueueLabelStrategy, TelemetryOptions, build_otlp_metric_exporter,
         metrics::{
             CoreMeter, CounterBase, Gauge, GaugeBase, HistogramBase, MetricKeyValue,
-            MetricParameters, NewAttributes, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
+            MetricParameters, NewAttributes, UpDownCounterBase,
+            WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         },
         start_prometheus_metric_exporter,
     },
@@ -1300,10 +1301,17 @@ async fn test_prometheus_endpoint_integration() {
         description: "Number of active test connections".into(),
         unit: "".into(),
     });
+    let up_down_counter = meter.up_down_counter(MetricParameters {
+        name: "test_inflight_operations".into(),
+        description: "Number of inflight test operations".into(),
+        unit: "".into(),
+    });
 
     counter.adds(5);
     histogram.records(100);
     gauge.records(10);
+    up_down_counter.adds(5);
+    up_down_counter.adds(-2);
 
     let url = format!("http://{addr}/metrics");
     let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
@@ -1330,6 +1338,8 @@ async fn test_prometheus_endpoint_integration() {
     assert!(body.contains("test_active_connections 10"),);
     assert!(body.contains("test_request_duration_ms_count 1"),);
     assert!(body.contains("test_request_duration_ms_sum 100"),);
+    assert!(body.contains("test_inflight_operations"),);
+    assert!(body.contains("test_inflight_operations 3"),);
 }
 
 #[tokio::test]

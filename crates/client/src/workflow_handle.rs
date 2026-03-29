@@ -9,6 +9,7 @@ use crate::{
     grpc::WorkflowService,
 };
 use std::{fmt::Debug, marker::PhantomData};
+pub use temporalio_common::UntypedWorkflow;
 use temporalio_common::{
     HasWorkflowDefinition, QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
     data_converters::{RawValue, SerializationContextData},
@@ -147,28 +148,6 @@ impl WorkflowExecutionInfo {
 /// A workflow handle to a workflow with unknown types. Uses single argument raw payloads for input
 /// and output.
 pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, UntypedWorkflow>;
-
-/// Marker type for untyped workflow handles. Stores the workflow type name.
-pub struct UntypedWorkflow {
-    name: String,
-}
-impl UntypedWorkflow {
-    /// Create a new `UntypedWorkflow` with the given workflow type name.
-    pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into() }
-    }
-}
-impl WorkflowDefinition for UntypedWorkflow {
-    type Input = RawValue;
-    type Output = RawValue;
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
-impl HasWorkflowDefinition for UntypedWorkflow {
-    type Run = Self;
-}
 
 /// Marker type for sending untyped signals. Stores the signal name for runtime lookup.
 ///

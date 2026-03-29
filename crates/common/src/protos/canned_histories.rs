@@ -9,7 +9,7 @@ use crate::protos::{
     },
 };
 use prost::Message;
-use rand::RngCore;
+use rand::Rng;
 use std::{fs::File, io::Write, path::PathBuf};
 
 ///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED

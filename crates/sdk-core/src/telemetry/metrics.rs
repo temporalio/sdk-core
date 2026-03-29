@@ -900,6 +900,12 @@ where
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(self.new_instrument(params, MetricKind::GaugeF64)))
     }
+
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter {
+        UpDownCounter::new(Arc::new(
+            self.new_instrument(params, MetricKind::UpDownCounter),
+        ))
+    }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
 where
@@ -1030,6 +1036,22 @@ where
         }))
     }
 }
+
+impl<I> MetricAttributable<Box<dyn UpDownCounterBase>> for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn UpDownCounterBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }))
+    }
+}
+
 impl<I> CounterBase for InstrumentWithAttributes<BufferInstrument<I>>
 where
     I: BufferInstrumentRef + Send + Sync + Clone + 'static,
@@ -1082,6 +1104,16 @@ where
     fn records(&self, value: Duration) {
         self.inner
             .send(MetricUpdateVal::Duration(value), &self.attributes)
+    }
+}
+
+impl<I> UpDownCounterBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn adds(&self, value: i64) {
+        self.inner
+            .send(MetricUpdateVal::SignedDelta(value), &self.attributes)
     }
 }
 
@@ -1203,7 +1235,7 @@ mod tests {
 
     #[test]
     fn metric_buffer() {
-        let call_buffer = MetricsCallBuffer::new(10);
+        let call_buffer = MetricsCallBuffer::new(12);
         let ctr = call_buffer.counter(MetricParameters {
             name: "ctr".into(),
             description: "a counter".into(),
@@ -1224,6 +1256,11 @@ mod tests {
             description: "a duration histogram".into(),
             unit: "seconds".into(),
         });
+        let up_down_ctr = call_buffer.up_down_counter(MetricParameters {
+            name: "up_down_ctr".into(),
+            description: "an up down counter".into(),
+            unit: "widgets".into(),
+        });
         let attrs_1 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("hi", "yo")],
         });
@@ -1234,6 +1271,7 @@ mod tests {
         histo.record(2, &attrs_1);
         gauge.record(3, &attrs_2);
         histo_dur.record(Duration::from_secs_f64(1.2), &attrs_1);
+        up_down_ctr.add(-3, &attrs_2);
 
         let mut calls = call_buffer.retrieve();
         calls.reverse();
@@ -1281,6 +1319,17 @@ mod tests {
             => populate_into
         );
         hist_4.set(Arc::new(DummyInstrumentRef(4))).unwrap();
+        let up_down_5 = assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                params,
+                populate_into,
+                kind: MetricKind::UpDownCounter
+            })
+            if params.name == "up_down_ctr"
+            => populate_into
+        );
+        up_down_5.set(Arc::new(DummyInstrumentRef(5))).unwrap();
         let a1 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
@@ -1339,6 +1388,15 @@ mod tests {
             })
             if DummyCustomAttrs::as_id(&attributes) == 1 && instrument.get().0 == 4
                && d == Duration::from_secs_f64(1.2)
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                instrument,
+                attributes,
+                update: MetricUpdateVal::SignedDelta(-3)
+            })
+            if DummyCustomAttrs::as_id(&attributes) == 2 && instrument.get().0 == 5
         );
     }
 }

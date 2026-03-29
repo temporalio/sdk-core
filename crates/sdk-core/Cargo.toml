@@ -38,7 +38,6 @@ bimap = { version = "0.6.3", optional = true }
 async-trait = "0.1"
 bon = { workspace = true }
 crossbeam-channel = "0.5"
-crossbeam-queue = "0.3"
 crossbeam-utils = "0.8"
 dashmap = "6.1"
 derive_more = { workspace = true }
@@ -52,7 +51,7 @@ governor = "0.10"
 hyper = { version = "1.7", optional = true }
 itertools = "0.14"
 lru = "0.16"
-mockall = "0.13"
+mockall = "0.14"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.31", features = [
   "rt-tokio",
@@ -71,17 +70,18 @@ pid = "4.0"
 pin-project = "1.1"
 prost = { workspace = true }
 prost-types = { workspace = true }
-rand = "0.9"
-reqwest = { version = "0.12", features = [
+rand = "0.10"
+reqwest = { version = "0.13", features = [
   "json",
   "stream",
-  "rustls-tls-native-roots",
+  "query",
+  "rustls",
 ], default-features = false, optional = true }
 serde = "1.0"
 serde_json = "1.0"
 siphasher = "1.0"
 slotmap = "1.0"
-sysinfo = { version = "0.37", default-features = false, features = ["system"] }
+sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
 thiserror = { workspace = true }
 tokio = { version = "1.47", features = [
@@ -99,7 +99,7 @@ tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 # Only need specific features to decompress zip files for ephemeral server download
-zip = { version = "4.6", optional = true, default-features = false, features = [
+zip = { version = "8.4", optional = true, default-features = false, features = [
   "deflate",
   "bzip2",
   "zstd",
@@ -125,7 +125,8 @@ assert_matches = "1.5"
 bimap = "0.6.3"
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
-criterion = { version = "0.7", features = ["async", "async_tokio"] }
+criterion = { version = "0.8", features = ["async", "async_tokio"] }
+crossbeam-queue = "0.3"
 http-body-util = { version = "0.1" }
 hyper = { version = "1.7" }
 hyper-util = { version = "0.1", features = [

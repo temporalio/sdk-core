@@ -97,9 +97,10 @@ use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
-    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture, ChildWorkflow,
-    ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
-    PendingChildWorkflow, RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
+    ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
+    ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
+    LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal,
+    SignalData, SignalWorkflowOptions, StartChildWorkflowExecutionFailedCause,
     StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
@@ -109,7 +110,9 @@ use crate::{
         ExecutableActivity,
     },
     interceptors::WorkerInterceptor,
-    workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
+    workflow_context::{
+        ChildWfCommon, NexusUnblockData, PendingChildWorkflow, StartedNexusOperation,
+    },
     workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
@@ -120,6 +123,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Debug, Display, Formatter},
     future::Future,
+    marker::PhantomData,
     panic::AssertUnwindSafe,
     sync::Arc,
     time::Duration,
@@ -136,7 +140,6 @@ use temporalio_common::{
             activity_result::{ActivityExecutionResult, ActivityResolution},
             activity_task::{ActivityTask, activity_task},
             child_workflow::ChildWorkflowResult,
-            common::NamespacedWorkflowExecution,
             nexus::NexusOperationResult,
             workflow_activation::{
                 WorkflowActivation,
@@ -1054,14 +1057,14 @@ impl Unblockable for ActivityResolution {
     }
 }
 
-impl Unblockable for PendingChildWorkflow {
-    // Other data here is workflow id
+impl<WD: WorkflowDefinition> Unblockable for PendingChildWorkflow<WD> {
     type OtherDat = ChildWfCommon;
     fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
         match ue {
             UnblockEvent::WorkflowStart(_, result) => Self {
                 status: *result,
                 common: od,
+                _phantom: PhantomData,
             },
             _ => panic!("Invalid unblock event for child workflow start"),
         }
@@ -1149,11 +1152,6 @@ pub(crate) enum CancellableID {
         reason: String,
     },
     SignalExternalWorkflow(u32),
-    ExternalWorkflow {
-        seqnum: u32,
-        execution: NamespacedWorkflowExecution,
-        reason: String,
-    },
     /// A nexus operation (waiting for start)
     NexusOp(u32),
 }
@@ -1165,34 +1163,13 @@ pub(crate) trait SupportsCancelReason {
 }
 #[derive(Debug, Clone)]
 pub(crate) enum CancellableIDWithReason {
-    ChildWorkflow {
-        seqnum: u32,
-    },
-    ExternalWorkflow {
-        seqnum: u32,
-        execution: NamespacedWorkflowExecution,
-    },
-}
-impl CancellableIDWithReason {
-    pub(crate) fn seq_num(&self) -> u32 {
-        match self {
-            CancellableIDWithReason::ChildWorkflow { seqnum } => *seqnum,
-            CancellableIDWithReason::ExternalWorkflow { seqnum, .. } => *seqnum,
-        }
-    }
+    ChildWorkflow { seqnum: u32 },
 }
 impl SupportsCancelReason for CancellableIDWithReason {
     fn with_reason(self, reason: String) -> CancellableID {
         match self {
             CancellableIDWithReason::ChildWorkflow { seqnum } => {
                 CancellableID::ChildWorkflow { seqnum, reason }
-            }
-            CancellableIDWithReason::ExternalWorkflow { seqnum, execution } => {
-                CancellableID::ExternalWorkflow {
-                    seqnum,
-                    execution,
-                    reason,
-                }
             }
         }
     }
@@ -1277,6 +1254,18 @@ impl From<anyhow::Error> for WorkflowTermination {
 
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
+        Self::failed(value)
+    }
+}
+
+impl From<ChildWorkflowExecutionError> for WorkflowTermination {
+    fn from(value: ChildWorkflowExecutionError) -> Self {
+        Self::failed(value)
+    }
+}
+
+impl From<ChildWorkflowSignalError> for WorkflowTermination {
+    fn from(value: ChildWorkflowSignalError) -> Self {
         Self::failed(value)
     }
 }

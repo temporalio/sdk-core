@@ -13,7 +13,7 @@ use futures_util::{
 };
 use parking_lot::Mutex;
 use prost::Message;
-use rand::Rng;
+use rand::RngExt;
 use std::{
     cell::Cell,
     collections::VecDeque,
