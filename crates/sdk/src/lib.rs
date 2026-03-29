@@ -444,17 +444,6 @@ struct WorkflowHalf {
     workflow_removed_from_map: Notify,
     detect_nondeterministic_futures: bool,
 }
-
-impl Default for WorkflowHalf {
-    fn default() -> Self {
-        Self {
-            workflows: Default::default(),
-            workflow_definitions: Default::default(),
-            workflow_removed_from_map: Default::default(),
-            detect_nondeterministic_futures: true,
-        }
-    }
-}
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
@@ -485,14 +474,13 @@ impl Worker {
             .to_core_options(client.namespace(), client.identity())
             .map_err(|s| anyhow::anyhow!("{s}"))?;
         let core = init_worker(runtime, wc, client.connection().clone())?;
-        let detect_nondet = options.detect_nondeterministic_futures;
         let mut me = Self::new_from_core_definitions(
             Arc::new(core),
             client.data_converter().clone(),
             Default::default(),
             Default::default(),
         );
-        me.set_detect_nondeterministic_futures(detect_nondet);
+        me.set_detect_nondeterministic_futures(options.detect_nondeterministic_futures);
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
         Ok(me)
@@ -525,8 +513,10 @@ impl Worker {
                 data_converter,
             },
             workflow_half: WorkflowHalf {
+                workflows: Default::default(),
                 workflow_definitions: workflows,
-                ..Default::default()
+                workflow_removed_from_map: Default::default(),
+                detect_nondeterministic_futures: false,
             },
             activity_half: ActivityHalf {
                 activities,

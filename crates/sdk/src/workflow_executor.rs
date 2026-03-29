@@ -11,18 +11,16 @@ use std::{
     task::{Context, Poll, Wake, Waker},
 };
 
-// ── Thread-local SDK wake guard ─────────────────────────────────────────────
-
 thread_local! {
     static SDK_WAKE_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-/// RAII guard that marks the current scope as an SDK-initiated wake source.
+/// Guard that marks the current scope as an SDK-initiated wake source.
 ///
 /// When the tracking waker's `wake()` is called while this guard is active
 /// (depth > 0), the wake is recognized as coming from SDK internals and is not
 /// flagged as nondeterministic. Nesting is safe via a depth counter, and the
-/// `Drop` impl ensures cleanup even on unwind.
+/// `Drop` impl ensures cleanup.
 pub(crate) struct SdkWakeGuard {
     _priv: (), // prevent construction outside this module
 }
@@ -44,33 +42,28 @@ fn is_sdk_wake() -> bool {
     SDK_WAKE_DEPTH.with(|c| c.get() > 0)
 }
 
-// ── Wake tracker (nondeterminism detection) ─────────────────────────────────
-
 /// Shared state for a tracking waker that detects non-SDK wake sources.
 ///
-/// Implements `std::task::Wake` so it can be converted to a `Waker` via
-/// `Waker::from(arc)`. Uses atomics and `parking_lot::Mutex` so the `Waker`
-/// satisfies `Send + Sync`, while cross-thread wakes are inherently detected
-/// (the thread-local guard won't be set on a foreign thread).
+/// Implements [Wake] so it can be converted to a [Waker] via [Waker::from]. Satisfies `Send +
+/// Sync`, but cross-thread wakes are inherently detected (the thread-local guard won't be set on
+/// a foreign thread).
 pub(crate) struct WakeTracker {
     /// Set when a wake arrives without the SDK guard active.
-    pub(crate) non_sdk_wake_detected: AtomicBool,
+    non_sdk_wake_detected: AtomicBool,
     /// The real waker to forward to (from the executor's task notifier).
     parent_waker: parking_lot::Mutex<Waker>,
-    detection_enabled: bool,
 }
 
 impl WakeTracker {
-    pub(crate) fn new(parent_waker: Waker, detection_enabled: bool) -> Arc<Self> {
+    pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
             non_sdk_wake_detected: AtomicBool::new(false),
-            parent_waker: parking_lot::Mutex::new(parent_waker),
-            detection_enabled,
+            parent_waker: parking_lot::Mutex::new(Waker::noop().clone()),
         })
     }
 
-    /// Update the parent waker (called at the top of each poll in case the
-    /// executor provided a new waker).
+    /// Update the parent waker (called at the top of each poll in case the executor provided a new
+    /// waker).
     pub(crate) fn update_parent_waker(&self, waker: &Waker) {
         let mut guard = self.parent_waker.lock();
         if !guard.will_wake(waker) {
@@ -90,14 +83,26 @@ impl Wake for WakeTracker {
     }
 
     fn wake_by_ref(self: &Arc<Self>) {
-        if self.detection_enabled && !is_sdk_wake() {
+        if !is_sdk_wake() {
             self.non_sdk_wake_detected.store(true, Ordering::Release);
         }
         self.parent_waker.lock().wake_by_ref();
     }
 }
 
-// ── Executor shared state (Send) ───────────────────────────────────────────
+/// A future wrapper that activates [`SdkWakeGuard`] during poll. Use this around futures whose
+/// internal waker machinery (e.g., `FuturesOrdered` inside `join_all`) would otherwise trigger
+/// false positives in nondeterminism detection.
+pub(crate) struct SdkGuardedFuture<F>(pub(crate) F);
+
+impl<F: Future + Unpin> Future for SdkGuardedFuture<F> {
+    type Output = F::Output;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let _guard = SdkWakeGuard::new();
+        Pin::new(&mut self.0).poll(cx)
+    }
+}
 
 struct ExecutorShared {
     ready_queue: parking_lot::Mutex<VecDeque<u64>>,
@@ -112,8 +117,6 @@ impl ExecutorShared {
         }
     }
 }
-
-// ── Per-task waker (Send + Sync via Arc) ────────────────────────────────────
 
 struct TaskNotifier {
     task_id: u64,
@@ -130,13 +133,10 @@ impl Wake for TaskNotifier {
     }
 }
 
-// ── Local task storage ──────────────────────────────────────────────────────
-
 struct LocalTask {
     future: Pin<Box<dyn Future<Output = ()>>>,
+    waker: Waker,
 }
-
-// ── TaskHandle (!Send join handle) ──────────────────────────────────────────
 
 struct TaskHandleInner<T> {
     result: RefCell<Option<T>>,
@@ -175,18 +175,14 @@ impl<T> Future for TaskHandle<T> {
     }
 }
 
-// ── WorkflowExecutor ────────────────────────────────────────────────────────
-
 /// A minimal single-threaded async executor for workflow futures.
 ///
-/// Replaces `tokio::task::LocalSet` + `spawn_local` for workflow tasks. Runs
-/// inside the existing tokio runtime (driven as an async future) but provides
-/// its own task management with custom wakers, enabling nondeterminism
-/// detection via [`WakeTracker`].
+/// Replaces [tokio::task::LocalSet] + `spawn_local` for workflow tasks. Runs inside the existing
+/// tokio runtime (driven as an async future) but provides its own task management with custom
+/// wakers, enabling nondeterminism detection via [WakeTracker]
 ///
-/// All spawned futures are `!Send` (they use `Rc<RefCell<...>>` internally).
-/// The executor itself is `!Send` and must be driven from a `LocalSet` or
-/// single-threaded context.
+/// All spawned futures are `!Send` (they use `Rc<RefCell<...>>` internally). The executor itself is
+/// `!Send` and must be driven from a `LocalSet` or single-threaded context.
 pub(crate) struct WorkflowExecutor {
     tasks: RefCell<HashMap<u64, LocalTask>>,
     next_id: Cell<u64>,
@@ -234,11 +230,14 @@ impl WorkflowExecutor {
             id,
             LocalTask {
                 future: Box::pin(wrapped),
+                waker: Waker::from(Arc::new(TaskNotifier {
+                    task_id: id,
+                    shared: self.shared.clone(),
+                })),
             },
         );
 
-        // Queue for initial poll
-        self.shared.ready_queue.lock().push_back(id);
+        self.shared.enqueue(id);
 
         TaskHandle {
             inner: handle_inner,
@@ -269,22 +268,15 @@ impl WorkflowExecutor {
                 let task_id = self.shared.ready_queue.lock().pop_front();
                 let Some(task_id) = task_id else { break };
 
-                let mut tasks = self.tasks.borrow_mut();
-                let Some(task) = tasks.get_mut(&task_id) else {
+                // Take the task out so we don't hold a borrow on `self.tasks`
+                // across the poll (which would panic if the future spawns).
+                let Some(mut task) = self.tasks.borrow_mut().remove(&task_id) else {
                     continue;
                 };
 
-                let waker = Waker::from(Arc::new(TaskNotifier {
-                    task_id,
-                    shared: self.shared.clone(),
-                }));
-                let mut task_cx = Context::from_waker(&waker);
-
-                match task.future.as_mut().poll(&mut task_cx) {
-                    Poll::Ready(()) => {
-                        tasks.remove(&task_id);
-                    }
-                    Poll::Pending => {}
+                let mut task_cx = Context::from_waker(&task.waker);
+                if task.future.as_mut().poll(&mut task_cx).is_pending() {
+                    self.tasks.borrow_mut().insert(task_id, task);
                 }
             }
 
@@ -308,40 +300,18 @@ mod tests {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let executor = WorkflowExecutor::new();
+                let executor = Rc::new(WorkflowExecutor::new());
                 let handle = executor.spawn(async { 42 });
 
-                // Drive executor in background
-                let exec_task = tokio::task::spawn_local({
-                    async move {
-                        // Need to give the handle a chance to resolve
-                        // Poll executor once, then shut down
-                        std::future::poll_fn(|cx| {
-                            *executor.shared.executor_waker.lock() = Some(cx.waker().clone());
-                            loop {
-                                let task_id = executor.shared.ready_queue.lock().pop_front();
-                                let Some(task_id) = task_id else { break };
-                                let mut tasks = executor.tasks.borrow_mut();
-                                if let Some(task) = tasks.get_mut(&task_id) {
-                                    let waker = Waker::from(Arc::new(TaskNotifier {
-                                        task_id,
-                                        shared: executor.shared.clone(),
-                                    }));
-                                    let mut task_cx = Context::from_waker(&waker);
-                                    if task.future.as_mut().poll(&mut task_cx).is_ready() {
-                                        tasks.remove(&task_id);
-                                    }
-                                }
-                            }
-                            Poll::Ready(())
-                        })
-                        .await;
-                    }
+                let executor_clone = executor.clone();
+                let exec_task = tokio::task::spawn_local(async move {
+                    executor_clone.shutdown();
+                    executor_clone.run().await;
                 });
 
-                exec_task.await.unwrap();
                 let result = handle.await.unwrap();
                 assert_eq!(result, 42);
+                exec_task.await.unwrap();
             })
             .await;
     }
@@ -397,6 +367,45 @@ mod tests {
             .await;
     }
 
+    #[tokio::test]
+    async fn spawn_while_parked_wakes_executor() {
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async {
+                let executor = Rc::new(WorkflowExecutor::new());
+                let (tx, rx) = oneshot::channel::<()>();
+
+                // Start the executor running with no tasks — it will park immediately.
+                let executor_clone = executor.clone();
+                tokio::task::spawn_local(async move {
+                    executor_clone.run().await;
+                });
+
+                // Let the executor park.
+                tokio::task::yield_now().await;
+
+                // Spawn a task while the executor is parked. Without the wake in
+                // enqueue, the executor never learns about this task.
+                let handle = executor.spawn(async move {
+                    rx.await.unwrap();
+                    42
+                });
+
+                // Yield to give the executor a chance to poll the new task.
+                tokio::task::yield_now().await;
+                tx.send(()).unwrap();
+
+                let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
+                    .await
+                    .expect("executor should have polled the spawned task")
+                    .unwrap();
+                assert_eq!(result, 42);
+
+                executor.shutdown();
+            })
+            .await;
+    }
+
     #[test]
     fn sdk_wake_guard_nesting() {
         assert!(!is_sdk_wake());
@@ -428,8 +437,7 @@ mod tests {
 
     #[test]
     fn wake_tracker_detects_non_sdk_wake() {
-        let noop_waker = Waker::noop().clone();
-        let tracker = WakeTracker::new(noop_waker, true);
+        let tracker = WakeTracker::new();
         let waker = Waker::from(tracker.clone());
 
         // Wake without SDK guard -- should be detected
@@ -443,20 +451,8 @@ mod tests {
     }
 
     #[test]
-    fn wake_tracker_detection_disabled() {
-        let noop_waker = Waker::noop().clone();
-        let tracker = WakeTracker::new(noop_waker, false);
-        let waker = Waker::from(tracker.clone());
-
-        // Wake without SDK guard -- should NOT be detected (disabled)
-        waker.wake_by_ref();
-        assert!(!tracker.take_non_sdk_wake());
-    }
-
-    #[test]
     fn wake_tracker_cross_thread_detection() {
-        let noop_waker = Waker::noop().clone();
-        let tracker = WakeTracker::new(noop_waker, true);
+        let tracker = WakeTracker::new();
         let waker = Waker::from(tracker.clone());
 
         // Set SDK guard on THIS thread

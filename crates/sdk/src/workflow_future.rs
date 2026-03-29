@@ -96,12 +96,11 @@ impl WorkflowFunction {
         let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
             .context("Failed to create workflow execution")?;
 
-        let tracking = if detect_nondeterministic {
-            Some(WakeTracker::new(Waker::noop().clone(), true))
+        let wake_tracking = if detect_nondeterministic {
+            Some(WakeTracker::new())
         } else {
             None
         };
-        let tracked_waker = tracking.as_ref().map(|t| Waker::from(t.clone()));
 
         let (tx, incoming_activations) = unbounded_channel();
         Ok((
@@ -117,9 +116,7 @@ impl WorkflowFunction {
                 payload_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
-                tracking,
-                tracked_waker,
-                pending_non_sdk_wake: false,
+                wake_tracking,
             },
             tx,
         ))
@@ -158,13 +155,7 @@ pub(crate) struct WorkflowFuture {
     signal_futures: Vec<LocalBoxFuture<'static, Result<(), crate::workflows::WorkflowError>>>,
     /// Nondeterminism detection tracker. When present, a tracking waker is used
     /// for polling user workflow code, and any non-SDK wake is flagged.
-    tracking: Option<Arc<WakeTracker>>,
-    /// Pre-built waker derived from the tracker, stored here so it lives as
-    /// long as the future and avoids lifetime issues with the `Context`.
-    tracked_waker: Option<Waker>,
-    /// Sticky flag set when a non-SDK wake is detected. Persists across polls
-    /// until an activation arrives and we can fail the WFT with a run_id.
-    pending_non_sdk_wake: bool,
+    wake_tracking: Option<Arc<WakeTracker>>,
 }
 
 impl WorkflowFuture {
@@ -446,12 +437,8 @@ impl Future for WorkflowFuture {
     type Output = WorkflowResult<Payload>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Update the tracking waker's parent and accumulate non-SDK wake detections
-        if let Some(ref tracker) = self.tracking {
+        if let Some(ref tracker) = self.wake_tracking {
             tracker.update_parent_waker(cx.waker());
-            if tracker.take_non_sdk_wake() {
-                self.pending_non_sdk_wake = true;
-            }
         }
 
         'activations: loop {
@@ -493,14 +480,16 @@ impl Future for WorkflowFuture {
                 return Err(WorkflowTermination::Evicted).into();
             }
 
-            if self.pending_non_sdk_wake {
-                self.pending_non_sdk_wake = false;
+            if self
+                .wake_tracking
+                .as_ref()
+                .is_some_and(|t| t.take_non_sdk_wake())
+            {
                 self.fail_wft(
                     run_id,
-                    // TODO: Should get new rule category?
                     anyhow!(
-                        "Nondeterministic future detected: a waker was invoked by a non-SDK \
-                         source. This usually means workflow code is using nondeterministic \
+                        "[TMPRL1100] Nondeterministic future detected: a waker was invoked by a \
+                         non-SDK source. This usually means workflow code is using nondeterministic \
                          operations like tokio async functions or channels, other async libraries, \
                          or std::thread. Use SDK-provided alternatives \
                          (ctx.timer(), ctx.state_mut() + ctx.wait_condition(), etc.) instead."
@@ -522,8 +511,8 @@ impl Future for WorkflowFuture {
 
             // Poll sub-futures using the tracked context if available,
             // otherwise use the executor context.
-            let repoll = if let Some(ref tw) = self.tracked_waker {
-                let waker = tw.clone();
+            let repoll = if let Some(ref tracker) = self.wake_tracking {
+                let waker = Waker::from(tracker.clone());
                 let mut tcx = Context::from_waker(&waker);
                 self.poll_sub_futures(&mut tcx, should_poll_wf, &run_id, &mut activation_cmds)?
             } else {

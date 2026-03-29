@@ -190,13 +190,18 @@ workflow task is failed with a descriptive error.
 - Direct use of `tokio::sync` channels (oneshot, mpsc, watch) -- use `ctx.state_mut()` +
   `ctx.wait_condition()` for inter-future coordination instead
 
+**Detection timing:** Detection is based on observing non-SDK wake sources. Because these wakes fire
+asynchronously (e.g., a tokio timer fires after the activation that started it), the failure is
+typically reported on the *next* workflow task, not the one that introduced the nondeterministic
+code. The workflow task that started the operation completes normally; the subsequent task fails
+with the detection error. The server then retries from that point.
+
 **What it does NOT catch:**
 
-- `FuturesUnordered` -- nondeterminism is in poll ordering, not wake sources. Avoid using it;
-  prefer sequential `.await` or `workflows::join!`
 - `futures::select!` without `biased` -- randomizes poll order within a single poll. Use
   `workflows::select!` or `futures::select! { biased; ... }` for deterministic ordering
 - Any combinator that only affects the order in which ready futures are polled
+- Purely synchronous nondeterminism (e.g., `std::time::SystemTime::now()`, `rand::random()`)
 
 **Disabling detection:** Set `detect_nondeterministic_futures(false)` on `WorkerOptions`. This may
 be useful during migration or for advanced users who understand the determinism constraints and want
