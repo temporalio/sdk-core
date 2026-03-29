@@ -492,9 +492,9 @@ impl Worker {
             Default::default(),
             Default::default(),
         );
+        me.set_detect_nondeterministic_futures(detect_nondet);
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
-        me.workflow_half.detect_nondeterministic_futures = detect_nondet;
         Ok(me)
     }
 
@@ -538,6 +538,12 @@ impl Worker {
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
         &self.common.task_queue
+    }
+
+    /// Set whether nondeterministic future detection is enabled for workflows
+    /// on this worker.
+    pub fn set_detect_nondeterministic_futures(&mut self, enabled: bool) {
+        self.workflow_half.detect_nondeterministic_futures = enabled;
     }
 
     /// Return a handle that can be used to initiate shutdown. This is useful because [Worker::run]

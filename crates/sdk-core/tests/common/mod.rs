@@ -347,12 +347,13 @@ impl CoreWfStarter {
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let worker = self.get_worker().await;
         let client = self.get_client().await;
-        let sdk = Worker::new_from_core_definitions(
+        let mut sdk = Worker::new_from_core_definitions(
             worker,
             client.data_converter().clone(),
             self.sdk_config.activities(),
             self.sdk_config.workflows(),
         );
+        sdk.set_detect_nondeterministic_futures(self.sdk_config.detect_nondeterministic_futures);
         let mut w = TestWorker::new(sdk);
         w.client = Some(client);
 

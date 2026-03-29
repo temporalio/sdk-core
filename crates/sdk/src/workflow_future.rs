@@ -119,6 +119,7 @@ impl WorkflowFunction {
                 signal_futures: Default::default(),
                 tracking,
                 tracked_waker,
+                pending_non_sdk_wake: false,
             },
             tx,
         ))
@@ -161,6 +162,9 @@ pub(crate) struct WorkflowFuture {
     /// Pre-built waker derived from the tracker, stored here so it lives as
     /// long as the future and avoids lifetime issues with the `Context`.
     tracked_waker: Option<Waker>,
+    /// Sticky flag set when a non-SDK wake is detected. Persists across polls
+    /// until an activation arrives and we can fail the WFT with a run_id.
+    pending_non_sdk_wake: bool,
 }
 
 impl WorkflowFuture {
@@ -442,19 +446,11 @@ impl Future for WorkflowFuture {
     type Output = WorkflowResult<Payload>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // Update the tracking waker's parent and check for non-SDK wakes
+        // Update the tracking waker's parent and accumulate non-SDK wake detections
         if let Some(ref tracker) = self.tracking {
             tracker.update_parent_waker(cx.waker());
             if tracker.take_non_sdk_wake() {
-                warn!(
-                    "Nondeterministic future detected: a waker was invoked by a non-SDK source. \
-                     This usually means workflow code is using nondeterministic operations like \
-                     tokio::time::sleep, tokio::net, tokio::spawn, std::thread, or raw \
-                     tokio::sync channels. Use SDK-provided alternatives (ctx.timer(), \
-                     ctx.state_mut() + ctx.wait_condition(), etc.) instead."
-                );
-                // We'll fail the WFT on the next activation below, but we need
-                // to receive it first so we have a run_id.
+                self.pending_non_sdk_wake = true;
             }
         }
 
@@ -495,6 +491,22 @@ impl Future for WorkflowFuture {
                     .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
                     .expect("Completion channel intact");
                 return Err(WorkflowTermination::Evicted).into();
+            }
+
+            if self.pending_non_sdk_wake {
+                self.pending_non_sdk_wake = false;
+                self.fail_wft(
+                    run_id,
+                    // TODO: Should get new rule category?
+                    anyhow!(
+                        "Nondeterministic future detected: a waker was invoked by a non-SDK \
+                         source. This usually means workflow code is using nondeterministic \
+                         operations like tokio async functions or channels, other async libraries, \
+                         or std::thread. Use SDK-provided alternatives \
+                         (ctx.timer(), ctx.state_mut() + ctx.wait_condition(), etc.) instead."
+                    ),
+                );
+                continue 'activations;
             }
 
             let mut should_poll_wf = false;

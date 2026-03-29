@@ -1,6 +1,7 @@
 use crate::common::{
     CoreWfStarter, WorkflowHandleExt, activity_functions::StdActivities, mock_sdk, mock_sdk_cfg,
 };
+use futures::FutureExt;
 use std::{
     sync::{
         Arc,
@@ -18,6 +19,7 @@ use temporalio_common::{
         temporal::api::{
             enums::v1::{EventType, WorkflowTaskFailedCause},
             failure::v1::Failure,
+            history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
         },
     },
     worker::WorkerTaskTypes,
@@ -25,6 +27,7 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WorkflowContext, WorkflowResult,
+    workflows,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -451,6 +454,88 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[workflow]
+struct TokioSleepWf {
+    attempt: Arc<AtomicUsize>,
+}
+
+#[workflow_methods(factory_only)]
+impl TokioSleepWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let attempt = ctx.state(|wf| wf.attempt.fetch_add(1, Ordering::Relaxed));
+        // Always start the SDK timer so the history is consistent across retries. On the first
+        // attempt, also race a tokio::time::sleep which triggers nondeterminism detection.
+        if attempt == 0 {
+            workflows::select! {
+                _ = ctx.timer(Duration::from_secs(1)) => {},
+                _ = tokio::time::sleep(Duration::from_millis(50)).fuse() => {},
+            }
+        } else {
+            ctx.timer(Duration::from_secs(1)).await;
+        }
+        Ok(())
+    }
+}
+
+/// Verifies that workflows using non-SDK futures (like `tokio::time::sleep`) are detected by the
+/// nondeterminism detector and result in a WFT failure recorded in history.
+#[tokio::test]
+async fn nondeterministic_future_detection_fails_wft() {
+    let wf_name = "nondeterministic_future_detection_fails_wft";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let attempt = Arc::new(AtomicUsize::new(0));
+    let attempt_clone = attempt.clone();
+    worker.register_workflow_with_factory(move || TokioSleepWf {
+        attempt: attempt_clone.clone(),
+    });
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            TokioSleepWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, starter.get_task_queue().to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    // The workflow should complete successfully after the WFT failure, because the server
+    // retries the task and on the second attempt the tokio sleep is skipped.
+    handle.get_result(Default::default()).await.unwrap();
+    // Should have run at least twice: once with the detected nondeterminism, once to complete.
+    assert!(attempt.load(Ordering::Relaxed) >= 2);
+
+    // Verify history contains a WorkflowTaskFailed event with our detection message
+    let history = starter.get_history().await;
+    let wft_failures: Vec<_> = history
+        .events
+        .iter()
+        .filter(|e| e.event_type() == EventType::WorkflowTaskFailed)
+        .collect();
+    assert_eq!(
+        wft_failures.len(),
+        1,
+        "Expected one WorkflowTaskFailed event in history"
+    );
+    let has_detection_failure = wft_failures.iter().any(|e| {
+        matches!(
+            e.attributes.as_ref(),
+            Some(WorkflowTaskFailedEventAttributes(attr))
+                if attr.failure.as_ref().is_some_and(|f|
+                    f.message.contains("Nondeterministic future detected"))
+        )
+    });
+    assert!(
+        has_detection_failure,
+        "Expected a WorkflowTaskFailed event with nondeterminism detection message"
+    );
 }
 
 #[workflow]
