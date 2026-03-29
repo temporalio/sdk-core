@@ -956,14 +956,17 @@ pub(crate) async fn eventually<F, Fut, T, E>(
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     let start = Instant::now();
+    let mut last_err = None;
     loop {
         if start.elapsed() > timeout {
-            bail!("Eventually hit timeout");
+            bail!("Eventually hit timeout after {timeout:?}. Last error: {last_err:?}");
         }
-        if let Ok(v) = func().await {
-            return Ok(v);
+        match func().await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(format!("{e:?}")),
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
