@@ -169,6 +169,9 @@ pub trait CoreMeter: Send + Sync + Debug {
 
     /// Create a new gauge instrument recording `f64` values.
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64;
+
+    /// Create a new up-down counter instrument recording `i64` values.
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter;
 }
 
 /// Provides a generic way to record metrics in memory.
@@ -350,6 +353,10 @@ impl CoreMeter for Arc<dyn CoreMeter> {
 
     fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         self.as_ref().gauge_f64(params)
+    }
+
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter {
+        self.as_ref().up_down_counter(params)
     }
 }
 
@@ -979,6 +986,81 @@ impl MetricAttributable<GaugeF64> for GaugeF64 {
     }
 }
 
+/// Base trait for up-down counter implementations.
+pub trait UpDownCounterBase: Send + Sync {
+    /// Add a signed value to the up-down counter.
+    fn adds(&self, value: i64);
+}
+
+/// The lazy-bound inner type for [`UpDownCounter`].
+pub type UpDownCounterImpl = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn UpDownCounterBase>> + Send + Sync>,
+    Arc<dyn UpDownCounterBase>,
+>;
+
+/// An up-down counter metric instrument that supports both positive and negative deltas.
+#[derive(Clone)]
+pub struct UpDownCounter {
+    primary: UpDownCounterImpl,
+}
+impl UpDownCounter {
+    /// Create a new up-down counter from an attributable metric source.
+    pub fn new(
+        inner: Arc<dyn MetricAttributable<Box<dyn UpDownCounterBase>> + Send + Sync>,
+    ) -> Self {
+        Self {
+            primary: LazyBoundMetric {
+                metric: inner,
+                attributes: MetricAttributes::Empty,
+                bound_cache: OnceLock::new(),
+            },
+        }
+    }
+
+    /// Add a signed `i64` value with the given attributes.
+    pub fn add(&self, value: i64, attributes: &MetricAttributes) {
+        match self.primary.metric.with_attributes(attributes) {
+            Ok(base) => base.adds(value),
+            Err(e) => {
+                dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
+            }
+        }
+    }
+
+    /// Replace the attributes on the primary metric.
+    pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
+        self.primary.update_attributes(new_attributes.clone());
+    }
+}
+impl UpDownCounterBase for UpDownCounter {
+    fn adds(&self, value: i64) {
+        let bound = self.primary.bound_cache.get_or_init(|| {
+            self.primary
+                .metric
+                .with_attributes(&self.primary.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize primary metric, will drop values: {e:?}");
+                    Arc::new(NoOpInstrument) as Arc<dyn UpDownCounterBase>
+                })
+        });
+        bound.adds(value);
+    }
+}
+impl MetricAttributable<UpDownCounter> for UpDownCounter {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<UpDownCounter, Box<dyn std::error::Error>> {
+        let primary = LazyBoundMetric {
+            metric: self.primary.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        };
+        Ok(UpDownCounter { primary })
+    }
+}
+
 /// A [`CoreMeter`] implementation that discards all metric recordings.
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
@@ -1025,6 +1107,10 @@ impl CoreMeter for NoOpCoreMeter {
     fn gauge_f64(&self, _: MetricParameters) -> GaugeF64 {
         GaugeF64::new(Arc::new(NoOpInstrument))
     }
+
+    fn up_down_counter(&self, _: MetricParameters) -> UpDownCounter {
+        UpDownCounter::new(Arc::new(NoOpInstrument))
+    }
 }
 
 macro_rules! impl_metric_attributable {
@@ -1043,6 +1129,12 @@ macro_rules! impl_metric_attributable {
 /// A no-op metric instrument that discards all recordings.
 pub struct NoOpInstrument;
 macro_rules! impl_no_op {
+    ($base_trait:ident, signed) => {
+        impl_metric_attributable!($base_trait, NoOpInstrument, NoOpInstrument);
+        impl $base_trait for NoOpInstrument {
+            fn adds(&self, _: i64) {}
+        }
+    };
     ($base_trait:ident, $value_type:ty) => {
         impl_metric_attributable!($base_trait, NoOpInstrument, NoOpInstrument);
         impl $base_trait for NoOpInstrument {
@@ -1062,6 +1154,7 @@ impl_no_op!(HistogramF64Base, f64);
 impl_no_op!(HistogramDurationBase, Duration);
 impl_no_op!(GaugeBase, u64);
 impl_no_op!(GaugeF64Base, f64);
+impl_no_op!(UpDownCounterBase, signed);
 
 #[cfg(test)]
 mod tests {
@@ -1238,6 +1331,28 @@ mod otel {
             }
         }
     }
+
+    impl MetricAttributable<Box<dyn UpDownCounterBase>> for opentelemetry::metrics::UpDownCounter<i64> {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn UpDownCounterBase>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: attributes.clone(),
+            }))
+        }
+    }
+
+    impl UpDownCounterBase for InstrumentWithAttributes<opentelemetry::metrics::UpDownCounter<i64>> {
+        fn adds(&self, value: i64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.add(value, kvs);
+            } else {
+                dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            }
+        }
+    }
 }
 
 /// Maintains a mapping of metric labels->values with a defined ordering, used for Prometheus labels
@@ -1328,5 +1443,10 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
     fn gauge_f64(&self, mut params: MetricParameters) -> GaugeF64 {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge_f64(params)
+    }
+
+    fn up_down_counter(&self, mut params: MetricParameters) -> UpDownCounter {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.up_down_counter(params)
     }
 }

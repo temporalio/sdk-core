@@ -136,6 +136,7 @@ pub enum MetricKind {
     HistogramDuration,
     GaugeInteger,
     GaugeFloat,
+    UpDownCounterInteger,
 }
 
 pub enum Metric {
@@ -145,6 +146,7 @@ pub enum Metric {
     HistogramDuration(metrics::HistogramDuration),
     GaugeInteger(metrics::Gauge),
     GaugeFloat(metrics::GaugeF64),
+    UpDownCounterInteger(metrics::UpDownCounter),
 }
 
 #[unsafe(no_mangle)]
@@ -167,6 +169,9 @@ pub extern "C" fn temporal_core_metric_new(
         }
         MetricKind::GaugeInteger => Metric::GaugeInteger(meter.core.gauge(options.into())),
         MetricKind::GaugeFloat => Metric::GaugeFloat(meter.core.gauge_f64(options.into())),
+        MetricKind::UpDownCounterInteger => {
+            Metric::UpDownCounterInteger(meter.core.up_down_counter(options.into()))
+        }
     }))
 }
 
@@ -205,6 +210,20 @@ pub extern "C" fn temporal_core_metric_record_float(
         Metric::HistogramFloat(histogram) => histogram.record(value, &attrs.core),
         Metric::GaugeFloat(gauge) => gauge.record(value, &attrs.core),
         _ => panic!("Not a float type"),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_record_integer_signed(
+    metric: *const Metric,
+    value: i64,
+    attrs: *const MetricAttributes,
+) {
+    let metric = unsafe { &*metric };
+    let attrs = unsafe { &*attrs };
+    match metric {
+        Metric::UpDownCounterInteger(counter) => counter.add(value, &attrs.core),
+        _ => panic!("Not a signed integer type"),
     }
 }
 
@@ -358,6 +377,12 @@ impl metrics::CoreMeter for CustomMetricMeterRef {
 
     fn gauge_f64(&self, params: metrics::MetricParameters) -> metrics::GaugeF64 {
         metrics::GaugeF64::new(Arc::new(self.new_metric(params, MetricKind::GaugeFloat)))
+    }
+
+    fn up_down_counter(&self, params: metrics::MetricParameters) -> metrics::UpDownCounter {
+        metrics::UpDownCounter::new(Arc::new(
+            self.new_metric(params, MetricKind::UpDownCounterInteger),
+        ))
     }
 }
 
@@ -648,6 +673,29 @@ impl metrics::GaugeF64Base for CustomMetric {
             let meter = &*(self.meter_impl.0);
             let attr_ptr = self.attr_ptr();
             (meter.metric_record_float)(*self.metric, value, attr_ptr);
+        }
+    }
+}
+
+impl metrics::MetricAttributable<Box<dyn metrics::UpDownCounterBase>> for CustomMetric {
+    fn with_attributes(
+        &self,
+        atts: &metrics::MetricAttributes,
+    ) -> Result<Box<dyn metrics::UpDownCounterBase>, Box<dyn Error>> {
+        Ok(Box::new(CustomMetric {
+            meter_impl: self.meter_impl.clone(),
+            metric: self.metric.clone(),
+            bound_attributes: Some(atts.clone()),
+        }))
+    }
+}
+
+impl metrics::UpDownCounterBase for CustomMetric {
+    fn adds(&self, value: i64) {
+        unsafe {
+            let meter = &*(self.meter_impl.0);
+            let attr_ptr = self.attr_ptr();
+            (meter.metric_record_integer)(*self.metric, value as u64, attr_ptr);
         }
     }
 }

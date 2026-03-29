@@ -1,4 +1,4 @@
-use crate::data_converters::{TemporalDeserializable, TemporalSerializable};
+use crate::data_converters::{RawValue, TemporalDeserializable, TemporalSerializable};
 
 /// Implement on a marker struct to define a workflow.
 ///
@@ -21,6 +21,29 @@ pub trait HasWorkflowDefinition: WorkflowDefinition {
     /// The [`WorkflowDefinition`] type that [`SignalDefinition`], [`QueryDefinition`], and
     /// [`UpdateDefinition`] are associated with.
     type Run: WorkflowDefinition;
+}
+
+/// Marker type for untyped workflow handles. Stores the workflow type name. Uses [`RawValue`]
+/// for both input and output.
+pub struct UntypedWorkflow {
+    name: String,
+}
+impl UntypedWorkflow {
+    /// Create a new `UntypedWorkflow` with the given workflow type name.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self { name: name.into() }
+    }
+}
+impl WorkflowDefinition for UntypedWorkflow {
+    type Input = RawValue;
+    type Output = RawValue;
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl HasWorkflowDefinition for UntypedWorkflow {
+    type Run = Self;
 }
 
 /// Implement on a marker struct to define a query.

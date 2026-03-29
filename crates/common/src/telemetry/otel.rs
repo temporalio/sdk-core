@@ -5,7 +5,7 @@ use super::{
         ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
         CoreMeter, Counter, DEFAULT_MS_BUCKETS, DEFAULT_S_BUCKETS, Gauge, GaugeF64, Histogram,
         HistogramBase, HistogramDuration, HistogramDurationBase, HistogramF64, HistogramF64Base,
-        MetricAttributable, MetricAttributes, MetricParameters, NewAttributes,
+        MetricAttributable, MetricAttributes, MetricParameters, NewAttributes, UpDownCounter,
         WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME, WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, default_buckets_for,
@@ -230,6 +230,16 @@ impl CoreMeter for CoreOtelMeter {
         GaugeF64::new(Arc::new(
             self.meter
                 .f64_gauge(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        ))
+    }
+
+    fn up_down_counter(&self, params: MetricParameters) -> UpDownCounter {
+        UpDownCounter::new(Arc::new(
+            self.meter
+                .i64_up_down_counter(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),

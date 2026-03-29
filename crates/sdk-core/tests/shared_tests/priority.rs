@@ -1,7 +1,11 @@
 use crate::common::CoreWfStarter;
 use std::time::Duration;
-use temporalio_client::{Priority, UntypedWorkflow, WorkflowGetResultOptions};
-use temporalio_common::protos::temporal::api::{common, history::v1::history_event::Attributes};
+use temporalio_client::{Priority, WorkflowGetResultOptions};
+use temporalio_common::{
+    UntypedWorkflow,
+    data_converters::RawValue,
+    protos::temporal::api::{common, history::v1::history_event::Attributes},
+};
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, ChildWorkflowOptions, WorkflowContext, WorkflowResult,
@@ -51,22 +55,22 @@ pub(crate) async fn priority_values_sent_to_server() {
     impl ParentWf {
         #[run]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            let child = ctx.child_workflow(ChildWorkflowOptions {
-                workflow_id: format!("{}-child", ctx.task_queue()),
-                workflow_type: ctx.state(|wf| wf.child_type.clone()),
-                priority: Some(Priority {
-                    priority_key: Some(4),
-                    fairness_key: Some("fair-child".to_string()),
-                    fairness_weight: Some(1.23),
-                }),
-                ..Default::default()
-            });
-
-            let started = child
-                .start()
-                .await
-                .into_started()
-                .expect("Child should start OK");
+            let child_type = ctx.state(|wf| wf.child_type.clone());
+            let started = ctx
+                .child_workflow(
+                    UntypedWorkflow::new(&child_type),
+                    RawValue::new(vec![]),
+                    ChildWorkflowOptions {
+                        workflow_id: format!("{}-child", ctx.task_queue()),
+                        priority: Some(Priority {
+                            priority_key: Some(4),
+                            fairness_key: Some("fair-child".to_string()),
+                            fairness_weight: Some(1.23),
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             let activity = ctx.start_activity(
                 PriorityActivities::echo,
                 "hello".to_string(),
@@ -81,7 +85,7 @@ pub(crate) async fn priority_values_sent_to_server() {
                     ..Default::default()
                 },
             );
-            started.result().await;
+            let _ = started.result().await;
             let _ = activity.await;
             Ok(())
         }

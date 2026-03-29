@@ -181,14 +181,17 @@ ctx.timer(Duration::from_secs(60)).await;
 ### Child Workflows
 
 ```rust
-let child_opts = ChildWorkflowOptions {
-    workflow_id: "child-1".to_string(),
-    workflow_type: "ChildWorkflow".to_string(),
-    ..Default::default()
-};
-
-let started = ctx.child_workflow(child_opts).start().await.into_started().unwrap();
-let result = started.join().await?;
+let started = ctx
+    .child_workflow(
+        MyChildWorkflow::run,
+        "input",
+        ChildWorkflowOptions {
+            workflow_id: "child-1".to_string(),
+            ..Default::default()
+        },
+    )
+    .await?;
+let result = started.result().await?;
 ```
 
 ### Continue-As-New

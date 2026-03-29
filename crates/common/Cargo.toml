@@ -72,13 +72,13 @@ prometheus = { version = "0.14", optional = true, default-features = false }
 prost = { workspace = true }
 prost-wkt = "0.7"
 prost-types = { workspace = true }
-rand = { version = "0.9", optional = true }
+rand = { version = "0.10", optional = true }
 ringbuf = { version = "0.4", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = { workspace = true }
 tokio = { version = "1.47", features = [], optional = true }
-toml = { version = "0.9", optional = true }
+toml = { version = "1.0", optional = true }
 tonic = { workspace = true }
 tonic-prost = { workspace = true }
 tracing = "0.1"
@@ -93,7 +93,6 @@ tracing-core = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
 pbjson = { workspace = true }
-pbjson-types = { workspace = true }
 
 [build-dependencies]
 prost = { workspace = true }
