@@ -106,15 +106,11 @@ impl<F: Future + Unpin> Future for SdkGuardedFuture<F> {
 
 struct ExecutorShared {
     ready_queue: parking_lot::Mutex<VecDeque<u64>>,
-    executor_waker: parking_lot::Mutex<Option<Waker>>,
 }
 
 impl ExecutorShared {
     fn enqueue(&self, task_id: u64) {
         self.ready_queue.lock().push_back(task_id);
-        if let Some(w) = self.executor_waker.lock().as_ref() {
-            w.wake_by_ref();
-        }
     }
 }
 
@@ -187,7 +183,6 @@ pub(crate) struct WorkflowExecutor {
     tasks: RefCell<HashMap<u64, LocalTask>>,
     next_id: Cell<u64>,
     shared: Arc<ExecutorShared>,
-    shutdown: Cell<bool>,
 }
 
 impl WorkflowExecutor {
@@ -197,9 +192,7 @@ impl WorkflowExecutor {
             next_id: Cell::new(0),
             shared: Arc::new(ExecutorShared {
                 ready_queue: parking_lot::Mutex::new(VecDeque::new()),
-                executor_waker: parking_lot::Mutex::new(None),
             }),
-            shutdown: Cell::new(false),
         }
     }
 
@@ -244,49 +237,33 @@ impl WorkflowExecutor {
         }
     }
 
-    /// Signal the executor to shut down once all tasks have completed.
-    pub(crate) fn shutdown(&self) {
-        self.shutdown.set(true);
-        // Wake the executor in case it's parked waiting for work
-        if let Some(w) = self.shared.executor_waker.lock().as_ref() {
-            w.wake_by_ref();
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tasks.borrow().is_empty()
+    }
+
+    /// Drain remaining tasks until all complete.
+    pub(crate) async fn shutdown(&self) {
+        while !self.is_empty() {
+            self.process_tasks();
+            tokio::task::yield_now().await;
         }
     }
 
-    /// Run the executor until shutdown is signaled and all tasks complete.
-    ///
-    /// This is an async method intended to be driven from a `LocalSet` or
-    /// similar `!Send` context. It yields back to the outer runtime when no
-    /// tasks are ready.
-    pub(crate) async fn run(&self) {
-        std::future::poll_fn(|cx| {
-            // Store executor waker so TaskNotifiers can wake us
-            *self.shared.executor_waker.lock() = Some(cx.waker().clone());
+    /// Drain the ready queue, polling all ready tasks once.
+    pub(crate) fn process_tasks(&self) {
+        loop {
+            let task_id = self.shared.ready_queue.lock().pop_front();
+            let Some(task_id) = task_id else { break };
 
-            // Drain ready queue and poll tasks
-            loop {
-                let task_id = self.shared.ready_queue.lock().pop_front();
-                let Some(task_id) = task_id else { break };
+            let Some(mut task) = self.tasks.borrow_mut().remove(&task_id) else {
+                continue;
+            };
 
-                // Take the task out so we don't hold a borrow on `self.tasks`
-                // across the poll (which would panic if the future spawns).
-                let Some(mut task) = self.tasks.borrow_mut().remove(&task_id) else {
-                    continue;
-                };
-
-                let mut task_cx = Context::from_waker(&task.waker);
-                if task.future.as_mut().poll(&mut task_cx).is_pending() {
-                    self.tasks.borrow_mut().insert(task_id, task);
-                }
+            let mut task_cx = Context::from_waker(&task.waker);
+            if task.future.as_mut().poll(&mut task_cx).is_pending() {
+                self.tasks.borrow_mut().insert(task_id, task);
             }
-
-            if self.shutdown.get() && self.tasks.borrow().is_empty() {
-                Poll::Ready(())
-            } else {
-                Poll::Pending
-            }
-        })
-        .await
+        }
     }
 }
 
@@ -300,18 +277,11 @@ mod tests {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let executor = Rc::new(WorkflowExecutor::new());
+                let executor = WorkflowExecutor::new();
                 let handle = executor.spawn(async { 42 });
-
-                let executor_clone = executor.clone();
-                let exec_task = tokio::task::spawn_local(async move {
-                    executor_clone.shutdown();
-                    executor_clone.run().await;
-                });
-
+                executor.shutdown().await;
                 let result = handle.await.unwrap();
                 assert_eq!(result, 42);
-                exec_task.await.unwrap();
             })
             .await;
     }
@@ -321,22 +291,14 @@ mod tests {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let executor = Rc::new(WorkflowExecutor::new());
+                let executor = WorkflowExecutor::new();
                 let h1 = executor.spawn(async { 1 });
                 let h2 = executor.spawn(async { 2 });
                 let h3 = executor.spawn(async { 3 });
-
-                let executor_clone = executor.clone();
-                let exec_task = tokio::task::spawn_local(async move {
-                    executor_clone.shutdown();
-                    executor_clone.run().await;
-                });
-
-                let (r1, r2, r3) = futures_util::join!(h1, h2, h3);
-                assert_eq!(r1.unwrap(), 1);
-                assert_eq!(r2.unwrap(), 2);
-                assert_eq!(r3.unwrap(), 3);
-                exec_task.await.unwrap();
+                executor.shutdown().await;
+                assert_eq!(h1.await.unwrap(), 1);
+                assert_eq!(h2.await.unwrap(), 2);
+                assert_eq!(h3.await.unwrap(), 3);
             })
             .await;
     }
@@ -353,8 +315,7 @@ mod tests {
 
                 let executor_clone = executor.clone();
                 tokio::task::spawn_local(async move {
-                    executor_clone.shutdown();
-                    executor_clone.run().await;
+                    executor_clone.shutdown().await;
                 });
 
                 // Send after a yield to ensure the future has parked
@@ -368,40 +329,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_while_parked_wakes_executor() {
+    async fn spawn_while_parked_drains_new_task() {
         let local = tokio::task::LocalSet::new();
         local
             .run_until(async {
-                let executor = Rc::new(WorkflowExecutor::new());
+                let executor = WorkflowExecutor::new();
+
+                // Spawn a task and drain it. The oneshot isn't ready yet so the
+                // task will park.
                 let (tx, rx) = oneshot::channel::<()>();
-
-                // Start the executor running with no tasks — it will park immediately.
-                let executor_clone = executor.clone();
-                tokio::task::spawn_local(async move {
-                    executor_clone.run().await;
-                });
-
-                // Let the executor park.
-                tokio::task::yield_now().await;
-
-                // Spawn a task while the executor is parked. Without the wake in
-                // enqueue, the executor never learns about this task.
                 let handle = executor.spawn(async move {
                     rx.await.unwrap();
                     42
                 });
+                executor.process_tasks();
 
-                // Yield to give the executor a chance to poll the new task.
-                tokio::task::yield_now().await;
+                // Resolve the oneshot, then drain again to complete the task.
                 tx.send(()).unwrap();
+                executor.process_tasks();
 
-                let result = tokio::time::timeout(std::time::Duration::from_secs(2), handle)
-                    .await
-                    .expect("executor should have polled the spawned task")
-                    .unwrap();
+                let result = handle.await.unwrap();
                 assert_eq!(result, 42);
-
-                executor.shutdown();
             })
             .await;
     }
