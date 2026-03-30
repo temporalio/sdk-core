@@ -809,7 +809,7 @@ impl<W> SyncWorkflowContext<W> {
         res
     }
 
-    /// Get a handle to an external workflow for sending typed signals or requesting cancellation.
+    /// Get a handle to an external workflow for sending signals or requesting cancellation.
     pub fn external_workflow(
         &self,
         workflow_id: impl Into<String>,
