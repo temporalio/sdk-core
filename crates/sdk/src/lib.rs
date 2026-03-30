@@ -100,9 +100,8 @@ pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
     ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
-    RootWorkflowInfo, Signal, SignalData, SignalWorkflowOptions,
-    StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
-    TimerOptions, WorkflowContext, WorkflowContextView,
+    RootWorkflowInfo, Signal, SignalData, StartChildWorkflowExecutionFailedCause,
+    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{

@@ -2,7 +2,7 @@ mod options;
 
 pub use options::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
-    SignalData, SignalWorkflowOptions, TimerOptions,
+    SignalData, TimerOptions,
 };
 pub use temporalio_common::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause;
 
@@ -809,21 +809,6 @@ impl<W> SyncWorkflowContext<W> {
         res
     }
 
-    /// Send a signal to an external workflow. May resolve as a failure if the signal didn't work
-    /// or was cancelled.
-    pub fn signal_workflow(
-        &self,
-        opts: impl Into<SignalWorkflowOptions>,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
-        let options: SignalWorkflowOptions = opts.into();
-        let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
-            namespace: self.base.inner.namespace.clone(),
-            workflow_id: options.workflow_id,
-            run_id: options.run_id.unwrap_or_default(),
-        });
-        self.base.clone().send_signal_wf(target, options.signal)
-    }
-
     /// Get a handle to an external workflow for sending typed signals or requesting cancellation.
     pub fn external_workflow(
         &self,
@@ -865,40 +850,6 @@ impl<W> SyncWorkflowContext<W> {
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
-    }
-
-    /// Request the cancellation of an external workflow. May resolve as a failure if the workflow
-    /// was not found or the cancel was otherwise unsendable.
-    pub fn cancel_external(
-        &self,
-        target: NamespacedWorkflowExecution,
-        reason: String,
-    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
-        let seq = self
-            .base
-            .inner
-            .seq_nums
-            .borrow_mut()
-            .next_cancel_external_wf_seq();
-        let (cmd, unblocker) = WFCommandFut::new();
-        self.base.send(
-            CommandCreateRequest {
-                cmd: WorkflowCommand {
-                    variant: Some(
-                        RequestCancelExternalWorkflowExecution {
-                            seq,
-                            workflow_execution: Some(target),
-                            reason,
-                        }
-                        .into(),
-                    ),
-                    user_metadata: None,
-                },
-                unblocker,
-            }
-            .into(),
-        );
-        cmd
     }
 
     /// Start a nexus operation
@@ -1101,14 +1052,6 @@ impl<W> WorkflowContext<W> {
         self.sync.deprecate_patch(patch_id)
     }
 
-    /// Send a signal to an external workflow.
-    pub fn signal_workflow(
-        &self,
-        opts: impl Into<SignalWorkflowOptions>,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
-        self.sync.signal_workflow(opts)
-    }
-
     /// Get a handle to an external workflow. See [SyncWorkflowContext::external_workflow].
     pub fn external_workflow(
         &self,
@@ -1131,15 +1074,6 @@ impl<W> WorkflowContext<W> {
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.sync.force_task_fail(with)
-    }
-
-    /// Request the cancellation of an external workflow.
-    pub fn cancel_external(
-        &self,
-        target: NamespacedWorkflowExecution,
-        reason: String,
-    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
-        self.sync.cancel_external(target, reason)
     }
 
     /// Start a nexus operation
