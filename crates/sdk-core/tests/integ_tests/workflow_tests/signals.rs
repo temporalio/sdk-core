@@ -418,3 +418,147 @@ async fn signal_serialization_failure() {
         "expected serialization error message, got: {result}"
     );
 }
+
+#[workflow]
+#[derive(Default)]
+struct CancelViaHandleSender;
+
+#[workflow_methods]
+impl CancelViaHandleSender {
+    #[run]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        (run_id, workflow_id): (String, String),
+    ) -> WorkflowResult<()> {
+        let handle = ctx.external_workflow(workflow_id, Some(run_id));
+        handle.cancel().await.unwrap();
+        Ok(())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancelViaHandleReceiver;
+
+#[workflow_methods]
+impl CancelViaHandleReceiver {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        let r = ctx.cancelled().await;
+        Ok(r)
+    }
+}
+
+#[tokio::test]
+async fn cancels_external_via_handle() {
+    let mut starter = CoreWfStarter::new("cancels_external_via_handle");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<CancelViaHandleSender>();
+    worker.register_workflow::<CancelViaHandleReceiver>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let cancel_wfid = "cancel-via-handle-receiver";
+    let receiver_run_handle = worker
+        .submit_workflow(
+            CancelViaHandleReceiver::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), cancel_wfid).build(),
+        )
+        .await
+        .unwrap();
+    let receiver_run_id = receiver_run_handle.run_id().unwrap();
+    let sender_handle = worker
+        .submit_workflow(
+            CancelViaHandleSender::run,
+            (receiver_run_id.to_owned(), cancel_wfid.to_owned()),
+            WorkflowStartOptions::new(task_queue, "cancel-via-handle-sender").build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    sender_handle
+        .get_result(Default::default())
+        .await
+        .expect("sender workflow should complete successfully");
+    let receiver_result = receiver_run_handle
+        .get_result(Default::default())
+        .await
+        .expect("receiver workflow should complete successfully");
+    assert!(
+        receiver_result.contains("Cancel requested by workflow"),
+        "expected cancellation message, got: {receiver_result}"
+    );
+}
+
+#[workflow]
+#[derive(Default)]
+struct CrossTypeSignalSender;
+
+#[workflow_methods]
+impl CrossTypeSignalSender {
+    #[run]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        (run_id, workflow_id): (String, String),
+    ) -> WorkflowResult<()> {
+        let handle = ctx.external_workflow(workflow_id, Some(run_id));
+        handle
+            .signal(CrossTypeSignalReceiver::handle_signal, "hi!".into())
+            .await
+            .unwrap();
+        Ok(())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct CrossTypeSignalReceiver {
+    received: bool,
+}
+
+#[workflow_methods]
+impl CrossTypeSignalReceiver {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.wait_condition(|s| s.received).await;
+        Ok(())
+    }
+
+    #[signal]
+    fn handle_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, input: String) {
+        assert_eq!(input, "hi!");
+        self.received = true;
+    }
+}
+
+#[tokio::test]
+async fn external_workflow_signal() {
+    let mut starter = CoreWfStarter::new("cross_type_signal_sends_successfully");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<CrossTypeSignalSender>();
+    worker.register_workflow::<CrossTypeSignalReceiver>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let receiver_wfid = "cross-type-signal-receiver";
+    let receiver_handle = worker
+        .submit_workflow(
+            CrossTypeSignalReceiver::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), receiver_wfid).build(),
+        )
+        .await
+        .unwrap();
+    let receiver_run_id = receiver_handle.run_id().unwrap();
+    worker
+        .submit_workflow(
+            CrossTypeSignalSender::run,
+            (receiver_run_id.to_owned(), receiver_wfid.to_owned()),
+            WorkflowStartOptions::new(task_queue, "cross-type-signal-sender").build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}

@@ -832,7 +832,7 @@ impl<W> SyncWorkflowContext<W> {
     ) -> ExternalWorkflowHandle {
         ExternalWorkflowHandle {
             workflow_id: workflow_id.into(),
-            run_id: run_id.unwrap_or_default(),
+            run_id,
             namespace: self.base.inner.namespace.clone(),
             base_ctx: self.base.clone(),
         }
@@ -1115,7 +1115,7 @@ impl<W> WorkflowContext<W> {
         workflow_id: impl Into<String>,
         run_id: Option<String>,
     ) -> ExternalWorkflowHandle {
-        self.sync.external_workflow(workflow_id.into(), run_id)
+        self.sync.external_workflow(workflow_id, run_id)
     }
 
     /// Add or create a set of search attributes
@@ -1987,7 +1987,7 @@ where
 #[derive(derive_more::Debug)]
 pub struct ExternalWorkflowHandle {
     workflow_id: String,
-    run_id: String,
+    run_id: Option<String>,
     namespace: String,
     #[debug(skip)]
     base_ctx: BaseWorkflowContext,
@@ -2001,7 +2001,7 @@ impl ExternalWorkflowHandle {
 
     /// The run ID of the external workflow, or `None` if targeting the latest run.
     pub fn run_id(&self) -> Option<&str> {
-        (!self.run_id.is_empty()).then_some(&self.run_id)
+        self.run_id.as_deref()
     }
 
     /// Send a signal to the external workflow.
@@ -2029,7 +2029,7 @@ impl ExternalWorkflowHandle {
         let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
             namespace: self.namespace.clone(),
             workflow_id: self.workflow_id.clone(),
-            run_id: self.run_id.clone(),
+            run_id: self.run_id.clone().unwrap_or_default(),
         });
         SignalExternalFut::Running(self.base_ctx.clone().send_signal_wf(target, signal))
     }
@@ -2052,7 +2052,7 @@ impl ExternalWorkflowHandle {
                             workflow_execution: Some(NamespacedWorkflowExecution {
                                 namespace: self.namespace.clone(),
                                 workflow_id: self.workflow_id.clone(),
-                                run_id: self.run_id.clone(),
+                                run_id: self.run_id.clone().unwrap_or_default(),
                             }),
                             reason: String::new(),
                         }
