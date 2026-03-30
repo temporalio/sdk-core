@@ -19,8 +19,7 @@ use temporalio_common::protos::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    CancellableFuture, ChildWorkflowOptions, SignalWorkflowOptions, SyncWorkflowContext,
-    WorkflowContext, WorkflowResult,
+    CancellableFuture, ChildWorkflowOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
 };
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
@@ -39,14 +38,10 @@ impl SignalSender {
         ctx: &mut WorkflowContext<Self>,
         (run_id, expect_failure): (String, bool),
     ) -> WorkflowResult<()> {
-        let mut dat = SignalWorkflowOptions::new(
-            RECEIVER_WFID,
-            run_id,
-            SIGNAME,
-            ["hi!".to_string().as_json_payload().unwrap()],
-        );
-        dat.with_header("tupac", b"shakur");
-        let sigres = ctx.signal_workflow(dat).await;
+        let handle = ctx.external_workflow(RECEIVER_WFID, Some(run_id));
+        let sigres = handle
+            .signal(SignalReceiver::handle_signal, "hi!".into())
+            .await;
         if expect_failure {
             assert!(sigres.is_err());
         } else {
@@ -91,13 +86,8 @@ impl SignalReceiver {
     }
 
     #[signal(name = "signame")]
-    fn handle_signal(&mut self, ctx: &mut SyncWorkflowContext<Self>, input: String) {
+    fn handle_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, input: String) {
         assert_eq!(input, "hi!");
-        let headers = ctx.headers();
-        assert_eq!(
-            *headers.get("tupac").expect("tupac header exists"),
-            b"shakur".into()
-        );
         self.received = true;
     }
 }
@@ -261,14 +251,10 @@ struct SignalSenderCanned;
 impl SignalSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let mut dat = SignalWorkflowOptions::new(
-            "fake_wid",
-            "fake_rid",
-            SIGNAME,
-            ["hi!".to_string().as_json_payload().unwrap()],
-        );
-        dat.with_header("tupac", b"shakur");
-        let res = ctx.signal_workflow(dat).await;
+        let handle = ctx.external_workflow("fake_wid", Some("fake_rid".into()));
+        let res = handle
+            .signal(SignalReceiver::handle_signal, "hi!".into())
+            .await;
         if res.is_err() {
             Err(anyhow::anyhow!("Signal fail!").into())
         } else {
@@ -302,8 +288,6 @@ async fn sends_signal(#[case] fails: bool) {
                         command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs)),..}] => {
                         assert_eq!(attrs.signal_name, SIGNAME);
                         assert_eq!(attrs.input.as_ref().unwrap().payloads[0], "hi!".to_string().as_json_payload().unwrap());
-                        assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(),
-                                   b"shakur".into());
                     }
                 );
             }).then(move |wft| {
@@ -333,12 +317,8 @@ struct CancelsBeforeSending;
 impl CancelsBeforeSending {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
-            "fake_wid",
-            "fake_rid",
-            SIGNAME,
-            ["hi!".to_string().as_json_payload().unwrap()],
-        ));
+        let handle = ctx.external_workflow("fake_wid", Some("fake_rid".into()));
+        let sig = handle.signal(SignalReceiver::handle_signal, "hi!".into());
         sig.cancel();
         let _res = sig.await;
         Ok(())
@@ -381,4 +361,60 @@ async fn cancels_before_sending() {
     worker.set_worker_interceptor(aai);
     worker.register_workflow::<CancelsBeforeSending>();
     worker.run().await.unwrap();
+}
+
+#[derive(serde::Deserialize)]
+struct BadSignalInput;
+
+impl serde::Serialize for BadSignalInput {
+    fn serialize<S: serde::Serializer>(&self, _serializer: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom(
+            "intentional serialization failure",
+        ))
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct SignalSerializationFailure;
+
+#[workflow_methods]
+impl SignalSerializationFailure {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
+        let handle = ctx.external_workflow("irrelevant", None);
+        let result = handle
+            .signal(SignalSerializationFailure::bad_signal, BadSignalInput)
+            .await;
+        Ok(result.unwrap_err().message)
+    }
+
+    #[signal]
+    fn bad_signal(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _input: BadSignalInput) {}
+}
+
+#[tokio::test]
+async fn signal_serialization_failure() {
+    let wf_name = "signal_serialization_failure";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<SignalSerializationFailure>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            SignalSerializationFailure::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+    assert!(
+        result.contains("intentional serialization failure"),
+        "expected serialization error message, got: {result}"
+    );
 }

@@ -824,6 +824,20 @@ impl<W> SyncWorkflowContext<W> {
         self.base.clone().send_signal_wf(target, options.signal)
     }
 
+    /// Get a handle to an external workflow for sending typed signals or requesting cancellation.
+    pub fn external_workflow(
+        &self,
+        workflow_id: impl Into<String>,
+        run_id: Option<String>,
+    ) -> ExternalWorkflowHandle {
+        ExternalWorkflowHandle {
+            workflow_id: workflow_id.into(),
+            run_id: run_id.unwrap_or_default(),
+            namespace: self.base.inner.namespace.clone(),
+            base_ctx: self.base.clone(),
+        }
+    }
+
     /// Add or create a set of search attributes
     pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
         self.base.send(RustWfCmd::NewNonblockingCmd(
@@ -1093,6 +1107,15 @@ impl<W> WorkflowContext<W> {
         opts: impl Into<SignalWorkflowOptions>,
     ) -> impl CancellableFuture<SignalExternalWfResult> {
         self.sync.signal_workflow(opts)
+    }
+
+    /// Get a handle to an external workflow. See [SyncWorkflowContext::external_workflow].
+    pub fn external_workflow(
+        &self,
+        workflow_id: impl Into<String>,
+        run_id: Option<String>,
+    ) -> ExternalWorkflowHandle {
+        self.sync.external_workflow(workflow_id.into(), run_id)
     }
 
     /// Add or create a set of search attributes
@@ -1954,6 +1977,149 @@ where
         let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
         SignalChildFut::Running(self.common.base_ctx.clone().send_signal_wf(target, signal))
+    }
+}
+
+/// Handle to an external workflow for sending signals or requesting cancellation.
+///
+/// Obtained via [`SyncWorkflowContext::external_workflow`] or
+/// [`WorkflowContext::external_workflow`].
+#[derive(derive_more::Debug)]
+pub struct ExternalWorkflowHandle {
+    workflow_id: String,
+    run_id: String,
+    namespace: String,
+    #[debug(skip)]
+    base_ctx: BaseWorkflowContext,
+}
+
+impl ExternalWorkflowHandle {
+    /// The workflow ID of the external workflow.
+    pub fn workflow_id(&self) -> &str {
+        &self.workflow_id
+    }
+
+    /// The run ID of the external workflow, or `None` if targeting the latest run.
+    pub fn run_id(&self) -> Option<&str> {
+        (!self.run_id.is_empty()).then_some(&self.run_id)
+    }
+
+    /// Send a signal to the external workflow.
+    pub fn signal<S: SignalDefinition>(
+        &self,
+        signal: S,
+        input: S::Input,
+    ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.base_ctx.inner.payload_converter,
+        };
+        let payloads = match self
+            .base_ctx
+            .inner
+            .payload_converter
+            .to_payloads(&ctx, &input)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                return SignalExternalFut::SerializationError(Some(e));
+            }
+        };
+        let signal = Signal::new(S::name(&signal), payloads);
+        let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
+            namespace: self.namespace.clone(),
+            workflow_id: self.workflow_id.clone(),
+            run_id: self.run_id.clone(),
+        });
+        SignalExternalFut::Running(self.base_ctx.clone().send_signal_wf(target, signal))
+    }
+
+    /// Request cancellation of the external workflow.
+    pub fn cancel(&self) -> impl FusedFuture<Output = CancelExternalWfResult> {
+        let seq = self
+            .base_ctx
+            .inner
+            .seq_nums
+            .borrow_mut()
+            .next_cancel_external_wf_seq();
+        let (cmd, unblocker) = WFCommandFut::new();
+        self.base_ctx.send(
+            CommandCreateRequest {
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        RequestCancelExternalWorkflowExecution {
+                            seq,
+                            workflow_execution: Some(NamespacedWorkflowExecution {
+                                namespace: self.namespace.clone(),
+                                workflow_id: self.workflow_id.clone(),
+                                run_id: self.run_id.clone(),
+                            }),
+                            reason: String::new(),
+                        }
+                        .into(),
+                    ),
+                    user_metadata: None,
+                },
+                unblocker,
+            }
+            .into(),
+        );
+        cmd
+    }
+}
+
+enum SignalExternalFut<F> {
+    Running(F),
+    SerializationError(Option<PayloadConversionError>),
+    Done,
+}
+
+impl<F: Unpin> Unpin for SignalExternalFut<F> {}
+
+impl<F> Future for SignalExternalFut<F>
+where
+    F: Future<Output = SignalExternalWfResult> + Unpin,
+{
+    type Output = SignalExternalWfResult;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match this {
+            SignalExternalFut::Running(inner) => {
+                let result = std::task::ready!(Pin::new(inner).poll(cx));
+                *this = SignalExternalFut::Done;
+                Poll::Ready(result)
+            }
+            SignalExternalFut::SerializationError(e) => {
+                let err = e.take().expect("polled after completion");
+                *this = SignalExternalFut::Done;
+                Poll::Ready(Err(Failure {
+                    message: format!("Failed to serialize signal input: {err}"),
+                    ..Default::default()
+                }))
+            }
+            SignalExternalFut::Done => panic!("polled after completion"),
+        }
+    }
+}
+
+impl<F> FusedFuture for SignalExternalFut<F>
+where
+    F: Future<Output = SignalExternalWfResult> + Unpin,
+{
+    fn is_terminated(&self) -> bool {
+        matches!(self, SignalExternalFut::Done)
+    }
+}
+
+impl<F> CancellableFuture<SignalExternalWfResult> for SignalExternalFut<F>
+where
+    F: CancellableFuture<SignalExternalWfResult> + Unpin,
+{
+    fn cancel(&self) {
+        if let SignalExternalFut::Running(inner) = self {
+            inner.cancel()
+        }
     }
 }
 
