@@ -1969,7 +1969,10 @@ impl ExternalWorkflowHandle {
     }
 
     /// Request cancellation of the external workflow.
-    pub fn cancel(&self) -> impl FusedFuture<Output = CancelExternalWfResult> {
+    pub fn cancel(
+        &self,
+        reason: Option<String>,
+    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
         let seq = self
             .base_ctx
             .inner
@@ -1988,7 +1991,7 @@ impl ExternalWorkflowHandle {
                                 workflow_id: self.workflow_id.clone(),
                                 run_id: self.run_id.clone().unwrap_or_default(),
                             }),
-                            reason: String::new(),
+                            reason: reason.unwrap_or_default(),
                         }
                         .into(),
                     ),

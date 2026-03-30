@@ -1346,7 +1346,7 @@ impl CancelExternalThenChildParent {
         // Advance cancel_external_wf_seq without touching child_workflow_seq.
         let cancel_target_id = format!("{}-cancel-target", ctx.task_queue());
         let handle = ctx.external_workflow(cancel_target_id, None);
-        handle.cancel().await.unwrap();
+        handle.cancel(None).await.unwrap();
 
         // Now start a child — child_seq=1, but cancel_external_wf_seq=3.
         let started = ctx

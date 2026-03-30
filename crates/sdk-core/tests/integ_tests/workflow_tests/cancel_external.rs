@@ -24,7 +24,7 @@ impl CancelSender {
         (run_id, workflow_id): (String, String),
     ) -> WorkflowResult<()> {
         let handle = ctx.external_workflow(workflow_id, Some(run_id));
-        handle.cancel().await.unwrap();
+        handle.cancel(Some("cancel-reason".into())).await.unwrap();
         Ok(())
     }
 }
@@ -83,6 +83,10 @@ async fn sends_cancel_to_other_wf() {
         receiver_result.contains("Cancel requested by workflow"),
         "expected cancellation message, got: {receiver_result}"
     );
+    assert!(
+        receiver_result.contains("cancel-reason"),
+        "expected cancel reason in message, got: {receiver_result}"
+    );
 }
 
 #[workflow]
@@ -94,7 +98,7 @@ impl CancelSenderCanned {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         let handle = ctx.external_workflow("fake_wid", Some("fake_rid".into()));
-        let res = handle.cancel().await;
+        let res = handle.cancel(None).await;
         if res.is_err() {
             Err(anyhow::anyhow!("Cancel fail!").into())
         } else {
