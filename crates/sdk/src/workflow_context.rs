@@ -2,7 +2,7 @@ mod options;
 
 pub use options::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
-    SignalData, SignalWorkflowOptions, TimerOptions,
+    SignalData, TimerOptions,
 };
 pub use temporalio_common::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause;
 
@@ -809,19 +809,18 @@ impl<W> SyncWorkflowContext<W> {
         res
     }
 
-    /// Send a signal to an external workflow. May resolve as a failure if the signal didn't work
-    /// or was cancelled.
-    pub fn signal_workflow(
+    /// Get a handle to an external workflow for sending signals or requesting cancellation.
+    pub fn external_workflow(
         &self,
-        opts: impl Into<SignalWorkflowOptions>,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
-        let options: SignalWorkflowOptions = opts.into();
-        let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
+        workflow_id: impl Into<String>,
+        run_id: Option<String>,
+    ) -> ExternalWorkflowHandle {
+        ExternalWorkflowHandle {
+            workflow_id: workflow_id.into(),
+            run_id,
             namespace: self.base.inner.namespace.clone(),
-            workflow_id: options.workflow_id,
-            run_id: options.run_id.unwrap_or_default(),
-        });
-        self.base.clone().send_signal_wf(target, options.signal)
+            base_ctx: self.base.clone(),
+        }
     }
 
     /// Add or create a set of search attributes
@@ -851,40 +850,6 @@ impl<W> SyncWorkflowContext<W> {
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
-    }
-
-    /// Request the cancellation of an external workflow. May resolve as a failure if the workflow
-    /// was not found or the cancel was otherwise unsendable.
-    pub fn cancel_external(
-        &self,
-        target: NamespacedWorkflowExecution,
-        reason: String,
-    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
-        let seq = self
-            .base
-            .inner
-            .seq_nums
-            .borrow_mut()
-            .next_cancel_external_wf_seq();
-        let (cmd, unblocker) = WFCommandFut::new();
-        self.base.send(
-            CommandCreateRequest {
-                cmd: WorkflowCommand {
-                    variant: Some(
-                        RequestCancelExternalWorkflowExecution {
-                            seq,
-                            workflow_execution: Some(target),
-                            reason,
-                        }
-                        .into(),
-                    ),
-                    user_metadata: None,
-                },
-                unblocker,
-            }
-            .into(),
-        );
-        cmd
     }
 
     /// Start a nexus operation
@@ -1087,12 +1052,13 @@ impl<W> WorkflowContext<W> {
         self.sync.deprecate_patch(patch_id)
     }
 
-    /// Send a signal to an external workflow.
-    pub fn signal_workflow(
+    /// Get a handle to an external workflow. See [SyncWorkflowContext::external_workflow].
+    pub fn external_workflow(
         &self,
-        opts: impl Into<SignalWorkflowOptions>,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
-        self.sync.signal_workflow(opts)
+        workflow_id: impl Into<String>,
+        run_id: Option<String>,
+    ) -> ExternalWorkflowHandle {
+        self.sync.external_workflow(workflow_id, run_id)
     }
 
     /// Add or create a set of search attributes
@@ -1108,15 +1074,6 @@ impl<W> WorkflowContext<W> {
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.sync.force_task_fail(with)
-    }
-
-    /// Request the cancellation of an external workflow.
-    pub fn cancel_external(
-        &self,
-        target: NamespacedWorkflowExecution,
-        reason: String,
-    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
-        self.sync.cancel_external(target, reason)
     }
 
     /// Start a nexus operation
@@ -1954,6 +1911,152 @@ where
         let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
         SignalChildFut::Running(self.common.base_ctx.clone().send_signal_wf(target, signal))
+    }
+}
+
+/// Handle to an external workflow for sending signals or requesting cancellation.
+///
+/// Obtained via [`SyncWorkflowContext::external_workflow`] or
+/// [`WorkflowContext::external_workflow`].
+#[derive(derive_more::Debug)]
+pub struct ExternalWorkflowHandle {
+    workflow_id: String,
+    run_id: Option<String>,
+    namespace: String,
+    #[debug(skip)]
+    base_ctx: BaseWorkflowContext,
+}
+
+impl ExternalWorkflowHandle {
+    /// The workflow ID of the external workflow.
+    pub fn workflow_id(&self) -> &str {
+        &self.workflow_id
+    }
+
+    /// The run ID of the external workflow, or `None` if targeting the latest run.
+    pub fn run_id(&self) -> Option<&str> {
+        self.run_id.as_deref()
+    }
+
+    /// Send a signal to the external workflow.
+    pub fn signal<S: SignalDefinition>(
+        &self,
+        signal: S,
+        input: S::Input,
+    ) -> impl CancellableFuture<SignalExternalWfResult> + 'static {
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &self.base_ctx.inner.payload_converter,
+        };
+        let payloads = match self
+            .base_ctx
+            .inner
+            .payload_converter
+            .to_payloads(&ctx, &input)
+        {
+            Ok(p) => p,
+            Err(e) => {
+                return SignalExternalFut::SerializationError(Some(e));
+            }
+        };
+        let signal = Signal::new(S::name(&signal), payloads);
+        let target = sig_we::Target::WorkflowExecution(NamespacedWorkflowExecution {
+            namespace: self.namespace.clone(),
+            workflow_id: self.workflow_id.clone(),
+            run_id: self.run_id.clone().unwrap_or_default(),
+        });
+        SignalExternalFut::Running(self.base_ctx.clone().send_signal_wf(target, signal))
+    }
+
+    /// Request cancellation of the external workflow.
+    pub fn cancel(
+        &self,
+        reason: Option<String>,
+    ) -> impl FusedFuture<Output = CancelExternalWfResult> {
+        let seq = self
+            .base_ctx
+            .inner
+            .seq_nums
+            .borrow_mut()
+            .next_cancel_external_wf_seq();
+        let (cmd, unblocker) = WFCommandFut::new();
+        self.base_ctx.send(
+            CommandCreateRequest {
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        RequestCancelExternalWorkflowExecution {
+                            seq,
+                            workflow_execution: Some(NamespacedWorkflowExecution {
+                                namespace: self.namespace.clone(),
+                                workflow_id: self.workflow_id.clone(),
+                                run_id: self.run_id.clone().unwrap_or_default(),
+                            }),
+                            reason: reason.unwrap_or_default(),
+                        }
+                        .into(),
+                    ),
+                    user_metadata: None,
+                },
+                unblocker,
+            }
+            .into(),
+        );
+        cmd
+    }
+}
+
+enum SignalExternalFut<F> {
+    Running(F),
+    SerializationError(Option<PayloadConversionError>),
+    Done,
+}
+
+impl<F: Unpin> Unpin for SignalExternalFut<F> {}
+
+impl<F> Future for SignalExternalFut<F>
+where
+    F: Future<Output = SignalExternalWfResult> + Unpin,
+{
+    type Output = SignalExternalWfResult;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        match this {
+            SignalExternalFut::Running(inner) => {
+                let result = std::task::ready!(Pin::new(inner).poll(cx));
+                *this = SignalExternalFut::Done;
+                Poll::Ready(result)
+            }
+            SignalExternalFut::SerializationError(e) => {
+                let err = e.take().expect("polled after completion");
+                *this = SignalExternalFut::Done;
+                Poll::Ready(Err(Failure {
+                    message: format!("Failed to serialize signal input: {err}"),
+                    ..Default::default()
+                }))
+            }
+            SignalExternalFut::Done => panic!("polled after completion"),
+        }
+    }
+}
+
+impl<F> FusedFuture for SignalExternalFut<F>
+where
+    F: Future<Output = SignalExternalWfResult> + Unpin,
+{
+    fn is_terminated(&self) -> bool {
+        matches!(self, SignalExternalFut::Done)
+    }
+}
+
+impl<F> CancellableFuture<SignalExternalWfResult> for SignalExternalFut<F>
+where
+    F: CancellableFuture<SignalExternalWfResult> + Unpin,
+{
+    fn cancel(&self) {
+        if let SignalExternalFut::Running(inner) = self {
+            inner.cancel()
+        }
     }
 }
 

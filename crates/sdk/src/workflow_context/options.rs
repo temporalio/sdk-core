@@ -287,43 +287,6 @@ impl ChildWorkflowOptions {
     }
 }
 
-/// Options for sending a signal to an external workflow
-#[derive(Debug)]
-pub struct SignalWorkflowOptions {
-    /// The workflow's id
-    pub workflow_id: String,
-    /// The particular run to target, or latest if `None`
-    pub run_id: Option<String>,
-    /// The details of the signal to send
-    pub signal: Signal,
-}
-
-impl SignalWorkflowOptions {
-    /// Create options for sending a signal to another workflow
-    pub fn new(
-        workflow_id: impl Into<String>,
-        run_id: impl Into<String>,
-        name: impl Into<String>,
-        input: impl IntoIterator<Item = impl Into<Payload>>,
-    ) -> Self {
-        Self {
-            workflow_id: workflow_id.into(),
-            run_id: Some(run_id.into()),
-            signal: Signal::new(name, input),
-        }
-    }
-
-    /// Set a header k/v pair attached to the signal
-    pub fn with_header(
-        &mut self,
-        key: impl Into<String>,
-        payload: impl Into<Payload>,
-    ) -> &mut Self {
-        self.signal.data.with_header(key.into(), payload.into());
-        self
-    }
-}
-
 /// Information needed to send a specific signal
 #[derive(Debug)]
 pub struct Signal {

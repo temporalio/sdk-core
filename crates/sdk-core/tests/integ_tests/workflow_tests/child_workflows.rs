@@ -1345,16 +1345,8 @@ impl CancelExternalThenChildParent {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         // Advance cancel_external_wf_seq without touching child_workflow_seq.
         let cancel_target_id = format!("{}-cancel-target", ctx.task_queue());
-        ctx.cancel_external(
-            temporalio_common::protos::coresdk::common::NamespacedWorkflowExecution {
-                workflow_id: cancel_target_id,
-                namespace: ctx.namespace().to_string(),
-                ..Default::default()
-            },
-            "superseded".to_string(),
-        )
-        .await
-        .unwrap();
+        let handle = ctx.external_workflow(cancel_target_id, None);
+        handle.cancel(None).await.unwrap();
 
         // Now start a child — child_seq=1, but cancel_external_wf_seq=3.
         let started = ctx
