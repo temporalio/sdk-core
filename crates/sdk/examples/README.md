@@ -1,10 +1,6 @@
 # Temporal Rust SDK Examples
 
-These examples demonstrate common Temporal patterns using the Rust SDK. Each example is a self-contained directory with:
-
-- `workflows.rs` — Workflow and activity definitions
-- `worker.rs` — Registers workflows/activities and runs a worker
-- `starter.rs` — Starts a workflow and prints the result
+These examples demonstrate common Temporal patterns using the Rust SDK. Each example is a self-contained directory with its own README, workflow definitions, a worker, and a starter.
 
 ## Prerequisites
 
@@ -29,22 +25,22 @@ cargo run --features examples --example hello-world-worker
 cargo run --features examples --example hello-world-starter
 ```
 
+See each example's README for details and expected output.
+
 ## Examples
 
-| Example | Description |
-|---|---|
-| `hello_world` | Basic workflow that calls a single activity |
-| `activity_heartbeating` | Long-running activity with heartbeating and resume-on-retry |
-| `timer_examples` | Workflow timers, racing timers against activities, and timer cancellation |
-| `message_passing` | Signals, queries, and updates on a workflow |
-| `child_workflows` | Starting and collecting results from child workflows |
-| `continue_as_new` | Long-running workflows via continue-as-new |
-| `saga` | Saga/compensation pattern for distributed transactions |
-| `patching` | Workflow versioning with `ctx.patched()` |
-| `local_activities` | Local vs remote activity execution |
-| `search_attributes` | Reading and upserting workflow search attributes |
-| `updatable_timer` | Timer that can be rescheduled via signals |
-| `polling` | Polling an external condition with activities and timers |
-| `cancellation` | Workflow and activity cancellation with cleanup |
-| `encryption` | Custom `PayloadCodec` for payload encryption |
-| `schedules` | Creating and managing scheduled workflows |
+- [Hello World](hello_world/) — Basic workflow that calls a single activity
+- [Activity Heartbeating](activity_heartbeating/) — Long-running activity with heartbeating and resume-on-retry
+- [Timer Examples](timer_examples/) — Workflow timers, racing timers against activities, and timer cancellation
+- [Message Passing](message_passing/) — Signals, queries, and updates on a workflow
+- [Child Workflows](child_workflows/) — Starting and collecting results from child workflows
+- [Continue-As-New](continue_as_new/) — Long-running workflows via continue-as-new
+- [Saga](saga/) — Saga/compensation pattern for distributed transactions
+- [Patching](patching/) — Workflow versioning with `ctx.patched()`
+- [Local Activities](local_activities/) — Local vs remote activity execution
+- [Search Attributes](search_attributes/) — Reading and upserting workflow search attributes
+- [Updatable Timer](updatable_timer/) — Timer that can be rescheduled via signals
+- [Polling](polling/) — Polling an external condition with activities and timers
+- [Cancellation](cancellation/) — Workflow and activity cancellation with cleanup
+- [Encryption](encryption/) — Custom `PayloadCodec` for payload encryption
+- [Schedules](schedules/) — Creating and managing scheduled workflows

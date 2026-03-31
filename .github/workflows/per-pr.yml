@@ -262,6 +262,9 @@ jobs:
       - name: Start Temporal dev server
         run: |
           temporal server start-dev --headless &
+          sleep 5
+          temporal operator search-attribute create --name CustomKeywordField --type Keyword
+          temporal operator search-attribute create --name CustomIntField --type Int
       - name: Run examples
         run: |
           for dir in crates/sdk/examples/*/; do
