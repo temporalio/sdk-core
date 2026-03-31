@@ -1121,7 +1121,7 @@ impl<W> WorkflowContext<W> {
     pub fn wait_condition<'a>(
         &'a self,
         mut condition: impl FnMut(&W) -> bool + 'a,
-    ) -> impl Future<Output = ()> + 'a {
+    ) -> impl FusedFuture<Output = ()> + 'a {
         future::poll_fn(move |cx: &mut Context<'_>| {
             if condition(&*self.workflow_state.borrow()) {
                 Poll::Ready(())
@@ -1130,6 +1130,7 @@ impl<W> WorkflowContext<W> {
                 Poll::Pending
             }
         })
+        .fuse()
     }
 }
 
