@@ -108,6 +108,7 @@ impl ActivityContext {
             retry_policy,
             is_local,
             priority,
+            run_id,
         } = task;
         let deadline = calculate_deadline(
             scheduled_time.as_ref(),
@@ -140,6 +141,7 @@ impl ActivityContext {
                     retry_policy,
                     is_local,
                     priority: priority.map(Into::into).unwrap_or_default(),
+                    run_id,
                 },
             },
             input,
@@ -220,6 +222,8 @@ pub struct ActivityInfo {
     pub is_local: bool,
     /// Priority of this activity. If unset uses [Priority::default].
     pub priority: Priority,
+    /// Run ID of this activity execution. Only set for standalone activities.
+    pub run_id: String,
 }
 
 /// Returned as errors from activity functions.

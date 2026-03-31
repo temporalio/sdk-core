@@ -63,6 +63,8 @@ message Start {
     // Set to true if this is a local activity. Note that heartbeating does not apply to local
     // activities.
     bool is_local = 17;
+    // Run ID of this activity execution. Only set for standalone activities.
+    string run_id = 19;
 }
 
 // Attempt to cancel a running activity
