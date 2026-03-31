@@ -17,7 +17,9 @@ async-trait = "0.1"
 anyhow = "1.0"
 bon = { workspace = true }
 derive_more = { workspace = true }
-futures-util = { version = "0.3", default-features = false, features = ["async-await-macro"] }
+futures-util = { version = "0.3", default-features = false, features = [
+  "async-await-macro",
+] }
 gethostname = "1.0.2"
 parking_lot = { version = "0.12", features = ["send_guard"] }
 prost-types = { workspace = true }
@@ -193,16 +195,6 @@ required-features = ["examples"]
 [[example]]
 name = "cancellation-starter"
 path = "examples/cancellation/starter.rs"
-required-features = ["examples"]
-
-[[example]]
-name = "encryption-worker"
-path = "examples/encryption/worker.rs"
-required-features = ["examples"]
-
-[[example]]
-name = "encryption-starter"
-path = "examples/encryption/starter.rs"
 required-features = ["examples"]
 
 [[example]]

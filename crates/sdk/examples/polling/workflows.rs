@@ -1,8 +1,10 @@
 #![allow(unreachable_pub)]
 use std::time::Duration;
 use temporalio_macros::{activities, workflow, workflow_methods};
-use temporalio_sdk::activities::{ActivityContext, ActivityError};
-use temporalio_sdk::{ActivityOptions, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{
+    ActivityOptions, WorkflowContext, WorkflowResult,
+    activities::{ActivityContext, ActivityError},
+};
 
 pub struct PollingActivities;
 

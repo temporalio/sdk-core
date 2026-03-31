@@ -1,9 +1,9 @@
 #![allow(unreachable_pub)]
 use std::time::Duration;
 use temporalio_macros::{activities, workflow, workflow_methods};
-use temporalio_sdk::activities::{ActivityContext, ActivityError};
 use temporalio_sdk::{
     ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult, WorkflowTermination,
+    activities::{ActivityContext, ActivityError},
 };
 
 #[derive(Debug)]
