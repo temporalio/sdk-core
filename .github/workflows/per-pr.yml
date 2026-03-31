@@ -240,6 +240,39 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: cargo integ-test docker_
 
+  examples:
+    name: "Build and run examples"
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "23.x"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/master' }}
+      - name: Build examples
+        run: cargo build --examples -p temporalio-sdk --features examples
+      - name: Install Temporal CLI
+        uses: temporalio/setup-temporal@v0
+      - name: Start Temporal dev server
+        run: |
+          temporal server start-dev --headless &
+      - name: Run examples
+        run: |
+          for dir in crates/sdk/examples/*/; do
+            sample="$(basename "$dir" | tr '_' '-')"
+            cargo run -p temporalio-sdk --features examples --example "${sample}-worker" &
+            WORKER_PID=$!
+            timeout 20 cargo run -p temporalio-sdk --features examples --example "${sample}-starter"
+            kill $WORKER_PID 2>/dev/null || true
+            wait $WORKER_PID 2>/dev/null || true
+          done
+
   c-bridge-static-link-test:
     name: "C bridge static link test"
     runs-on: ubuntu-latest
