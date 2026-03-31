@@ -1,11 +1,13 @@
 use std::str::FromStr;
 
 use futures_util::StreamExt;
-use temporalio_client::schedules::{
-    CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleOverlapPolicy,
-    ScheduleSpec,
+use temporalio_client::{
+    Client, ClientOptions, Connection, ConnectionOptions,
+    schedules::{
+        CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleOverlapPolicy,
+        ScheduleSpec,
+    },
 };
-use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
 use temporalio_common::telemetry::TelemetryOptions;
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
 
@@ -26,16 +28,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = &runtime;
 
     let schedule_id = "demo-schedule";
-    let action =
-        ScheduleAction::start_workflow("ScheduledWorkflow", "schedules", "scheduled-workflow");
-    let spec = ScheduleSpec::from_interval(std::time::Duration::from_secs(10));
-    let opts = CreateScheduleOptions::builder()
-        .action(action)
-        .spec(spec)
-        .trigger_immediately(true)
-        .build();
-
-    let handle = client.create_schedule(schedule_id, opts).await?;
+    let handle = client
+        .create_schedule(
+            schedule_id,
+            CreateScheduleOptions::builder()
+                .action(ScheduleAction::start_workflow(
+                    "ScheduledWorkflow",
+                    "schedules",
+                    "scheduled-workflow",
+                ))
+                .spec(ScheduleSpec::from_interval(std::time::Duration::from_secs(
+                    10,
+                )))
+                .trigger_immediately(true)
+                .build(),
+        )
+        .await?;
     println!("Created schedule: {schedule_id}");
 
     let desc = handle.describe().await?;

@@ -1,13 +1,11 @@
 mod workflows;
 
-use std::collections::HashMap;
-use std::str::FromStr;
+use std::{collections::HashMap, str::FromStr};
 use temporalio_client::{
     Client, ClientOptions, Connection, ConnectionOptions, WorkflowGetResultOptions,
     WorkflowStartOptions,
 };
-use temporalio_common::protos::coresdk::AsJsonPayloadExt;
-use temporalio_common::telemetry::TelemetryOptions;
+use temporalio_common::{protos::coresdk::AsJsonPayloadExt, telemetry::TelemetryOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
 use workflows::SearchAttributesWorkflow;
 

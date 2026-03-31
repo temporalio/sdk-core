@@ -2,8 +2,7 @@ mod workflows;
 
 use std::str::FromStr;
 use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
-use temporalio_common::telemetry::TelemetryOptions;
-use temporalio_common::worker::WorkerTaskTypes;
+use temporalio_common::{telemetry::TelemetryOptions, worker::WorkerTaskTypes};
 use temporalio_sdk::{Worker, WorkerOptions};
 use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
 use workflows::SearchAttributesWorkflow;
