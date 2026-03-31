@@ -1,4 +1,5 @@
 #![allow(unreachable_pub)]
+use futures_util::FutureExt;
 use std::time::Duration;
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
@@ -38,12 +39,13 @@ impl UpdatableTimerWorkflow {
 
             let remaining = Duration::from_millis(deadline_ms - now_ms);
 
-            tokio::select! {
+            temporalio_sdk::workflows::select! {
                 _ = ctx.timer(remaining) => {
                     let final_deadline = ctx.state(|s| s.deadline_ms);
                     return Ok(format!("Timer fired at deadline {final_deadline}"));
                 }
-                _ = ctx.wait_condition(|s: &Self| s.deadline_version != current_version) => {
+                // TODO: make `wait_condition` impl `FusedFuture`
+                _ = ctx.wait_condition(|s: &Self| s.deadline_version != current_version).fuse() => {
                     // Deadline was updated, loop to recompute remaining time
                 }
             }

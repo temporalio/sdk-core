@@ -30,7 +30,7 @@ impl TimerWorkflow {
     pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         ctx.timer(Duration::from_secs(1)).await;
 
-        let winner = tokio::select! {
+        let winner = temporalio_sdk::workflows::select! {
             _ = ctx.timer(Duration::from_secs(10)) => "timer",
             result = ctx.start_activity(
                 TimerActivities::slow_activity,
