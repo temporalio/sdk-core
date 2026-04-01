@@ -42,42 +42,40 @@ fn is_sdk_wake() -> bool {
     SDK_WAKE_DEPTH.with(|c| c.get() > 0)
 }
 
-/// Shared state for a tracking waker that detects non-SDK wake sources.
-///
-/// Implements [Wake] so it can be converted to a [Waker] via [Waker::from]. Satisfies `Send +
-/// Sync`, but cross-thread wakes are inherently detected (the thread-local guard won't be set on
-/// a foreign thread).
+/// Persists across polls to accumulate non-SDK wake detection. Each poll creates a lightweight
+/// waker via [`WakeTracker::new_per_poll_waker`] that shares the detection flag but has the
+/// current parent waker baked in (no mutex needed).
 pub(crate) struct WakeTracker {
-    /// Set when a wake arrives without the SDK guard active.
-    non_sdk_wake_detected: AtomicBool,
-    /// The real waker to forward to (from the executor's task notifier).
-    parent_waker: parking_lot::Mutex<Waker>,
+    non_sdk_wake_detected: Arc<AtomicBool>,
 }
 
 impl WakeTracker {
-    pub(crate) fn new() -> Arc<Self> {
-        Arc::new(Self {
-            non_sdk_wake_detected: AtomicBool::new(false),
-            parent_waker: parking_lot::Mutex::new(Waker::noop().clone()),
-        })
-    }
-
-    /// Update the parent waker (called at the top of each poll in case the executor provided a new
-    /// waker).
-    pub(crate) fn update_parent_waker(&self, waker: &Waker) {
-        let mut guard = self.parent_waker.lock();
-        if !guard.will_wake(waker) {
-            *guard = waker.clone();
+    pub(crate) fn new() -> Self {
+        Self {
+            non_sdk_wake_detected: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    /// Check and clear the detection flag.
+    /// Create a waker for this poll that forwards to `parent_waker` and sets the shared
+    /// detection flag on non-SDK wakes.
+    pub(crate) fn new_per_poll_waker(&self, parent_waker: &Waker) -> Waker {
+        Waker::from(Arc::new(PerPollWakeTracker {
+            non_sdk_wake_detected: self.non_sdk_wake_detected.clone(),
+            parent_waker: parent_waker.clone(),
+        }))
+    }
+
     pub(crate) fn take_non_sdk_wake(&self) -> bool {
         self.non_sdk_wake_detected.swap(false, Ordering::AcqRel)
     }
 }
 
-impl Wake for WakeTracker {
+struct PerPollWakeTracker {
+    non_sdk_wake_detected: Arc<AtomicBool>,
+    parent_waker: Waker,
+}
+
+impl Wake for PerPollWakeTracker {
     fn wake(self: Arc<Self>) {
         self.wake_by_ref();
     }
@@ -86,7 +84,7 @@ impl Wake for WakeTracker {
         if !is_sdk_wake() {
             self.non_sdk_wake_detected.store(true, Ordering::Release);
         }
-        self.parent_waker.lock().wake_by_ref();
+        self.parent_waker.wake_by_ref();
     }
 }
 
@@ -386,7 +384,8 @@ mod tests {
     #[test]
     fn wake_tracker_detects_non_sdk_wake() {
         let tracker = WakeTracker::new();
-        let waker = Waker::from(tracker.clone());
+        let noop = Waker::noop();
+        let waker = tracker.new_per_poll_waker(noop);
 
         // Wake without SDK guard -- should be detected
         waker.wake_by_ref();
@@ -401,7 +400,8 @@ mod tests {
     #[test]
     fn wake_tracker_cross_thread_detection() {
         let tracker = WakeTracker::new();
-        let waker = Waker::from(tracker.clone());
+        let noop = Waker::noop();
+        let waker = tracker.new_per_poll_waker(noop);
 
         // Set SDK guard on THIS thread
         let _guard = SdkWakeGuard::new();

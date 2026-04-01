@@ -530,8 +530,9 @@ impl Worker {
         &self.common.task_queue
     }
 
-    /// Set whether nondeterministic future detection is enabled for workflows
-    /// on this worker.
+    #[doc(hidden)]
+    /// Set whether nondeterministic future detection is enabled for workflows on this worker. Users
+    /// should use [WorkerOptions] to set this. TODO: Only needs to exist due to test setup.
     pub fn set_detect_nondeterministic_futures(&mut self, enabled: bool) {
         self.workflow_half.detect_nondeterministic_futures = enabled;
     }

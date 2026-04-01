@@ -12,8 +12,8 @@ use std::{
     panic,
     panic::AssertUnwindSafe,
     pin::Pin,
-    sync::{Arc, mpsc::Receiver},
-    task::{Context, Poll, Waker},
+    sync::mpsc::Receiver,
+    task::{Context, Poll},
 };
 use temporalio_common::{
     data_converters::PayloadConverter,
@@ -155,7 +155,7 @@ pub(crate) struct WorkflowFuture {
     signal_futures: Vec<LocalBoxFuture<'static, Result<(), crate::workflows::WorkflowError>>>,
     /// Nondeterminism detection tracker. When present, a tracking waker is used
     /// for polling user workflow code, and any non-SDK wake is flagged.
-    wake_tracking: Option<Arc<WakeTracker>>,
+    wake_tracking: Option<WakeTracker>,
 }
 
 impl WorkflowFuture {
@@ -437,10 +437,6 @@ impl Future for WorkflowFuture {
     type Output = WorkflowResult<Payload>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if let Some(ref tracker) = self.wake_tracking {
-            tracker.update_parent_waker(cx.waker());
-        }
-
         'activations: loop {
             // WF must always receive an activation first before responding with commands.
             // Use the executor waker (cx) for the activation channel -- these wakes are
@@ -482,7 +478,7 @@ impl Future for WorkflowFuture {
 
             if self
                 .wake_tracking
-                .as_ref()
+                .as_mut()
                 .is_some_and(|t| t.take_non_sdk_wake())
             {
                 self.fail_wft(
@@ -512,7 +508,7 @@ impl Future for WorkflowFuture {
             // Poll sub-futures using the tracked context if available,
             // otherwise use the executor context.
             let repoll = if let Some(ref tracker) = self.wake_tracking {
-                let waker = Waker::from(tracker.clone());
+                let waker = tracker.new_per_poll_waker(cx.waker());
                 let mut tcx = Context::from_waker(&waker);
                 self.poll_sub_futures(&mut tcx, should_poll_wf, &run_id, &mut activation_cmds)?
             } else {
