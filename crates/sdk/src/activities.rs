@@ -223,7 +223,7 @@ pub struct ActivityInfo {
     /// Priority of this activity. If unset uses [Priority::default].
     pub priority: Priority,
     /// Run ID of this activity execution. Only set for standalone activities.
-    pub run_id: String,
+    pub run_id: Option<String>,
 }
 
 /// Returned as errors from activity functions.
