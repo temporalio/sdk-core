@@ -592,38 +592,71 @@ async fn latency_metrics(
         .await
         .unwrap();
 
-    let body = get_text(format!("http://{addr}/metrics")).await;
-    let matching_line = body
-        .lines()
-        .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
-        .unwrap();
+    struct MetricLines {
+        end_to_end: String,
+        execution: String,
+        long_request: Vec<String>,
+    }
+
+    let metrics = eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                let end_to_end = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
+                    .ok_or_else(|| anyhow!("endtoend_latency metric not found"))?
+                    .to_string();
+                let execution = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_latency"))
+                    .ok_or_else(|| anyhow!("task_execution_latency metric not found"))?
+                    .to_string();
+                let long_request: Vec<String> = body
+                    .lines()
+                    .filter(|l| l.starts_with("temporal_long_request_latency"))
+                    .map(String::from)
+                    .collect();
+                if long_request.len() <= 1 {
+                    bail!("long_request_latency metrics not yet available");
+                }
+                Ok(MetricLines {
+                    end_to_end,
+                    execution,
+                    long_request,
+                })
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
 
     if use_seconds_latency {
         if show_units {
-            assert!(matching_line.contains("temporal_workflow_endtoend_latency_seconds"));
+            assert!(
+                metrics
+                    .end_to_end
+                    .contains("temporal_workflow_endtoend_latency_seconds")
+            );
         }
-        assert!(matching_line.contains("le=\"0.1\""));
+        assert!(metrics.end_to_end.contains("le=\"0.1\""));
     } else {
         if show_units {
-            assert!(matching_line.contains("temporal_workflow_endtoend_latency_milliseconds"));
+            assert!(
+                metrics
+                    .end_to_end
+                    .contains("temporal_workflow_endtoend_latency_milliseconds")
+            );
         }
-        assert!(matching_line.contains("le=\"100\""));
+        assert!(metrics.end_to_end.contains("le=\"100\""));
     }
 
-    let matching_line = body
-        .lines()
-        .find(|l| l.starts_with("temporal_workflow_task_execution_latency"))
-        .unwrap();
-    assert!(matching_line.contains("le=\"1337\""));
-
-    // Ensure poll metrics show up as long polls properly
-    let matching_lines = body
-        .lines()
-        .filter(|l| l.starts_with("temporal_long_request_latency"))
-        .collect::<Vec<_>>();
-    assert!(matching_lines.len() > 1);
+    assert!(metrics.execution.contains("le=\"1337\""));
     assert!(
-        matching_lines
+        metrics
+            .long_request
             .iter()
             .any(|l| l.contains("PollWorkflowTaskQueue"))
     );
