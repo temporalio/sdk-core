@@ -1898,12 +1898,12 @@ where
                     let pc = data_converter.payload_converter();
                     match status {
                         child_workflow_result::Status::Completed(success) => {
-                            let payload = success.result.unwrap_or_default();
+                            let payloads: Vec<_> = success.result.into_iter().collect();
                             let ser_ctx = SerializationContext {
                                 data: ctx,
                                 converter: pc,
                             };
-                            pc.from_payload::<Output>(&ser_ctx, payload)
+                            pc.from_payloads::<Output>(&ser_ctx, payloads)
                                 .map_err(ChildWorkflowExecutionError::Serialization)
                         }
                         child_workflow_result::Status::Failed(f) => {

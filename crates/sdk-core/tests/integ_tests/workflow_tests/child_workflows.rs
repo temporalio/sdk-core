@@ -34,7 +34,7 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    Signal, SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowTermination,
+    SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -478,7 +478,7 @@ impl ParentCancelsChildWf {
             .result()
             .await
             .expect_err("child should be cancelled");
-        assert_matches!(err, ChildWorkflowExecutionError::Cancelled(_));
+        assert_matches!(err, ChildWorkflowExecutionError::Cancelled { .. });
         Ok(())
     }
 }
@@ -739,7 +739,7 @@ impl ParentWf {
         let started = start_res.map_err(|e| anyhow!(e))?;
         match (expectation, started.result().await) {
             (Expectation::Success, Ok(_)) => Ok(()),
-            (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed(_))) => Ok(()),
+            (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed { .. })) => Ok(()),
             _ => Err(anyhow!("Unexpected child WF status").into()),
         }
     }
@@ -842,7 +842,7 @@ impl CancelBeforeSendWf {
         );
         start.cancel();
         match start.await {
-            Err(ChildWorkflowExecutionError::Cancelled(_)) => Ok(()),
+            Err(ChildWorkflowExecutionError::Cancelled { .. }) => Ok(()),
             _ => Err(anyhow!("Unexpected start status").into()),
         }
     }
@@ -1437,7 +1437,10 @@ impl ParentOfFailingChild {
             .child_workflow(
                 FailingChildWf::run,
                 (),
-                ChildWorkflowOptions::default(),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-child", ctx.task_queue()),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(|e| anyhow!(e))?;
@@ -1500,7 +1503,10 @@ impl ParentCancelsChild {
             .child_workflow(
                 CancellableChildWf::run,
                 (),
-                ChildWorkflowOptions::default(),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-child", ctx.task_queue()),
+                    ..Default::default()
+                },
             )
             .await
             .map_err(|e| anyhow!(e))?;
