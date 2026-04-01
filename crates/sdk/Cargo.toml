@@ -138,16 +138,6 @@ path = "examples/saga/starter.rs"
 required-features = ["examples"]
 
 [[example]]
-name = "patching-worker"
-path = "examples/patching/worker.rs"
-required-features = ["examples"]
-
-[[example]]
-name = "patching-starter"
-path = "examples/patching/starter.rs"
-required-features = ["examples"]
-
-[[example]]
 name = "local-activities-worker"
 path = "examples/local_activities/worker.rs"
 required-features = ["examples"]
