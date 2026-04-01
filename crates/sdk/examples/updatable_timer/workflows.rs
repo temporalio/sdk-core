@@ -27,7 +27,7 @@ impl UpdatableTimerWorkflow {
 
             let now_ms = ctx
                 .workflow_time()
-                .unwrap_or(std::time::UNIX_EPOCH)
+                .ok_or_else(|| anyhow::anyhow!("Did not find workflow time"))?
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64;

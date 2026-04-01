@@ -52,7 +52,7 @@ impl CancellationWorkflow {
             activity_opts(),
         );
 
-        tokio::select! {
+        temporalio_sdk::workflows::select! {
             result = &mut activity_fut => {
                 let value = result.map_err(|e| anyhow::anyhow!("{e}"))?;
                 Ok(value)
