@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
-    WorkflowTerminateOptions,
+    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowGetResultOptions,
+    WorkflowStartOptions, WorkflowTerminateOptions,
 };
 use temporalio_common::{
     prost_dur,
@@ -218,71 +218,111 @@ async fn activity_workflow() {
     core.complete_execution(&task.run_id).await;
 }
 
+struct NonRetryableActivities;
+#[activities]
+impl NonRetryableActivities {
+    #[activity]
+    async fn non_retryable_fail(
+        _ctx: ActivityContext,
+        _input: String,
+    ) -> Result<String, ActivityError> {
+        Err(ActivityError::NonRetryable(
+            "activity went boom".to_string().into(),
+        ))
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct NonRetryableActivityWorkflow;
+#[workflow_methods]
+impl NonRetryableActivityWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        ctx.start_activity(
+            NonRetryableActivities::non_retryable_fail,
+            "trigger".to_string(),
+            ActivityOptions {
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|e| WorkflowTermination::Failed(anyhow::anyhow!("activity failed: {}", e)))
+    }
+}
+
 #[tokio::test]
 async fn activity_non_retryable_failure() {
-    let mut starter = init_core_and_create_wf("activity_non_retryable_failure").await;
-    let core = starter.get_worker().await;
-    let task_q = starter.get_task_queue();
-    let activity_id = "act-1";
-    let task = core.poll_workflow_activation().await.unwrap();
-    // Complete workflow task and schedule activity
-    core.complete_workflow_activation(
-        schedule_activity_cmd(
-            0,
-            task_q,
-            activity_id,
-            ActivityCancellationType::TryCancel,
-            Duration::from_secs(60),
-            Duration::from_secs(60),
+    let wf_name = NonRetryableActivityWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .sdk_config
+        .register_workflow::<NonRetryableActivityWorkflow>();
+    starter
+        .sdk_config
+        .register_activities(NonRetryableActivities);
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let wf_id = format!("{wf_name}-{}", uuid::Uuid::new_v4());
+    let handle = worker
+        .submit_workflow(
+            NonRetryableActivityWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
         )
-        .into_completion(task.run_id),
-    )
-    .await
-    .unwrap();
-    // Poll activity and verify that it's been scheduled
-    let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
-    // Fail activity with non-retryable error
-    let failure = Failure::application_failure("activity failed".to_string(), true);
-    core.complete_activity_task(ActivityTaskCompletion {
-        task_token: task.task_token,
-        result: Some(ActivityExecutionResult::fail(failure.clone())),
-    })
-    .await
-    .unwrap();
-    // Poll workflow task and verify that activity has failed.
-    let task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        task.jobs.as_slice(),
-        [
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {seq, result: Some(ActivityResolution{
-                    status: Some(act_res::Status::Failed(activity_result::Failure{
-                        failure: Some(f),
-                    }))}),..}
-                )),
-            },
-        ] => {
-            assert_eq!(*seq, 0);
-            assert_eq!(f, &Failure{
-                message: "Activity task failed".to_owned(),
-                cause: Some(Box::new(failure)),
-                failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
-                    activity_id: "act-1".to_owned(),
-                    activity_type: Some(ActivityType {
-                        name: DEFAULT_ACTIVITY_TYPE.to_owned(),
-                    }),
-                    scheduled_event_id: 5,
-                    started_event_id: 6,
-                    identity: INTEG_CLIENT_IDENTITY.to_owned(),
-                    retry_state: RetryState::NonRetryableFailure as i32,
-                })),
-                ..Default::default()
-            });
-        }
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    let result = handle.get_result(Default::default()).await;
+
+    // Fetch history and find the ActivityTaskFailed event to inspect the failure
+    // the worker actually sent.
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    use temporalio_common::protos::temporal::api::history::v1::history_event::Attributes;
+    let activity_failed = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::ActivityTaskFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find ActivityTaskFailed event");
+
+    let failure = activity_failed
+        .failure
+        .as_ref()
+        .expect("should have failure");
+
+    // The server wraps the activity error in an ApplicationFailureInfo directly
+    // on the failure proto. Walk through the failure and its cause to find it.
+    let app_info = std::iter::successors(Some(failure), |f| f.cause.as_deref())
+        .find_map(|f| match f.failure_info.as_ref() {
+            Some(FailureInfo::ApplicationFailureInfo(info)) => Some(info),
+            _ => None,
+        })
+        .expect("Should find ApplicationFailureInfo in failure chain");
+
+    assert!(
+        app_info.non_retryable,
+        "ActivityError::NonRetryable must set non_retryable on the failure proto"
     );
-    core.complete_execution(&task.run_id).await;
 }
 
 #[tokio::test]

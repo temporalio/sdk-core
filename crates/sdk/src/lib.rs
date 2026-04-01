@@ -976,10 +976,16 @@ impl ActivityHalf {
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                codec_data_converter
-                                    .to_failure(nre, &SerializationContextData::Activity),
-                            ),
+                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail({
+                                let mut f = codec_data_converter
+                                    .to_failure(nre, &SerializationContextData::Activity);
+                                if let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
+                                    f.failure_info.as_mut()
+                                {
+                                    fi.non_retryable = true;
+                                }
+                                f
+                            }),
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
