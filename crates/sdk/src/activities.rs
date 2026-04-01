@@ -141,7 +141,7 @@ impl ActivityContext {
                     retry_policy,
                     is_local,
                     priority: priority.map(Into::into).unwrap_or_default(),
-                    run_id,
+                    run_id: (!run_id.is_empty()).then_some(run_id),
                 },
             },
             input,
