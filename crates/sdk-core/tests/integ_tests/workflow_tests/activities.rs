@@ -179,7 +179,9 @@ async fn activity_workflow() {
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, DEFAULT_ACTIVITY_TYPE.to_string())
+            assert_eq!(start_activity.activity_type, DEFAULT_ACTIVITY_TYPE.to_string());
+            // Workflow-scheduled activities have no activity run ID
+            assert!(start_activity.run_id.is_empty());
         }
     );
     let response_payload = Payload {
