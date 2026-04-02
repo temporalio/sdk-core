@@ -104,11 +104,17 @@ impl<F: Future + Unpin> Future for SdkGuardedFuture<F> {
 
 struct ExecutorShared {
     ready_queue: parking_lot::Mutex<VecDeque<u64>>,
+    /// Waker to notify when tasks are enqueued. Set by `shutdown` so it can
+    /// park instead of busy-polling when tasks are waiting on external events.
+    waker: parking_lot::Mutex<Option<Waker>>,
 }
 
 impl ExecutorShared {
     fn enqueue(&self, task_id: u64) {
         self.ready_queue.lock().push_back(task_id);
+        if let Some(w) = self.waker.lock().as_ref() {
+            w.wake_by_ref();
+        }
     }
 }
 
@@ -190,6 +196,7 @@ impl WorkflowExecutor {
             next_id: Cell::new(0),
             shared: Arc::new(ExecutorShared {
                 ready_queue: parking_lot::Mutex::new(VecDeque::new()),
+                waker: parking_lot::Mutex::new(None),
             }),
         }
     }
@@ -241,10 +248,16 @@ impl WorkflowExecutor {
 
     /// Drain remaining tasks until all complete.
     pub(crate) async fn shutdown(&self) {
-        while !self.is_empty() {
+        std::future::poll_fn(|cx| {
+            *self.shared.waker.lock() = Some(cx.waker().clone());
             self.process_tasks();
-            tokio::task::yield_now().await;
-        }
+            if self.is_empty() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
+        .await
     }
 
     /// Drain the ready queue, polling all ready tasks once.
