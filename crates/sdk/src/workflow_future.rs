@@ -31,12 +31,13 @@ use temporalio_common::{
                 RequestCancelNexusOperation, ScheduleActivity, ScheduleLocalActivity, StartTimer,
                 UpdateResponse, WorkflowCommand, query_result, update_response, workflow_command,
             },
-            workflow_completion,
-            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
+            workflow_completion::{
+                self, WorkflowActivationCompletion, workflow_activation_completion,
+            },
         },
         temporal::api::{
             common::v1::{Payload, Payloads},
-            enums::v1::VersioningBehavior,
+            enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
             failure::v1::Failure,
         },
         utilities::TryIntoOrNone,
@@ -179,13 +180,13 @@ impl WorkflowFuture {
         Ok(())
     }
 
-    fn fail_wft(&self, run_id: String, fail: Error) {
+    fn fail_wft(&self, run_id: String, fail: Error, cause: Option<WorkflowTaskFailedCause>) {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
             .send(WorkflowActivationCompletion::fail(
                 run_id,
                 fail.into(),
-                None,
+                cause,
             ))
             .expect("Completion channel intact");
     }
@@ -490,6 +491,7 @@ impl Future for WorkflowFuture {
                          or std::thread. Use SDK-provided alternatives \
                          (ctx.timer(), ctx.state_mut() + ctx.wait_condition(), etc.) instead."
                     ),
+                    Some(WorkflowTaskFailedCause::NonDeterministicError)
                 );
                 continue 'activations;
             }
@@ -499,7 +501,7 @@ impl Future for WorkflowFuture {
                 match self.handle_job(variant, &mut activation_cmds) {
                     Ok(should_poll) => should_poll_wf |= should_poll,
                     Err(e) => {
-                        self.fail_wft(run_id, e);
+                        self.fail_wft(run_id, e, None);
                         continue 'activations;
                     }
                 }
@@ -559,7 +561,11 @@ impl WorkflowFuture {
             match signal_result {
                 Ok(remaining) => self.signal_futures = remaining,
                 Err(e) => {
-                    self.fail_wft(run_id.to_owned(), anyhow!("Signal handler error: {}", e));
+                    self.fail_wft(
+                        run_id.to_owned(),
+                        anyhow!("Signal handler error: {}", e),
+                        None,
+                    );
                     return Ok(true);
                 }
             }
@@ -724,7 +730,7 @@ impl WorkflowFuture {
                     );
                 }
                 RustWfCmd::ForceWFTFailure(err) => {
-                    self.fail_wft(run_id.to_string(), err);
+                    self.fail_wft(run_id.to_string(), err, None);
                     return Ok(true);
                 }
                 RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker } => {
