@@ -10,7 +10,7 @@ use crate::{
     CancelExternalWfResult, CancellableID, CancellableIDWithReason, CommandCreateRequest,
     CommandSubscribeChildWorkflowCompletion, NexusStartResult, RustWfCmd, SignalExternalWfResult,
     SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
-    workflow_context::options::IntoWorkflowCommand,
+    workflow_context::options::IntoWorkflowCommand, workflow_executor::SdkWakeGuard,
 };
 use futures_util::{
     FutureExt,
@@ -1107,6 +1107,7 @@ impl<W> WorkflowContext<W> {
     /// `FuturesOrdered`) re-poll them on the next pass.
     pub fn state_mut<R>(&self, f: impl FnOnce(&mut W) -> R) -> R {
         let result = f(&mut *self.workflow_state.borrow_mut());
+        let _guard = SdkWakeGuard::new();
         for waker in self.condition_wakers.borrow_mut().drain(..) {
             waker.wake();
         }

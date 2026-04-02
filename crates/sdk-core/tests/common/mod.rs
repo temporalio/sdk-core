@@ -347,12 +347,13 @@ impl CoreWfStarter {
     pub(crate) async fn worker(&mut self) -> TestWorker {
         let worker = self.get_worker().await;
         let client = self.get_client().await;
-        let sdk = Worker::new_from_core_definitions(
+        let mut sdk = Worker::new_from_core_definitions(
             worker,
             client.data_converter().clone(),
             self.sdk_config.activities(),
             self.sdk_config.workflows(),
         );
+        sdk.set_detect_nondeterministic_futures(self.sdk_config.detect_nondeterministic_futures);
         let mut w = TestWorker::new(sdk);
         w.client = Some(client);
 
@@ -955,14 +956,17 @@ pub(crate) async fn eventually<F, Fut, T, E>(
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Debug,
 {
     let start = Instant::now();
+    let mut last_err = None;
     loop {
         if start.elapsed() > timeout {
-            bail!("Eventually hit timeout");
+            bail!("Eventually hit timeout after {timeout:?}. Last error: {last_err:?}");
         }
-        if let Ok(v) = func().await {
-            return Ok(v);
+        match func().await {
+            Ok(v) => return Ok(v),
+            Err(e) => last_err = Some(format!("{e:?}")),
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

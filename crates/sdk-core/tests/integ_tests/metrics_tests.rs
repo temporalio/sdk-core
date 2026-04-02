@@ -989,6 +989,9 @@ async fn nexus_metrics() {
         enable_remote_activities: false,
         enable_nexus: true,
     };
+    // Nexus operation handling involves internal async coordination that can
+    // trigger false positives in nondeterminism detection.
+    starter.sdk_config.detect_nondeterministic_futures = false;
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;

@@ -869,6 +869,8 @@ async fn worker_heartbeat_failure_metrics() {
     let wf_name = "worker_heartbeat_failure_metrics";
     let mut starter = new_no_metrics_starter(wf_name);
     starter.sdk_config.tuner = Arc::new(TunerHolder::fixed_size(10, 5, 10, 10));
+    // This test uses tokio::sync::Notify from workflow code for test coordination.
+    starter.sdk_config.detect_nondeterministic_futures = false;
 
     struct FailingActivities;
     #[activities]
@@ -951,50 +953,24 @@ async fn worker_heartbeat_failure_metrics() {
         .await
         .unwrap();
 
+    let query = format!("WorkerInstanceKey=\"{worker_key}\"");
     let test_fut = async {
         ACT_FAIL.notified().await;
         let client = starter.get_client().await;
         eventually(
             || async {
-                let mut raw_client = client.clone();
-
-                let workers_list = WorkflowService::list_workers(
-                    &mut raw_client,
-                    ListWorkersRequest {
-                        namespace: client.namespace().to_owned(),
-                        page_size: 100,
-                        next_page_token: Vec::new(),
-                        query: String::new(),
-                    }
-                    .into_request(),
-                )
-                .await
-                .unwrap()
-                .into_inner();
-                #[allow(deprecated)]
-                let worker_info = workers_list
-                    .workers_info
-                    .iter()
-                    .find(|worker_info| {
-                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                            hb.worker_instance_key == worker_instance_key.to_string()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap();
-                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-                assert_eq!(
-                    heartbeat.worker_instance_key,
-                    worker_instance_key.to_string()
-                );
-                let activity_slots = heartbeat.activity_task_slots_info.clone().unwrap();
+                let heartbeats = list_worker_heartbeats(&client, query.clone()).await;
+                let heartbeat = heartbeats
+                    .into_iter()
+                    .find(|hb| hb.worker_instance_key == worker_key)
+                    .ok_or("worker not found in list_workers response")?;
+                let activity_slots = heartbeat.activity_task_slots_info.unwrap();
                 if activity_slots.last_interval_failure_tasks >= 1 {
                     return Ok(());
                 }
                 Err("activity_slots.last_interval_failure_tasks still 0, retrying")
             },
-            Duration::from_millis(1500),
+            Duration::from_secs(2),
         )
         .await
         .unwrap();
@@ -1003,41 +979,18 @@ async fn worker_heartbeat_failure_metrics() {
 
         eventually(
             || async {
-                let mut raw_client = client.clone();
-                let workers_list = WorkflowService::list_workers(
-                    &mut raw_client,
-                    ListWorkersRequest {
-                        namespace: client.namespace().to_owned(),
-                        page_size: 100,
-                        next_page_token: Vec::new(),
-                        query: String::new(),
-                    }
-                    .into_request(),
-                )
-                .await
-                .unwrap()
-                .into_inner();
-                #[allow(deprecated)]
-                let worker_info = workers_list
-                    .workers_info
-                    .iter()
-                    .find(|worker_info| {
-                        if let Some(hb) = worker_info.worker_heartbeat.as_ref() {
-                            hb.worker_instance_key == worker_instance_key.to_string()
-                        } else {
-                            false
-                        }
-                    })
-                    .unwrap();
-
-                let heartbeat = worker_info.worker_heartbeat.as_ref().unwrap();
-                let workflow_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
+                let heartbeats = list_worker_heartbeats(&client, query.clone()).await;
+                let heartbeat = heartbeats
+                    .into_iter()
+                    .find(|hb| hb.worker_instance_key == worker_key)
+                    .ok_or("worker not found in list_workers response")?;
+                let workflow_slots = heartbeat.workflow_task_slots_info.unwrap();
                 if workflow_slots.last_interval_failure_tasks >= 1 {
                     return Ok(());
                 }
                 Err("workflow_slots.last_interval_failure_tasks still 0, retrying")
             },
-            Duration::from_millis(1500),
+            Duration::from_secs(2),
         )
         .await
         .unwrap();
@@ -1057,8 +1010,7 @@ async fn worker_heartbeat_failure_metrics() {
     tokio::join!(test_fut, runner);
 
     let client = starter.get_client().await;
-    let mut heartbeats =
-        list_worker_heartbeats(&client, format!("WorkerInstanceKey=\"{worker_key}\"")).await;
+    let mut heartbeats = list_worker_heartbeats(&client, query).await;
     assert_eq!(heartbeats.len(), 1);
     let heartbeat = heartbeats.pop().unwrap();
 

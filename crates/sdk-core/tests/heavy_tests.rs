@@ -41,6 +41,7 @@ use temporalio_common::{
 use temporalio_sdk::{
     ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
+    workflows,
 };
 use temporalio_sdk_core::{
     CoreRuntime, PollerBehavior, ResourceBasedTuner, ResourceSlotOptions, TunerHolder,
@@ -363,7 +364,7 @@ impl ManyParallelTimersLonghistWf {
             for _ in 0..100 {
                 futs.push(ctx.timer(Duration::from_millis(100)));
             }
-            join_all(futs).await;
+            workflows::join_all(futs).await;
         }
         Ok(())
     }
