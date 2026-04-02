@@ -74,6 +74,7 @@ extern crate self as temporalio_sdk;
 pub mod activities;
 pub mod interceptors;
 mod workflow_context;
+mod workflow_executor;
 mod workflow_future;
 pub mod workflows;
 
@@ -113,6 +114,7 @@ use crate::{
     workflow_context::{
         ChildWfCommon, NexusUnblockData, PendingChildWorkflow, StartedNexusOperation,
     },
+    workflow_executor::WorkflowExecutor,
     workflows::{WorkflowDefinitions, WorkflowImplementation, WorkflowImplementer},
 };
 use anyhow::{Context, anyhow, bail};
@@ -163,13 +165,10 @@ use temporalio_sdk_core::{
     CoreRuntime, PollError, PollerBehavior, TunerBuilder, Worker as CoreWorker, WorkerConfig,
     WorkerTuner, WorkerVersioningStrategy, WorkflowErrorType, init_worker,
 };
-use tokio::{
-    sync::{
-        Notify,
-        mpsc::{UnboundedSender, unbounded_channel},
-        oneshot,
-    },
-    task::JoinError,
+use tokio::sync::{
+    Notify,
+    mpsc::{UnboundedSender, unbounded_channel},
+    oneshot,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -274,6 +273,11 @@ pub struct WorkerOptions {
     /// If set, the worker will issue cancels for all outstanding activities and nexus operations after
     /// shutdown has been initiated and this amount of time has elapsed.
     pub graceful_shutdown_period: Option<Duration>,
+    /// Detect nondeterministic async usage in workflow code. When enabled (the default), workflows
+    /// that use external async operations (tokio timers, IO, spawned threads, raw tokio::sync
+    /// channels, etc.) will have their tasks failed with a descriptive error.
+    #[builder(default = true)]
+    pub detect_nondeterministic_futures: bool,
 }
 
 impl<S: worker_options_builder::State> WorkerOptionsBuilder<S> {
@@ -433,19 +437,19 @@ struct CommonWorker {
     data_converter: DataConverter,
 }
 
-#[derive(Default)]
 struct WorkflowHalf {
     /// Maps run id to cached workflow state
     workflows: RefCell<HashMap<String, WorkflowData>>,
     workflow_definitions: WorkflowDefinitions,
     workflow_removed_from_map: Notify,
+    detect_nondeterministic_futures: bool,
 }
 struct WorkflowData {
     /// Channel used to send the workflow activations
     activation_chan: UnboundedSender<WorkflowActivation>,
 }
 
-struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, JoinError>>> {
+struct WorkflowFutureHandle<F: Future> {
     join_handle: F,
     run_id: String,
 }
@@ -476,6 +480,7 @@ impl Worker {
             Default::default(),
             Default::default(),
         );
+        me.set_detect_nondeterministic_futures(options.detect_nondeterministic_futures);
         me.activity_half.activities = acts;
         me.workflow_half.workflow_definitions = wfs;
         Ok(me)
@@ -508,8 +513,10 @@ impl Worker {
                 data_converter,
             },
             workflow_half: WorkflowHalf {
+                workflows: Default::default(),
                 workflow_definitions: workflows,
-                ..Default::default()
+                workflow_removed_from_map: Default::default(),
+                detect_nondeterministic_futures: false,
             },
             activity_half: ActivityHalf {
                 activities,
@@ -521,6 +528,13 @@ impl Worker {
     /// Returns the task queue name this worker polls on
     pub fn task_queue(&self) -> &str {
         &self.common.task_queue
+    }
+
+    #[doc(hidden)]
+    /// Set whether nondeterministic future detection is enabled for workflows on this worker. Users
+    /// should use [WorkerOptions] to set this. TODO: Only needs to exist due to test setup.
+    pub fn set_detect_nondeterministic_futures(&mut self, enabled: bool) {
+        self.workflow_half.detect_nondeterministic_futures = enabled;
     }
 
     /// Return a handle that can be used to initiate shutdown. This is useful because [Worker::run]
@@ -577,12 +591,17 @@ impl Worker {
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
         let (common, wf_half, act_half) = self.split_apart();
-        let (wf_future_tx, wf_future_rx) = unbounded_channel();
+        let (wf_future_tx, wf_future_rx) = unbounded_channel::<
+            WorkflowFutureHandle<workflow_executor::TaskHandle<WorkflowResult<Payload>>>,
+        >();
         let (completions_tx, completions_rx) = unbounded_channel();
 
         // Workflows run in a LocalSet because they use Rc<RefCell> for state management.
-        // This allows them to not require Send/Sync bounds.
+        // This allows them to not require Send/Sync bounds. The WorkflowExecutor replaces
+        // tokio::task::spawn_local for workflow tasks and provides custom wakers for
+        // nondeterminism detection.
         let workflow_local_set = tokio::task::LocalSet::new();
+        let executor = WorkflowExecutor::new();
 
         let wf_future_joiner = async {
             UnboundedReceiverStream::new(wf_future_rx)
@@ -595,7 +614,7 @@ impl Worker {
                      }| {
                         let wf_half = &*wf_half;
                         async move {
-                            let result = join_handle.await?;
+                            let result = join_handle.await.map_err(|e| anyhow::anyhow!("{e}"))?;
                             // Eviction is normal workflow lifecycle - workflows loop waiting for
                             // eviction after completion to manage cache cleanup
                             if let Err(e) = result
@@ -662,6 +681,7 @@ impl Worker {
                                     shutdown_token.clone(),
                                     activation,
                                     &completions_tx,
+                                    &executor,
                                 )
                                 .await?
                                 && wf_future_tx.send(wf_fut).is_err()
@@ -670,6 +690,9 @@ impl Worker {
                                     "Receive half of completion processor channel cannot be dropped"
                                 );
                             }
+                            // Drive the executor so spawned tasks and sent activations make
+                            // progress.
+                            executor.process_tasks();
                         }
                         // Tell still-alive workflows to evict themselves
                         shutdown_token.cancel();
@@ -677,6 +700,7 @@ impl Worker {
                         // terminate.
                         drop(wf_future_tx);
                         drop(completions_tx);
+                        executor.shutdown().await;
                         Result::<_, anyhow::Error>::Ok(())
                     },
                     wf_future_joiner,
@@ -764,12 +788,9 @@ impl WorkflowHalf {
         shutdown_token: CancellationToken,
         mut activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
+        executor: &WorkflowExecutor,
     ) -> Result<
-        Option<
-            WorkflowFutureHandle<
-                impl Future<Output = Result<WorkflowResult<Payload>, JoinError>> + use<>,
-            >,
-        >,
+        Option<WorkflowFutureHandle<workflow_executor::TaskHandle<WorkflowResult<Payload>>>>,
         anyhow::Error,
     > {
         let mut res = None;
@@ -792,6 +813,7 @@ impl WorkflowHalf {
                         std::mem::take(sw),
                         completions_tx.clone(),
                         payload_converter,
+                        self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
                         Err(e) => {
@@ -818,11 +840,8 @@ impl WorkflowHalf {
                     return Ok(None);
                 }
             };
-            // Wrap in unconstrained to prevent Tokio from imposing limits on commands per poll
             // TODO [rust-sdk-branch]: Deadlock detection
-            let wff = tokio::task::unconstrained(wff);
-            // The LocalSet is created in Worker::run().
-            let jh = tokio::task::spawn_local(async move {
+            let jh = executor.spawn(async move {
                 tokio::select! {
                     r = wff.fuse() => r,
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress

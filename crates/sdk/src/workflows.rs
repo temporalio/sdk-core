@@ -89,31 +89,9 @@ pub use crate::__temporal_select as select;
 #[doc(inline)]
 pub use crate::__temporal_join as join;
 
-/// Deterministic `join_all` for use in Temporal workflows.
-///
-/// Polls a collection of futures concurrently to completion in declaration order,
-/// returning a `Vec` of their results. Delegates to [`futures_util::future::join_all`].
-///
-/// # Example
-///
-/// ```ignore
-/// use temporalio_sdk::workflows::join_all;
-/// use temporalio_sdk::WorkflowContext;
-/// use std::time::Duration;
-///
-/// # async fn hidden(ctx: &mut WorkflowContext<()>) {
-/// let timers = vec![
-///     ctx.timer(Duration::from_secs(1)),
-///     ctx.timer(Duration::from_secs(2)),
-/// ];
-/// let results = join_all(timers).await;
-/// # }
-/// ```
-pub use futures_util::future::join_all;
-
 use crate::{
     BaseWorkflowContext, SyncWorkflowContext, WorkflowContext, WorkflowContextView,
-    WorkflowTermination,
+    WorkflowTermination, workflow_executor::SdkGuardedFuture,
 };
 use futures_util::future::{Fuse, FutureExt, LocalBoxFuture};
 use std::{
@@ -708,4 +686,46 @@ pub fn serialize_result<T: TemporalSerializable + 'static>(
     converter: &PayloadConverter,
 ) -> Result<Payload, WorkflowError> {
     serialize_output(&result, converter)
+}
+
+/// Deterministic `join_all` for use in Temporal workflows.
+///
+/// Polls a collection of futures concurrently to completion in declaration order,
+/// returning a `Vec` of their results.
+///
+/// # Example
+///
+/// ```ignore
+/// use temporalio_sdk::workflows::join_all;
+/// use temporalio_sdk::WorkflowContext;
+/// use std::time::Duration;
+///
+/// # async fn hidden(ctx: &mut WorkflowContext<()>) {
+/// let timers = vec![
+///     ctx.timer(Duration::from_secs(1)),
+///     ctx.timer(Duration::from_secs(2)),
+/// ];
+/// let results = join_all(timers).await;
+/// # }
+/// ```
+pub fn join_all<I>(iter: I) -> JoinAll<I::Item>
+where
+    I: IntoIterator,
+    I::Item: std::future::Future,
+{
+    JoinAll(SdkGuardedFuture(futures_util::future::join_all(iter)))
+}
+
+/// Future returned by [`join_all`].
+pub struct JoinAll<F: std::future::Future>(SdkGuardedFuture<futures_util::future::JoinAll<F>>);
+
+impl<F: std::future::Future> std::future::Future for JoinAll<F> {
+    type Output = Vec<F::Output>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.0.poll_unpin(cx)
+    }
 }
