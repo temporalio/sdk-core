@@ -40,19 +40,21 @@ fn load_from_config_with_env(
     Ok((conn_opts, client_opts))
 }
 
-/// Parse an address string into a [`Url`], prepending `http://` if no scheme is present.
+/// Parse an address string into a [`Url`], prepending a scheme if none is present.
 ///
 /// Other SDKs pass addresses as bare `host:port` strings. Our [`ConnectionOptions`] requires a
-/// [`Url`], so we attempt a direct parse first and fall back to prepending `http://`.
-fn parse_address(address: &str) -> Result<Url, ConfigError> {
+/// [`Url`], so we attempt a direct parse first and fall back to prepending a scheme.
+/// When the user omits a scheme, we use `https://` if TLS will be enabled, otherwise `http://`.
+fn parse_address(address: &str, use_tls: bool) -> Result<Url, ConfigError> {
     // Try parsing as-is. `Url::parse("localhost:7233")` "succeeds" by treating `localhost` as
-    // the scheme, so reject parses that have no host — those need the http:// prefix.
+    // the scheme, so reject parses that have no host — those need a scheme prefix.
     if let Ok(url) = Url::parse(address)
         && url.host().is_some()
     {
         return Ok(url);
     }
-    Url::parse(&format!("http://{address}"))
+    let scheme = if use_tls { "https" } else { "http" };
+    Url::parse(&format!("{scheme}://{address}"))
         .map_err(|e| ConfigError::InvalidConfig(format!("Invalid address: {e}")))
 }
 
@@ -115,10 +117,11 @@ impl TryFrom<ClientConfigProfile> for ConnectionOptions {
             grpc_meta,
         } = profile;
 
-        let target = parse_address(address.as_deref().unwrap_or(DEFAULT_ADDRESS))?;
-
         let has_api_key = api_key.is_some();
-        let tls_options = if should_enable_tls(&tls, has_api_key) {
+        let use_tls = should_enable_tls(&tls, has_api_key);
+        let target = parse_address(address.as_deref().unwrap_or(DEFAULT_ADDRESS), use_tls)?;
+
+        let tls_options = if use_tls {
             match tls {
                 Some(tls_cfg) => Some(build_tls_options(tls_cfg)?),
                 None => Some(TlsOptions::default()),
@@ -168,12 +171,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::default(None, "http://localhost:7233/")]
-    #[case::with_scheme(Some("https://my-server:7233"), "https://my-server:7233/")]
-    #[case::without_scheme(Some("localhost:7233"), "http://localhost:7233/")]
-    fn address_parsing(#[case] address: Option<&str>, #[case] expected: &str) {
+    #[case::default(None, false, "http://localhost:7233/")]
+    #[case::with_scheme(Some("https://my-server:7233"), false, "https://my-server:7233/")]
+    #[case::without_scheme(Some("localhost:7233"), false, "http://localhost:7233/")]
+    #[case::without_scheme_tls(Some("localhost:7233"), true, "https://localhost:7233/")]
+    #[case::explicit_http_with_tls(Some("http://my-server:7233"), true, "http://my-server:7233/")]
+    fn address_parsing(
+        #[case] address: Option<&str>,
+        #[case] enable_tls: bool,
+        #[case] expected: &str,
+    ) {
+        let tls = enable_tls.then(|| ClientConfigTLS::default());
         let profile = ClientConfigProfile {
             address: address.map(str::to_string),
+            tls,
             ..Default::default()
         };
         let conn: ConnectionOptions = profile.try_into().unwrap();
@@ -376,7 +387,7 @@ namespace = "custom-ns"
             ..Default::default()
         };
         let (conn, client) = ClientOptions::load_from_config(opts).unwrap();
-        assert_eq!(conn.target.as_str(), "http://toml-server:7233/");
+        assert_eq!(conn.target.as_str(), "https://toml-server:7233/");
         assert_eq!(client.namespace, "toml-ns");
         assert_eq!(conn.api_key.as_deref(), Some("toml-key"));
         assert!(conn.tls_options.is_some());
