@@ -181,7 +181,7 @@ mod tests {
         #[case] enable_tls: bool,
         #[case] expected: &str,
     ) {
-        let tls = enable_tls.then(|| ClientConfigTLS::default());
+        let tls = enable_tls.then(ClientConfigTLS::default);
         let profile = ClientConfigProfile {
             address: address.map(str::to_string),
             tls,
