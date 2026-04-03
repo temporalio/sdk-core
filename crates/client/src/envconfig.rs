@@ -25,7 +25,7 @@ impl ClientOptions {
     }
 }
 
-// seperate function allows injecting env vars for testing.
+// Separate function allows injecting env vars for testing.
 fn load_from_config_with_env(
     options: LoadClientConfigProfileOptions,
     env_vars: Option<&HashMap<String, String>>,
@@ -149,7 +149,7 @@ fn resolve_datasource(data_source: DataSource) -> Result<Vec<u8>, std::io::Error
 mod tests {
     use super::*;
     use rstest::{fixture, rstest};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
     use tempfile::TempDir;
     use temporalio_common::envconfig::{ClientConfigTLS, DataSource};
 
@@ -166,12 +166,6 @@ mod tests {
         std::fs::write(&path, content).unwrap();
         path
     }
-
-    fn config_source(path: &Path) -> Option<DataSource> {
-        Some(DataSource::Path(path.to_str().unwrap().to_string()))
-    }
-
-    // ── Address parsing ─────────────────────────────────────────────────
 
     #[rstest]
     #[case::default(None, "http://localhost:7233/")]
@@ -194,8 +188,6 @@ mod tests {
         };
         assert!(ConnectionOptions::try_from(profile).is_err());
     }
-
-    // ── Defaults and basic field mapping ──────────────────────────────────
 
     #[test]
     fn empty_profile_defaults() {
@@ -238,8 +230,6 @@ mod tests {
         assert_eq!(conn.headers.unwrap(), meta);
     }
 
-    // ── API key and TLS interaction ───────────────────────────────────────
-
     #[test]
     fn api_key_populates_field() {
         let profile = ClientConfigProfile {
@@ -274,8 +264,6 @@ mod tests {
         let conn: ConnectionOptions = profile.try_into().unwrap();
         assert_eq!(conn.tls_options.is_some(), expect_tls);
     }
-
-    // ── TLS certificate handling ──────────────────────────────────────────
 
     #[test]
     fn data_source_certs() {
@@ -362,7 +350,6 @@ mod tests {
         assert!(ConnectionOptions::try_from(profile).is_err());
     }
 
-    // ── Convenience function ──────────────────────────────────────────────
     #[rstest]
     fn load_from_config_from_toml(config_dir: TempDir) {
         let config_path = write_config(
@@ -384,7 +371,7 @@ namespace = "custom-ns"
 
         // Default profile
         let opts = LoadClientConfigProfileOptions {
-            config_source: config_source(&config_path),
+            config_source: Some(DataSource::Path(config_path.to_str().unwrap().to_string())),
             disable_env: true,
             ..Default::default()
         };
@@ -400,7 +387,7 @@ namespace = "custom-ns"
 
         // Custom profile
         let opts = LoadClientConfigProfileOptions {
-            config_source: config_source(&config_path),
+            config_source: Some(DataSource::Path(config_path.to_str().unwrap().to_string())),
             config_file_profile: Some("custom".to_string()),
             disable_env: true,
             ..Default::default()
