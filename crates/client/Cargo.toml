@@ -12,6 +12,7 @@ categories = ["development-tools"]
 readme = "README.md"
 
 [features]
+default = ["envconfig"]
 telemetry = ["dep:opentelemetry"]
 core-based-sdk = []
 envconfig = ["temporalio-common/envconfig"]
