@@ -589,7 +589,7 @@ async fn test_task_type_combinations_unified(
         }
     }
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     if enable_workflows {
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
@@ -647,7 +647,7 @@ async fn nexus_request_deadline_missing_header() {
         .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
         .await
         .unwrap();
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -707,7 +707,7 @@ async fn nexus_request_deadline_valid_header() {
         .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
         .await
         .unwrap();
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -753,7 +753,7 @@ async fn nexus_request_deadline_invalid_header() {
         .complete_nexus_task(create_test_nexus_completion(nexus_task.task_token()))
         .await
         .unwrap();
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -814,7 +814,7 @@ async fn nexus_task_completion_with_failure_status() {
         .await
         .unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -876,7 +876,7 @@ async fn nexus_task_completion_with_failure_converts_to_legacy_for_old_server() 
         .await
         .unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -926,7 +926,7 @@ async fn nexus_task_completion_with_failure_status_missing_handler_info_fails(
         Err(CompleteNexusError::MalformedNexusCompletion { reason }) if reason.contains("NexusHandlerFailureInfo")
     );
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -1006,7 +1006,7 @@ async fn nexus_start_operation_failure_with_application_failure_info() {
         .await
         .unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -1066,7 +1066,7 @@ async fn nexus_start_operation_failure_with_canceled_failure_info() {
         .await
         .unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -1117,7 +1117,7 @@ async fn nexus_start_operation_failure_with_invalid_failure_info(
             if reason.contains("ApplicationFailureInfo") && reason.contains("CanceledFailureInfo")
     );
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -1201,7 +1201,7 @@ async fn nexus_start_operation_failure_converts_to_legacy_for_old_server(
         .await
         .unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_nexus_task().await.unwrap_err(),
         PollError::ShutDown
@@ -1305,7 +1305,7 @@ async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
     let poll_fut = worker.poll_workflow_activation();
     let shutdown_fut = async {
         // initiate_shutdown must send the ShutdownWorker RPC, which releases the polls
-        worker.initiate_shutdown().await;
+        worker.initiate_shutdown();
     };
 
     let (poll_result, _) = tokio::time::timeout(Duration::from_secs(5), async {

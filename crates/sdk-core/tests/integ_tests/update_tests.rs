@@ -1164,7 +1164,7 @@ async fn worker_restarted_in_middle_of_update() {
     let stopper = async {
         // Wait for the activity to start
         BARR.wait().await;
-        core_worker.initiate_shutdown().await;
+        core_worker.initiate_shutdown();
         // Allow it to start again, the second time
         BARR.wait().await;
         // Poke the workflow off the sticky queue to get it to complete faster than WFT timeout

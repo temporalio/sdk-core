@@ -860,7 +860,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        core_worker.initiate_shutdown().await;
+        core_worker.initiate_shutdown();
     };
     let runner = async {
         worker.run_until_done().await.unwrap();

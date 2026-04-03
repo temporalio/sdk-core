@@ -504,7 +504,7 @@ async fn poller_autoscaling_basic_loadtest() {
             })
             .await;
         ah.abort();
-        shutdown_handle().await;
+        shutdown_handle();
     };
 
     let sig_sender = Abortable::new(

@@ -448,7 +448,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         // Wait for workflow to complete in order for all eager activities to be requested before
         // shutting down. After shutdown, no eager activities slots can be allocated.
         workflow_complete_token_clone.cancelled().await;
-        core.initiate_shutdown().await;
+        core.initiate_shutdown();
         // Even though this test requests eager activity tasks, none are returned in poll responses.
         let err = core.poll_activity_task().await.unwrap_err();
         assert_matches!(err, PollError::ShutDown);

@@ -714,7 +714,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
             .await
             .expect("wf2 result");
 
-        worker_core.initiate_shutdown().await;
+        worker_core.initiate_shutdown();
     };
 
     let mut worker_runner = worker;

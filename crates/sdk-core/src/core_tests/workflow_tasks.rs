@@ -980,7 +980,7 @@ async fn lots_of_workflows() {
     let completed_count = Arc::new(Semaphore::new(0));
     let killer = async {
         let _ = completed_count.acquire_many(total_wfs).await.unwrap();
-        worker.initiate_shutdown().await;
+        worker.initiate_shutdown();
     };
     let poller = fanout_tasks(5, |_| {
         let completed_count = completed_count.clone();
@@ -2576,7 +2576,7 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
-    core.initiate_shutdown().await;
+    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollError::ShutDown);
     core.shutdown().await;
@@ -2701,7 +2701,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
     let ender = async {
         time::sleep(Duration::from_millis(300)).await;
         // initiate shutdown, then complete open tasks
-        worker.initiate_shutdown().await;
+        worker.initiate_shutdown();
         for t in tasks {
             worker
                 .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
@@ -2909,7 +2909,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     let ender = async {
         time::sleep(Duration::from_millis(300)).await;
         // initiate shutdown, then complete open tasks
-        worker.initiate_shutdown().await;
+        worker.initiate_shutdown();
         for t in tasks {
             worker
                 .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
