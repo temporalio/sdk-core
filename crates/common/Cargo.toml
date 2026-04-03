@@ -27,8 +27,6 @@ envconfig = ["dep:toml", "dep:dirs"]
 serde_serialize = []
 test-utilities = ["history_builders"]
 core-based-sdk = [
-  "prometheus",
-  "envconfig",
   "dep:ringbuf",
   "dep:futures-channel",
 ]
@@ -68,6 +66,7 @@ opentelemetry-otlp = { version = "0.31", features = [
   "grpc-tonic",
 ], optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
+portable-atomic = "1.11"
 prometheus = { version = "0.14", optional = true, default-features = false }
 prost = { workspace = true }
 prost-wkt = "0.7"

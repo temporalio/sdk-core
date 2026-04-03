@@ -54,7 +54,6 @@ use crate::{
 };
 use errors::*;
 use futures_util::{stream, stream::Stream};
-use http::Uri;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -99,7 +98,7 @@ use tonic::{
         MetadataValue,
     },
     service::Interceptor,
-    transport::{Certificate, Channel, Endpoint, Identity},
+    transport::{Channel, Endpoint},
 };
 use tower::ServiceBuilder;
 use uuid::Uuid;
@@ -368,36 +367,10 @@ impl ClientHeaders {
 /// Passes it through if TLS options not set.
 async fn add_tls_to_channel(
     tls_options: Option<&TlsOptions>,
-    mut channel: Endpoint,
+    channel: Endpoint,
 ) -> Result<Endpoint, ClientConnectError> {
-    if let Some(tls_cfg) = tls_options {
-        let mut tls = tonic::transport::ClientTlsConfig::new();
-
-        if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
-            let server_root_ca_cert = Certificate::from_pem(root_cert);
-            tls = tls.ca_certificate(server_root_ca_cert);
-        } else {
-            tls = tls.with_native_roots();
-        }
-
-        if let Some(domain) = &tls_cfg.domain {
-            tls = tls.domain_name(domain);
-
-            // This song and dance ultimately is just to make sure the `:authority` header ends
-            // up correct on requests while we use TLS. Setting the header directly in our
-            // interceptor doesn't work since seemingly it is overridden at some point by
-            // something lower level.
-            let uri: Uri = format!("https://{domain}").parse()?;
-            channel = channel.origin(uri);
-        }
-
-        if let Some(client_opts) = &tls_cfg.client_tls_options {
-            let client_identity =
-                Identity::from_pem(&client_opts.client_cert, &client_opts.client_private_key);
-            tls = tls.identity(client_identity);
-        }
-
-        return channel.tls_config(tls).map_err(Into::into);
+    if tls_options.is_some() {
+        return Err(ClientConnectError::TlsSupportNotCompiledIn);
     }
     Ok(channel)
 }

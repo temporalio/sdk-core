@@ -17,6 +17,9 @@ pub enum ClientConnectError {
     /// Invalid gRPC metadata headers. Configuration error.
     #[error("Invalid headers: {0}")]
     InvalidHeaders(#[from] InvalidHeaderError),
+    /// This local build of the client was compiled without TLS transport support.
+    #[error("TLS support is not compiled into this build")]
+    TlsSupportNotCompiledIn,
     /// Server connection error. Crashing and restarting the worker is likely best.
     #[error("Server connection error: {0:?}")]
     TonicTransportError(#[from] tonic::transport::Error),

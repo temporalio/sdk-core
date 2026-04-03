@@ -63,8 +63,8 @@ use activities::WorkerActivityTasks;
 use anyhow::bail;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
-use gethostname::gethostname;
 use parking_lot::RwLock;
+use portable_atomic::AtomicU64;
 use slot_provider::SlotProvider;
 use std::{
     any::Any,
@@ -73,7 +73,7 @@ use std::{
     future,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, SystemTime},
 };
@@ -116,6 +116,16 @@ use {
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
+
+#[cfg(target_os = "espidf")]
+pub(crate) fn current_host_name() -> String {
+    "espidf".to_owned()
+}
+
+#[cfg(not(target_os = "espidf"))]
+pub(crate) fn current_host_name() -> String {
+    gethostname::gethostname().to_string_lossy().to_string()
+}
 
 /// Defines per-worker configuration options
 #[derive(Clone, bon::Builder)]
@@ -592,8 +602,6 @@ impl Worker {
             sys_info = tuner_builder.get_sys_info();
             Arc::new(tuner_builder.build())
         });
-        let sys_info = sys_info.unwrap_or_else(|| Arc::new(RealSysInfo::new()));
-
         metrics.worker_registered();
         let shutdown_token = CancellationToken::new();
         let slot_context_data = Arc::new(PermitDealerContextData {
@@ -822,6 +830,9 @@ impl Worker {
 
         let sdk_name_and_ver = client.sdk_name_and_version();
         let worker_heartbeat = worker_heartbeat_interval.map(|hb_interval| {
+            let sys_info = sys_info
+                .clone()
+                .unwrap_or_else(|| Arc::new(RealSysInfo::new()));
             let hb_metrics = HeartbeatMetrics {
                 in_mem_metrics: metrics.in_memory_meter(),
                 wft_slots: wft_slots.clone(),
@@ -2016,7 +2027,7 @@ impl WorkerHeartbeatManager {
             let mut worker_heartbeat = WorkerHeartbeat {
                 worker_instance_key: worker_instance_key.to_string(),
                 host_info: Some(WorkerHostInfo {
-                    host_name: gethostname().to_string_lossy().to_string(),
+                    host_name: current_host_name(),
                     process_id: std::process::id().to_string(),
                     current_host_cpu_usage: heartbeat_manager_metrics.sys_info.used_cpu_percent()
                         as f32,

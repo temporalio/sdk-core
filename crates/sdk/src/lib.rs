@@ -198,7 +198,7 @@ pub struct WorkerOptions {
     pub deployment_options: WorkerDeploymentOptions,
     /// A human-readable string that can identify this worker. If set, overrides the identity on
     /// the client used by this worker. If unset and the client has no identity, defaults to
-    /// `{pid}@{hostname}`.
+    /// `{pid}@{hostname}` on host targets and `{pid}@espidf` on ESP-IDF.
     pub client_identity_override: Option<String>,
     /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
     /// history updates are applied incrementally to suspended instances of workflow execution.
@@ -332,6 +332,20 @@ fn def_build_id() -> WorkerDeploymentOptions {
     WorkerDeploymentOptions::from_build_id(build_id_from_current_exe().to_owned())
 }
 
+#[cfg(target_os = "espidf")]
+fn synthesized_client_identity() -> String {
+    format!("{}@espidf", std::process::id())
+}
+
+#[cfg(not(target_os = "espidf"))]
+fn synthesized_client_identity() -> String {
+    format!(
+        "{}@{}",
+        std::process::id(),
+        gethostname::gethostname().to_string_lossy()
+    )
+}
+
 impl WorkerOptions {
     /// Registers all activities on an activity implementer.
     pub fn register_activities<AI: ActivityImplementer>(&mut self, instance: AI) -> &mut Self {
@@ -388,13 +402,9 @@ impl WorkerOptions {
             .namespace(namespace)
             .task_queue(self.task_queue.clone())
             .maybe_client_identity_override(self.client_identity_override.clone().or_else(|| {
-                connection_identity.is_empty().then(|| {
-                    format!(
-                        "{}@{}",
-                        std::process::id(),
-                        gethostname::gethostname().to_string_lossy()
-                    )
-                })
+                connection_identity
+                    .is_empty()
+                    .then(synthesized_client_identity)
             }))
             .max_cached_workflows(self.max_cached_workflows)
             .tuner(self.tuner.clone())
@@ -1419,11 +1429,7 @@ mod tests {
     }
 
     fn default_identity() -> String {
-        format!(
-            "{}@{}",
-            std::process::id(),
-            gethostname::gethostname().to_string_lossy()
-        )
+        synthesized_client_identity()
     }
 
     #[rstest::rstest]

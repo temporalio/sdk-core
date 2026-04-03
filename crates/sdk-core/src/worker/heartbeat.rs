@@ -190,10 +190,7 @@ mod tests {
                 let host_info = heartbeat.host_info.clone().unwrap();
                 assert_eq!("test-identity", heartbeat.worker_identity);
                 assert!(!heartbeat.worker_instance_key.is_empty());
-                assert_eq!(
-                    host_info.host_name,
-                    gethostname::gethostname().to_string_lossy().to_string()
-                );
+                assert_eq!(host_info.host_name, super::current_host_name());
                 assert_eq!(host_info.process_id, std::process::id().to_string());
                 assert_eq!(heartbeat.sdk_name, "test-core");
                 assert_eq!(heartbeat.sdk_version, "0.0.0");

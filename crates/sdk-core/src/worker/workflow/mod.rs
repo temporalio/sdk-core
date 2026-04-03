@@ -46,6 +46,8 @@ use anyhow::anyhow;
 use futures_util::{Stream, StreamExt, future::abortable, stream, stream::BoxStream};
 use itertools::Itertools;
 use prost_types::TimestampError;
+#[cfg(not(target_os = "espidf"))]
+use std::thread;
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -55,7 +57,6 @@ use std::{
     rc::Rc,
     result,
     sync::{Arc, atomic, atomic::AtomicBool},
-    thread,
     time::{Duration, Instant},
 };
 use temporalio_client::MESSAGE_TOO_LARGE_KEY;
@@ -88,16 +89,27 @@ use temporalio_common::{
     },
     telemetry::set_trace_subscriber_for_current_thread,
 };
-use tokio::{
-    sync::{
-        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
-        oneshot,
-    },
-    task::{LocalSet, spawn_blocking},
+use tokio::sync::{
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
+    oneshot,
 };
+#[cfg(target_os = "espidf")]
+use tokio::task::JoinHandle as TokioJoinHandle;
+#[cfg(not(target_os = "espidf"))]
+use tokio::task::{LocalSet, spawn_blocking};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::{either::Either, sync::CancellationToken};
 use tracing::{Span, Subscriber};
+
+#[cfg(target_os = "espidf")]
+type ProcessingTaskHandle = TokioJoinHandle<()>;
+#[cfg(not(target_os = "espidf"))]
+type ProcessingTaskHandle = thread::JoinHandle<()>;
+
+#[cfg(target_os = "espidf")]
+const WORKFLOW_PROCESSING_TASK_CONTEXT: &str = "workflow processing local task";
+#[cfg(not(target_os = "espidf"))]
+const WORKFLOW_PROCESSING_TASK_CONTEXT: &str = "workflow processing thread";
 
 /// Id used by server for "legacy" queries. IE: Queries that come in the `query` rather than
 /// `queries` field of a WFT, and are responded to on the separate `respond_query_task_completed`
@@ -117,7 +129,7 @@ type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
 pub(crate) struct Workflows {
     task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
-    processing_task: TakeCell<thread::JoinHandle<()>>,
+    processing_task: TakeCell<ProcessingTaskHandle>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
         // Used to indicate polling may begin
@@ -197,63 +209,76 @@ impl Workflows {
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
-        let processing_task = thread::Builder::new()
-            .name("workflow-processing".to_string())
-            .spawn(move || {
-                if let Some(ts) = tracing_sub {
-                    set_trace_subscriber_for_current_thread(ts);
+        let processing = move || async move {
+            // However, we want to avoid plowing ahead until we've been asked to poll at
+            // least once. This supports activity-only workers.
+            let do_poll = tokio::select! {
+                sp = start_polling_rx => {
+                    sp.is_ok()
                 }
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .unwrap();
-                let local = LocalSet::new();
-                local.block_on(&rt, async move {
-                    // However, we want to avoid plowing ahead until we've been asked to poll at
-                    // least once. This supports activity-only workers.
-                    let do_poll = tokio::select! {
-                        sp = start_polling_rx => {
-                            sp.is_ok()
-                        }
-                        _ = shutdown_tok.cancelled() => {
-                            false
-                        }
-                    };
-                    if !do_poll {
-                        return;
-                    }
+                _ = shutdown_tok.cancelled() => {
+                    false
+                }
+            };
+            if !do_poll {
+                return;
+            }
 
-                    let mut stream = WFStream::build(
-                        basics,
-                        extracted_wft_stream,
-                        locals_stream,
-                        local_activity_request_sink,
-                    );
+            let mut stream = WFStream::build(
+                basics,
+                extracted_wft_stream,
+                locals_stream,
+                local_activity_request_sink,
+            );
 
-                    while let Some(output) = stream.next().await {
-                        match output {
-                            Ok(o) => {
-                                for fetchreq in o.fetch_histories {
-                                    fetch_tx
-                                        .send(fetchreq)
-                                        .expect("Fetch channel must not be dropped");
-                                }
-                                for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
-                                }
-                            }
-                            Err(e) => {
-                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
-                                    error!(activation=?e.0, "Activation processor channel dropped");
-                                });
-                            }
+            while let Some(output) = stream.next().await {
+                match output {
+                    Ok(o) => {
+                        for fetchreq in o.fetch_histories {
+                            fetch_tx
+                                .send(fetchreq)
+                                .expect("Fetch channel must not be dropped");
+                        }
+                        for act in o.activations {
+                            activation_tx
+                                .send(Ok(act))
+                                .expect("Activation processor channel not dropped");
                         }
                     }
-                });
-            })
-            .expect("Must be able to spawn workflow processing thread");
+                    Err(e) => {
+                        let _ = activation_tx.send(Err(e)).inspect_err(|e| {
+                            error!(activation=?e.0, "Activation processor channel dropped");
+                        });
+                    }
+                }
+            }
+        };
+        #[cfg(target_os = "espidf")]
+        let processing_task = {
+            if let Some(ts) = tracing_sub {
+                set_trace_subscriber_for_current_thread(ts);
+            }
+            tokio::task::spawn_local(processing())
+        };
+        #[cfg(not(target_os = "espidf"))]
+        let processing_task = {
+            let processing_thread = thread::Builder::new().name("workflow-processing".to_string());
+            processing_thread
+                .spawn(move || {
+                    if let Some(ts) = tracing_sub {
+                        set_trace_subscriber_for_current_thread(ts);
+                    }
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    let local = LocalSet::new();
+                    local.block_on(&rt, processing());
+                })
+                .unwrap_or_else(|err| {
+                    panic!("Must be able to spawn workflow processing thread: {err}");
+                })
+        };
         Self {
             task_queue,
             local_tx,
@@ -684,18 +709,32 @@ impl Workflows {
                     self.bump_stream();
                 }
             });
-            let (_, jh_res) = tokio::join!(
-                waker,
-                spawn_blocking(move || {
-                    let r = jh.join();
+            #[cfg(target_os = "espidf")]
+            {
+                let (_, jh_res) = tokio::join!(waker, async move {
+                    let r = jh.await;
                     stop_waker.abort();
                     r
-                })
-            );
-            jh_res?.map_err(|e| {
-                let as_str = e.downcast::<&str>();
-                anyhow!("Error joining workflow processing thread: {as_str:?}")
-            })?;
+                });
+                jh_res.map_err(|e| {
+                    anyhow!("Error awaiting {WORKFLOW_PROCESSING_TASK_CONTEXT}: {e}")
+                })?;
+            }
+            #[cfg(not(target_os = "espidf"))]
+            {
+                let (_, jh_res) = tokio::join!(
+                    waker,
+                    spawn_blocking(move || {
+                        let r = jh.join();
+                        stop_waker.abort();
+                        r
+                    })
+                );
+                jh_res?.map_err(|e| {
+                    let as_str = e.downcast::<&str>();
+                    anyhow!("Error joining {WORKFLOW_PROCESSING_TASK_CONTEXT}: {as_str:?}")
+                })?;
+            }
         }
         Ok(())
     }

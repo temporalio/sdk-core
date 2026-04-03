@@ -24,7 +24,7 @@ otel = [
 ]
 ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 debug-plugin = ["dep:reqwest", "dep:hyper"]
-test-utilities = ["dep:assert_matches", "dep:bimap"]
+test-utilities = ["dep:assert_matches", "dep:bimap", "dep:mockall"]
 antithesis_assertions = ["dep:antithesis_sdk"]
 
 [dependencies]
@@ -46,12 +46,11 @@ enum-iterator = "2"
 flate2 = { version = "1.1", optional = true }
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
-gethostname = "1.0.2"
 governor = "0.10"
 hyper = { version = "1.7", optional = true }
 itertools = "0.14"
 lru = "0.16"
-mockall = "0.14"
+mockall = { version = "0.14", optional = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.31", features = [
   "rt-tokio",
@@ -68,6 +67,7 @@ opentelemetry-otlp = { version = "0.31", features = [
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
 pin-project = "1.1"
+portable-atomic = "1.13"
 prost = { workspace = true }
 prost-types = { workspace = true }
 rand = "0.10"
@@ -90,11 +90,10 @@ tokio = { version = "1.47", features = [
   "parking_lot",
   "time",
   "fs",
-  "process",
 ] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
-tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
+tonic = { workspace = true }
 tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4"] }
@@ -105,11 +104,14 @@ zip = { version = "8.4", optional = true, default-features = false, features = [
   "zstd",
 ] }
 
+[target.'cfg(not(target_os = "espidf"))'.dependencies]
+gethostname = "1.0.2"
+
 # 1st party local deps
 [dependencies.temporalio-common]
 path = "../common"
 version = "0.2"
-features = ["core-based-sdk", "history_builders", "test-utilities"]
+features = ["core-based-sdk", "history_builders"]
 
 [dependencies.temporalio-client]
 path = "../client"
@@ -138,6 +140,7 @@ hyper-util = { version = "0.1", features = [
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
+mockall = "0.14"
 tokio = { version = "1.47", features = [
   "rt",
   "rt-multi-thread",

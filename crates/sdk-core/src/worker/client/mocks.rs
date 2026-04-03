@@ -1,4 +1,5 @@
 use super::*;
+#[cfg(any(feature = "test-utilities", test))]
 use futures_util::{Future, FutureExt};
 use std::sync::{Arc, LazyLock};
 use temporalio_client::worker::ClientWorkerSet;
@@ -46,6 +47,7 @@ pub fn mock_worker_client() -> MockWorkerClient {
     r
 }
 
+#[cfg(any(feature = "test-utilities", test))]
 /// Create a mock manual client primed with basic necessary expectations
 pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
@@ -68,6 +70,7 @@ pub(crate) fn mock_manual_worker_client() -> MockManualWorkerClient {
 // Need a version of the mock that can return futures so we can return potentially pending
 // results. This is really annoying b/c of the async trait stuff. Need
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
+#[cfg(any(feature = "test-utilities", test))]
 mockall::mock! {
     pub(crate) ManualWorkerClient {}
     #[allow(unused)]

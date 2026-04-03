@@ -5,13 +5,14 @@ use crate::worker::{
 };
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
+use portable_atomic::AtomicU64;
 use std::{
     fs,
     marker::PhantomData,
     path::PathBuf,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         mpsc,
     },
     thread,
@@ -733,10 +734,7 @@ mod tests {
         env,
         hint::black_box,
         rc::Rc,
-        sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering},
-        },
+        sync::{Arc, atomic::Ordering},
         thread::sleep,
     };
 

@@ -1,12 +1,13 @@
 #[cfg(test)]
 use crate::TelemetryInstance;
 use crate::abstractions::dbg_panic;
+use portable_atomic::AtomicU64;
 
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
     iter::Iterator,
-    sync::{Arc, atomic::AtomicU64},
+    sync::Arc,
     time::Duration,
 };
 use temporalio_common::{

@@ -1,13 +1,11 @@
 use crate::{dbg_panic, telemetry::TaskQueueLabelStrategy};
+use portable_atomic::{AtomicU64, Ordering};
 use std::{
     borrow::Cow,
     collections::{BTreeMap, HashMap},
     fmt::{Debug, Display},
     ops::Deref,
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
@@ -1159,13 +1157,8 @@ impl_no_op!(UpDownCounterBase, signed);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{
-        collections::HashMap,
-        sync::{
-            Arc,
-            atomic::{AtomicU64, Ordering},
-        },
-    };
+    use portable_atomic::{AtomicU64, Ordering};
+    use std::{collections::HashMap, sync::Arc};
 
     #[test]
     fn in_memory_attributes_provide_label_values() {
