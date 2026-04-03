@@ -73,7 +73,7 @@ pub const NAMESPACE: &str = "default";
 
 /// Initiate shutdown, drain the pollers (handling evictions), and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &Worker) {
-    worker.initiate_shutdown();
+    worker.initiate_shutdown().await;
     tokio::join!(
         async {
             assert_matches!(
@@ -1019,7 +1019,7 @@ impl WorkerExt for Worker {
     }
 
     async fn drain_activity_poller_and_shutdown(&self) {
-        self.initiate_shutdown();
+        self.initiate_shutdown().await;
         assert_matches!(
             self.poll_activity_task().await.unwrap_err(),
             PollError::ShutDown

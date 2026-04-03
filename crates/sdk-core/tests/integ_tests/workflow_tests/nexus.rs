@@ -1017,7 +1017,7 @@ async fn nexus_cancellation_types(
             if cancellation_type == NexusOperationCancellationType::WaitCancellationRequested {
                 check_caller_op_future_resolved_then_allow_handler_to_complete.await;
             }
-            shutdown_handle();
+            shutdown_handle().await;
         }
     );
 
