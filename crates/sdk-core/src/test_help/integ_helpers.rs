@@ -514,7 +514,7 @@ pub struct MockPollCfg {
     pub mock_client: MockWorkerClient,
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
-        Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
+        Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>, &String) -> bool + Send>,
     /// All calls to legacy query responses must match this predicate
     pub expect_legacy_query_matcher: Box<dyn Fn(&TaskToken, &LegacyQueryResult) -> bool + Send>,
     pub completion_mock_fn: Option<Box<WFTCompletionMockFn>>,
@@ -541,7 +541,7 @@ impl MockPollCfg {
             num_expected_fails,
             num_expected_legacy_query_resps: 0,
             mock_client: mock_worker_client(),
-            expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            expect_fail_wft_matcher: Box::new(|_, _, _, _| true),
             expect_legacy_query_matcher: Box::new(|_, _| true),
             completion_mock_fn: None,
             num_expected_completions: None,
@@ -581,7 +581,7 @@ impl MockPollCfg {
             num_expected_fails: 0,
             num_expected_legacy_query_resps: 0,
             mock_client,
-            expect_fail_wft_matcher: Box::new(|_, _, _| true),
+            expect_fail_wft_matcher: Box::new(|_, _, _, _| true),
             expect_legacy_query_matcher: Box::new(|_, _| true),
             completion_mock_fn: None,
             num_expected_completions: None,
@@ -819,7 +819,7 @@ pub fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         .expect_fail_workflow_task()
         .withf(cfg.expect_fail_wft_matcher)
         .times::<TimesRange>(cfg.num_expected_fails.into())
-        .returning(move |tt, _, _| {
+        .returning(move |tt, _, _, _| {
             outstanding.release_token(&tt);
             Ok(Default::default())
         });
