@@ -1350,6 +1350,7 @@ impl Worker {
                 "Initiated shutdown",
             );
         }
+        let already_initiated_shutdown = self.shutdown_token.is_cancelled();
         self.shutdown_token.cancel();
         {
             *self.status.write() = WorkerStatus::ShuttingDown;
@@ -1383,6 +1384,10 @@ impl Worker {
             if self.workflows.as_ref().is_none_or(|w| !w.ever_polled()) {
                 la_mgr.workflows_have_shutdown();
             }
+        }
+
+        if already_initiated_shutdown {
+            return;
         }
 
         // Send shutdown_worker RPC so the server can complete in-flight polls.
