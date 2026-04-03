@@ -1,4 +1,4 @@
-//! Conversion from [`ClientConfigProfile`] to [`ConnectionOptions`] and [`ClientOptions`].
+//! Conversion from [`temporalio_common::envconfig::ClientConfigProfile`] to [`ConnectionOptions`] and [`ClientOptions`].
 //!
 //! This module bridges the environment/file-based configuration in `temporalio-common` with
 //! the client connection types.
