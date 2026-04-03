@@ -8,8 +8,7 @@ use temporalio_client::{
         ScheduleSpec,
     },
 };
-use temporalio_common::telemetry::TelemetryOptions;
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
+use temporalio_sdk_core::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,15 +16,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "http://localhost:7233".to_string());
     let namespace = std::env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| "default".to_string());
 
-    let runtime = CoreRuntime::new_assume_tokio(
-        RuntimeOptions::builder()
-            .telemetry_options(TelemetryOptions::builder().build())
-            .build()?,
-    )?;
     let connection =
         Connection::connect(ConnectionOptions::new(Url::from_str(&address)?).build()).await?;
     let client = Client::new(connection, ClientOptions::new(namespace).build())?;
-    let _ = &runtime;
 
     let schedule_id = "demo-schedule";
     let handle = client
