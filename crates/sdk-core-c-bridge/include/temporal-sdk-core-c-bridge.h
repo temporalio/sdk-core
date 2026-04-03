@@ -1050,7 +1050,9 @@ const struct TemporalCoreByteArray *temporal_core_worker_record_activity_heartbe
 void temporal_core_worker_request_workflow_eviction(struct TemporalCoreWorker *worker,
                                                     struct TemporalCoreByteArrayRef run_id);
 
-void temporal_core_worker_initiate_shutdown(struct TemporalCoreWorker *worker);
+void temporal_core_worker_initiate_shutdown(struct TemporalCoreWorker *worker,
+                                            void *user_data,
+                                            TemporalCoreWorkerCallback callback);
 
 void temporal_core_worker_finalize_shutdown(struct TemporalCoreWorker *worker,
                                             void *user_data,
