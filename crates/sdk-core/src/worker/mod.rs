@@ -64,7 +64,7 @@ use anyhow::bail;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
 use std::{
     any::Any,
@@ -432,7 +432,7 @@ pub struct Worker {
     /// enabling scale-down on poll timeout even without an explicit scaling decision.
     poller_autoscaling: Arc<AtomicBool>,
     /// Handle for the spawned ShutdownWorker RPC task, awaited during shutdown.
-    shutdown_rpc_handle: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    shutdown_rpc_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 struct AllPermitsTracker {
@@ -929,7 +929,7 @@ impl Worker {
             status: worker_status,
             graceful_poll_shutdown,
             poller_autoscaling,
-            shutdown_rpc_handle: std::sync::Mutex::new(None),
+            shutdown_rpc_handle: Mutex::new(None),
         })
     }
 
@@ -950,11 +950,7 @@ impl Worker {
 
         // Ensure the ShutdownWorker RPC completes before waiting for polls to drain,
         // otherwise graceful poll shutdown deadlocks.
-        let handle = self
-            .shutdown_rpc_handle
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take());
+        let handle = self.shutdown_rpc_handle.lock().take();
         if let Some(handle) = handle {
             let _ = handle.await;
         }
@@ -1351,9 +1347,8 @@ impl Worker {
         &self.config
     }
 
-    /// Initiate shutdown, including sending the `ShutdownWorker` RPC so the server can complete
-    /// in-flight polls. This must be awaited before waiting for polls to drain, otherwise
-    /// graceful poll shutdown deadlocks.
+    /// Initiate shutdown, including spawning the `ShutdownWorker` RPC so the server can complete
+    /// in-flight polls. The RPC runs in a background task and is awaited in [Worker::shutdown].
     ///
     /// You can then wait on `shutdown` or [Worker::finalize_shutdown].
     pub fn initiate_shutdown(&self) {
@@ -1438,9 +1433,7 @@ impl Worker {
                 _ => {}
             }
         });
-        if let Ok(mut guard) = self.shutdown_rpc_handle.lock() {
-            *guard = Some(handle);
-        }
+        *self.shutdown_rpc_handle.lock() = Some(handle);
     }
 
     /// Unique identifier for this worker instance.
