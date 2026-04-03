@@ -9,11 +9,15 @@ The workflow increments a counter each run and continues-as-new until it reaches
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example continue-as-new-worker
+```bash
+  cargo run --features examples --example continue-as-new-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example continue-as-new-starter
+```bash
+  cargo run --features examples --example continue-as-new-starter
+```
 
 The starter should print:
 

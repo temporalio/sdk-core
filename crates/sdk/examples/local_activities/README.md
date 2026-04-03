@@ -12,10 +12,14 @@ The workflow runs the same activity both ways and returns both results.
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example local-activities-worker
+```bash
+  cargo run --features examples --example local-activities-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example local-activities-starter
+```bash
+  cargo run --features examples --example local-activities-starter
+```
 
 The starter should print both the remote and local activity results.

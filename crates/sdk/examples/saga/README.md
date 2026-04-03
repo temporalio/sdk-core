@@ -7,12 +7,18 @@ This sample demonstrates the saga (compensation) pattern for distributed transac
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example saga-worker
+```bash
+  cargo run --features examples --example saga-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example saga-starter
+```bash
+  cargo run --features examples --example saga-starter
+```
 
 By default, all bookings succeed. To trigger a failure and see compensations run:
 
-    cargo run --features examples --example saga-starter -- fail-trip
+```bash
+  cargo run --features examples --example saga-starter -- fail-trip
+```

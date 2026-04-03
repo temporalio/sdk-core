@@ -13,10 +13,14 @@ The workflow waits until the counter reaches a target value, then completes.
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example message-passing-worker
+```bash
+  cargo run --features examples --example message-passing-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example message-passing-starter
+```bash
+  cargo run --features examples --example message-passing-starter
+```
 
 The starter signals, queries, and updates the workflow, then prints the final result.

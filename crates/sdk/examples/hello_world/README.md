@@ -7,11 +7,15 @@ This sample shows a basic workflow that calls a single activity and returns the 
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example hello-world-worker
+```bash
+  cargo run --features examples --example hello-world-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example hello-world-starter
+```bash
+  cargo run --features examples --example hello-world-starter
+```
 
 The starter should print:
 
