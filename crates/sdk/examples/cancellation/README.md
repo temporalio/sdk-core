@@ -9,10 +9,14 @@ The workflow starts a long-running activity that heartbeats, then races it again
 1. `temporal server start-dev` to start the Temporal server.
 2. In another terminal, start the worker:
 
-       cargo run --features examples --example cancellation-worker
+```bash
+  cargo run --features examples --example cancellation-worker
+```
 
 3. In another terminal, run the workflow:
 
-       cargo run --features examples --example cancellation-starter
+```bash
+  cargo run --features examples --example cancellation-starter
+```
 
 The starter waits 2 seconds, then requests cancellation. The workflow should complete with a message indicating cancellation and cleanup.
