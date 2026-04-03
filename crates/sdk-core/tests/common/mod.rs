@@ -709,11 +709,14 @@ pub(crate) enum TestWorkerShutdownCond {
 /// Implements calling the shutdown handle when the expected number of test workflows has completed
 pub(crate) struct TestWorkerCompletionIceptor {
     condition: TestWorkerShutdownCond,
-    shutdown_handle: Arc<dyn Fn()>,
+    shutdown_handle: Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, ()>>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 impl TestWorkerCompletionIceptor {
-    pub(crate) fn new(condition: TestWorkerShutdownCond, shutdown_handle: Arc<dyn Fn()>) -> Self {
+    pub(crate) fn new(
+        condition: TestWorkerShutdownCond,
+        shutdown_handle: Arc<dyn Fn() -> futures_util::future::BoxFuture<'static, ()>>,
+    ) -> Self {
         Self {
             condition,
             shutdown_handle,
@@ -742,7 +745,7 @@ impl TestWorkerCompletionIceptor {
                         Ok::<_, anyhow::Error>(())
                     })
                     .await?;
-                shutdown_h();
+                shutdown_h().await;
                 Ok(())
             })
         } else {

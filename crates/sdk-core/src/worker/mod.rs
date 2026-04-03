@@ -943,45 +943,7 @@ impl Worker {
     /// Lang implementations should use [Worker::initiate_shutdown] followed by
     /// [Worker::finalize_shutdown].
     pub async fn shutdown(&self) {
-        self.initiate_shutdown();
-        {
-            *self.status.write() = WorkerStatus::ShuttingDown;
-        }
-        let heartbeat = self
-            .client_worker_registrator
-            .heartbeat_manager
-            .as_ref()
-            .map(|hm| hm.heartbeat_callback.clone()());
-        let sticky_name = self
-            .workflows
-            .as_ref()
-            .and_then(|wf| wf.get_sticky_queue_name())
-            .unwrap_or_default();
-        // This is a best effort call and we can still shutdown the worker if it fails
-        let task_queue_types = self.config.task_types.to_task_queue_types();
-        match self
-            .client
-            .shutdown_worker(
-                sticky_name,
-                self.config.task_queue.clone(),
-                task_queue_types,
-                heartbeat,
-            )
-            .await
-        {
-            Err(err)
-                if !matches!(
-                    err.code(),
-                    tonic::Code::Unimplemented | tonic::Code::Unavailable
-                ) =>
-            {
-                warn!(
-                    "shutdown_worker rpc errored during worker shutdown: {:?}",
-                    err
-                );
-            }
-            _ => {}
-        }
+        self.initiate_shutdown().await;
 
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
@@ -1168,7 +1130,7 @@ impl Worker {
         // Since we consider network errors (at this level) fatal, we want to start shutdown if one
         // is encountered
         if matches!(r, Err(PollError::TonicError(_))) {
-            self.initiate_shutdown();
+            self.initiate_shutdown().await;
         }
         r
     }
@@ -1260,7 +1222,7 @@ impl Worker {
                 // any remaining outstanding LAs and shutdown.
                 if let Err(ref e) = r {
                     // This is covering the situation where WFT pollers dying is the reason for shutdown
-                    self.initiate_shutdown();
+                    self.initiate_shutdown().await;
                     if matches!(e, PollError::ShutDown)
                         && let Some(la_mgr) = &self.local_act_mgr
                     {
@@ -1375,9 +1337,12 @@ impl Worker {
         &self.config
     }
 
-    /// Initiate shutdown. See [Worker::shutdown], this is just a sync version that starts the
-    /// process. You can then wait on `shutdown` or [Worker::finalize_shutdown].
-    pub fn initiate_shutdown(&self) {
+    /// Initiate shutdown, including sending the `ShutdownWorker` RPC so the server can complete
+    /// in-flight polls. This must be awaited before waiting for polls to drain, otherwise
+    /// graceful poll shutdown deadlocks.
+    ///
+    /// You can then wait on `shutdown` or [Worker::finalize_shutdown].
+    pub async fn initiate_shutdown(&self) {
         if !self.shutdown_token.is_cancelled() {
             info!(
                 task_queue=%self.config.task_queue,
@@ -1418,6 +1383,42 @@ impl Worker {
             if self.workflows.as_ref().is_none_or(|w| !w.ever_polled()) {
                 la_mgr.workflows_have_shutdown();
             }
+        }
+
+        // Send shutdown_worker RPC so the server can complete in-flight polls.
+        let sticky_name = self
+            .workflows
+            .as_ref()
+            .and_then(|wf| wf.get_sticky_queue_name())
+            .unwrap_or_default();
+        let task_queue_types = self.config.task_types.to_task_queue_types();
+        let heartbeat = self
+            .client_worker_registrator
+            .heartbeat_manager
+            .as_ref()
+            .map(|hm| hm.heartbeat_callback.clone()());
+        match self
+            .client
+            .shutdown_worker(
+                sticky_name,
+                self.config.task_queue.clone(),
+                task_queue_types,
+                heartbeat,
+            )
+            .await
+        {
+            Err(err)
+                if !matches!(
+                    err.code(),
+                    tonic::Code::Unimplemented | tonic::Code::Unavailable
+                ) =>
+            {
+                warn!(
+                    "shutdown_worker rpc errored during worker shutdown: {:?}",
+                    err
+                );
+            }
+            _ => {}
         }
     }
 
