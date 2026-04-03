@@ -11,10 +11,13 @@ use temporalio_client::{Client, ClientOptions, UntypedWorkflow, WorkflowStartOpt
 use temporalio_common::{
     data_converters::{
         DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
-        PayloadConverter, SerializationContext, SerializationContextData, TemporalDeserializable,
-        TemporalSerializable,
+        PayloadConverter, ProstJsonSerializable, ProstSerializable, SerializationContext,
+        SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
-    protos::temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    protos::temporal::api::{
+        common::v1::{Payload, WorkflowExecution},
+        history::v1::history_event::Attributes,
+    },
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -377,5 +380,235 @@ async fn codec_encodes_and_decodes_payloads() {
     assert!(
         codec.decode_count() > 0,
         "Codec should have decoded payloads, but decode_count was 0"
+    );
+}
+
+struct ProtoActivities;
+#[activities]
+impl ProtoActivities {
+    #[activity]
+    async fn echo_binary_proto(
+        _ctx: ActivityContext,
+        input: ProstSerializable<WorkflowExecution>,
+    ) -> Result<ProstSerializable<WorkflowExecution>, ActivityError> {
+        let mut wf = input.0;
+        wf.run_id = format!("activity-{}", wf.run_id);
+        Ok(ProstSerializable(wf))
+    }
+
+    #[activity]
+    async fn echo_json_proto(
+        _ctx: ActivityContext,
+        input: ProstJsonSerializable<WorkflowExecution>,
+    ) -> Result<ProstJsonSerializable<WorkflowExecution>, ActivityError> {
+        let mut wf = input.0;
+        wf.run_id = format!("activity-{}", wf.run_id);
+        Ok(ProstJsonSerializable(wf))
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ProtoBinaryWorkflow;
+#[workflow_methods]
+impl ProtoBinaryWorkflow {
+    #[run]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        input: ProstSerializable<WorkflowExecution>,
+    ) -> WorkflowResult<ProstSerializable<WorkflowExecution>> {
+        let output = ctx
+            .start_activity(
+                ProtoActivities::echo_binary_proto,
+                input,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(output)
+    }
+}
+
+#[tokio::test]
+async fn prost_binary_round_trips_through_workflow() {
+    let wf_name = ProtoBinaryWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(ProtoActivities);
+    starter
+        .sdk_config
+        .register_workflow::<ProtoBinaryWorkflow>();
+    let mut worker = starter.worker().await;
+
+    let input = WorkflowExecution {
+        workflow_id: "test-wf".into(),
+        run_id: "test-run".into(),
+    };
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ProtoBinaryWorkflow::run,
+            ProstSerializable(input),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let output = handle.get_result(Default::default()).await.unwrap().0;
+    assert_eq!(
+        output,
+        WorkflowExecution {
+            workflow_id: "test-wf".into(),
+            run_id: "activity-test-run".into(),
+        }
+    );
+
+    // Verify the history payloads use binary/protobuf encoding
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(wf_name)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let started = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowExecutionStartedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find WorkflowExecutionStarted event");
+
+    let input_payload = &started.input.as_ref().unwrap().payloads[0];
+    assert_eq!(
+        input_payload.metadata.get("encoding").unwrap().as_slice(),
+        b"binary/protobuf",
+        "Workflow input should be encoded as binary/protobuf"
+    );
+    assert_eq!(
+        input_payload
+            .metadata
+            .get("messageType")
+            .unwrap()
+            .as_slice(),
+        b"temporal.api.common.v1.WorkflowExecution"
+    );
+
+    // Decode the raw payload back into the proto type to verify the bytes are valid
+    let decoded = <WorkflowExecution as prost::Message>::decode(input_payload.data.as_slice())
+        .expect("History payload should decode as a valid WorkflowExecution");
+    assert_eq!(decoded.workflow_id, "test-wf");
+    assert_eq!(decoded.run_id, "test-run");
+}
+
+#[workflow]
+#[derive(Default)]
+struct ProtoJsonWorkflow;
+#[workflow_methods]
+impl ProtoJsonWorkflow {
+    #[run]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        input: ProstJsonSerializable<WorkflowExecution>,
+    ) -> WorkflowResult<ProstJsonSerializable<WorkflowExecution>> {
+        let output = ctx
+            .start_activity(
+                ProtoActivities::echo_json_proto,
+                input,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        Ok(output)
+    }
+}
+
+#[tokio::test]
+async fn prost_json_round_trips_through_workflow() {
+    let wf_name = ProtoJsonWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(ProtoActivities);
+    starter.sdk_config.register_workflow::<ProtoJsonWorkflow>();
+    let mut worker = starter.worker().await;
+
+    let input = ProstJsonSerializable(WorkflowExecution {
+        workflow_id: "test-wf".into(),
+        run_id: "test-run".into(),
+    });
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ProtoJsonWorkflow::run,
+            input,
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let output = handle.get_result(Default::default()).await.unwrap().0;
+    assert_eq!(output.workflow_id, "test-wf");
+    assert_eq!(output.run_id, "activity-test-run");
+
+    // Verify the history payloads use json/protobuf encoding
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(wf_name)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let started = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::WorkflowExecutionStartedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find WorkflowExecutionStarted event");
+
+    let input_payload = &started.input.as_ref().unwrap().payloads[0];
+    assert_eq!(
+        input_payload.metadata.get("encoding").unwrap().as_slice(),
+        b"json/protobuf",
+        "Workflow input should be encoded as json/protobuf"
+    );
+    assert_eq!(
+        input_payload
+            .metadata
+            .get("messageType")
+            .unwrap()
+            .as_slice(),
+        b"temporal.api.common.v1.WorkflowExecution"
+    );
+
+    // Decode the raw payload back into the proto type to verify the JSON is valid
+    let decoded: WorkflowExecution = serde_json::from_slice(&input_payload.data)
+        .expect("History payload should decode as a valid WorkflowExecution");
+    assert_eq!(
+        decoded,
+        WorkflowExecution {
+            workflow_id: "test-wf".into(),
+            run_id: "test-run".into(),
+        }
     );
 }
