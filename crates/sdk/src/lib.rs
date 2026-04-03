@@ -539,9 +539,14 @@ impl Worker {
 
     /// Return a handle that can be used to initiate shutdown. This is useful because [Worker::run]
     /// takes self mutably, so you may want to obtain a handle for shutting down before running.
-    pub fn shutdown_handle(&self) -> impl Fn() + use<> {
+    pub fn shutdown_handle(
+        &self,
+    ) -> impl Fn() -> futures_util::future::BoxFuture<'static, ()> + use<> {
         let w = self.common.worker.clone();
-        move || w.initiate_shutdown()
+        move || {
+            let w = w.clone();
+            Box::pin(async move { w.initiate_shutdown().await })
+        }
     }
 
     /// Registers all activities on an activity implementer.

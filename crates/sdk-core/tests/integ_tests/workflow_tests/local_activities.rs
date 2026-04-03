@@ -2411,7 +2411,7 @@ async fn local_activities_can_be_delivered_during_shutdown() {
     let task = core.poll_workflow_activation().await.unwrap();
     // Initiate shutdown once we have the WF activation, but before replying that we want to do an
     // LA
-    core.initiate_shutdown();
+    core.initiate_shutdown().await;
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
         ScheduleLocalActivity {

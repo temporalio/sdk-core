@@ -928,9 +928,20 @@ pub extern "C" fn temporal_core_worker_request_workflow_eviction(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn temporal_core_worker_initiate_shutdown(worker: *mut Worker) {
+pub extern "C" fn temporal_core_worker_initiate_shutdown(
+    worker: *mut Worker,
+    user_data: *mut libc::c_void,
+    callback: WorkerCallback,
+) {
     let worker = unsafe { &*worker };
-    worker.worker.as_ref().unwrap().initiate_shutdown();
+    let core_worker = worker.worker.as_ref().unwrap().clone();
+    let user_data = UserDataHandle(user_data);
+    worker.runtime.core.tokio_handle().spawn(async move {
+        core_worker.initiate_shutdown().await;
+        unsafe {
+            callback(user_data.into(), std::ptr::null());
+        }
+    });
 }
 
 #[unsafe(no_mangle)]

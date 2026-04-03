@@ -210,7 +210,7 @@ async fn activity_has_deployment_stamp() {
             .await
             .unwrap();
         starter.wait_for_default_wf_finish().await.unwrap();
-        shutdown_handle();
+        shutdown_handle().await;
     };
     join!(
         async {

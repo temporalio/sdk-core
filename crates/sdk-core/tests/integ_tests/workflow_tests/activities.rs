@@ -1125,7 +1125,7 @@ async fn graceful_shutdown() {
     let shutdowner = async {
         // Wait for all acts to be started before initiating shutdown
         let _ = acts_started.acquire_many(10).await;
-        handle();
+        handle().await;
         // Kill workflow once all acts are cancelled. This also ensures we actually see all the
         // cancels, otherwise run_until_done will hang since the workflow won't complete.
         let _ = acts_done.acquire_many(10).await;
