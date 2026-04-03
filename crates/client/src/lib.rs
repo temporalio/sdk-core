@@ -54,6 +54,8 @@ use crate::{
 };
 use errors::*;
 use futures_util::{stream, stream::Stream};
+#[cfg(target_os = "espidf")]
+use hyper_util::rt::TokioIo;
 use parking_lot::RwLock;
 use std::{
     collections::{HashMap, VecDeque},
@@ -64,6 +66,8 @@ use std::{
     task::{Context, Poll},
     time::{Duration, SystemTime},
 };
+#[cfg(target_os = "espidf")]
+use std::net::{TcpStream as StdTcpStream, ToSocketAddrs};
 use temporalio_common::{
     HasWorkflowDefinition,
     data_converters::{DataConverter, SerializationContextData},
@@ -100,6 +104,10 @@ use tonic::{
     service::Interceptor,
     transport::{Channel, Endpoint},
 };
+#[cfg(target_os = "espidf")]
+use tokio::net::TcpStream;
+#[cfg(target_os = "espidf")]
+use tower::service_fn;
 use tower::ServiceBuilder;
 use uuid::Uuid;
 
@@ -170,7 +178,14 @@ impl Connection {
             let channel = if let Some(proxy) = options.http_connect_proxy.as_ref() {
                 proxy.connect_endpoint(&channel).await?
             } else {
-                channel.connect().await?
+                #[cfg(target_os = "espidf")]
+                {
+                    connect_endpoint_with_blocking_tcp(channel).await?
+                }
+                #[cfg(not(target_os = "espidf"))]
+                {
+                    channel.connect().await?
+                }
             };
             ServiceBuilder::new()
                 .layer_fn(move |channel| GrpcMetricSvc {
@@ -373,6 +388,40 @@ async fn add_tls_to_channel(
         return Err(ClientConnectError::TlsSupportNotCompiledIn);
     }
     Ok(channel)
+}
+
+#[cfg(target_os = "espidf")]
+async fn connect_endpoint_with_blocking_tcp(
+    endpoint: Endpoint,
+) -> Result<Channel, tonic::transport::Error> {
+    let svc_fn = service_fn(|uri: tonic::transport::Uri| async move {
+        let host = uri.host().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("missing host in URI {uri}"),
+            )
+        })?;
+        let port = uri.port_u16().unwrap_or_else(|| match uri.scheme_str() {
+            Some("https") => 443,
+            _ => 80,
+        });
+        let addr = format!("{host}:{port}")
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("failed to resolve URI {uri}"),
+                )
+            })?;
+        let stream = StdTcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
+        let _ = stream.set_nodelay(true);
+        stream.set_nonblocking(true)?;
+        let stream = TcpStream::from_std(stream)?;
+        Ok::<_, std::io::Error>(TokioIo::new(stream))
+    });
+
+    endpoint.connect_with_connector(svc_fn).await
 }
 
 fn parse_ascii_headers(
