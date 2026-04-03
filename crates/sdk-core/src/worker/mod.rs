@@ -64,7 +64,7 @@ use anyhow::bail;
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{StreamExt, stream};
 use gethostname::gethostname;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use slot_provider::SlotProvider;
 use std::{
     any::Any,
@@ -431,6 +431,8 @@ pub struct Worker {
     /// Set during validate() when the namespace has the poller_autoscaling capability,
     /// enabling scale-down on poll timeout even without an explicit scaling decision.
     poller_autoscaling: Arc<AtomicBool>,
+    /// Handle for the spawned ShutdownWorker RPC task, awaited during shutdown.
+    shutdown_rpc_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 struct AllPermitsTracker {
@@ -927,6 +929,7 @@ impl Worker {
             status: worker_status,
             graceful_poll_shutdown,
             poller_autoscaling,
+            shutdown_rpc_handle: Mutex::new(None),
         })
     }
 
@@ -944,43 +947,12 @@ impl Worker {
     /// [Worker::finalize_shutdown].
     pub async fn shutdown(&self) {
         self.initiate_shutdown();
-        {
-            *self.status.write() = WorkerStatus::ShuttingDown;
-        }
-        let heartbeat = self
-            .client_worker_registrator
-            .heartbeat_manager
-            .as_ref()
-            .map(|hm| hm.heartbeat_callback.clone()());
-        let sticky_name = self
-            .workflows
-            .as_ref()
-            .and_then(|wf| wf.get_sticky_queue_name())
-            .unwrap_or_default();
-        // This is a best effort call and we can still shutdown the worker if it fails
-        let task_queue_types = self.config.task_types.to_task_queue_types();
-        match self
-            .client
-            .shutdown_worker(
-                sticky_name,
-                self.config.task_queue.clone(),
-                task_queue_types,
-                heartbeat,
-            )
-            .await
-        {
-            Err(err)
-                if !matches!(
-                    err.code(),
-                    tonic::Code::Unimplemented | tonic::Code::Unavailable
-                ) =>
-            {
-                warn!(
-                    "shutdown_worker rpc errored during worker shutdown: {:?}",
-                    err
-                );
-            }
-            _ => {}
+
+        // Ensure the ShutdownWorker RPC completes before waiting for polls to drain,
+        // otherwise graceful poll shutdown deadlocks.
+        let handle = self.shutdown_rpc_handle.lock().take();
+        if let Some(handle) = handle {
+            let _ = handle.await;
         }
 
         // We need to wait for all local activities to finish so no more workflow task heartbeats
@@ -1375,8 +1347,10 @@ impl Worker {
         &self.config
     }
 
-    /// Initiate shutdown. See [Worker::shutdown], this is just a sync version that starts the
-    /// process. You can then wait on `shutdown` or [Worker::finalize_shutdown].
+    /// Initiate shutdown, including spawning the `ShutdownWorker` RPC so the server can complete
+    /// in-flight polls. The RPC runs in a background task and is awaited in [Worker::shutdown].
+    ///
+    /// You can then wait on `shutdown` or [Worker::finalize_shutdown].
     pub fn initiate_shutdown(&self) {
         if !self.shutdown_token.is_cancelled() {
             info!(
@@ -1385,6 +1359,7 @@ impl Worker {
                 "Initiated shutdown",
             );
         }
+        let already_initiated_shutdown = self.shutdown_token.is_cancelled();
         self.shutdown_token.cancel();
         {
             *self.status.write() = WorkerStatus::ShuttingDown;
@@ -1419,6 +1394,46 @@ impl Worker {
                 la_mgr.workflows_have_shutdown();
             }
         }
+
+        if already_initiated_shutdown {
+            return;
+        }
+
+        // Spawn the ShutdownWorker RPC so the server can complete in-flight polls.
+        // The handle is stored and awaited in shutdown() to ensure completion.
+        let client = self.client.clone();
+        let sticky_name = self
+            .workflows
+            .as_ref()
+            .and_then(|wf| wf.get_sticky_queue_name())
+            .unwrap_or_default();
+        let task_queue = self.config.task_queue.clone();
+        let task_queue_types = self.config.task_types.to_task_queue_types();
+        let heartbeat = self
+            .client_worker_registrator
+            .heartbeat_manager
+            .as_ref()
+            .map(|hm| hm.heartbeat_callback.clone()());
+        let handle = tokio::spawn(async move {
+            match client
+                .shutdown_worker(sticky_name, task_queue, task_queue_types, heartbeat)
+                .await
+            {
+                Err(err)
+                    if !matches!(
+                        err.code(),
+                        tonic::Code::Unimplemented | tonic::Code::Unavailable
+                    ) =>
+                {
+                    warn!(
+                        "shutdown_worker rpc errored during worker shutdown: {:?}",
+                        err
+                    );
+                }
+                _ => {}
+            }
+        });
+        *self.shutdown_rpc_handle.lock() = Some(handle);
     }
 
     /// Unique identifier for this worker instance.

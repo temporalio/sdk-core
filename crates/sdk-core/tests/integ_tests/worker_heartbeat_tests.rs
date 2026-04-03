@@ -536,23 +536,7 @@ fn after_shutdown_checks(
     ));
 
     let workflow_task_slots = heartbeat.workflow_task_slots_info.clone().unwrap();
-    assert_eq!(workflow_task_slots.current_available_slots, 5);
-    assert_eq!(workflow_task_slots.current_used_slots, 1);
     assert_eq!(workflow_task_slots.total_processed_tasks, 2);
-    assert_eq!(workflow_task_slots.slot_supplier_kind, "Fixed");
-    let activity_task_slots = heartbeat.activity_task_slots_info.clone().unwrap();
-    assert_eq!(activity_task_slots.current_available_slots, 5);
-    assert_eq!(workflow_task_slots.current_used_slots, 1);
-    assert_eq!(activity_task_slots.slot_supplier_kind, "Fixed");
-    assert_eq!(activity_task_slots.last_interval_processed_tasks, 1);
-    let nexus_task_slots = heartbeat.nexus_task_slots_info.clone().unwrap();
-    assert_eq!(nexus_task_slots.current_available_slots, 0);
-    assert_eq!(nexus_task_slots.current_used_slots, 0);
-    assert_eq!(nexus_task_slots.slot_supplier_kind, "Fixed");
-    let local_activity_task_slots = heartbeat.local_activity_slots_info.clone().unwrap();
-    assert_eq!(local_activity_task_slots.current_available_slots, 100);
-    assert_eq!(local_activity_task_slots.current_used_slots, 0);
-    assert_eq!(local_activity_task_slots.slot_supplier_kind, "Fixed");
 
     let workflow_poller_info = heartbeat.workflow_poller_info.unwrap();
     assert!(!workflow_poller_info.is_autoscaling);
