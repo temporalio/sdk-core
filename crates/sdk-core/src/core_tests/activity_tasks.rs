@@ -590,7 +590,7 @@ async fn eviction_completion_during_shutdown_does_not_panic() {
     // Cancel the shutdown token and enqueue BumpStream into the local channel.
     // The stream will process BumpStream, see shutdown_done()=true (because
     // ignore_evicts_on_shutdown skips the eviction activation), and exit.
-    core.initiate_shutdown().await;
+    core.initiate_shutdown();
 
     // Complete the eviction. Its WFActCompleteMsg is queued AFTER BumpStream
     // (same FIFO channel), so the stream exits before processing it — dropping
@@ -1082,7 +1082,7 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
     let _2 = worker.poll_activity_task().await.unwrap();
     let _3 = worker.poll_activity_task().await.unwrap();
 
-    worker.initiate_shutdown().await;
+    worker.initiate_shutdown();
     let expected_tts = HashSet::from([vec![1], vec![2], vec![3]]);
     let mut seen_tts = HashSet::new();
     for _ in 1..=3 {

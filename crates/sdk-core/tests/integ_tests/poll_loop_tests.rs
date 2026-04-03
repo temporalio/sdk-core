@@ -150,7 +150,7 @@ async fn run_scripted_test(name: &str, script: TestScript) {
             for r in results {
                 assert_eq!(r.unwrap(), "done");
             }
-            shutdown().await;
+            shutdown();
         }
         _ = runner => {
             panic!("worker exited before updates completed");

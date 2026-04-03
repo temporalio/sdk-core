@@ -388,7 +388,7 @@ async fn one_slot_worker_reports_available_slot() {
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
         )));
-        worker.initiate_shutdown().await;
+        worker.initiate_shutdown();
     };
     join!(wf_polling, act_polling, nexus_polling, testing);
 }
