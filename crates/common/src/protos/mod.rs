@@ -2932,10 +2932,10 @@ pub fn proto_ts_to_system_time(ts: &prost_types::Timestamp) -> Option<std::time:
 
 #[cfg(test)]
 mod tests {
-    use crate::protos::coresdk::activity_task;
-    use crate::protos::coresdk::activity_task::ActivityTask;
-    use crate::protos::temporal::api::failure::v1::Failure;
-    use crate::protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+    use crate::protos::{
+        coresdk::{activity_task, activity_task::ActivityTask},
+        temporal::api::{failure::v1::Failure, workflowservice::v1::PollActivityTaskQueueResponse},
+    };
     use anyhow::anyhow;
 
     #[test]
