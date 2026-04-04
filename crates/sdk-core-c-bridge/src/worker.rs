@@ -1163,13 +1163,15 @@ impl TryFrom<&WorkerOptions> for temporalio_sdk_core::WorkerConfig {
                         }
                     }
                     WorkerVersioningStrategy::DeploymentBased(dopts) => {
-                        let dvb = if let Ok(v) = dopts.default_versioning_behavior.try_into() {
-                            Some(v)
-                        } else {
-                            bail!(
-                                "Invalid default versioning behavior {}",
-                                dopts.default_versioning_behavior
-                            )
+                        let dvb = match dopts.default_versioning_behavior {
+                            0 => None,
+                            v => {
+                                if let Ok(behavior) = v.try_into() {
+                                    Some(behavior)
+                                } else {
+                                    bail!("Invalid default versioning behavior {}", v)
+                                }
+                            }
                         };
                         temporalio_sdk_core::WorkerVersioningStrategy::WorkerDeploymentBased(
                             temporalio_common::worker::WorkerDeploymentOptions {
@@ -1368,5 +1370,91 @@ impl<SK: SlotKind + Send + Sync + 'static> TryFrom<SlotSupplier>
                 temporalio_sdk_core::SlotSupplierOptions::Custom(cs.into_ss())
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ByteArrayRef;
+
+    fn fixed_slot_supplier(num_slots: usize) -> SlotSupplier {
+        SlotSupplier::FixedSize(FixedSizeSlotSupplier { num_slots })
+    }
+
+    fn simple_poller_behavior(max: usize) -> PollerBehavior {
+        let simple = Box::leak(Box::new(PollerBehaviorSimpleMaximum {
+            simple_maximum: max,
+        }));
+        PollerBehavior {
+            simple_maximum: simple as *const _,
+            autoscaling: std::ptr::null(),
+        }
+    }
+
+    fn base_worker_options(
+        namespace: &str,
+        task_queue: &str,
+        versioning_strategy: WorkerVersioningStrategy,
+    ) -> WorkerOptions {
+        WorkerOptions {
+            namespace: namespace.into(),
+            task_queue: task_queue.into(),
+            versioning_strategy,
+            identity_override: ByteArrayRef::empty(),
+            max_cached_workflows: 10,
+            tuner: TunerHolder {
+                workflow_slot_supplier: fixed_slot_supplier(10),
+                activity_slot_supplier: fixed_slot_supplier(10),
+                local_activity_slot_supplier: fixed_slot_supplier(10),
+                nexus_task_slot_supplier: fixed_slot_supplier(10),
+            },
+            task_types: WorkerTaskTypes {
+                enable_workflows: true,
+                enable_local_activities: true,
+                enable_remote_activities: true,
+                enable_nexus: false,
+            },
+            sticky_queue_schedule_to_start_timeout_millis: 0,
+            max_heartbeat_throttle_interval_millis: 60_000,
+            default_heartbeat_throttle_interval_millis: 1_000,
+            max_activities_per_second: 0.0,
+            max_task_queue_activities_per_second: 0.0,
+            graceful_shutdown_period_millis: 0,
+            workflow_task_poller_behavior: simple_poller_behavior(2),
+            nonsticky_to_sticky_poll_ratio: 0.2,
+            activity_task_poller_behavior: simple_poller_behavior(2),
+            nexus_task_poller_behavior: simple_poller_behavior(2),
+            nondeterminism_as_workflow_fail: false,
+            nondeterminism_as_workflow_fail_for_types: crate::ByteArrayRefArray::empty(),
+            plugins: crate::ByteArrayRefArray::empty(),
+            storage_drivers: crate::ByteArrayRefArray::empty(),
+        }
+    }
+
+    #[test]
+    fn deployment_based_versioning_off_with_unspecified_behavior_converts_to_none() {
+        // Regression test: when use_worker_versioning=false, the C bridge sends
+        // default_versioning_behavior=0 (Unspecified). This must map to None, not
+        // Some(Unspecified).
+        let opts = base_worker_options(
+            "default",
+            "test-queue",
+            WorkerVersioningStrategy::DeploymentBased(WorkerDeploymentOptions {
+                version: WorkerDeploymentVersion {
+                    deployment_name: "my-deployment".into(),
+                    build_id: "1.0".into(),
+                },
+                use_worker_versioning: false,
+                default_versioning_behavior: 0,
+            }),
+        );
+        let config = temporalio_sdk_core::WorkerConfig::try_from(&opts)
+            .expect("default_versioning_behavior=0 with use_worker_versioning=false should be accepted");
+        assert_eq!(
+            config.versioning_strategy.default_versioning_behavior(),
+            None,
+            "default_versioning_behavior should be None after converting from i32 value 0"
+        );
     }
 }
