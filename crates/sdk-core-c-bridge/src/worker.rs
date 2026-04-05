@@ -1449,8 +1449,9 @@ mod tests {
                 default_versioning_behavior: 0,
             }),
         );
-        let config = temporalio_sdk_core::WorkerConfig::try_from(&opts)
-            .expect("default_versioning_behavior=0 with use_worker_versioning=false should be accepted");
+        let config = temporalio_sdk_core::WorkerConfig::try_from(&opts).expect(
+            "default_versioning_behavior=0 with use_worker_versioning=false should be accepted",
+        );
         assert_eq!(
             config.versioning_strategy.default_versioning_behavior(),
             None,
