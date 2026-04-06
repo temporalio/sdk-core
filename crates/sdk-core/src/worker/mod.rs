@@ -1396,12 +1396,13 @@ impl Worker {
             }
         }
 
-        if already_initiated_shutdown {
+        // Spawn the ShutdownWorker RPC so the server can complete in-flight polls.
+        // The handle is stored and awaited in shutdown() to ensure completion.
+        let mut guard = self.shutdown_rpc_handle.lock();
+        if guard.is_some() || already_initiated_shutdown {
             return;
         }
 
-        // Spawn the ShutdownWorker RPC so the server can complete in-flight polls.
-        // The handle is stored and awaited in shutdown() to ensure completion.
         let client = self.client.clone();
         let sticky_name = self
             .workflows
@@ -1434,7 +1435,7 @@ impl Worker {
                 _ => {}
             }
         });
-        *self.shutdown_rpc_handle.lock() = Some(handle);
+        *guard = Some(handle);
     }
 
     /// Unique identifier for this worker instance.
