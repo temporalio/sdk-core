@@ -370,7 +370,7 @@ where
                         let shutdown_clone = shutdown.clone();
 
                         let r = if graceful_shutdown.load(Ordering::Relaxed) {
-                            // TEMP FIX: Give the server a reasonable window to
+                            // TEMP_FIX: Give the server a reasonable window to
                             // complete the poll after ShutdownWorker. Fall back
                             // to cancelling the poll if it takes too long, to
                             // avoid a 60s hang due to a server-side race
