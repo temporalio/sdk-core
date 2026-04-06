@@ -1,24 +1,19 @@
-use std::str::FromStr;
-
 use futures_util::StreamExt;
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions,
+    Client, ClientOptions, Connection,
+    envconfig::LoadClientConfigProfileOptions,
     schedules::{
         CreateScheduleOptions, ListSchedulesOptions, ScheduleAction, ScheduleOverlapPolicy,
         ScheduleSpec,
     },
 };
-use temporalio_sdk_core::Url;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let address = std::env::var("TEMPORAL_SERVICE_ADDRESS")
-        .unwrap_or_else(|_| "http://localhost:7233".to_string());
-    let namespace = std::env::var("TEMPORAL_NAMESPACE").unwrap_or_else(|_| "default".to_string());
-
-    let connection =
-        Connection::connect(ConnectionOptions::new(Url::from_str(&address)?).build()).await?;
-    let client = Client::new(connection, ClientOptions::new(namespace).build())?;
+    let (conn_opts, client_opts) =
+        ClientOptions::load_from_config(LoadClientConfigProfileOptions::default())?;
+    let connection = Connection::connect(conn_opts).await?;
+    let client = Client::new(connection, client_opts)?;
 
     let schedule_id = "demo-schedule";
     let handle = client
