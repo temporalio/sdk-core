@@ -81,20 +81,24 @@ impl GreetingWorkflow {
 
 ### Running a Worker
 
+The simplest way to configure a connection is with environment variables and/or a `temporal.toml`
+config file. See the [`envconfig` module docs](https://docs.rs/temporalio-client/latest/temporalio_client/envconfig/) for supported variables and
+the TOML format.
+
 ```rust
-use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
+use temporalio_client::{Client, ClientOptions, Connection, envconfig::LoadClientConfigProfileOptions};
 use temporalio_sdk::{Worker, WorkerOptions};
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
-use std::str::FromStr;
+use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = CoreRuntime::new_assume_tokio(RuntimeOptions::builder().build()?)?;
 
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build()
-    ).await?;
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     let worker_options = WorkerOptions::new("my-task-queue")
         .register_activities(MyActivities { counter: Default::default() })
@@ -341,22 +345,18 @@ among other operations.
 
 ```rust
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions,
+    Client, ClientOptions, Connection,
+    envconfig::LoadClientConfigProfileOptions,
     WorkflowOptions, GetWorkflowResultOptions,
 };
-use temporalio_sdk_core::{Url, CoreRuntime, RuntimeOptions};
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?)
-            .identity("my-client".to_string())
-            .build()
-    ).await?;
-
-    // "default" is your namespace
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     // Start a workflow
     let handle = client.start_workflow(
