@@ -12,7 +12,44 @@ will continue to evolve.
 
 ## Quick Start
 
-### Connecting and Starting Workflows
+### Connecting and Starting Workflows with Environment Configuration
+
+The simplest way to connect is to load connection settings from environment variables and/or a
+`temporal.toml` config file:
+
+```rust
+use temporalio_client::{
+    Client, Connection, WorkflowOptions, GetWorkflowResultOptions,
+    envconfig::LoadClientConfigProfileOptions,
+};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
+
+    // Start a workflow
+    let handle = client.start_workflow(
+        GreetingWorkflow::run,
+        "World".to_string(),
+        WorkflowOptions::new("my-task-queue", "greeting-workflow-1").build()
+    ).await?;
+
+    // Wait for the result
+    let result = handle.get_result(GetWorkflowResultOptions::default()).await?;
+    Ok(())
+}
+```
+
+This reads `TEMPORAL_ADDRESS`, `TEMPORAL_NAMESPACE`, `TEMPORAL_API_KEY`, TLS settings, and more
+from the environment. See the [`envconfig` module docs](https://docs.rs/temporalio-client/latest/temporalio_client/envconfig/) for the full list of
+supported variables and the TOML file format.
+
+### Connecting and Starting Workflows with Explicit Options
 
 ```rust
 use temporalio_client::{
