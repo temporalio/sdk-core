@@ -209,20 +209,22 @@ fn new_wft_poller(
         tonic::Status,
     >,
 > {
-    stream::unfold((poller, metrics, shutdown_token), |(poller, metrics, shutdown_token)| async move {
-        loop {
-            return match poller.poll().await {
-                Some(Ok((wft, permit))) => {
-                    if wft == PollWorkflowTaskQueueResponse::default() {
-                        if shutdown_token.is_cancelled() {
-                            poller.shutdown_box().await;
-                            return None;
+    stream::unfold(
+        (poller, metrics, shutdown_token),
+        |(poller, metrics, shutdown_token)| async move {
+            loop {
+                return match poller.poll().await {
+                    Some(Ok((wft, permit))) => {
+                        if wft == PollWorkflowTaskQueueResponse::default() {
+                            if shutdown_token.is_cancelled() {
+                                poller.shutdown_box().await;
+                                return None;
+                            }
+                            // We get the default proto in the event that the long poll times out.
+                            debug!("Poll wft timeout");
+                            metrics.wf_tq_poll_empty();
+                            continue;
                         }
-                        // We get the default proto in the event that the long poll times out.
-                        debug!("Poll wft timeout");
-                        metrics.wf_tq_poll_empty();
-                        continue;
-                    }
                         if let Some(dur) = wft.sched_to_start() {
                             metrics.wf_task_sched_to_start_latency(dur);
                         }
@@ -234,17 +236,11 @@ fn new_wft_poller(
                             }
                         };
                         metrics.wf_tq_poll_ok();
-                        Some((
-                            Ok((work, permit)),
-                            (poller, metrics, shutdown_token),
-                        ))
+                        Some((Ok((work, permit)), (poller, metrics, shutdown_token)))
                     }
                     Some(Err(e)) => {
                         warn!(error=?e, "Error while polling for workflow tasks");
-                        Some((
-                            Err(e),
-                            (poller, metrics, shutdown_token),
-                        ))
+                        Some((Err(e), (poller, metrics, shutdown_token)))
                     }
                     // If poller returns None, it's dead, thus we also return None to terminate
                     // this stream.
