@@ -1,8 +1,8 @@
 mod workflows;
 
 use temporalio_client::{
-    Client, ClientOptions, Connection, WorkflowGetResultOptions, WorkflowSignalOptions,
-    WorkflowStartOptions, envconfig::LoadClientConfigProfileOptions,
+    Client, ClientOptions, Connection, WorkflowGetResultOptions, WorkflowQueryOptions,
+    WorkflowSignalOptions, WorkflowStartOptions, envconfig::LoadClientConfigProfileOptions,
 };
 use workflows::UpdatableTimerWorkflow;
 
@@ -47,6 +47,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     println!("Updated deadline to: {near_future_ms}");
+    let curr_deadline = handle
+        .query(
+            UpdatableTimerWorkflow::get_deadline,
+            (),
+            WorkflowQueryOptions::default(),
+        )
+        .await?;
+    println!("Current deadline: {curr_deadline}");
 
     let result = handle
         .get_result(WorkflowGetResultOptions::default())
