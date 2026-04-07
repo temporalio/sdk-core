@@ -13,8 +13,8 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions,
-    WorkflowStartOptions, WorkflowTerminateOptions,
+    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
+    WorkflowTerminateOptions,
 };
 use temporalio_common::{
     prost_dur,
@@ -45,8 +45,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, ContinueAsNewOptions, WorkflowContext, WorkflowResult,
-    WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, CancellableFuture, ContinueAsNewOptions,
+    WorkflowContext, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -1238,7 +1238,11 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                     },
                 )
                 .await;
-            assert!(res.is_err_and(|e| e.is_timed_out()));
+            let err = res.unwrap_err();
+            assert!(
+                matches!(err, ActivityExecutionError::Timeout { .. }),
+                "Expected timeout got {err:?}"
+            );
             Ok(())
         }
     }

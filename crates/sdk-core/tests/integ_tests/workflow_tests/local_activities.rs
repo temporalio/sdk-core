@@ -21,7 +21,7 @@ use temporalio_client::{
     NamespacedClient, WorkflowExecuteUpdateOptions, WorkflowExecutionInfo, WorkflowStartOptions,
 };
 use temporalio_common::{
-    data_converters::{RawValue, TemporalError},
+    data_converters::RawValue,
     protos::{
         DEFAULT_ACTIVITY_TYPE, canned_histories,
         coresdk::{
@@ -641,19 +641,11 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 )
                 .await;
             let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed { source, .. } = &err {
-                if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                    let expected_tt = TimeoutType::try_from(timeout_type).unwrap();
-                    assert_matches!(
-                        cause.as_deref(),
-                        Some(TemporalError::Timeout { timeout_type, .. })
-                            if *timeout_type == expected_tt
-                    );
-                } else {
-                    panic!("expected Activity, got {source:?}");
-                }
+            let expected_tt = TimeoutType::try_from(timeout_type).unwrap();
+            if let ActivityExecutionError::Timeout { timeout_type, .. } = &err {
+                assert_eq!(*timeout_type, expected_tt);
             } else {
-                return Err(anyhow!("expected Failed, got {err:?}").into());
+                return Err(anyhow!("expected TimedOut, got {err:?}").into());
             }
             Ok(())
         }
@@ -727,7 +719,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
             assert!(
                 matches!(
                     res,
-                    Err(ActivityExecutionError::TimedOut {
+                    Err(ActivityExecutionError::Timeout {
                         timeout_type: TimeoutType::ScheduleToClose,
                         ..
                     })
@@ -2001,18 +1993,10 @@ async fn test_schedule_to_start_timeout() {
                 )
                 .await;
             let err = la_res.unwrap_err();
-            if let ActivityExecutionError::Failed { source, .. } = &err {
-                if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                    assert_matches!(
-                        cause.as_deref(),
-                        Some(TemporalError::Timeout { timeout_type, .. })
-                            if *timeout_type == TimeoutType::ScheduleToStart
-                    );
-                } else {
-                    panic!("expected Activity, got {source:?}");
-                }
+            if let ActivityExecutionError::Timeout { timeout_type, .. } = &err {
+                assert_eq!(*timeout_type, TimeoutType::ScheduleToStart);
             } else {
-                panic!("expected Failed, got {err:?}");
+                panic!("expected TimedOut, got {err:?}");
             }
             Ok(())
         }
@@ -2104,16 +2088,10 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
                 .await;
             if is_sched_to_start {
                 assert!(la_res.is_ok());
-            } else if let Err(ActivityExecutionError::Failed { ref source, .. }) = la_res {
-                if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                    assert_matches!(
-                        cause.as_deref(),
-                        Some(TemporalError::Timeout { timeout_type, .. })
-                            if *timeout_type == TimeoutType::ScheduleToClose
-                    );
-                } else {
-                    panic!("expected Activity, got {source:?}");
-                }
+            } else if let Err(ActivityExecutionError::Timeout { timeout_type, .. }) = &la_res {
+                assert_eq!(*timeout_type, TimeoutType::ScheduleToClose);
+            } else {
+                panic!("expected TimedOut, got {la_res:?}");
             }
             Ok(())
         }
@@ -2182,16 +2160,10 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
                 .await;
             if la_completes {
                 assert!(la_res.is_ok(), "Result should be ok was {la_res:?}");
-            } else if let Err(ActivityExecutionError::Failed { ref source, .. }) = la_res {
-                if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                    assert_matches!(
-                        cause.as_deref(),
-                        Some(TemporalError::Timeout { timeout_type, .. })
-                            if *timeout_type == TimeoutType::StartToClose
-                    );
-                } else {
-                    panic!("expected Activity, got {source:?}");
-                }
+            } else if let Err(ActivityExecutionError::Timeout { timeout_type, .. }) = &la_res {
+                assert_eq!(*timeout_type, TimeoutType::StartToClose);
+            } else {
+                panic!("expected TimedOut, got {la_res:?}");
             }
             Ok(())
         }
@@ -3308,21 +3280,11 @@ async fn cancel_after_act_starts_canned(
             la.cancel();
             ctx.timer(Duration::from_secs(1)).await;
             let resolution = la.await;
+            let err = resolution.unwrap_err();
             assert!(
-                matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
-                "got: {}",
-                resolution.as_ref().unwrap_err()
+                matches!(err, ActivityExecutionError::Cancelled { .. }),
+                "expected Cancelled, got: {err}"
             );
-            if let Err(ActivityExecutionError::Cancelled { source, .. }) = resolution {
-                if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                    assert_matches!(
-                        cause.as_ref().unwrap().as_ref(),
-                        TemporalError::Cancelled { .. }
-                    );
-                } else {
-                    panic!("Should be cancel: {source}");
-                }
-            }
             Ok(())
         }
     }

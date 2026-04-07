@@ -304,7 +304,7 @@ pub enum ActivityExecutionError {
     },
     /// The activity timed out.
     #[error("Activity timed out ({timeout_type:?}): {activity_type} ({activity_id})")]
-    TimedOut {
+    Timeout {
         /// Which kind of timeout.
         timeout_type: TimeoutType,
         /// Activity type name.
@@ -341,39 +341,6 @@ pub enum ActivityExecutionError {
 }
 
 impl ActivityExecutionError {
-    /// Returns `true` if the activity failed with an application error.
-    pub fn is_failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
-
-    /// Returns `true` if the activity timed out.
-    pub fn is_timed_out(&self) -> bool {
-        matches!(self, Self::TimedOut { .. })
-    }
-
-    /// Returns `true` if the activity was cancelled.
-    pub fn is_cancelled(&self) -> bool {
-        matches!(self, Self::Cancelled { .. })
-    }
-
-    /// Returns `true` if the activity was terminated.
-    pub fn is_terminated(&self) -> bool {
-        matches!(self, Self::Terminated { .. })
-    }
-
-    /// Returns the full [`TemporalError`] cause chain, if available.
-    ///
-    /// Present on all variants except [`Self::Serialization`].
-    pub fn temporal_error(&self) -> Option<&TemporalError> {
-        match self {
-            Self::Failed { source, .. }
-            | Self::TimedOut { source, .. }
-            | Self::Cancelled { source, .. }
-            | Self::Terminated { source, .. } => Some(source),
-            Self::Serialization(_) => None,
-        }
-    }
-
     /// Construct from a [`TemporalError`], classifying into the appropriate variant
     /// based on the error's shape.
     fn from_temporal_error(te: TemporalError) -> Self {
@@ -403,7 +370,7 @@ impl ActivityExecutionError {
                         retry_state,
                         source: Box::new(te),
                     },
-                    TemporalError::Timeout { timeout_type, .. } => Self::TimedOut {
+                    TemporalError::Timeout { timeout_type, .. } => Self::Timeout {
                         timeout_type: *timeout_type,
                         activity_type,
                         activity_id,
@@ -473,7 +440,7 @@ pub enum ChildWorkflowExecutionError {
     },
     /// The child workflow timed out.
     #[error("Child workflow timed out ({timeout_type:?}): {workflow_type} ({workflow_id})")]
-    TimedOut {
+    Timeout {
         /// Which kind of timeout.
         timeout_type: TimeoutType,
         /// Child workflow type name.
@@ -528,44 +495,6 @@ pub enum ChildWorkflowExecutionError {
 }
 
 impl ChildWorkflowExecutionError {
-    /// Returns `true` if the child workflow failed with an application error.
-    pub fn is_failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
-
-    /// Returns `true` if the child workflow timed out.
-    pub fn is_timed_out(&self) -> bool {
-        matches!(self, Self::TimedOut { .. })
-    }
-
-    /// Returns `true` if the child workflow was cancelled.
-    pub fn is_cancelled(&self) -> bool {
-        matches!(self, Self::Cancelled { .. })
-    }
-
-    /// Returns `true` if the child workflow was terminated.
-    pub fn is_terminated(&self) -> bool {
-        matches!(self, Self::Terminated { .. })
-    }
-
-    /// Returns `true` if the child workflow failed to start.
-    pub fn is_start_failed(&self) -> bool {
-        matches!(self, Self::StartFailed { .. })
-    }
-
-    /// Returns the full [`TemporalError`] cause chain, if available.
-    ///
-    /// Present on all variants except [`Self::StartFailed`] and [`Self::Serialization`].
-    pub fn temporal_error(&self) -> Option<&TemporalError> {
-        match self {
-            Self::Failed { source, .. }
-            | Self::TimedOut { source, .. }
-            | Self::Cancelled { source, .. }
-            | Self::Terminated { source, .. } => Some(source),
-            Self::StartFailed { .. } | Self::Serialization(_) => None,
-        }
-    }
-
     /// Construct from a [`TemporalError`], classifying into the appropriate variant
     /// based on the error's shape.
     fn from_temporal_error(te: TemporalError) -> Self {
@@ -591,7 +520,7 @@ impl ChildWorkflowExecutionError {
                         retry_state,
                         source: Box::new(te),
                     },
-                    TemporalError::Timeout { timeout_type, .. } => Self::TimedOut {
+                    TemporalError::Timeout { timeout_type, .. } => Self::Timeout {
                         timeout_type: *timeout_type,
                         workflow_type,
                         workflow_id,

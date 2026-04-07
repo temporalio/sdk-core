@@ -2,14 +2,11 @@ use crate::common::CoreWfStarter;
 use rstest::rstest;
 use std::{sync::Arc, time::Duration};
 use temporalio_client::{ActivityIdentifier, WorkflowStartOptions};
-use temporalio_common::{
-    data_converters::TemporalError,
-    protos::{
-        coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
-        temporal::api::{
-            common::v1::RetryPolicy,
-            failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
-        },
+use temporalio_common::protos::{
+    coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
+    temporal::api::{
+        common::v1::RetryPolicy,
+        failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
     },
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -138,21 +135,18 @@ async fn async_activity_completions(
                 }
                 Outcome::Failure => {
                     let err = activity_result.expect_err("expected failure");
-                    if let ActivityExecutionError::Failed { source, .. } = &err {
-                        // The failure we sent is wrapped in Activity { cause: Application }
-                        if let TemporalError::Activity { cause, .. } = source.as_ref() {
-                            let cause = cause.as_ref().expect("cause should be present");
-                            assert_eq!(cause.message().unwrap(), "async failure reason");
-                        } else {
-                            panic!("expected Activity, got {source:?}");
-                        }
+                    if let ActivityExecutionError::Failed { message, .. } = &err {
+                        assert_eq!(message, "async failure reason");
                     } else {
                         panic!("expected Failed, got {err:?}");
                     }
                 }
                 Outcome::Cancellation => {
                     let err = activity_result.expect_err("expected cancellation");
-                    assert!(err.is_cancelled(), "expected Cancelled, got {err:?}");
+                    assert!(
+                        matches!(err, ActivityExecutionError::Cancelled { .. }),
+                        "expected Cancelled, got {err:?}"
+                    );
                 }
             }
             Ok(())
