@@ -1,15 +1,15 @@
 mod options;
 
 pub use options::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
-    SignalData, TimerOptions,
+    ActivityOptions, ChildWorkflowOptions, ContinueAsNewOptions, LocalActivityOptions,
+    NexusOperationOptions, Signal, SignalData, TimerOptions,
 };
 pub use temporalio_common::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause;
 
 use crate::{
     CancelExternalWfResult, CancellableID, CancellableIDWithReason, CommandCreateRequest,
     CommandSubscribeChildWorkflowCompletion, NexusStartResult, RustWfCmd, SignalExternalWfResult,
-    SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
+    SupportsCancelReason, TimerResult, UnblockEvent, Unblockable, WorkflowTermination,
     workflow_context::options::IntoWorkflowCommand, workflow_executor::SdkWakeGuard,
 };
 use futures_util::{
@@ -37,11 +37,12 @@ use temporalio_common::{
     data_converters::{
         DataConverter, GenericPayloadConverter, PayloadConversionError, PayloadConverter,
         SerializationContext, SerializationContextData, TemporalDeserializable, TemporalError,
+        TemporalSerializable,
     },
     protos::{
         coresdk::{
             activity_result::{ActivityResolution, Cancellation, activity_resolution},
-            child_workflow::{ChildWorkflowResult, child_workflow_result},
+            child_workflow::ChildWorkflowResult,
             common::NamespacedWorkflowExecution,
             nexus::NexusOperationResult,
             workflow_activation::{
@@ -340,6 +341,39 @@ pub enum ActivityExecutionError {
 }
 
 impl ActivityExecutionError {
+    /// Returns `true` if the activity failed with an application error.
+    pub fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns `true` if the activity timed out.
+    pub fn is_timed_out(&self) -> bool {
+        matches!(self, Self::TimedOut { .. })
+    }
+
+    /// Returns `true` if the activity was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled { .. })
+    }
+
+    /// Returns `true` if the activity was terminated.
+    pub fn is_terminated(&self) -> bool {
+        matches!(self, Self::Terminated { .. })
+    }
+
+    /// Returns the full [`TemporalError`] cause chain, if available.
+    ///
+    /// Present on all variants except [`Self::Serialization`].
+    pub fn temporal_error(&self) -> Option<&TemporalError> {
+        match self {
+            Self::Failed { source, .. }
+            | Self::TimedOut { source, .. }
+            | Self::Cancelled { source, .. }
+            | Self::Terminated { source, .. } => Some(source),
+            Self::Serialization(_) => None,
+        }
+    }
+
     /// Construct from a [`TemporalError`], classifying into the appropriate variant
     /// based on the error's shape.
     fn from_temporal_error(te: TemporalError) -> Self {
@@ -404,7 +438,7 @@ impl ActivityExecutionError {
         let message = te
             .message()
             .map(str::to_owned)
-            .unwrap_or_else(|| "wowo look at this".to_owned());
+            .unwrap_or_else(|| te.to_string());
         Self::Failed {
             message,
             error_type: String::new(),
@@ -494,6 +528,44 @@ pub enum ChildWorkflowExecutionError {
 }
 
 impl ChildWorkflowExecutionError {
+    /// Returns `true` if the child workflow failed with an application error.
+    pub fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Returns `true` if the child workflow timed out.
+    pub fn is_timed_out(&self) -> bool {
+        matches!(self, Self::TimedOut { .. })
+    }
+
+    /// Returns `true` if the child workflow was cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        matches!(self, Self::Cancelled { .. })
+    }
+
+    /// Returns `true` if the child workflow was terminated.
+    pub fn is_terminated(&self) -> bool {
+        matches!(self, Self::Terminated { .. })
+    }
+
+    /// Returns `true` if the child workflow failed to start.
+    pub fn is_start_failed(&self) -> bool {
+        matches!(self, Self::StartFailed { .. })
+    }
+
+    /// Returns the full [`TemporalError`] cause chain, if available.
+    ///
+    /// Present on all variants except [`Self::StartFailed`] and [`Self::Serialization`].
+    pub fn temporal_error(&self) -> Option<&TemporalError> {
+        match self {
+            Self::Failed { source, .. }
+            | Self::TimedOut { source, .. }
+            | Self::Cancelled { source, .. }
+            | Self::Terminated { source, .. } => Some(source),
+            Self::StartFailed { .. } | Self::Serialization(_) => None,
+        }
+    }
+
     /// Construct from a [`TemporalError`], classifying into the appropriate variant
     /// based on the error's shape.
     fn from_temporal_error(te: TemporalError) -> Self {
@@ -573,8 +645,8 @@ impl ChildWorkflowExecutionError {
 #[derive(Debug, thiserror::Error)]
 pub enum ChildWorkflowSignalError {
     /// The signal delivery failed.
-    #[error("Child workflow signal failed: {}", .0.message)]
-    Failed(Box<Failure>),
+    #[error("Child workflow signal failed: {0}")]
+    Failed(#[source] Box<TemporalError>),
     /// Failed to serialize the signal input payload.
     #[error("Signal payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
@@ -1366,6 +1438,33 @@ impl<W> WorkflowContext<W> {
         result
     }
 
+    /// Signal that this workflow should continue as a new execution with the given input and
+    /// options.
+    ///
+    /// This always returns `Err(WorkflowTermination::ContinueAsNew(...))`, so callers should
+    /// propagate it with `?`:
+    ///
+    /// ```ignore
+    /// ctx.continue_as_new(&new_input, ContinueAsNewOptions::default())?;
+    /// ```
+    pub fn continue_as_new<I: TemporalSerializable + 'static>(
+        &self,
+        input: &I,
+        opts: ContinueAsNewOptions,
+    ) -> Result<std::convert::Infallible, WorkflowTermination> {
+        let pc = self.sync.base.inner.data_converter.payload_converter();
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: pc,
+        };
+        let arguments = pc
+            .to_payloads(&ctx, input)
+            .expect("continue_as_new input serialization should not fail");
+        let workflow_type = self.sync.workflow_initial_info().workflow_type.clone();
+        let proto = opts.into_proto(workflow_type, arguments);
+        Err(WorkflowTermination::continue_as_new(proto))
+    }
+
     /// Wait for some condition on workflow state to become true, yielding the workflow if not.
     ///
     /// The condition closure receives an immutable reference to the workflow state,
@@ -2085,7 +2184,7 @@ enum SignalChildFut<F> {
     Errored {
         error: Option<ChildWorkflowSignalError>,
     },
-    Running(F),
+    Running(F, DataConverter),
     Terminated,
 }
 
@@ -2093,8 +2192,13 @@ impl<F> SignalChildFut<F> {
     fn eager(err: ChildWorkflowSignalError) -> Self {
         Self::Errored { error: Some(err) }
     }
+
+    fn running(inner: F, data_converter: DataConverter) -> Self {
+        Self::Running(inner, data_converter)
+    }
 }
 
+// SAFETY: DataConverter contains only Arc fields, so it is Unpin.
 impl<F> Unpin for SignalChildFut<F> where F: Unpin {}
 
 impl<F> Future for SignalChildFut<F>
@@ -2109,11 +2213,12 @@ where
             SignalChildFut::Errored { error } => {
                 Poll::Ready(Err(error.take().expect("polled after completion")))
             }
-            SignalChildFut::Running(inner) => match Pin::new(inner).poll(cx) {
+            SignalChildFut::Running(inner, dc) => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
                 Poll::Ready(Err(failure)) => {
-                    Poll::Ready(Err(ChildWorkflowSignalError::Failed(Box::new(failure))))
+                    let te = dc.to_error(failure, &SerializationContextData::Workflow);
+                    Poll::Ready(Err(ChildWorkflowSignalError::Failed(Box::new(te))))
                 }
             },
             SignalChildFut::Terminated => panic!("polled after termination"),
@@ -2139,7 +2244,7 @@ where
     F: CancellableFuture<SignalExternalWfResult> + Unpin,
 {
     fn cancel(&self) {
-        if let SignalChildFut::Running(inner) = self {
+        if let SignalChildFut::Running(inner, _) = self {
             inner.cancel()
         }
     }
@@ -2191,7 +2296,10 @@ where
         };
         let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        SignalChildFut::Running(self.common.base_ctx.clone().send_signal_wf(target, signal))
+        SignalChildFut::running(
+            self.common.base_ctx.clone().send_signal_wf(target, signal),
+            self.common.data_converter.clone(),
+        )
     }
 }
 
@@ -2230,8 +2338,7 @@ impl ExternalWorkflowHandle {
             data: &SerializationContextData::Workflow,
             converter: pc,
         };
-        let payloads = match pc.to_payloads(&ctx, &input)
-        {
+        let payloads = match pc.to_payloads(&ctx, &input) {
             Ok(p) => p,
             Err(e) => {
                 return SignalExternalFut::SerializationError(Some(e));

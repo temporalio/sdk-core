@@ -251,7 +251,31 @@ pub enum ActivityError {
 }
 
 impl ActivityError {
-    /// Construct a cancelled error without details
+    /// Construct a retryable error from any error type.
+    pub fn retryable(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Retryable {
+            source: Box::new(source),
+            explicit_delay: None,
+        }
+    }
+
+    /// Construct a retryable error with an explicit delay before the next retry.
+    pub fn retryable_with_delay(
+        source: impl std::error::Error + Send + Sync + 'static,
+        delay: StdDuration,
+    ) -> Self {
+        Self::Retryable {
+            source: Box::new(source),
+            explicit_delay: Some(delay),
+        }
+    }
+
+    /// Construct a non-retryable error from any error type.
+    pub fn non_retryable(source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::NonRetryable(Box::new(source))
+    }
+
+    /// Construct a cancelled error without details.
     pub fn cancelled() -> Self {
         Self::Cancelled { details: None }
     }

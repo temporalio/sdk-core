@@ -101,9 +101,10 @@ pub use temporalio_common::protos::temporal::api::enums::v1::{RetryState, Timeou
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
-    RootWorkflowInfo, Signal, SignalData, StartChildWorkflowExecutionFailedCause,
-    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
+    ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions,
+    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
+    StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
+    TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{

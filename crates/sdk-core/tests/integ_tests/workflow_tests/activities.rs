@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowGetResultOptions,
+    ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions,
     WorkflowStartOptions, WorkflowTerminateOptions,
 };
 use temporalio_common::{
@@ -45,7 +45,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ActivityOptions, CancellableFuture, ContinueAsNewOptions, WorkflowContext, WorkflowResult,
+    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -279,7 +280,7 @@ async fn activity_non_retryable_failure() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    let result = handle.get_result(Default::default()).await;
+    let _result = handle.get_result(Default::default()).await;
 
     // Fetch history and find the ActivityTaskFailed event to inspect the failure
     // the worker actually sent.
@@ -1237,10 +1238,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                     },
                 )
                 .await;
-            assert!(res.is_err_and(|e| matches!(
-                e,
-                temporalio_sdk::ActivityExecutionError::TimedOut { .. }
-            )));
+            assert!(res.is_err_and(|e| e.is_timed_out()));
             Ok(())
         }
     }
@@ -1310,7 +1308,7 @@ async fn long_activity_timeout_repro() {
                 ctx.timer(Duration::from_secs(60 * 3)).await;
                 iter += 1;
                 if iter > 5000 {
-                    return Err(WorkflowTermination::continue_as_new(Default::default()));
+                    ctx.continue_as_new(&(), ContinueAsNewOptions::default())?;
                 }
             }
         }

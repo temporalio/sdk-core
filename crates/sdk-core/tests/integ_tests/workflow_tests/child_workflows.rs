@@ -478,7 +478,7 @@ impl ParentCancelsChildWf {
             .result()
             .await
             .expect_err("child should be cancelled");
-        assert_matches!(err, ChildWorkflowExecutionError::Cancelled { .. });
+        assert!(err.is_cancelled(), "expected Cancelled, got {err:?}");
         Ok(())
     }
 }
@@ -739,7 +739,7 @@ impl ParentWf {
         let started = start_res.map_err(|e| anyhow!(e))?;
         match (expectation, started.result().await) {
             (Expectation::Success, Ok(_)) => Ok(()),
-            (Expectation::Failure, Err(ChildWorkflowExecutionError::Failed { .. })) => Ok(()),
+            (Expectation::Failure, Err(e)) if e.is_failed() => Ok(()),
             _ => Err(anyhow!("Unexpected child WF status").into()),
         }
     }
@@ -842,8 +842,8 @@ impl CancelBeforeSendWf {
         );
         start.cancel();
         match start.await {
-            Err(ChildWorkflowExecutionError::Cancelled { .. }) => Ok(()),
-            _ => Err(anyhow!("Unexpected start status").into()),
+            Err(e) if e.is_cancelled() => Ok(()),
+            other => Err(anyhow!("Unexpected start status: {other:?}").into()),
         }
     }
 }
@@ -1445,12 +1445,13 @@ impl ParentOfFailingChild {
             .await
             .map_err(|e| anyhow!(e))?;
         let err = started.result().await.unwrap_err();
-        assert_matches!(
-            err,
-            ChildWorkflowExecutionError::Failed { ref message, .. }
-                if message.contains("child went boom"),
-            "expected Failed with child's message, got: {err:?}"
-        );
+        assert!(err.is_failed(), "expected Failed, got: {err:?}");
+        if let ChildWorkflowExecutionError::Failed { ref message, .. } = err {
+            assert!(
+                message.contains("child went boom"),
+                "expected message containing 'child went boom', got: {message}"
+            );
+        }
         Ok(())
     }
 }
@@ -1512,11 +1513,7 @@ impl ParentCancelsChild {
             .map_err(|e| anyhow!(e))?;
         started.cancel("test cancel".to_string());
         let err = started.result().await.unwrap_err();
-        assert_matches!(
-            err,
-            ChildWorkflowExecutionError::Cancelled { .. },
-            "expected Cancelled, got: {err:?}"
-        );
+        assert!(err.is_cancelled(), "expected Cancelled, got: {err:?}");
         Ok(())
     }
 }

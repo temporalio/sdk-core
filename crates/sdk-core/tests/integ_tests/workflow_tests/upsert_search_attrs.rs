@@ -17,7 +17,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
+use temporalio_sdk::{ContinueAsNewOptions, WorkflowContext, WorkflowResult};
 use temporalio_sdk_core::test_help::MockPollCfg;
 use uuid::Uuid;
 
@@ -42,10 +42,9 @@ impl SearchAttrUpdater {
             (SEARCH_ATTR_INT.to_string(), int_val),
         ]);
         if orig_val == 49 {
-            Err(WorkflowTermination::continue_as_new(Default::default()))
-        } else {
-            Ok(())
+            ctx.continue_as_new(&(), ContinueAsNewOptions::default())?;
         }
+        Ok(())
     }
 }
 

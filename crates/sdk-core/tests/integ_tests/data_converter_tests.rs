@@ -775,7 +775,7 @@ impl FailWithDetailsActivities {
             cause: None,
         };
 
-        Err(ActivityError::NonRetryable(Box::new(tf)))
+        Err(ActivityError::non_retryable(tf))
     }
 }
 
@@ -1014,7 +1014,7 @@ impl CodecFailActivities {
             cause: None,
         };
 
-        Err(ActivityError::NonRetryable(Box::new(tf)))
+        Err(ActivityError::non_retryable(tf))
     }
 }
 
@@ -1051,7 +1051,6 @@ impl ActivityCodecDecodeWorkflow {
         // converter + codec are wired up on the receive path, the error will be
         // a TemporalError with decoded detail payloads.
         let err_str = format!("{}", err);
-        assert_matches!(err, temporalio_sdk::ActivityExecutionError::Failed { .. });
         if let temporalio_sdk::ActivityExecutionError::Failed { source: e, .. } = err
             && let TemporalError::Activity {
                 cause: Some(tf), ..
