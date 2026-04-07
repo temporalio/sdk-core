@@ -380,7 +380,10 @@ where
                                 .then(|_| tokio::time::sleep(Duration::from_secs(5)));
                             tokio::select! {
                                 r = pf(timeout_override) => r,
-                                _ = graceful_interruptor => return,
+                                _ = graceful_interruptor => {
+                                    error!("hit TEMP_FIX: poll cancelled due to shutdown");
+                                    return
+                                },
                             }
                         } else {
                             let poll_interruptor = shutdown.cancelled().then(|_| async move {
