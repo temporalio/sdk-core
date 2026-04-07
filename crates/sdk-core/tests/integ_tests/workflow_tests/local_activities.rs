@@ -393,8 +393,8 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
             let resolution = la.await;
             assert!(
                 matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
-                "got: {}",
-                resolution.unwrap_err()
+                "got: {:?}",
+                resolution
             );
             Ok(())
         }
@@ -550,7 +550,7 @@ async fn cancel_after_act_starts(
             assert!(
                 matches!(resolution, Err(ActivityExecutionError::Cancelled { .. })),
                 "got: {:?}",
-                resolution.unwrap_err()
+                resolution
             );
             Ok(())
         }
@@ -645,7 +645,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
             if let ActivityExecutionError::Timeout { timeout_type, .. } = &err {
                 assert_eq!(*timeout_type, expected_tt);
             } else {
-                return Err(anyhow!("expected TimedOut, got {err:?}").into());
+                return Err(anyhow!("expected timeout, got {err:?}").into());
             }
             Ok(())
         }

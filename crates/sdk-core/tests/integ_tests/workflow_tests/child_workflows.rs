@@ -1407,10 +1407,6 @@ async fn cancel_child_after_cancel_external_uses_correct_seq() {
     worker.run_until_done().await.unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// Child workflow error paths: verify ChildWorkflowExecutionError variants
-// ---------------------------------------------------------------------------
-
 #[workflow]
 #[derive(Default)]
 struct FailingChildWf;
@@ -1485,7 +1481,7 @@ struct CancellableChildWf;
 impl CancellableChildWf {
     #[run]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        ctx.timer(Duration::from_secs(3600)).await;
+        ctx.wait_condition(|_| false).await;
         Ok(())
     }
 }

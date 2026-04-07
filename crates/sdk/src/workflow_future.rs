@@ -807,7 +807,7 @@ fn anyhow_to_box(e: anyhow::Error) -> Box<dyn std::error::Error + Send + Sync + 
     use temporalio_common::data_converters::TemporalError;
     match e.downcast::<TemporalError>() {
         Ok(te) => Box::new(te),
-        Err(e) => Box::<dyn std::error::Error + Send + Sync>::from(e),
+        Err(e) => e.into_boxed_dyn_error(),
     }
 }
 

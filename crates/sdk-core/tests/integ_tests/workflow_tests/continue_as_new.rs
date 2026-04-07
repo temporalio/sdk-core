@@ -139,7 +139,7 @@ impl ContinueAsNewSuggestedWf {
         ctx.timer(Duration::from_millis(500)).await;
         // Second WFT: flag should be true (set on WFT started event 8)
         assert!(ctx.continue_as_new_suggested());
-        ctx.continue_as_new(&[1u8], ContinueAsNewOptions::default())?;
+        ctx.continue_as_new(&(), ContinueAsNewOptions::default())?;
         Ok(())
     }
 }

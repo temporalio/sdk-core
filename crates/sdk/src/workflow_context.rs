@@ -37,7 +37,6 @@ use temporalio_common::{
     data_converters::{
         DataConverter, GenericPayloadConverter, PayloadConversionError, PayloadConverter,
         SerializationContext, SerializationContextData, TemporalDeserializable, TemporalError,
-        TemporalSerializable,
     },
     protos::{
         coresdk::{
@@ -280,7 +279,7 @@ impl WorkflowContextView {
     }
 }
 
-/// Error returned when a workflow awaits an activity result.
+/// Error type for activity execution outcomes.
 #[derive(Debug, thiserror::Error)]
 pub enum ActivityExecutionError {
     /// The activity failed with an application error.
@@ -1370,17 +1369,19 @@ impl<W> WorkflowContext<W> {
     /// Signal that this workflow should continue as a new execution with the given input and
     /// options.
     ///
-    /// This always returns `Err(WorkflowTermination::ContinueAsNew(...))`, so callers should
-    /// propagate it with `?`:
+    /// This always returns an `Err` which should be propigated
     ///
     /// ```ignore
     /// ctx.continue_as_new(&new_input, ContinueAsNewOptions::default())?;
     /// ```
-    pub fn continue_as_new<I: TemporalSerializable + 'static>(
+    pub fn continue_as_new(
         &self,
-        input: &I,
+        input: &<W::Run as WorkflowDefinition>::Input,
         opts: ContinueAsNewOptions,
-    ) -> Result<std::convert::Infallible, WorkflowTermination> {
+    ) -> Result<std::convert::Infallible, WorkflowTermination>
+    where
+        W: crate::workflows::WorkflowImplementation,
+    {
         let pc = self.sync.base.inner.data_converter.payload_converter();
         let ctx = SerializationContext {
             data: &SerializationContextData::Workflow,
@@ -1388,7 +1389,7 @@ impl<W> WorkflowContext<W> {
         };
         let arguments = pc
             .to_payloads(&ctx, input)
-            .expect("continue_as_new input serialization should not fail");
+            .map_err(WorkflowTermination::failed)?;
         let workflow_type = self.sync.workflow_initial_info().workflow_type.clone();
         let proto = opts.into_proto(workflow_type, arguments);
         Err(WorkflowTermination::continue_as_new(proto))

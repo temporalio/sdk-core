@@ -7,7 +7,9 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{Client, ClientOptions, UntypedWorkflow, WorkflowStartOptions};
+use temporalio_client::{
+    Client, ClientOptions, UntypedWorkflow, WorkflowGetResultError, WorkflowStartOptions,
+};
 use temporalio_common::{
     data_converters::{
         DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
@@ -282,15 +284,15 @@ async fn failing_workflow_produces_failure_with_message() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    let message = res
-        .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalError")
-        .message()
-        .unwrap();
-    assert!(
-        message.contains("intentional failure"),
-        "failure message should contain the workflow error, got: {message}",
-    );
+    if let WorkflowGetResultError::Failed(ref te) = res {
+        let message = te.message().unwrap();
+        assert!(
+            message.contains("intentional failure"),
+            "failure message should contain the workflow error, got: {message}",
+        );
+    } else {
+        panic!("expected Failed, got: {res:?}");
+    }
 }
 
 #[workflow]
@@ -354,15 +356,15 @@ async fn activity_failure_propagates_through_workflow() {
     worker.run_until_done().await.unwrap();
 
     let res = handle.get_result(Default::default()).await.unwrap_err();
-    let message = res
-        .as_temporal_failure()
-        .expect("Failed variant should downcast to TemporalError")
-        .message()
-        .unwrap();
-    assert!(
-        message.contains("activity failed"),
-        "workflow failure should mention the activity error, got: {message}",
-    );
+    if let WorkflowGetResultError::Failed(ref te) = res {
+        let message = te.message().unwrap();
+        assert!(
+            message.contains("activity failed"),
+            "workflow failure should mention the activity error, got: {message}",
+        );
+    } else {
+        panic!("expected Failed, got: {res:?}");
+    }
 }
 
 /// A codec that XORs payload data with a key and tracks encode/decode operations.
@@ -775,7 +777,7 @@ impl FailWithDetailsActivities {
             cause: None,
         };
 
-        Err(ActivityError::non_retryable(tf))
+        Err(ActivityError::NonRetryable(tf.into()))
     }
 }
 
@@ -1014,7 +1016,7 @@ impl CodecFailActivities {
             cause: None,
         };
 
-        Err(ActivityError::non_retryable(tf))
+        Err(ActivityError::NonRetryable(tf.into()))
     }
 }
 

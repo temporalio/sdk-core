@@ -435,7 +435,8 @@ impl IntoWorkflowCommand for NexusOperationOptions {
 /// Options for continuing a workflow as a new execution.
 ///
 /// All fields are optional. Unset fields inherit the current workflow's values where applicable.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, bon::Builder)]
+#[non_exhaustive]
 pub struct ContinueAsNewOptions {
     /// Override the workflow type for the new execution. If `None`, reuses the current type.
     pub workflow_type: Option<String>,

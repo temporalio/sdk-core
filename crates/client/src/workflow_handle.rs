@@ -41,7 +41,7 @@ use uuid::Uuid;
 /// Enumerates terminal states for a particular workflow execution
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum WorkflowExecutionResult<T> {
+pub(crate) enum WorkflowExecutionResult<T> {
     /// The workflow finished successfully
     Succeeded(T),
     /// The workflow finished in failure
@@ -281,7 +281,7 @@ where
             WorkflowExecutionResult::Terminated { details } => {
                 Err(WorkflowGetResultError::Terminated { details })
             }
-            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::TimedOut),
+            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::Timeout),
             WorkflowExecutionResult::ContinuedAsNew => Err(WorkflowGetResultError::ContinuedAsNew),
         }
     }

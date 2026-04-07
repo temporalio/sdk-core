@@ -140,15 +140,6 @@ pub enum WorkflowUpdateError {
 }
 
 impl WorkflowUpdateError {
-    /// If this is a `Failed` variant, returns a reference to the inner
-    /// [`TemporalError`]. Returns `None` for other variants.
-    pub fn as_temporal_failure(&self) -> Option<&TemporalError> {
-        match self {
-            Self::Failed(tf) => Some(tf),
-            _ => None,
-        }
-    }
-
     pub(crate) fn from_status(status: tonic::Status) -> Self {
         if status.code() == Code::NotFound {
             Self::NotFound(status)
@@ -182,7 +173,7 @@ pub enum WorkflowGetResultError {
 
     /// The workflow timed out.
     #[error("Workflow timed out")]
-    TimedOut,
+    Timeout,
 
     /// The workflow continued as new.
     #[error("Workflow continued as new")]
@@ -217,15 +208,6 @@ impl From<WorkflowInteractionError> for WorkflowGetResultError {
 }
 
 impl WorkflowGetResultError {
-    /// If this is a `Failed` variant, returns a reference to the inner
-    /// [`TemporalError`]. Returns `None` for other variants.
-    pub fn as_temporal_failure(&self) -> Option<&TemporalError> {
-        match self {
-            Self::Failed(tf) => Some(tf),
-            _ => None,
-        }
-    }
-
     /// Returns `true` if this error represents a workflow-level non-success outcome
     /// (Failed, Cancelled, Terminated, TimedOut, or ContinuedAsNew) rather than an
     /// infrastructure/RPC error.
@@ -235,7 +217,7 @@ impl WorkflowGetResultError {
             Self::Failed(_)
                 | Self::Cancelled { .. }
                 | Self::Terminated { .. }
-                | Self::TimedOut
+                | Self::Timeout
                 | Self::ContinuedAsNew
         )
     }
