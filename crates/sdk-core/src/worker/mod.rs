@@ -952,7 +952,9 @@ impl Worker {
         // otherwise graceful poll shutdown deadlocks.
         let handle = self.shutdown_rpc_handle.lock().take();
         if let Some(handle) = handle {
+            error!("shutdown: awaiting shutdown_worker rpc handle");
             let _ = handle.await;
+            error!("shutdown: shutdown_worker rpc handle completed");
         }
 
         // We need to wait for all local activities to finish so no more workflow task heartbeats
@@ -1417,6 +1419,7 @@ impl Worker {
             .as_ref()
             .map(|hm| hm.heartbeat_callback.clone()());
         let handle = tokio::spawn(async move {
+            error!("shutdown_worker rpc: sending request");
             match client
                 .shutdown_worker(sticky_name, task_queue, task_queue_types, heartbeat)
                 .await
@@ -1432,7 +1435,9 @@ impl Worker {
                         err
                     );
                 }
-                _ => {}
+                _ => {
+                    error!("shutdown_worker rpc: returned successfully");
+                }
             }
         });
         *guard = Some(handle);
