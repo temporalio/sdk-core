@@ -209,39 +209,20 @@ fn new_wft_poller(
         tonic::Status,
     >,
 > {
-    stream::unfold(
-        (poller, metrics, shutdown_token, false),
-        |(poller, metrics, shutdown_token, mut poller_was_shutdown)| async move {
-            loop {
-                let poll = poller.poll();
-                let result = if poller_was_shutdown {
-                    poll.await
-                } else {
-                    tokio::select! {
-                        biased;
-                        _ = shutdown_token.cancelled() => {
-                            poller.notify_shutdown();
-                            poller_was_shutdown = true;
-                            continue;
+    stream::unfold((poller, metrics, shutdown_token), |(poller, metrics, shutdown_token)| async move {
+        loop {
+            return match poller.poll().await {
+                Some(Ok((wft, permit))) => {
+                    if wft == PollWorkflowTaskQueueResponse::default() {
+                        if shutdown_token.is_cancelled() {
+                            poller.shutdown_box().await;
+                            return None;
                         }
-                        r = poll => r,
+                        // We get the default proto in the event that the long poll times out.
+                        debug!("Poll wft timeout");
+                        metrics.wf_tq_poll_empty();
+                        continue;
                     }
-                };
-                return match result {
-                    Some(Ok((wft, permit))) => {
-                        if wft == PollWorkflowTaskQueueResponse::default() {
-                            if poller_was_shutdown {
-                                // Server sent an empty response after we initiated
-                                // shutdown — this is the graceful shutdown signal.
-                                poller.shutdown_box().await;
-                                return None;
-                            }
-                            // We get the default proto in the event that the long poll
-                            // times out.
-                            debug!("Poll wft timeout");
-                            metrics.wf_tq_poll_empty();
-                            continue;
-                        }
                         if let Some(dur) = wft.sched_to_start() {
                             metrics.wf_task_sched_to_start_latency(dur);
                         }
@@ -255,14 +236,14 @@ fn new_wft_poller(
                         metrics.wf_tq_poll_ok();
                         Some((
                             Ok((work, permit)),
-                            (poller, metrics, shutdown_token, poller_was_shutdown),
+                            (poller, metrics, shutdown_token),
                         ))
                     }
                     Some(Err(e)) => {
                         warn!(error=?e, "Error while polling for workflow tasks");
                         Some((
                             Err(e),
-                            (poller, metrics, shutdown_token, poller_was_shutdown),
+                            (poller, metrics, shutdown_token),
                         ))
                     }
                     // If poller returns None, it's dead, thus we also return None to terminate
