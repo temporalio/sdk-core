@@ -4,7 +4,6 @@ use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 
 #[workflow]
-#[derive(Default)]
 pub struct UpdatableTimerWorkflow {
     deadline_ms: u64,
     deadline_version: u64,
@@ -12,15 +11,16 @@ pub struct UpdatableTimerWorkflow {
 
 #[workflow_methods]
 impl UpdatableTimerWorkflow {
-    #[run]
-    pub async fn run(
-        ctx: &mut WorkflowContext<Self>,
-        initial_deadline_ms: u64,
-    ) -> WorkflowResult<String> {
-        ctx.state_mut(|s| {
-            s.deadline_ms = initial_deadline_ms;
-        });
+    #[init]
+    pub fn new(_ctx: &WorkflowContextView, initial_deadline_ms: u64) -> Self {
+        Self {
+            deadline_ms: initial_deadline_ms,
+            deadline_version: 0,
+        }
+    }
 
+    #[run]
+    pub async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<String> {
         loop {
             let current_version = ctx.state(|s| s.deadline_version);
             let deadline_ms = ctx.state(|s| s.deadline_ms);

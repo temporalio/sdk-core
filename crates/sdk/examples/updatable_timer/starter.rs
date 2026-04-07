@@ -30,8 +30,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Started workflow, run_id: {:?}", handle.run_id());
     println!("Initial deadline: {far_future_ms}");
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
     let near_future_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
