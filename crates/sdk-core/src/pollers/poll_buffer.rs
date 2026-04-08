@@ -377,7 +377,7 @@ where
                             // (temporalio/temporal#9545).
                             let graceful_interruptor = shutdown_clone
                                 .cancelled()
-                                .then(|_| tokio::time::sleep(Duration::from_secs(5)));
+                                .then(|_| tokio::time::sleep(Duration::from_millis(500)));
                             tokio::select! {
                                 r = pf(timeout_override) => r,
                                 _ = graceful_interruptor => {

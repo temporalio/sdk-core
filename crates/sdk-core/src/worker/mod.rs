@@ -980,8 +980,8 @@ impl Worker {
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
-            // TEMP: Shutdown can take 5s longer due to TEMP_FIX in poll_buffer.rs
-            _ = tokio::time::sleep(Duration::from_secs(6)) => {
+            // TEMP: Shutdown can take 500ms longer due to TEMP_FIX in poll_buffer.rs
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
         }
