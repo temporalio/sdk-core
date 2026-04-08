@@ -52,6 +52,10 @@ impl HttpConnectProxyOptions {
         &self,
         uri: tonic::transport::Uri,
     ) -> anyhow::Result<hyper::upgrade::Upgraded> {
+        // When no explicit port is present on the provided uri this produces
+        // "CONNECT example.com HTTP/1.1". violating RFC 9110-9.3.6 which
+        // requires (host:port).
+        let uri = ensure_connect_authority_port(uri);
         debug!("Connecting to {} via proxy at {}", uri, self.target_addr);
         // Create CONNECT request
         let mut req_build = hyper::Request::builder().method("CONNECT").uri(uri);
@@ -205,5 +209,110 @@ impl Connection for ProxyStream {
             #[cfg(unix)]
             ProxyStream::Unix(_) => Connected::new(),
         }
+    }
+}
+
+/// Ensure the URI authority includes an explicit port so that hyper emits a
+/// RFC 9110-compliant CONNECT request-target (authority-form requires host:port).
+fn ensure_connect_authority_port(uri: tonic::transport::Uri) -> tonic::transport::Uri {
+    if uri.port().is_some() {
+        return uri;
+    }
+    let port = match uri.scheme_str() {
+        Some("https") => 443,
+        Some("http") => 80,
+        _ => return uri,
+    };
+    let mut parts = uri.into_parts();
+    if let Some(ref authority) = parts.authority
+        && let Ok(new_auth) = format!("{}:{}", authority.host(), port).parse()
+    {
+        parts.authority = Some(new_auth);
+    }
+    tonic::transport::Uri::from_parts(parts).expect("adding port to valid URI should not fail")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+    };
+
+    struct CapturedConnect {
+        request_line: String,
+        headers: Vec<String>,
+    }
+
+    async fn mock_proxy() -> (String, tokio::task::JoinHandle<CapturedConnect>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).await.unwrap();
+            let mut headers = Vec::new();
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                headers.push(line.trim_end().to_string());
+            }
+            reader
+                .into_inner()
+                .write_all(b"HTTP/1.1 200 OK\r\n\r\n")
+                .await
+                .unwrap();
+            CapturedConnect {
+                request_line,
+                headers,
+            }
+        });
+        (addr, handle)
+    }
+
+    #[rstest::rstest]
+    #[case("https://example.com/some/path", "CONNECT example.com:443 HTTP/1.1")]
+    #[case("http://example.com", "CONNECT example.com:80 HTTP/1.1")]
+    #[case("https://example.com:7233", "CONNECT example.com:7233 HTTP/1.1")]
+    #[tokio::test]
+    async fn connect_request_line(#[case] uri: &str, #[case] expected: &str) {
+        let (proxy_addr, handle) = mock_proxy().await;
+        let opts = HttpConnectProxyOptions {
+            target_addr: proxy_addr,
+            basic_auth: None,
+        };
+        let uri: tonic::transport::Uri = uri.parse().unwrap();
+        let _ = opts.connect(uri).await;
+
+        let captured = handle.await.unwrap();
+        assert_eq!(captured.request_line.trim(), expected);
+    }
+
+    #[tokio::test]
+    async fn connect_includes_basic_auth() {
+        let (proxy_addr, handle) = mock_proxy().await;
+        let opts = HttpConnectProxyOptions {
+            target_addr: proxy_addr,
+            basic_auth: Some(("user".to_string(), "pass".to_string())),
+        };
+        let uri: tonic::transport::Uri = "https://example.com:7233".parse().unwrap();
+        let _ = opts.connect(uri).await;
+
+        let captured = handle.await.unwrap();
+        let creds = BASE64_STANDARD.encode("user:pass");
+        let auth_header = captured
+            .headers
+            .iter()
+            .find(|h| h.to_lowercase().starts_with("proxy-authorization:"))
+            .expect("missing proxy-authorization header");
+        assert_eq!(
+            auth_header.trim(),
+            format!("proxy-authorization: Basic {creds}")
+        );
     }
 }
