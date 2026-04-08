@@ -528,7 +528,9 @@ impl Workflows {
                 self.handle_activation_failed(run_id, completion_time, outcome)
                     .await
             }
-            ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
+            ActivationCompleteOutcome::WFTFailedDontReport => {
+                WFTReportStatus::DropWft { completion_time }
+            }
             ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         }
     }
@@ -1197,8 +1199,21 @@ enum WFTReportStatus {
     /// work to be done. EX: Running LAs.
     NotReported,
     /// We didn't report, but we want to clear the outstanding workflow task anyway. See
-    /// [ActivationCompleteOutcome::WFTFailedDontReport]
-    DropWft,
+    /// [ActivationCompleteOutcome::WFTFailedDontReport].
+    DropWft { completion_time: Instant },
+}
+impl WFTReportStatus {
+    fn completion_time(&self) -> Option<Instant> {
+        match self {
+            WFTReportStatus::Reported {
+                completion_time, ..
+            }
+            | WFTReportStatus::DropWft {
+                completion_time, ..
+            } => Some(*completion_time),
+            WFTReportStatus::NotReported => None,
+        }
+    }
 }
 #[derive(Debug, Default)]
 struct BufferedTasks {
