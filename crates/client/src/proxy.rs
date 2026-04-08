@@ -52,9 +52,6 @@ impl HttpConnectProxyOptions {
         &self,
         uri: tonic::transport::Uri,
     ) -> anyhow::Result<hyper::upgrade::Upgraded> {
-        // When no explicit port is present on the provided uri this produces
-        // "CONNECT example.com HTTP/1.1". violating RFC 9110-9.3.6 which
-        // requires (host:port).
         let uri = ensure_connect_authority_port(uri);
         debug!("Connecting to {} via proxy at {}", uri, self.target_addr);
         // Create CONNECT request
