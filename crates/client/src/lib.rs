@@ -75,10 +75,10 @@ use temporalio_common::{
         temporal::api::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
             common::v1::{Memo, Payload, SearchAttributes, WorkflowType},
-            sdk::v1::UserMetadata,
             enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
             errordetails::v1::WorkflowExecutionAlreadyStartedFailure,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
+            sdk::v1::UserMetadata,
             taskqueue::v1::TaskQueue,
             testservice::v1::test_service_client::TestServiceClient,
             workflow::v1 as workflow,
@@ -1028,15 +1028,19 @@ where
         let workflow_id = options.workflow_id.clone();
         let task_queue_name = options.task_queue.clone();
 
-        let user_metadata =
-            if options.static_summary.is_some() || options.static_details.is_some() {
-                Some(UserMetadata {
-                    summary: options.static_summary.and_then(|s| s.as_json_payload().ok()),
-                    details: options.static_details.and_then(|s| s.as_json_payload().ok()),
-                })
-            } else {
-                None
-            };
+        let user_metadata = if options.static_summary.is_some() || options.static_details.is_some()
+        {
+            Some(UserMetadata {
+                summary: options
+                    .static_summary
+                    .and_then(|s| s.as_json_payload().ok()),
+                details: options
+                    .static_details
+                    .and_then(|s| s.as_json_payload().ok()),
+            })
+        } else {
+            None
+        };
 
         let run_id = if let Some(start_signal) = options.start_signal {
             // Use signal-with-start when a start_signal is provided

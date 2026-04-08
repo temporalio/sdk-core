@@ -14,7 +14,6 @@ use std::{
     sync::mpsc::Receiver,
     task::{Context, Poll},
 };
-
 use temporalio_common::{
     data_converters::PayloadConverter,
     protos::{
@@ -251,9 +250,6 @@ impl WorkflowFuture {
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
                         // Build the proto-JSON representation of WorkflowMetadata.
-                        // The Go SDK uses "json/protobuf" (proto JSON) encoding, so we match that.
-                        // Proto JSON uses lowerCamelCase field names; the only field we set is
-                        // `current_details` → `currentDetails`.
                         let details = self.base_ctx.current_details();
                         let json_bytes = if details.is_empty() {
                             b"{}".to_vec()

@@ -413,8 +413,6 @@ async fn query_returns_workflow_context_view_info() {
     worker.run().await.unwrap();
 }
 
-// ── current_details integration test ────────────────────────────────────────
-
 /// Workflow that sets current_details and then waits for a signal before completing.
 /// The wait ensures the workflow stays alive when the metadata query arrives.
 #[workflow]
@@ -475,7 +473,10 @@ async fn workflow_metadata_query_returns_current_details() {
                     .commands
                     .iter()
                     .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
-                assert!(!has_complete, "Workflow should not complete on first activation");
+                assert!(
+                    !has_complete,
+                    "Workflow should not complete on first activation"
+                );
             })
             .then(|wft| {
                 // Second activation: the metadata query response.
