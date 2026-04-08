@@ -17,7 +17,7 @@ pub(crate) use history_update::HistoryUpdate;
 use crate::{
     MetricsContext, WorkerConfig,
     abstractions::{
-        MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic,
+        MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
         take_cell::TakeCell,
     },
     internal_flags::InternalFlags,
@@ -233,21 +233,18 @@ impl Workflows {
                     while let Some(output) = stream.next().await {
                         match output {
                             Ok(o) => {
-                                for fetchreq in o.fetch_histories {
-                                    fetch_tx
-                                        .send(fetchreq)
-                                        .expect("Fetch channel must not be dropped");
-                                }
-                                for act in o.activations {
-                                    activation_tx
-                                        .send(Ok(act))
-                                        .expect("Activation processor channel not dropped");
+                                if !forward_stream_output(&fetch_tx, &activation_tx, o) {
+                                    return;
                                 }
                             }
                             Err(e) => {
-                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
-                                    error!(activation=?e.0, "Activation processor channel dropped");
-                                });
+                                if let Err(e) = activation_tx.send(Err(e)) {
+                                    error!(
+                                        activation=?e.0,
+                                        "Activation processor channel dropped, stopping workflow processing"
+                                    );
+                                    return;
+                                }
                             }
                         }
                     }
@@ -556,10 +553,7 @@ impl Workflows {
                 // Empty complete which is likely an evict reply, we can just ignore.
                 return Ok(());
             }
-            panic!(
-                "A non-empty completion was not processed. Workflow processing may have \
-                 terminated unexpectedly. This is a bug."
-            );
+            return Err(CompleteWfError::WorkflowNotEnabled);
         }
 
         let completion_outcome = if let Ok(c) = rx.await {
@@ -570,13 +564,11 @@ impl Workflows {
             // Empty complete which is likely an evict reply, we can just ignore as above.
             return Ok(());
         } else {
-            dbg_panic!("Send half of activation complete response channel went missing");
-            self.request_eviction(
+            return Err(CompleteWfError::MalformedWorkflowCompletion {
+                reason: "Send half of activation complete response channel went missing"
+                    .to_string(),
                 run_id,
-                "Send half of activation complete response channel went missing",
-                EvictionReason::Fatal,
-            );
-            return Ok(());
+            });
         };
         let replaying = completion_outcome.replaying;
 
@@ -798,9 +790,10 @@ impl Workflows {
                 at_handle.add_tasks(with_permits);
             }
         } else if !eager_acts.is_empty() {
-            panic!(
+            error!(
                 "Requested eager activity execution but this worker has no activity task \
-                 manager! This is an internal bug, Core should not have asked for tasks."
+                 manager! This is an internal bug, Core should not have asked for tasks. \
+                 Ignoring the tasks."
             )
         }
     }
@@ -868,6 +861,29 @@ impl Workflows {
             .and_then(|sa| sa.worker_task_queue.as_ref())
             .map(|tq| tq.name.clone())
     }
+}
+
+fn forward_stream_output(
+    fetch_tx: &UnboundedSender<HistoryFetchReq>,
+    activation_tx: &UnboundedSender<Result<ActivationOrAuto, PollError>>,
+    output: WFStreamOutput,
+) -> bool {
+    for fetchreq in output.fetch_histories {
+        if let Err(e) = fetch_tx.send(fetchreq) {
+            warn!(fetch=?e.0, "Fetch channel dropped, stopping workflow processing");
+            return false;
+        }
+    }
+    for act in output.activations {
+        if let Err(e) = activation_tx.send(Ok(act)) {
+            debug!(
+                activation=?e.0,
+                "Activation processor channel dropped, stopping workflow processing"
+            );
+            return false;
+        }
+    }
+    true
 }
 
 /// Returned when a cache miss happens and we need to fetch history from the beginning to
@@ -1664,7 +1680,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         )
     });
     if any_job_is_query && !all_jobs_are_query {
-        dbg_panic!(
+        error!(
             "About to issue an activation that contains query jobs with non-query jobs: {:?}",
             &wfa
         );
@@ -1700,6 +1716,7 @@ mod tests {
     use super::*;
     use itertools::Itertools;
     use temporalio_common::protos::coresdk::workflow_activation::SignalWorkflow;
+    use tokio::sync::mpsc::unbounded_channel;
 
     #[test]
     fn jobs_sort() {
@@ -1770,7 +1787,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic]
     fn queries_cannot_go_with_other_jobs() {
         let mut act = WorkflowActivation {
             jobs: vec![
@@ -1788,5 +1804,41 @@ mod tests {
             ..Default::default()
         };
         prepare_to_ship_activation(&mut act);
+    }
+
+    #[test]
+    fn forwarding_output_stops_when_activation_channel_dropped() {
+        let (fetch_tx, _fetch_rx) = unbounded_channel();
+        let (activation_tx, activation_rx) = unbounded_channel();
+        drop(activation_rx);
+
+        let output = WFStreamOutput {
+            activations: vec![ActivationOrAuto::Autocomplete {
+                run_id: "run-id".to_string(),
+            }]
+            .into_iter()
+            .collect(),
+            fetch_histories: Default::default(),
+        };
+
+        assert!(!forward_stream_output(&fetch_tx, &activation_tx, output));
+    }
+
+    #[test]
+    fn forwarding_output_succeeds_with_live_channels() {
+        let (fetch_tx, _fetch_rx) = unbounded_channel();
+        let (activation_tx, mut activation_rx) = unbounded_channel();
+
+        let output = WFStreamOutput {
+            activations: vec![ActivationOrAuto::Autocomplete {
+                run_id: "run-id".to_string(),
+            }]
+            .into_iter()
+            .collect(),
+            fetch_histories: Default::default(),
+        };
+
+        assert!(forward_stream_output(&fetch_tx, &activation_tx, output));
+        assert!(activation_rx.try_recv().is_ok());
     }
 }
