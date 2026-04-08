@@ -860,13 +860,6 @@ impl<W> SyncWorkflowContext<W> {
         self.base.inner.shared.borrow_mut().current_details = details.into();
     }
 
-    /// Get the current details string previously set via [`set_current_details`].
-    ///
-    /// Returns an empty string if [`set_current_details`] has not been called.
-    pub fn get_current_details(&self) -> String {
-        self.base.inner.shared.borrow().current_details.clone()
-    }
-
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
@@ -1096,13 +1089,6 @@ impl<W> WorkflowContext<W> {
     /// See [`SyncWorkflowContext::set_current_details`].
     pub fn set_current_details(&self, details: impl Into<String>) {
         self.sync.set_current_details(details)
-    }
-
-    /// Get the current details string previously set via [`set_current_details`].
-    ///
-    /// See [`SyncWorkflowContext::get_current_details`].
-    pub fn get_current_details(&self) -> String {
-        self.sync.get_current_details()
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
