@@ -977,6 +977,163 @@ async fn shutdown_worker_not_retried() {
     assert_eq!(shutdown_call_count.load(Ordering::Relaxed), 1);
 }
 
+/// Reproduces the server-side race in temporalio/temporal#9545 where a poll completes naturally
+/// (e.g. long-poll timeout) right as shutdown begins, causing the poller to re-poll AFTER the
+/// ShutdownWorker RPC has already been processed. The server never flushes this second poll,
+/// so without the 5s TEMP_FIX timeout the worker would hang for 60s.
+///
+/// Sequence:
+///   1. Worker starts polling with graceful_poll_shutdown enabled
+///   2. initiate_shutdown() fires → shutdown token cancelled, ShutdownWorker RPC spawned
+///   3. First poll returns empty (natural timeout) — but this races with ShutdownWorker
+///   4. Poller re-polls (graceful mode: no select! against shutdown token)
+///   5. ShutdownWorker RPC completes — server flushes nothing (first poll already returned)
+///   6. Second poll hangs forever — server doesn't know about it
+///   7. TEMP_FIX: after 5s the graceful_interruptor cancels the hanging poll
+///
+/// This test verifies shutdown completes within 10s (not 60s), proving the temp fix works.
+/// Remove this test when temporalio/temporal#9545 is fully deployed.
+#[tokio::test]
+async fn graceful_shutdown_race_temp_fix_prevents_60s_hang() {
+    use prost::Message;
+    use std::sync::atomic::AtomicUsize;
+    use temporalio_common::protos::temporal::api::{
+        namespace::v1::{NamespaceInfo, namespace_info::Capabilities},
+        workflowservice::v1::DescribeNamespaceResponse,
+    };
+    use tokio::sync::Notify;
+
+    fn grpc_ok_empty() -> tonic::codegen::http::Response<tonic::body::Body> {
+        tonic::codegen::http::Response::builder()
+            .header("content-type", "application/grpc")
+            .header("grpc-status", "0")
+            .body(tonic::body::Body::empty())
+            .unwrap()
+    }
+    fn grpc_ok_proto(msg: &impl Message) -> tonic::codegen::http::Response<tonic::body::Body> {
+        let encoded = msg.encode_to_vec();
+        let mut buf = Vec::with_capacity(5 + encoded.len());
+        buf.push(0);
+        buf.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+        buf.extend_from_slice(&encoded);
+        tonic::codegen::http::Response::builder()
+            .header("content-type", "application/grpc")
+            .header("grpc-status", "0")
+            .body(tonic::body::Body::new(http_body_util::Full::new(
+                bytes::Bytes::from(buf),
+            )))
+            .unwrap()
+    }
+
+    // Track poll count to distinguish first poll (returns empty) from re-polls (hang forever)
+    let poll_count = Arc::new(AtomicUsize::new(0));
+    let poll_count_clone = poll_count.clone();
+    // Signal from initiate_shutdown (via shutdown_worker RPC) to release the first poll
+    let shutdown_signal = Arc::new(Notify::new());
+    let shutdown_signal_for_rpc = shutdown_signal.clone();
+    let shutdown_signal_for_poll = shutdown_signal.clone();
+
+    let fs = fake_server(move |req| {
+        let uri = req.uri().to_string();
+        let poll_count = poll_count_clone.clone();
+        let shutdown_signal_for_poll = shutdown_signal_for_poll.clone();
+        let shutdown_signal_for_rpc = shutdown_signal_for_rpc.clone();
+
+        if uri.contains("DescribeNamespace") {
+            let resp = DescribeNamespaceResponse {
+                namespace_info: Some(NamespaceInfo {
+                    capabilities: Some(Capabilities {
+                        worker_poll_complete_on_shutdown: true,
+                        ..Capabilities::default()
+                    }),
+                    ..NamespaceInfo::default()
+                }),
+                ..DescribeNamespaceResponse::default()
+            };
+            async move { grpc_ok_proto(&resp) }.boxed()
+        } else if uri.contains("Poll") {
+            async move {
+                let n = poll_count.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // First poll: wait for shutdown to start, then return empty.
+                    // This simulates the poll timing out naturally right as shutdown begins.
+                    shutdown_signal_for_poll.notified().await;
+                    grpc_ok_empty()
+                } else {
+                    // Re-poll after shutdown: hang forever. This is the race —
+                    // the server already processed ShutdownWorker and won't flush this poll.
+                    futures_util::future::pending().await
+                }
+            }
+            .boxed()
+        } else if uri.contains("ShutdownWorker") {
+            // ShutdownWorker arrives — signal the first poll to return (simulating the race
+            // where poll returns right as/after ShutdownWorker is processed).
+            async move {
+                shutdown_signal_for_rpc.notify_waiters();
+                grpc_ok_empty()
+            }
+            .boxed()
+        } else {
+            async { grpc_ok_empty() }.boxed()
+        }
+    })
+    .await;
+
+    let mut opts = get_integ_server_options();
+    opts.target = format!("http://localhost:{}", fs.addr.port())
+        .parse::<url::Url>()
+        .unwrap();
+    opts.set_skip_get_system_info(true);
+    let connection = Connection::connect(opts).await.unwrap();
+    let client_opts = temporalio_client::ClientOptions::new("ns").build();
+    let client = temporalio_client::Client::new(connection, client_opts).unwrap();
+
+    let wf_type = "graceful_shutdown_race";
+    let mut starter = CoreWfStarter::new_with_overrides(wf_type, None, Some(client));
+    let worker = starter.get_worker().await;
+
+    // Enable graceful poll shutdown via validate()
+    worker.validate().await.unwrap();
+
+    // Start polling BEFORE initiating shutdown so the poll is in-flight.
+    // poll_workflow_activation triggers LongPollBuffer to start, which spawns a poll task
+    // that hits the fake server and blocks on the first poll (waiting for shutdown_signal).
+    let poll_handle = tokio::spawn({
+        let w = worker.clone();
+        async move {
+            // This will block until shutdown causes PollError::ShutDown
+            let _ = w.poll_workflow_activation().await;
+        }
+    });
+    let act_handle = tokio::spawn({
+        let w = worker.clone();
+        async move {
+            let _ = w.poll_activity_task().await;
+        }
+    });
+
+    // Give polls time to reach the fake server before initiating shutdown
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Shutdown should complete within 10s (5s TEMP_FIX + margin).
+    // Without the temp fix, the re-poll hangs for 60s.
+    let result = tokio::time::timeout(Duration::from_secs(10), async {
+        worker.shutdown().await;
+    })
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "Shutdown should complete within 10s. If it hangs, the TEMP_FIX graceful poll \
+         timeout is not working and the server race (temporal#9545) caused a 60s hang."
+    );
+
+    let _ = poll_handle.await;
+    let _ = act_handle.await;
+    fs.shutdown().await;
+}
+
 #[test]
 fn test_default_build_id() {
     let o = WorkerOptions::new("task_queue").build();

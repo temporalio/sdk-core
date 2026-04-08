@@ -930,6 +930,7 @@ pub extern "C" fn temporal_core_worker_request_workflow_eviction(
 #[unsafe(no_mangle)]
 pub extern "C" fn temporal_core_worker_initiate_shutdown(worker: *mut Worker) {
     let worker = unsafe { &*worker };
+    enter_sync!(worker.runtime);
     worker.worker.as_ref().unwrap().initiate_shutdown();
 }
 

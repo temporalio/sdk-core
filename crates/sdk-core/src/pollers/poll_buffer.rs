@@ -370,7 +370,21 @@ where
                         let shutdown_clone = shutdown.clone();
 
                         let r = if graceful_shutdown.load(Ordering::Relaxed) {
-                            pf(timeout_override).await
+                            // TEMP_FIX: Give the server a reasonable window to
+                            // complete the poll after ShutdownWorker. Fall back
+                            // to cancelling the poll if it takes too long, to
+                            // avoid a 60s hang due to a server-side race
+                            // (temporalio/temporal#9545).
+                            let graceful_interruptor = shutdown_clone
+                                .cancelled()
+                                .then(|_| tokio::time::sleep(Duration::from_secs(5)));
+                            tokio::select! {
+                                r = pf(timeout_override) => r,
+                                _ = graceful_interruptor => {
+                                    error!("hit TEMP_FIX: poll cancelled due to shutdown");
+                                    return
+                                },
+                            }
                         } else {
                             let poll_interruptor = shutdown.cancelled().then(|_| async move {
                                 if let Some(w) = poll_shutdown_interrupt_wait {
