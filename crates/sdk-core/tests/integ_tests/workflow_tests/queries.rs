@@ -17,7 +17,7 @@ use temporalio_common::protos::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 use temporalio_sdk_core::test_help::{
-    MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
+    LegacyQueryResult, MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
 };
 
 /// A workflow that returns Pending on first poll and Ready on second poll.
@@ -466,57 +466,54 @@ async fn workflow_metadata_query_returns_current_details() {
     mock_cfg.num_expected_legacy_query_resps = 1;
 
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
-        asserts
-            .then(|wft| {
-                // First activation: workflow runs and blocks. No completion command.
-                let has_complete = wft
-                    .commands
-                    .iter()
-                    .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
-                assert!(
-                    !has_complete,
-                    "Workflow should not complete on first activation"
-                );
-            })
-            .then(|wft| {
-                // Second activation: the metadata query response.
-                assert_eq!(
-                    wft.query_responses.len(),
-                    1,
-                    "Expected exactly one query response"
-                );
-                let query_resp = &wft.query_responses[0];
+        asserts.then(|wft| {
+            // First activation: workflow runs and blocks. Should produce no CompleteWorkflow command.
+            let has_complete = wft
+                .commands
+                .iter()
+                .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+            assert!(
+                !has_complete,
+                "Workflow should not complete on first activation"
+            );
+        });
+    });
 
-                match &query_resp.variant {
-                    Some(query_result::Variant::Succeeded(success)) => {
-                        let payload = success
-                            .response
-                            .as_ref()
-                            .expect("Expected a response payload");
+    // The legacy query response goes through respond_legacy_query, not complete_workflow_activation.
+    // Use expect_legacy_query_matcher to assert on the actual payload sent to the server.
+    mock_cfg.expect_legacy_query_matcher = Box::new(|_, result| {
+        let LegacyQueryResult::Succeeded(qr) = result else {
+            panic!("Expected Succeeded legacy query result");
+        };
+        let Some(query_result::Variant::Succeeded(success)) = &qr.variant else {
+            panic!("Expected Succeeded query result variant");
+        };
+        let payload = success
+            .response
+            .as_ref()
+            .expect("Expected a response payload in __temporal_workflow_metadata response");
 
-                        assert_eq!(
-                            payload.metadata.get("encoding").map(|v| v.as_slice()),
-                            Some(b"json/protobuf".as_slice()),
-                            "Expected json/protobuf encoding"
-                        );
-                        assert_eq!(
-                            payload.metadata.get("messageType").map(|v| v.as_slice()),
-                            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
-                            "Expected WorkflowMetadata messageType"
-                        );
+        assert_eq!(
+            payload.metadata.get("encoding").map(|v| v.as_slice()),
+            Some(b"json/protobuf".as_slice()),
+            "Expected json/protobuf encoding"
+        );
+        assert_eq!(
+            payload.metadata.get("messageType").map(|v| v.as_slice()),
+            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
+            "Expected WorkflowMetadata messageType"
+        );
 
-                        // The data is proto-JSON: {"currentDetails":"..."}
-                        let json: serde_json::Value =
-                            serde_json::from_slice(&payload.data).expect("valid JSON");
-                        assert_eq!(
-                            json["currentDetails"].as_str(),
-                            Some("details from workflow"),
-                            "current_details should match what the workflow set"
-                        );
-                    }
-                    other => panic!("Expected Succeeded query response, got {:?}", other),
-                }
-            });
+        // The data is proto-JSON: {"currentDetails":"..."}
+        let json: serde_json::Value =
+            serde_json::from_slice(&payload.data).expect("Response data should be valid JSON");
+        assert_eq!(
+            json["currentDetails"].as_str(),
+            Some("details from workflow"),
+            "current_details should match what the workflow set"
+        );
+
+        true
     });
 
     let mut worker = build_fake_sdk(mock_cfg);

@@ -4,7 +4,7 @@
 
 pub use crate::{
     internal_flags::CoreInternalFlags,
-    worker::{LEGACY_QUERY_ID, client::mocks::mock_worker_client},
+    worker::{LEGACY_QUERY_ID, client::{LegacyQueryResult, mocks::mock_worker_client}},
 };
 
 use crate::{
@@ -16,7 +16,7 @@ use crate::{
     sticky_q_name_for_worker,
     worker::{
         TaskPollers, WorkerTelemetry,
-        client::{LegacyQueryResult, MockWorkerClient, WorkerClient, WorkflowTaskCompletion},
+        client::{MockWorkerClient, WorkerClient, WorkflowTaskCompletion},
         worker_config_builder,
     },
 };
