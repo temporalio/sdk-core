@@ -11,8 +11,13 @@ use crate::{
 use futures_util::stream;
 use std::{
     collections::{HashMap, VecDeque},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
+use temporalio_client::MESSAGE_TOO_LARGE_KEY;
 use temporalio_common::protos::{
     TestHistoryBuilder, canned_histories,
     coresdk::{
@@ -650,6 +655,73 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
         }] => q
     );
     // Fail wft which should result in query being failed
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok(LEGACY_QUERY_ID.to_string(), "hi"),
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn legacy_query_too_large_responds_with_failure() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("1");
+    let tasks = [{
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
+        pr.query = Some(WorkflowQuery {
+            query_type: "query-type".to_string(),
+            query_args: Some(b"hi".into()),
+            header: None,
+        });
+        pr
+    }];
+    let mut mock = mock_worker_client();
+    let first_call = Arc::new(AtomicBool::new(true));
+    let fc = first_call.clone();
+    mock.expect_respond_legacy_query()
+        .times(2)
+        .returning(move |_, result| {
+            if fc.swap(false, Ordering::Relaxed) {
+                let mut err = tonic::Status::new(
+                    tonic::Code::ResourceExhausted,
+                    "grpc: received message larger than max",
+                );
+                err.metadata_mut().insert(MESSAGE_TOO_LARGE_KEY, 1.into());
+                Err(err)
+            } else {
+                assert!(
+                    matches!(&result, LegacyQueryResult::Failed(f) if
+                        f.failure.as_ref().unwrap().message == "GRPC Message too large"
+                    ),
+                    "Expected query failure with message-too-large, got: {:?}",
+                    matches!(&result, LegacyQueryResult::Failed(_)),
+                );
+                Ok(Default::default())
+            }
+        });
+    let mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock);
+    let mut mock = build_mock_pollers(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+        }] => q
+    );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
         query_ok(LEGACY_QUERY_ID.to_string(), "hi"),

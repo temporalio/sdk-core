@@ -851,10 +851,39 @@ impl Workflows {
 
     /// Wraps responding to legacy queries. Handles ignore-able failures.
     async fn respond_legacy_query(&self, tt: TaskToken, res: LegacyQueryResult) {
-        match self.client.respond_legacy_query(tt, res).await {
+        match self.client.respond_legacy_query(tt.clone(), res).await {
             Ok(_) => {}
             Err(e) if e.code() == tonic::Code::NotFound => {
                 warn!(error=?e, "Query not found when attempting to respond to it");
+            }
+            Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
+                warn!(error=%e, "Query response too large, responding with failure");
+                let failure = Failure {
+                    failure: Some(
+                        temporalio_common::protos::temporal::api::failure::v1::Failure {
+                            message: "GRPC Message too large".to_string(),
+                            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                                ApplicationFailureInfo {
+                                    r#type: "GrpcMessageTooLarge".to_string(),
+                                    non_retryable: true,
+                                    ..Default::default()
+                                },
+                            )),
+                            ..Default::default()
+                        },
+                    ),
+                    force_cause: 0,
+                };
+                if let Err(e2) = self
+                    .client
+                    .respond_legacy_query(tt, LegacyQueryResult::Failed(failure))
+                    .await
+                {
+                    warn!(
+                        error=%e2,
+                        "Failed to send query failure response after message-too-large"
+                    );
+                }
             }
             Err(e) => {
                 warn!(error= %e, "Network error while responding to legacy query");
