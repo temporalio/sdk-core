@@ -873,6 +873,8 @@ message WorkflowExecutionOptionsUpdatedEventAttributes {
     // Priority override upserted in this event. Represents the full priority; not just partial fields.
     // Ignored if nil.
     temporal.api.common.v1.Priority priority = 6;
+    // If set, the time-skipping configuration was changed. Contains the full updated configuration.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 7;
 }
 
 // Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes
@@ -965,6 +967,23 @@ message WorkflowExecutionUnpausedEventAttributes {
     string request_id = 3;
 }
 
+// Attributes for an event indicating that time skipping state changed for a workflow execution,
+// either time was advanced or time skipping was disabled automatically due to a bound being reached.
+// The worker_may_ignore field in HistoryEvent should always be set true for this event.
+message WorkflowExecutionTimeSkippingTransitionedEventAttributes {
+
+    // The virtual time after time skipping was applied.
+    google.protobuf.Timestamp target_time = 1;
+
+    // when true, time skipping was disabled automatically due to a bound being reached.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "after" is used to indicate temporal ordering. --)
+    bool disabled_after_bound = 2;
+
+    // The wall-clock time when the time-skipping state changed event was generated.
+    google.protobuf.Timestamp wall_clock_time = 3;
+}
+
 // Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command.
 message NexusOperationScheduledEventAttributes {
     // Endpoint name, must exist in the endpoint registry.
@@ -982,6 +1001,8 @@ message NexusOperationScheduledEventAttributes {
     // Calls are retried internally by the server.
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    // (-- api-linter: core::0142::time-field-names=disabled
+    //     aip.dev/not-precedent: "timeout" is an acceptable suffix for duration fields in this API. --)
     google.protobuf.Duration schedule_to_close_timeout = 5;
     // Header to attach to the Nexus request. Note these headers are not the same as Temporal headers on internal
     // activities and child workflows, these are transmitted to Nexus operations that may be external and are not
@@ -1136,6 +1157,8 @@ message HistoryEvent {
     temporal.api.sdk.v1.UserMetadata user_metadata = 301;
     // Links associated with the event.
     repeated temporal.api.common.v1.Link links = 302;
+    // Server-computed authenticated caller identity associated with this event.
+    temporal.api.common.v1.Principal principal = 303;
     // The event details. The type must match that in `event_type`.
     oneof attributes {
         WorkflowExecutionStartedEventAttributes workflow_execution_started_event_attributes = 6;
@@ -1197,6 +1220,7 @@ message HistoryEvent {
         NexusOperationCancelRequestFailedEventAttributes nexus_operation_cancel_request_failed_event_attributes = 62;
         WorkflowExecutionPausedEventAttributes workflow_execution_paused_event_attributes = 63;
         WorkflowExecutionUnpausedEventAttributes workflow_execution_unpaused_event_attributes = 64;
+        WorkflowExecutionTimeSkippingTransitionedEventAttributes workflow_execution_time_skipping_transitioned_event_attributes = 65;
     }
 }
 

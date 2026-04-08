@@ -240,10 +240,27 @@ message Link {
         string job_id = 1;
     }
 
+    // A link to a standalone Nexus operation.
+    message NexusOperation {
+        string namespace = 1;
+        string operation_id = 2;
+        string run_id = 3;
+    }
+
     oneof variant {
         WorkflowEvent workflow_event = 1;
         BatchJob batch_job = 2;
+        NexusOperation nexus_operation = 3;
     }
+}
+
+// Principal is an authenticated caller identity computed by the server from trusted
+// authentication context.
+message Principal {
+    // Low-cardinality category of the principal (e.g., "jwt", "users").
+    string type = 1;
+    // Identifier within that category (e.g., sub JWT claim, email address).
+    string name = 2;
 }
 
 // Priority contains metadata that controls relative ordering of task processing

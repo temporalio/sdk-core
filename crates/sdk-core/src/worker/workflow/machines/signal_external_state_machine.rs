@@ -270,7 +270,7 @@ impl SignalExternalMachine {
                         failure: Some(Failure {
                             message: SIG_CANCEL_MSG.to_string(),
                             failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                CanceledFailureInfo { details: None },
+                                CanceledFailureInfo { details: None, identity: String::new() },
                             )),
                             ..Default::default()
                         }),

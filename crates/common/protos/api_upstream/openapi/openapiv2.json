@@ -1462,6 +1462,358 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/nexus-operation-count": {
+      "get": {
+        "summary": "CountNexusOperationExecutions is a visibility API to count Nexus operations in a specific namespace.",
+        "operationId": "CountNexusOperationExecutions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountNexusOperationExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.\nSee also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/nexus-operations": {
+      "get": {
+        "summary": "ListNexusOperationExecutions is a visibility API to list Nexus operations in a specific namespace.",
+        "operationId": "ListNexusOperationExecutions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListNexusOperationExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "Max number of operations to return per page.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "Token returned in ListNexusOperationExecutionsResponse.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.\nSearch attributes that are avaialble for Nexus operations include:\n- OperationId\n- RunId\n- Endpoint\n- Service\n- Operation\n- RequestId\n- StartTime\n- ExecutionTime\n- CloseTime\n- ExecutionStatus\n- ExecutionDuration\n- StateTransitionCount",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/nexus-operations/{operationId}": {
+      "get": {
+        "summary": "DescribeNexusOperationExecution returns information about a Nexus operation.\nSupported use cases include:\n- Get current operation info without waiting\n- Long-poll for next state change and return new operation info\nResponse can optionally include operation input or outcome (if the operation has completed).",
+        "operationId": "DescribeNexusOperationExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Operation run ID. If empty the request targets the latest run.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "includeInput",
+            "description": "Include the input field in the response.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "includeOutcome",
+            "description": "Include the outcome (result/failure) in the response if the operation has completed.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "longPollToken",
+            "description": "Token from a previous DescribeNexusOperationExecutionResponse. If present, long-poll until operation\nstate changes from the state encoded in this token. If absent, return current state immediately.\nIf present, run_id must also be present.\nNote that operation state may change multiple times between requests, therefore it is not\nguaranteed that a client making a sequence of long-poll requests will see a complete\nsequence of state changes.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "StartNexusOperationExecution starts a new Nexus operation.",
+        "description": "Returns a `NexusOperationExecutionAlreadyStarted` error if an instance already exists with same operation ID in this\nnamespace unless permitted by the specified ID conflict policy.",
+        "operationId": "StartNexusOperationExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "description": "Identifier for this operation. This is a caller-side ID, distinct from any internal\noperation identifiers generated by the handler. Must be unique among operations in the\nsame namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceStartNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/nexus-operations/{operationId}/cancel": {
+      "post": {
+        "summary": "RequestCancelNexusOperationExecution requests cancellation of a Nexus operation.",
+        "description": "Requesting to cancel an operation does not automatically transition the operation to canceled status.\nThe operation will only transition to canceled status if it supports cancellation and the handler\nprocesses the cancellation request.",
+        "operationId": "RequestCancelNexusOperationExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RequestCancelNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRequestCancelNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/nexus-operations/{operationId}/poll": {
+      "get": {
+        "summary": "PollNexusOperationExecution long-polls for a Nexus operation for a given wait stage to complete and returns\nthe outcome (result or failure).",
+        "operationId": "PollNexusOperationExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PollNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Operation run ID. If empty the request targets the latest run.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "waitStage",
+            "description": "Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.\n\n - NEXUS_OPERATION_WAIT_STAGE_STARTED: Wait for the operation to be started.\n - NEXUS_OPERATION_WAIT_STAGE_CLOSED: Wait for the operation to be in a terminal state, either successful or unsuccessful.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED",
+              "NEXUS_OPERATION_WAIT_STAGE_STARTED",
+              "NEXUS_OPERATION_WAIT_STAGE_CLOSED"
+            ],
+            "default": "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/nexus-operations/{operationId}/terminate": {
+      "post": {
+        "summary": "TerminateNexusOperationExecution terminates an existing Nexus operation immediately.",
+        "description": "Termination happens immediately and the operation handler cannot react to it. A terminated operation will have\nits outcome set to a failure with a termination reason.",
+        "operationId": "TerminateNexusOperationExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TerminateNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceTerminateNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/schedule-count": {
       "get": {
         "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
@@ -2190,6 +2542,53 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}": {
+      "post": {
+        "summary": "Creates a new Worker Deployment Version.",
+        "description": "Experimental. This API might significantly change or be removed in a\nfuture release.",
+        "operationId": "CreateWorkerDeploymentVersion2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkerDeploymentVersionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkerDeploymentVersionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}": {
       "get": {
         "summary": "Describes a worker deployment version.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -2313,6 +2712,59 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-compute-config": {
+      "post": {
+        "summary": "Updates the compute config attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "UpdateWorkerDeploymentVersionComputeConfig2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkerDeploymentVersionComputeConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkerDeploymentVersionComputeConfigBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-metadata": {
       "post": {
         "summary": "Updates the user-given metadata attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -2358,6 +2810,59 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceUpdateWorkerDeploymentVersionMetadataBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/validate-compute-config": {
+      "post": {
+        "summary": "Validates the compute config without attaching it to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "ValidateWorkerDeploymentVersionComputeConfig2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ValidateWorkerDeploymentVersionComputeConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceValidateWorkerDeploymentVersionComputeConfigBody"
             }
           }
         ],
@@ -2483,6 +2988,51 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "Creates a new Worker Deployment.",
+        "description": "Experimental. This API might significantly change or be removed in a\nfuture release.",
+        "operationId": "CreateWorkerDeployment2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkerDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentName",
+            "description": "The name of the Worker Deployment to create. If a Worker Deployment with\nthis name already exists, an error will be returned.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkerDeploymentBody"
+            }
           }
         ],
         "tags": [
@@ -6032,6 +6582,358 @@
         ]
       }
     },
+    "/namespaces/{namespace}/nexus-operation-count": {
+      "get": {
+        "summary": "CountNexusOperationExecutions is a visibility API to count Nexus operations in a specific namespace.",
+        "operationId": "CountNexusOperationExecutions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountNexusOperationExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.\nSee also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/nexus-operations": {
+      "get": {
+        "summary": "ListNexusOperationExecutions is a visibility API to list Nexus operations in a specific namespace.",
+        "operationId": "ListNexusOperationExecutions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListNexusOperationExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "Max number of operations to return per page.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "Token returned in ListNexusOperationExecutionsResponse.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "query",
+            "description": "Visibility query, see https://docs.temporal.io/list-filter for the syntax.\nSearch attributes that are avaialble for Nexus operations include:\n- OperationId\n- RunId\n- Endpoint\n- Service\n- Operation\n- RequestId\n- StartTime\n- ExecutionTime\n- CloseTime\n- ExecutionStatus\n- ExecutionDuration\n- StateTransitionCount",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/nexus-operations/{operationId}": {
+      "get": {
+        "summary": "DescribeNexusOperationExecution returns information about a Nexus operation.\nSupported use cases include:\n- Get current operation info without waiting\n- Long-poll for next state change and return new operation info\nResponse can optionally include operation input or outcome (if the operation has completed).",
+        "operationId": "DescribeNexusOperationExecution",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Operation run ID. If empty the request targets the latest run.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "includeInput",
+            "description": "Include the input field in the response.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "includeOutcome",
+            "description": "Include the outcome (result/failure) in the response if the operation has completed.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "longPollToken",
+            "description": "Token from a previous DescribeNexusOperationExecutionResponse. If present, long-poll until operation\nstate changes from the state encoded in this token. If absent, return current state immediately.\nIf present, run_id must also be present.\nNote that operation state may change multiple times between requests, therefore it is not\nguaranteed that a client making a sequence of long-poll requests will see a complete\nsequence of state changes.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "StartNexusOperationExecution starts a new Nexus operation.",
+        "description": "Returns a `NexusOperationExecutionAlreadyStarted` error if an instance already exists with same operation ID in this\nnamespace unless permitted by the specified ID conflict policy.",
+        "operationId": "StartNexusOperationExecution",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "description": "Identifier for this operation. This is a caller-side ID, distinct from any internal\noperation identifiers generated by the handler. Must be unique among operations in the\nsame namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceStartNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/nexus-operations/{operationId}/cancel": {
+      "post": {
+        "summary": "RequestCancelNexusOperationExecution requests cancellation of a Nexus operation.",
+        "description": "Requesting to cancel an operation does not automatically transition the operation to canceled status.\nThe operation will only transition to canceled status if it supports cancellation and the handler\nprocesses the cancellation request.",
+        "operationId": "RequestCancelNexusOperationExecution",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RequestCancelNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRequestCancelNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/nexus-operations/{operationId}/poll": {
+      "get": {
+        "summary": "PollNexusOperationExecution long-polls for a Nexus operation for a given wait stage to complete and returns\nthe outcome (result or failure).",
+        "operationId": "PollNexusOperationExecution",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PollNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "runId",
+            "description": "Operation run ID. If empty the request targets the latest run.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "waitStage",
+            "description": "Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.\n\n - NEXUS_OPERATION_WAIT_STAGE_STARTED: Wait for the operation to be started.\n - NEXUS_OPERATION_WAIT_STAGE_CLOSED: Wait for the operation to be in a terminal state, either successful or unsuccessful.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED",
+              "NEXUS_OPERATION_WAIT_STAGE_STARTED",
+              "NEXUS_OPERATION_WAIT_STAGE_CLOSED"
+            ],
+            "default": "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/nexus-operations/{operationId}/terminate": {
+      "post": {
+        "summary": "TerminateNexusOperationExecution terminates an existing Nexus operation immediately.",
+        "description": "Termination happens immediately and the operation handler cannot react to it. A terminated operation will have\nits outcome set to a failure with a termination reason.",
+        "operationId": "TerminateNexusOperationExecution",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TerminateNexusOperationExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "operationId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceTerminateNexusOperationExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/schedule-count": {
       "get": {
         "summary": "CountSchedules is a visibility API to count schedules in a specific namespace.",
@@ -6690,6 +7592,53 @@
         ]
       }
     },
+    "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}": {
+      "post": {
+        "summary": "Creates a new Worker Deployment Version.",
+        "description": "Experimental. This API might significantly change or be removed in a\nfuture release.",
+        "operationId": "CreateWorkerDeploymentVersion",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkerDeploymentVersionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkerDeploymentVersionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}": {
       "get": {
         "summary": "Describes a worker deployment version.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -6813,6 +7762,59 @@
         ]
       }
     },
+    "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-compute-config": {
+      "post": {
+        "summary": "Updates the compute config attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "UpdateWorkerDeploymentVersionComputeConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkerDeploymentVersionComputeConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkerDeploymentVersionComputeConfigBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-metadata": {
       "post": {
         "summary": "Updates the user-given metadata attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
@@ -6858,6 +7860,59 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceUpdateWorkerDeploymentVersionMetadataBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/validate-compute-config": {
+      "post": {
+        "summary": "Validates the compute config without attaching it to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "ValidateWorkerDeploymentVersionComputeConfig",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ValidateWorkerDeploymentVersionComputeConfigResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceValidateWorkerDeploymentVersionComputeConfigBody"
             }
           }
         ],
@@ -6983,6 +8038,51 @@
             "in": "query",
             "required": false,
             "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "Creates a new Worker Deployment.",
+        "description": "Experimental. This API might significantly change or be removed in a\nfuture release.",
+        "operationId": "CreateWorkerDeployment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkerDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentName",
+            "description": "The name of the Worker Deployment to create. If a Worker Deployment with\nthis name already exists, an error will be returned.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkerDeploymentBody"
+            }
           }
         ],
         "tags": [
@@ -8769,6 +9869,21 @@
       },
       "description": "A link to a built-in batch job.\nBatch jobs can be used to perform operations on a set of workflows (e.g. terminate, signal, cancel, etc).\nThis link can be put on workflow history events generated by actions taken by a batch job."
     },
+    "LinkNexusOperation": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "operationId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        }
+      },
+      "description": "A link to a standalone Nexus operation."
+    },
     "LinkWorkflowEvent": {
       "type": "object",
       "properties": {
@@ -9144,6 +10259,49 @@
         }
       }
     },
+    "WorkflowServiceCreateWorkerDeploymentBody": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "Optional. The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "A unique identifier for this create request for idempotence. Typically UUIDv4."
+        }
+      },
+      "description": "Creates a new WorkerDeployment."
+    },
+    "WorkflowServiceCreateWorkerDeploymentVersionBody": {
+      "type": "object",
+      "properties": {
+        "deploymentVersion": {
+          "type": "object",
+          "properties": {
+            "buildId": {
+              "type": "string",
+              "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace."
+            }
+          },
+          "description": "Required.",
+          "title": "Required."
+        },
+        "computeConfig": {
+          "$ref": "#/definitions/v1ComputeConfig",
+          "description": "Optional. Contains the new worker compute configuration for the Worker\nDeployment. Used for worker scale management."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Optional. The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "A unique identifier for this create request for idempotence. Typically UUIDv4.\nIf a second request with the same ID is recieved, it is considered a successful no-op.\nRetrying with a different request ID for the same deployment name + build ID is an error."
+        }
+      },
+      "description": "Creates a new WorkerDeploymentVersion."
+    },
     "WorkflowServiceCreateWorkflowRuleBody": {
       "type": "object",
       "properties": {
@@ -9366,6 +10524,27 @@
         "reason": {
           "type": "string",
           "description": "Reason for requesting the cancellation, recorded and available via the PollActivityExecution API.\nNot propagated to a worker if an activity attempt is currently running."
+        }
+      }
+    },
+    "WorkflowServiceRequestCancelNexusOperationExecutionBody": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "Operation run ID, targets the latest run if empty."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe cancellation requests."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for requesting the cancellation, recorded and available via the DescribeNexusOperationExecution API."
         }
       }
     },
@@ -9879,6 +11058,10 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "title": "Priority metadata"
+        },
+        "timeSkippingConfig": {
+          "$ref": "#/definitions/v1TimeSkippingConfig",
+          "description": "Time-skipping configuration. If not set, time skipping is disabled."
         }
       }
     },
@@ -10047,6 +11230,62 @@
         }
       }
     },
+    "WorkflowServiceStartNexusOperationExecutionBody": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "A unique identifier for this caller-side start request. Typically UUIDv4.\nStartOperation requests sent to the handler will use a server-generated request ID."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Endpoint name, resolved to a URL via the cluster's endpoint registry."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service name."
+        },
+        "operation": {
+          "type": "string",
+          "description": "Operation name."
+        },
+        "scheduleToCloseTimeout": {
+          "type": "string",
+          "description": "Schedule-to-close timeout for this operation.\nThis is the only timeout settable for a Nexus operation."
+        },
+        "input": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Serialized input to the operation. Passed as the request payload."
+        },
+        "idReusePolicy": {
+          "$ref": "#/definitions/v1NexusOperationIdReusePolicy",
+          "description": "Defines whether to allow re-using the operation id from a previously *closed* operation.\nThe default policy is NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE."
+        },
+        "idConflictPolicy": {
+          "$ref": "#/definitions/v1NexusOperationIdConflictPolicy",
+          "description": "Defines how to resolve an operation id conflict with a *running* operation.\nThe default policy is NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL."
+        },
+        "searchAttributes": {
+          "$ref": "#/definitions/v1SearchAttributes",
+          "description": "Search attributes for indexing."
+        },
+        "nexusHeader": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Header to attach to the Nexus request.\nUsers are responsible for encrypting sensitive data in this header as it is stored in workflow history and\ntransmitted to external services as-is.\nThis is useful for propagating tracing information.\nNote these headers are not the same as Temporal headers on internal activities and child workflows, these are\ntransmitted to Nexus operations that may be external and are not traditional payloads."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation."
+        }
+      }
+    },
     "WorkflowServiceStartWorkflowExecutionBody": {
       "type": "object",
       "properties": {
@@ -10155,6 +11394,10 @@
         "eagerWorkerDeploymentOptions": {
           "$ref": "#/definitions/v1WorkerDeploymentOptions",
           "description": "Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`."
+        },
+        "timeSkippingConfig": {
+          "$ref": "#/definitions/v1TimeSkippingConfig",
+          "description": "Time-skipping configuration. If not set, time skipping is disabled."
         }
       }
     },
@@ -10189,6 +11432,27 @@
         "reason": {
           "type": "string",
           "description": "Reason for requesting the termination, recorded in in the activity's result failure outcome."
+        }
+      }
+    },
+    "WorkflowServiceTerminateNexusOperationExecutionBody": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "Operation run ID, targets the latest run if empty."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe termination requests."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for requesting the termination, recorded in the operation's result failure outcome."
         }
       }
     },
@@ -10397,6 +11661,10 @@
         "searchAttributes": {
           "$ref": "#/definitions/v1SearchAttributes",
           "description": "Schedule search attributes to be updated.\nDo not set this field if you do not want to update the search attributes.\nA non-null empty object will set the search attributes to an empty map.\nNote: you cannot only update the search attributes with `UpdateScheduleRequest`,\nyou must also set the `schedule` field; otherwise, it will unset the schedule."
+        },
+        "memo": {
+          "$ref": "#/definitions/v1Memo",
+          "description": "Schedule memo to replace. If set, replaces the entire memo.\nDo not set this field if you do not want to update the memo.\nA non-null empty object will clear the memo."
         }
       }
     },
@@ -10462,6 +11730,39 @@
           "description": "Resource ID for routing. Contains the worker grouping key."
         }
       }
+    },
+    "WorkflowServiceUpdateWorkerDeploymentVersionComputeConfigBody": {
+      "type": "object",
+      "properties": {
+        "deploymentVersion": {
+          "type": "object",
+          "description": "Required.",
+          "title": "Required."
+        },
+        "computeConfigScalingGroups": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1ComputeConfigScalingGroupUpdate"
+          },
+          "description": "Optional. Contains the compute config scaling groups to add or update for the Worker\nDeployment."
+        },
+        "removeComputeConfigScalingGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Contains the compute config scaling groups to remove from the Worker Deployment."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Optional. The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "A unique identifier for this create request for idempotence. Typically UUIDv4.\nIf a second request with the same ID is recieved, it is considered a successful no-op.\nRetrying with a different request ID for the same deployment name + build ID is an error."
+        }
+      },
+      "description": "Used to update the compute config of a Worker Deployment Version."
     },
     "WorkflowServiceUpdateWorkerDeploymentVersionMetadataBody": {
       "type": "object",
@@ -10567,6 +11868,35 @@
         }
       },
       "description": "Keep the parameters in sync with:\n  - temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions.\n  - temporal.api.workflow.v1.PostResetOperation.UpdateWorkflowOptions."
+    },
+    "WorkflowServiceValidateWorkerDeploymentVersionComputeConfigBody": {
+      "type": "object",
+      "properties": {
+        "deploymentVersion": {
+          "type": "object",
+          "description": "Required.",
+          "title": "Required."
+        },
+        "computeConfigScalingGroups": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1ComputeConfigScalingGroupUpdate"
+          },
+          "description": "Optional. Contains the compute config scaling groups to add or update for the Worker\nDeployment."
+        },
+        "removeComputeConfigScalingGroups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Contains the compute config scaling groups to remove from the Worker Deployment."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Optional. The identity of the client who initiated this request."
+        }
+      },
+      "description": "Used to validate the compute config without attaching it to a Worker Deployment Version."
     },
     "protobufAny": {
       "type": "object",
@@ -11649,6 +12979,10 @@
       "properties": {
         "details": {
           "$ref": "#/definitions/v1Payloads"
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the worker or client that requested the cancellation."
         }
       }
     },
@@ -11892,6 +13226,83 @@
       },
       "description": "Used by the worker versioning APIs, represents an unordered set of one or more versions which are\nconsidered to be compatible with each other. Currently the versions are always worker build IDs."
     },
+    "v1ComputeConfig": {
+      "type": "object",
+      "properties": {
+        "scalingGroups": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1ComputeConfigScalingGroup"
+          },
+          "description": "Each scaling group describes a compute config for a specific subset of the worker \ndeployment version: covering a specific set of task types and/or regions.\nHaving different configurations for different task types, allows independent\ntuning of activity and workflow task processing (for example).\n\nThe key of the map is the ID of the scaling group used to reference it in subsequent\nupdate calls."
+        }
+      },
+      "description": "ComputeConfig stores configuration that helps a worker control plane\ncontroller understand *when* and *how* to respond to worker lifecycle\nevents."
+    },
+    "v1ComputeConfigScalingGroup": {
+      "type": "object",
+      "properties": {
+        "taskQueueTypes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/v1TaskQueueType"
+          },
+          "description": "Optional. The set of task queue types this scaling group serves. \nIf not provided, this scaling group serves all not otherwise defined\ntask types."
+        },
+        "provider": {
+          "$ref": "#/definitions/v1ComputeProvider",
+          "description": "Stores instructions for a worker control plane controller how to respond\nto worker lifeycle events."
+        },
+        "scaler": {
+          "$ref": "#/definitions/v1ComputeScaler",
+          "description": "Informs a worker lifecycle controller *when* and *how often* to perform\ncertain worker lifecycle actions like starting a serverless worker."
+        }
+      }
+    },
+    "v1ComputeConfigScalingGroupUpdate": {
+      "type": "object",
+      "properties": {
+        "scalingGroup": {
+          "$ref": "#/definitions/v1ComputeConfigScalingGroup"
+        },
+        "updateMask": {
+          "type": "string",
+          "title": "Controls which fields from `scaling_group` will be applied. Semantics:\n- Mask is ignored for new scaling groups (only applicable when scaling group already exists).\n- Empty mask for an existing scaling group is no-op: no change.\n- Non-empty mask for an existing scaling group will update/unset only to the fields\n  mentioned in the mask.\n- Accepted paths: \"task_queue_types\", \"provider\", \"provider.type\", \"provider.details\",\n  \"provider.nexus_endpoint\", \"scaler\", \"scaler.type\", \"scaler.details\""
+        }
+      }
+    },
+    "v1ComputeProvider": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Type of the compute provider. This string is implementation-specific and\ncan be used by implementations to understand how to interpret the\ncontents of the provider_details field."
+        },
+        "details": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Contains provider-specific instructions and configuration.\nFor server-implemented providers, use the SDK's default content\nconverter to ensure the server can understand it.\nFor remote-implemented providers, you might use your own content\nconverters according to what the remote endpoints understand."
+        },
+        "nexusEndpoint": {
+          "type": "string",
+          "description": "Optional. If the compute provider is a Nexus service, this should point\nthere."
+        }
+      },
+      "description": "ComputeProvider stores information used by a worker control plane controller\nto respond to worker lifecycle events. For example, when a Task is received\non a TaskQueue that has no active pollers, a serverless worker lifecycle\ncontroller might need to invoke an AWS Lambda Function that itself ends up\ncalling the SDK's worker.New() function."
+    },
+    "v1ComputeScaler": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Type of the compute scaler. this string is implementation-specific and\ncan be used by implementations to understand how to interpret the\ncontents of the scaler_details field."
+        },
+        "details": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Contains scaler-specific instructions and configuration.\nFor server-implemented scalers, use the SDK's default data\nconverter to ensure the server can understand it.\nFor remote-implemented scalers, you might use your own data\nconverters according to what the remote endpoints understand."
+        }
+      },
+      "description": "ComputeScaler instructs the Temporal Service when to scale up or down the number of\nWorkers that comprise a WorkerDeployment."
+    },
     "v1ConfigMetadata": {
       "type": "object",
       "properties": {
@@ -11949,6 +13360,40 @@
       }
     },
     "v1CountActivityExecutionsResponseAggregationGroup": {
+      "type": "object",
+      "properties": {
+        "groupValues": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Payload"
+          }
+        },
+        "count": {
+          "type": "string",
+          "format": "int64"
+        }
+      }
+    },
+    "v1CountNexusOperationExecutionsResponse": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "string",
+          "format": "int64",
+          "description": "If `query` is not grouping by any field, the count is an approximate number\nof operations that match the query.\nIf `query` is grouping by a field, the count is simply the sum of the counts\nof the groups returned in the response. This number can be smaller than the\ntotal number of operations matching the query."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1CountNexusOperationExecutionsResponseAggregationGroup"
+          },
+          "description": "Contains the groups if the request is grouping by a field.\nThe list might not be complete, and the counts of each group is approximate."
+        }
+      }
+    },
+    "v1CountNexusOperationExecutionsResponseAggregationGroup": {
       "type": "object",
       "properties": {
         "groupValues": {
@@ -12058,6 +13503,19 @@
           "format": "byte"
         }
       }
+    },
+    "v1CreateWorkerDeploymentResponse": {
+      "type": "object",
+      "properties": {
+        "conflictToken": {
+          "type": "string",
+          "format": "byte",
+          "description": "This value is returned so that it can be optionally passed to APIs that\nwrite to the WorkerDeployment state to ensure that the state did not\nchange between this API call and a future write."
+        }
+      }
+    },
+    "v1CreateWorkerDeploymentVersionResponse": {
+      "type": "object"
     },
     "v1CreateWorkflowRuleResponse": {
       "type": "object",
@@ -12316,6 +13774,36 @@
             "$ref": "#/definitions/v1FailoverStatus"
           },
           "description": "Contains the historical state of failover_versions for the cluster, truncated to contain only the last N\nstates to ensure that the list does not grow unbounded."
+        }
+      }
+    },
+    "v1DescribeNexusOperationExecutionResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The run ID of the operation, useful when run_id was not specified in the request."
+        },
+        "info": {
+          "$ref": "#/definitions/v1NexusOperationExecutionInfo",
+          "description": "Information about the operation."
+        },
+        "input": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Serialized operation input, passed as the request payload.\nOnly set if include_input was true in the request."
+        },
+        "result": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "The result if the operation completed successfully."
+        },
+        "failure": {
+          "$ref": "#/definitions/v1Failure",
+          "description": "The failure if the operation completed unsuccessfully."
+        },
+        "longPollToken": {
+          "type": "string",
+          "format": "byte",
+          "description": "Token for follow-on long-poll requests. Absent only if the operation is complete."
         }
       }
     },
@@ -12623,10 +14111,11 @@
         "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED",
         "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED",
         "EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED",
-        "EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED"
+        "EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED"
       ],
       "default": "EVENT_TYPE_UNSPECIFIED",
-      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED: A cancellation request for a Nexus operation was successfully delivered to the Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED: A cancellation request for a Nexus operation resulted in an error.\n - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED: An event that indicates that the workflow execution has been paused.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED: An event that indicates that the previously paused workflow execution has been unpaused.",
+      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED: A cancellation request for a Nexus operation was successfully delivered to the Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED: A cancellation request for a Nexus operation resulted in an error.\n - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED: An event that indicates that the workflow execution has been paused.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED: An event that indicates that the previously paused workflow execution has been unpaused.\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED: An event that indicates time skipping advanced time or was disabled automatically after a bound was reached.",
       "title": "Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering"
     },
     "v1ExternalWorkflowExecutionCancelRequestedEventAttributes": {
@@ -12885,6 +14374,10 @@
         "nexus": {
           "type": "boolean",
           "description": "True if the server supports Nexus operations.\nThis flag is dependent both on server version and for Nexus to be enabled via server configuration."
+        },
+        "serverScaledDeployments": {
+          "type": "boolean",
+          "description": "True if the server supports server-scaled deployments.\nThis flag is dependent both on server version and for server-scaled deployments\nto be enabled via server configuration."
         }
       },
       "description": "System capability details."
@@ -13043,6 +14536,10 @@
             "$ref": "#/definitions/v1Link"
           },
           "description": "Links associated with the event."
+        },
+        "principal": {
+          "$ref": "#/definitions/v1Principal",
+          "description": "Server-computed authenticated caller identity associated with this event."
         },
         "workflowExecutionStartedEventAttributes": {
           "$ref": "#/definitions/v1WorkflowExecutionStartedEventAttributes"
@@ -13220,6 +14717,9 @@
         },
         "workflowExecutionUnpausedEventAttributes": {
           "$ref": "#/definitions/v1WorkflowExecutionUnpausedEventAttributes"
+        },
+        "workflowExecutionTimeSkippingTransitionedEventAttributes": {
+          "$ref": "#/definitions/v1WorkflowExecutionTimeSkippingTransitionedEventAttributes"
         }
       },
       "description": "History events are the method by which Temporal SDKs advance (or recreate) workflow state.\nSee the `EventType` enum for more info about what each event is for."
@@ -13299,6 +14799,9 @@
         },
         "batchJob": {
           "$ref": "#/definitions/LinkBatchJob"
+        },
+        "nexusOperation": {
+          "$ref": "#/definitions/LinkNexusOperation"
         }
       },
       "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
@@ -13400,6 +14903,23 @@
             "type": "object",
             "$ref": "#/definitions/v1Endpoint"
           }
+        }
+      }
+    },
+    "v1ListNexusOperationExecutionsResponse": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1NexusOperationExecutionListInfo"
+          }
+        },
+        "nextPageToken": {
+          "type": "string",
+          "format": "byte",
+          "description": "Token to use to fetch the next page. If empty, there is no next page."
         }
       }
     },
@@ -14007,6 +15527,243 @@
       },
       "description": "Nexus operation completed successfully."
     },
+    "v1NexusOperationExecutionCancellationInfo": {
+      "type": "object",
+      "properties": {
+        "requestedTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when cancellation was requested."
+        },
+        "state": {
+          "$ref": "#/definitions/v1NexusOperationCancellationState"
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The number of attempts made to deliver the cancel operation request.\nThis number represents a minimum bound since the attempt is incremented after the request completes."
+        },
+        "lastAttemptCompleteTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the last attempt completed."
+        },
+        "lastAttemptFailure": {
+          "$ref": "#/definitions/v1Failure",
+          "description": "The last attempt's failure, if any."
+        },
+        "nextAttemptScheduleTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the next attempt is scheduled."
+        },
+        "blockedReason": {
+          "type": "string",
+          "description": "If the state is BLOCKED, blocked reason provides additional information."
+        },
+        "reason": {
+          "type": "string",
+          "description": "A reason that may be specified in the CancelNexusOperationRequest."
+        }
+      },
+      "description": "NexusOperationExecutionCancellationInfo contains the state of a Nexus operation cancellation."
+    },
+    "v1NexusOperationExecutionInfo": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "description": "Unique identifier of this Nexus operation within its namespace along with run ID (below)."
+        },
+        "runId": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Endpoint name, resolved to a URL via the cluster's endpoint registry."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service name."
+        },
+        "operation": {
+          "type": "string",
+          "description": "Operation name."
+        },
+        "status": {
+          "$ref": "#/definitions/v1NexusOperationExecutionStatus",
+          "description": "A general status for this operation, indicates whether it is currently running or in one of the terminal statuses.\nUpdated once when the operation is originally scheduled, and again when it reaches a terminal status."
+        },
+        "state": {
+          "$ref": "#/definitions/v1PendingNexusOperationState",
+          "description": "More detailed breakdown of NEXUS_OPERATION_EXECUTION_STATUS_RUNNING."
+        },
+        "scheduleToCloseTimeout": {
+          "type": "string",
+          "description": "Schedule-to-close timeout for this operation."
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Schedule-to-start timeout for this operation."
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Start-to-close timeout for this operation."
+        },
+        "attempt": {
+          "type": "integer",
+          "format": "int32",
+          "description": "The number of attempts made to start/deliver the operation request.\nThis number represents a minimum bound since the attempt is incremented after the request completes."
+        },
+        "scheduleTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the operation was originally scheduled via a StartNexusOperation request."
+        },
+        "expirationTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Scheduled time + schedule to close timeout."
+        },
+        "closeTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time when the operation transitioned to a closed state."
+        },
+        "lastAttemptCompleteTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the last attempt completed."
+        },
+        "lastAttemptFailure": {
+          "$ref": "#/definitions/v1Failure",
+          "description": "The last attempt's failure, if any."
+        },
+        "nextAttemptScheduleTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the next attempt is scheduled."
+        },
+        "executionDuration": {
+          "type": "string",
+          "description": "Elapsed time from schedule_time to now for running operations or to close_time for closed\noperations, including all attempts and backoff between attempts."
+        },
+        "cancellationInfo": {
+          "$ref": "#/definitions/v1NexusOperationExecutionCancellationInfo"
+        },
+        "blockedReason": {
+          "type": "string",
+          "description": "If the state is BLOCKED, blocked reason provides additional information."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Server-generated request ID used as an idempotency token when submitting start requests to\nthe handler. Distinct from the request_id in StartNexusOperationRequest, which is the\ncaller-side idempotency key for the StartNexusOperation RPC itself."
+        },
+        "operationToken": {
+          "type": "string",
+          "description": "Operation token. Only set for asynchronous operations after a successful StartOperation call."
+        },
+        "stateTransitionCount": {
+          "type": "string",
+          "format": "int64",
+          "description": "Incremented each time the operation's state is mutated in persistence."
+        },
+        "searchAttributes": {
+          "$ref": "#/definitions/v1SearchAttributes"
+        },
+        "nexusHeader": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Header for context propagation and tracing purposes."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Link"
+          },
+          "description": "Links attached by the handler of this operation on start or completion."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who started this operation."
+        }
+      },
+      "description": "Full current state of a standalone Nexus operation, as of the time of the request."
+    },
+    "v1NexusOperationExecutionListInfo": {
+      "type": "object",
+      "properties": {
+        "operationId": {
+          "type": "string",
+          "description": "A unique identifier of this operation within its namespace along with run ID (below)."
+        },
+        "runId": {
+          "type": "string",
+          "description": "The run ID of the standalone Nexus operation."
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "Endpoint name."
+        },
+        "service": {
+          "type": "string",
+          "description": "Service name."
+        },
+        "operation": {
+          "type": "string",
+          "description": "Operation name."
+        },
+        "scheduleTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Time the operation was originally scheduled via a StartNexusOperation request."
+        },
+        "closeTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "If the operation is in a terminal status, this field represents the time the operation transitioned to that status."
+        },
+        "status": {
+          "$ref": "#/definitions/v1NexusOperationExecutionStatus",
+          "description": "The status is updated once, when the operation is originally scheduled, and again when the operation reaches a terminal status."
+        },
+        "searchAttributes": {
+          "$ref": "#/definitions/v1SearchAttributes",
+          "description": "Search attributes from the start request."
+        },
+        "stateTransitionCount": {
+          "type": "string",
+          "format": "int64",
+          "description": "Updated on terminal status."
+        },
+        "executionDuration": {
+          "type": "string",
+          "description": "The difference between close time and scheduled time.\nThis field is only populated if the operation is closed."
+        }
+      },
+      "description": "Limited Nexus operation information returned in the list response.\nWhen adding fields here, ensure that it is also present in NexusOperationExecutionInfo (note that it may already be present in\nNexusOperationExecutionInfo but not at the top-level)."
+    },
+    "v1NexusOperationExecutionStatus": {
+      "type": "string",
+      "enum": [
+        "NEXUS_OPERATION_EXECUTION_STATUS_UNSPECIFIED",
+        "NEXUS_OPERATION_EXECUTION_STATUS_RUNNING",
+        "NEXUS_OPERATION_EXECUTION_STATUS_COMPLETED",
+        "NEXUS_OPERATION_EXECUTION_STATUS_FAILED",
+        "NEXUS_OPERATION_EXECUTION_STATUS_CANCELED",
+        "NEXUS_OPERATION_EXECUTION_STATUS_TERMINATED",
+        "NEXUS_OPERATION_EXECUTION_STATUS_TIMED_OUT"
+      ],
+      "default": "NEXUS_OPERATION_EXECUTION_STATUS_UNSPECIFIED",
+      "description": "Status of a standalone Nexus operation execution.\nThe status is updated once, when the operation is originally scheduled, and again when the\noperation reaches a terminal status.\n\n - NEXUS_OPERATION_EXECUTION_STATUS_RUNNING: The operation is not in a terminal status. The operation may be attempting to start,\nbacking off between attempts, or already started.\n - NEXUS_OPERATION_EXECUTION_STATUS_COMPLETED: The operation completed successfully.\n - NEXUS_OPERATION_EXECUTION_STATUS_FAILED: The operation completed with failure.\n - NEXUS_OPERATION_EXECUTION_STATUS_CANCELED: The operation completed as canceled.\nRequesting to cancel an operation does not automatically transition the operation to canceled status, depending\non the current operation status and the cancelation type used.\n - NEXUS_OPERATION_EXECUTION_STATUS_TERMINATED: The operation was terminated. Termination happens immediately without notifying the handler.\n - NEXUS_OPERATION_EXECUTION_STATUS_TIMED_OUT: The operation has timed out by reaching one of the specified timeouts."
+    },
     "v1NexusOperationFailedEventAttributes": {
       "type": "object",
       "properties": {
@@ -14056,6 +15813,27 @@
         }
       },
       "description": "Representation of the Temporal SDK NexusOperationError object that is returned to workflow callers."
+    },
+    "v1NexusOperationIdConflictPolicy": {
+      "type": "string",
+      "enum": [
+        "NEXUS_OPERATION_ID_CONFLICT_POLICY_UNSPECIFIED",
+        "NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL",
+        "NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING"
+      ],
+      "default": "NEXUS_OPERATION_ID_CONFLICT_POLICY_UNSPECIFIED",
+      "description": "Defines what to do when trying to start a Nexus operation with the same ID as a *running* operation.\nNote that it is *never* valid to have two running instances of the same operation ID.\n\nSee `NexusOperationIdReusePolicy` for handling operation ID duplication with a *closed* operation.\n\n - NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL: Don't start a new operation; instead return `NexusOperationAlreadyStarted` error.\n - NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING: Don't start a new operation; instead return a handle for the running operation."
+    },
+    "v1NexusOperationIdReusePolicy": {
+      "type": "string",
+      "enum": [
+        "NEXUS_OPERATION_ID_REUSE_POLICY_UNSPECIFIED",
+        "NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE",
+        "NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY",
+        "NEXUS_OPERATION_ID_REUSE_POLICY_REJECT_DUPLICATE"
+      ],
+      "default": "NEXUS_OPERATION_ID_REUSE_POLICY_UNSPECIFIED",
+      "description": "Defines whether to allow re-using an operation ID from a previously *closed* Nexus operation.\nIf the request is denied, the server returns a `NexusOperationAlreadyStarted` error.\n\nSee `NexusOperationIdConflictPolicy` for handling ID duplication with a *running* operation.\n\n - NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE: Always allow starting an operation using the same operation ID.\n - NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY: Allow starting an operation using the same ID only when the last operation's final state is one\nof {failed, canceled, terminated, timed out}.\n - NEXUS_OPERATION_ID_REUSE_POLICY_REJECT_DUPLICATE: Do not permit re-use of the ID for this operation. Future start requests could potentially change the policy,\nallowing re-use of the ID."
     },
     "v1NexusOperationScheduledEventAttributes": {
       "type": "object",
@@ -14152,6 +15930,16 @@
         }
       },
       "description": "Nexus operation timed out."
+    },
+    "v1NexusOperationWaitStage": {
+      "type": "string",
+      "enum": [
+        "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED",
+        "NEXUS_OPERATION_WAIT_STAGE_STARTED",
+        "NEXUS_OPERATION_WAIT_STAGE_CLOSED"
+      ],
+      "default": "NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED",
+      "description": "Stage that can be specified when waiting on a nexus operation.\n\n - NEXUS_OPERATION_WAIT_STAGE_STARTED: Wait for the operation to be started.\n - NEXUS_OPERATION_WAIT_STAGE_CLOSED: Wait for the operation to be in a terminal state, either successful or unsuccessful."
     },
     "v1OnConflictOptions": {
       "type": "object",
@@ -14505,6 +16293,31 @@
         }
       }
     },
+    "v1PollNexusOperationExecutionResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The run ID of the operation, useful when run_id was not specified in the request."
+        },
+        "waitStage": {
+          "$ref": "#/definitions/v1NexusOperationWaitStage",
+          "description": "The current stage of the operation. May be more advanced than the stage requested in the poll."
+        },
+        "operationToken": {
+          "type": "string",
+          "description": "Operation token. Only populated for asynchronous operations after a successful StartOperation call."
+        },
+        "result": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "The result if the operation completed successfully."
+        },
+        "failure": {
+          "$ref": "#/definitions/v1Failure",
+          "description": "The failure if the operation completed unsuccessfully."
+        }
+      }
+    },
     "v1PollWorkflowTaskQueueResponse": {
       "type": "object",
       "properties": {
@@ -14633,6 +16446,20 @@
         }
       },
       "description": "PostResetOperation represents an operation to be performed on the new workflow execution after a workflow reset."
+    },
+    "v1Principal": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Low-cardinality category of the principal (e.g., \"jwt\", \"users\")."
+        },
+        "name": {
+          "type": "string",
+          "description": "Identifier within that category (e.g., sub JWT claim, email address)."
+        }
+      },
+      "description": "Principal is an authenticated caller identity computed by the server from trusted\nauthentication context."
     },
     "v1Priority": {
       "type": "object",
@@ -14945,6 +16772,9 @@
         }
       }
     },
+    "v1RequestCancelNexusOperationExecutionResponse": {
+      "type": "object"
+    },
     "v1RequestCancelWorkflowExecutionResponse": {
       "type": "object"
     },
@@ -15195,7 +17025,7 @@
       "properties": {
         "currentDeploymentVersion": {
           "$ref": "#/definitions/v1WorkerDeploymentVersion",
-          "description": "Specifies which Deployment Version should receive new workflow executions and tasks of\nexisting unversioned or AutoUpgrade workflows.\nNil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). \nNote: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\nis non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
+          "description": "Specifies which Deployment Version should receive new workflow executions and tasks of\nexisting unversioned or AutoUpgrade workflows.\nNil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.).\nNote: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\nis non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
         },
         "currentVersion": {
           "type": "string",
@@ -15232,7 +17062,7 @@
         "revisionNumber": {
           "type": "string",
           "format": "int64",
-          "description": "Monotonically increasing value which is incremented on every mutation \nto any field of this message to achieve eventual consistency between task queues and their partitions."
+          "description": "Monotonically increasing value which is incremented on every mutation\nto any field of this message to achieve eventual consistency between task queues and their partitions."
         }
       }
     },
@@ -15902,6 +17732,19 @@
         }
       }
     },
+    "v1StartNexusOperationExecutionResponse": {
+      "type": "object",
+      "properties": {
+        "runId": {
+          "type": "string",
+          "description": "The run ID of the operation that was started - or used (via NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING)."
+        },
+        "started": {
+          "type": "boolean",
+          "description": "If true, a new operation was started."
+        }
+      }
+    },
     "v1StartWorkflowExecutionResponse": {
       "type": "object",
       "properties": {
@@ -16254,11 +18097,47 @@
     "v1TerminateActivityExecutionResponse": {
       "type": "object"
     },
+    "v1TerminateNexusOperationExecutionResponse": {
+      "type": "object"
+    },
     "v1TerminateWorkflowExecutionResponse": {
       "type": "object"
     },
     "v1TerminatedFailureInfo": {
-      "type": "object"
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the worker or client that requested the termination."
+        }
+      }
+    },
+    "v1TimeSkippingConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enables or disables time skipping for this workflow execution.\nBy default, this field is propagated to transitively related workflows (child workflows/start-as-new/reset) \nat the time they are started.\nChanges made after a transitively related workflow has started are not propagated."
+        },
+        "disablePropagation": {
+          "type": "boolean",
+          "description": "If set, the enabled field is not propagated to transitively related workflows."
+        },
+        "maxSkippedDuration": {
+          "type": "string",
+          "description": "Maximum total virtual time that can be skipped."
+        },
+        "maxElapsedDuration": {
+          "type": "string",
+          "description": "Maximum elapsed time since time skipping was enabled.\nThis includes both skipped time and real time elapsing."
+        },
+        "maxTargetTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Absolute virtual timestamp at which time skipping is disabled.\nTime skipping will not advance beyond this point."
+        }
+      },
+      "description": "Configuration for time skipping during a workflow execution.\nWhen enabled, virtual time advances automatically whenever there is no in-flight work.\nIn-flight work includes activities, child workflows, Nexus operations, signal/cancel external workflow operations,\nand possibly other features added in the future.\nUser timers are not classified as in-flight work and will be skipped over.\nWhen time advances, it skips to the earlier of the next user timer or the configured bound, if either exists."
     },
     "v1TimeoutFailureInfo": {
       "type": "object",
@@ -16512,6 +18391,9 @@
         }
       }
     },
+    "v1UpdateWorkerDeploymentVersionComputeConfigResponse": {
+      "type": "object"
+    },
     "v1UpdateWorkerDeploymentVersionMetadataResponse": {
       "type": "object",
       "properties": {
@@ -16584,6 +18466,9 @@
         }
       },
       "description": "Information a user can set, often for use by user interfaces."
+    },
+    "v1ValidateWorkerDeploymentVersionComputeConfigResponse": {
+      "type": "object"
     },
     "v1VersionDrainageInfo": {
       "type": "object",
@@ -16727,7 +18612,7 @@
             "type": "object",
             "$ref": "#/definitions/WorkerDeploymentInfoWorkerDeploymentVersionSummary"
           },
-          "title": "Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be\ncleaned up automatically if all the following conditions meet:\n- It does not receive new executions (is not current or ramping)\n- It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status) \n- It is drained (see WorkerDeploymentVersionInfo.drainage_status)"
+          "title": "Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be\ncleaned up automatically if all the following conditions meet:\n- It does not receive new executions (is not current or ramping)\n- It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status)\n- It is drained (see WorkerDeploymentVersionInfo.drainage_status)"
         },
         "createTime": {
           "type": "string",
@@ -16799,7 +18684,8 @@
           "description": "Required."
         },
         "deploymentName": {
-          "type": "string"
+          "type": "string",
+          "description": "Deprecated. User deployment_version.deployment_name."
         },
         "createTime": {
           "type": "string",
@@ -16855,6 +18741,14 @@
         "metadata": {
           "$ref": "#/definitions/v1VersionMetadata",
           "description": "Arbitrary user-provided metadata attached to this version."
+        },
+        "computeConfig": {
+          "$ref": "#/definitions/v1ComputeConfig",
+          "description": "Optional. Contains the new worker compute configuration for the Worker\nDeployment. Used for worker scale management."
+        },
+        "lastModifierIdentity": {
+          "type": "string",
+          "title": "Identity of the last client who modified the configuration of this Version.\nAs of now, this field only covers changes through the following APIs:\n- `CreateWorkerDeploymentVersion`\n- `UpdateWorkerDeploymentVersionComputeConfig`\n- `UpdateWorkerDeploymentVersionMetadata`"
         }
       },
       "description": "A Worker Deployment Version (Version, for short) represents all workers of the same \ncode and config within a Deployment. Workers of the same Version are expected to \nbehave exactly the same so when executions move between them there are no \nnon-determinism issues.\nWorker Deployment Versions are created in Temporal server automatically when \ntheir first poller arrives to the server.\nExperimental. Worker Deployments are experimental and might significantly change in the future."
@@ -16867,10 +18761,11 @@
         "WORKER_DEPLOYMENT_VERSION_STATUS_CURRENT",
         "WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING",
         "WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING",
-        "WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED"
+        "WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED",
+        "WORKER_DEPLOYMENT_VERSION_STATUS_CREATED"
       ],
       "default": "WORKER_DEPLOYMENT_VERSION_STATUS_UNSPECIFIED",
-      "description": "Specify the status of a Worker Deployment Version.\nExperimental. Worker Deployments are experimental and might significantly change in the future.\n\n - WORKER_DEPLOYMENT_VERSION_STATUS_INACTIVE: The Worker Deployment Version has been created inside the Worker Deployment but is not used by any\nworkflow executions. These Versions can still have workflows if they have an explicit Versioning Override targeting\nthis Version. Such Versioning Override could be set at workflow start time, or at a later time via `UpdateWorkflowExecutionOptions`.\n - WORKER_DEPLOYMENT_VERSION_STATUS_CURRENT: The Worker Deployment Version is the current version of the Worker Deployment. All new workflow executions \nand tasks of existing unversioned or AutoUpgrade workflows are routed to this version.\n - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING: The Worker Deployment Version is the ramping version of the Worker Deployment. A subset of new Pinned workflow executions are \nrouted to this version. Moreover, a portion of existing unversioned or AutoUpgrade workflow executions are also routed to this version.\n - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING: The Worker Deployment Version is not used by new workflows but is still used by\nopen pinned workflows. The version cannot be decommissioned safely.\n - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED: The Worker Deployment Version is not used by new or open workflows, but might be still needed by\nQueries sent to closed workflows. The version can be decommissioned safely if user does\nnot query closed workflows. If the user does query closed workflows for some time x after\nworkflows are closed, they should decommission the version after it has been drained for that duration."
+      "description": "Specify the status of a Worker Deployment Version.\nExperimental. Worker Deployments are experimental and might significantly change in the future.\n\n - WORKER_DEPLOYMENT_VERSION_STATUS_INACTIVE: The Worker Deployment Version has been created inside the Worker Deployment but is not used by any\nworkflow executions. These Versions can still have workflows if they have an explicit Versioning Override targeting\nthis Version. Such Versioning Override could be set at workflow start time, or at a later time via `UpdateWorkflowExecutionOptions`.\n - WORKER_DEPLOYMENT_VERSION_STATUS_CURRENT: The Worker Deployment Version is the current version of the Worker Deployment. All new workflow executions \nand tasks of existing unversioned or AutoUpgrade workflows are routed to this version.\n - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING: The Worker Deployment Version is the ramping version of the Worker Deployment. A subset of new Pinned workflow executions are \nrouted to this version. Moreover, a portion of existing unversioned or AutoUpgrade workflow executions are also routed to this version.\n - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING: The Worker Deployment Version is not used by new workflows but is still used by\nopen pinned workflows. The version cannot be decommissioned safely.\n - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED: The Worker Deployment Version is not used by new or open workflows, but might be still needed by\nQueries sent to closed workflows. The version can be decommissioned safely if user does\nnot query closed workflows. If the user does query closed workflows for some time x after\nworkflows are closed, they should decommission the version after it has been drained for that duration.\n - WORKER_DEPLOYMENT_VERSION_STATUS_CREATED: The Worker Deployment Version is created by user (via `CreateWorkerDeploymentVersion` API)\nbut server has not seen any poller for it yet."
     },
     "v1WorkerHeartbeat": {
       "type": "object",
@@ -17523,6 +19418,10 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "description": "If set, overrides the workflow's priority sent by the SDK."
+        },
+        "timeSkippingConfig": {
+          "$ref": "#/definitions/v1TimeSkippingConfig",
+          "description": "Time-skipping configuration for this workflow execution.\nIf not set, the time-skipping conf will not get updated upon request, \ni.e. the existing time-skipping conf will be preserved."
         }
       }
     },
@@ -17556,6 +19455,10 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "description": "Priority override upserted in this event. Represents the full priority; not just partial fields.\nIgnored if nil."
+        },
+        "timeSkippingConfig": {
+          "$ref": "#/definitions/v1TimeSkippingConfig",
+          "description": "If set, the time-skipping configuration was changed. Contains the full updated configuration."
         }
       }
     },
@@ -17815,6 +19718,26 @@
           "title": "id of the client who requested termination"
         }
       }
+    },
+    "v1WorkflowExecutionTimeSkippingTransitionedEventAttributes": {
+      "type": "object",
+      "properties": {
+        "targetTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The virtual time after time skipping was applied."
+        },
+        "disabledAfterBound": {
+          "type": "boolean",
+          "description": "when true, time skipping was disabled automatically due to a bound being reached."
+        },
+        "wallClockTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The wall-clock time when the time-skipping state changed event was generated."
+        }
+      },
+      "description": "Attributes for an event indicating that time skipping state changed for a workflow execution,\neither time was advanced or time skipping was disabled automatically due to a bound being reached.\nThe worker_may_ignore field in HistoryEvent should always be set true for this event."
     },
     "v1WorkflowExecutionTimedOutEventAttributes": {
       "type": "object",

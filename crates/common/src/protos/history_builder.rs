@@ -377,7 +377,7 @@ impl TestHistoryBuilder {
                 stack_trace: "".to_string(),
                 cause: None,
                 failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
-                    CanceledFailureInfo { details: None },
+                    CanceledFailureInfo { details: None, identity: String::new() },
                 )),
                 encoded_attributes: Default::default(),
             }),

@@ -1343,6 +1343,327 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operation-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountNexusOperationExecutions is a visibility API to count Nexus operations in a specific namespace.
+      operationId: CountNexusOperationExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: |-
+            Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+             See also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountNexusOperationExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operations:
+    get:
+      tags:
+        - WorkflowService
+      description: ListNexusOperationExecutions is a visibility API to list Nexus operations in a specific namespace.
+      operationId: ListNexusOperationExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          description: Max number of operations to return per page.
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          description: Token returned in ListNexusOperationExecutionsResponse.
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: |-
+            Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+             Search attributes that are avaialble for Nexus operations include:
+             - OperationId
+             - RunId
+             - Endpoint
+             - Service
+             - Operation
+             - RequestId
+             - StartTime
+             - ExecutionTime
+             - CloseTime
+             - ExecutionStatus
+             - ExecutionDuration
+             - StateTransitionCount
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNexusOperationExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operations/{operationId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeNexusOperationExecution returns information about a Nexus operation.
+         Supported use cases include:
+         - Get current operation info without waiting
+         - Long-poll for next state change and return new operation info
+         Response can optionally include operation input or outcome (if the operation has completed).
+      operationId: DescribeNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Operation run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: includeInput
+          in: query
+          description: Include the input field in the response.
+          schema:
+            type: boolean
+        - name: includeOutcome
+          in: query
+          description: Include the outcome (result/failure) in the response if the operation has completed.
+          schema:
+            type: boolean
+        - name: longPollToken
+          in: query
+          description: |-
+            Token from a previous DescribeNexusOperationExecutionResponse. If present, long-poll until operation
+             state changes from the state encoded in this token. If absent, return current state immediately.
+             If present, run_id must also be present.
+             Note that operation state may change multiple times between requests, therefore it is not
+             guaranteed that a client making a sequence of long-poll requests will see a complete
+             sequence of state changes.
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        StartNexusOperationExecution starts a new Nexus operation.
+
+         Returns a `NexusOperationExecutionAlreadyStarted` error if an instance already exists with same operation ID in this
+         namespace unless permitted by the specified ID conflict policy.
+      operationId: StartNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          description: |-
+            Identifier for this operation. This is a caller-side ID, distinct from any internal
+             operation identifiers generated by the handler. Must be unique among operations in the
+             same namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operations/{operationId}/cancel:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RequestCancelNexusOperationExecution requests cancellation of a Nexus operation.
+
+         Requesting to cancel an operation does not automatically transition the operation to canceled status.
+         The operation will only transition to canceled status if it supports cancellation and the handler
+         processes the cancellation request.
+      operationId: RequestCancelNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCancelNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCancelNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operations/{operationId}/poll:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        PollNexusOperationExecution long-polls for a Nexus operation for a given wait stage to complete and returns
+         the outcome (result or failure).
+      operationId: PollNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Operation run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: waitStage
+          in: query
+          description: Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.
+          schema:
+            enum:
+              - NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED
+              - NEXUS_OPERATION_WAIT_STAGE_STARTED
+              - NEXUS_OPERATION_WAIT_STAGE_CLOSED
+            type: string
+            format: enum
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/nexus-operations/{operationId}/terminate:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TerminateNexusOperationExecution terminates an existing Nexus operation immediately.
+
+         Termination happens immediately and the operation handler cannot react to it. A terminated operation will have
+         its outcome set to a failure with a termination reason.
+      operationId: TerminateNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/schedule-count:
     get:
       tags:
@@ -1958,6 +2279,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Creates a new Worker Deployment Version.
+
+         Experimental. This API might significantly change or be removed in a
+         future release.
+      operationId: CreateWorkerDeploymentVersion
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkerDeploymentVersionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkerDeploymentVersionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}:
     get:
       tags:
@@ -2091,6 +2452,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  ? /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-compute-config
+  : post:
+      tags:
+        - WorkflowService
+      description: |-
+        Updates the compute config attached to a Worker Deployment Version.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: UpdateWorkerDeploymentVersionComputeConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkerDeploymentVersionComputeConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkerDeploymentVersionComputeConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   ? /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-metadata
   : post:
       tags:
@@ -2128,6 +2532,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateWorkerDeploymentVersionMetadataResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  ? /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/validate-compute-config
+  : post:
+      tags:
+        - WorkflowService
+      description: |-
+        Validates the compute config without attaching it to a Worker Deployment Version.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: ValidateWorkerDeploymentVersionComputeConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateWorkerDeploymentVersionComputeConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateWorkerDeploymentVersionComputeConfigResponse'
         default:
           description: Default error response
           content:
@@ -2197,6 +2644,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DescribeWorkerDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Creates a new Worker Deployment.
+
+         Experimental. This API might significantly change or be removed in a
+         future release.
+      operationId: CreateWorkerDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deploymentName
+          in: path
+          description: |-
+            The name of the Worker Deployment to create. If a Worker Deployment with
+             this name already exists, an error will be returned.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkerDeploymentRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkerDeploymentResponse'
         default:
           description: Default error response
           content:
@@ -5434,6 +5923,327 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operation-count:
+    get:
+      tags:
+        - WorkflowService
+      description: CountNexusOperationExecutions is a visibility API to count Nexus operations in a specific namespace.
+      operationId: CountNexusOperationExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          description: |-
+            Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+             See also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountNexusOperationExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operations:
+    get:
+      tags:
+        - WorkflowService
+      description: ListNexusOperationExecutions is a visibility API to list Nexus operations in a specific namespace.
+      operationId: ListNexusOperationExecutions
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          description: Max number of operations to return per page.
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          description: Token returned in ListNexusOperationExecutionsResponse.
+          schema:
+            type: string
+            format: bytes
+        - name: query
+          in: query
+          description: |-
+            Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+             Search attributes that are avaialble for Nexus operations include:
+             - OperationId
+             - RunId
+             - Endpoint
+             - Service
+             - Operation
+             - RequestId
+             - StartTime
+             - ExecutionTime
+             - CloseTime
+             - ExecutionStatus
+             - ExecutionDuration
+             - StateTransitionCount
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListNexusOperationExecutionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operations/{operationId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeNexusOperationExecution returns information about a Nexus operation.
+         Supported use cases include:
+         - Get current operation info without waiting
+         - Long-poll for next state change and return new operation info
+         Response can optionally include operation input or outcome (if the operation has completed).
+      operationId: DescribeNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Operation run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: includeInput
+          in: query
+          description: Include the input field in the response.
+          schema:
+            type: boolean
+        - name: includeOutcome
+          in: query
+          description: Include the outcome (result/failure) in the response if the operation has completed.
+          schema:
+            type: boolean
+        - name: longPollToken
+          in: query
+          description: |-
+            Token from a previous DescribeNexusOperationExecutionResponse. If present, long-poll until operation
+             state changes from the state encoded in this token. If absent, return current state immediately.
+             If present, run_id must also be present.
+             Note that operation state may change multiple times between requests, therefore it is not
+             guaranteed that a client making a sequence of long-poll requests will see a complete
+             sequence of state changes.
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        StartNexusOperationExecution starts a new Nexus operation.
+
+         Returns a `NexusOperationExecutionAlreadyStarted` error if an instance already exists with same operation ID in this
+         namespace unless permitted by the specified ID conflict policy.
+      operationId: StartNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          description: |-
+            Identifier for this operation. This is a caller-side ID, distinct from any internal
+             operation identifiers generated by the handler. Must be unique among operations in the
+             same namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StartNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operations/{operationId}/cancel:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        RequestCancelNexusOperationExecution requests cancellation of a Nexus operation.
+
+         Requesting to cancel an operation does not automatically transition the operation to canceled status.
+         The operation will only transition to canceled status if it supports cancellation and the handler
+         processes the cancellation request.
+      operationId: RequestCancelNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCancelNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequestCancelNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operations/{operationId}/poll:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        PollNexusOperationExecution long-polls for a Nexus operation for a given wait stage to complete and returns
+         the outcome (result or failure).
+      operationId: PollNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: runId
+          in: query
+          description: Operation run ID. If empty the request targets the latest run.
+          schema:
+            type: string
+        - name: waitStage
+          in: query
+          description: Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.
+          schema:
+            enum:
+              - NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED
+              - NEXUS_OPERATION_WAIT_STAGE_STARTED
+              - NEXUS_OPERATION_WAIT_STAGE_CLOSED
+            type: string
+            format: enum
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PollNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/nexus-operations/{operationId}/terminate:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TerminateNexusOperationExecution terminates an existing Nexus operation immediately.
+
+         Termination happens immediately and the operation handler cannot react to it. A terminated operation will have
+         its outcome set to a failure with a termination reason.
+      operationId: TerminateNexusOperationExecution
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: operationId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TerminateNexusOperationExecutionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TerminateNexusOperationExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/schedule-count:
     get:
       tags:
@@ -5991,6 +6801,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Creates a new Worker Deployment Version.
+
+         Experimental. This API might significantly change or be removed in a
+         future release.
+      operationId: CreateWorkerDeploymentVersion
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkerDeploymentVersionRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkerDeploymentVersionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}:
     get:
       tags:
@@ -6124,6 +6974,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  ? /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-compute-config
+  : post:
+      tags:
+        - WorkflowService
+      description: |-
+        Updates the compute config attached to a Worker Deployment Version.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: UpdateWorkerDeploymentVersionComputeConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkerDeploymentVersionComputeConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkerDeploymentVersionComputeConfigResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   ? /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-metadata
   : post:
       tags:
@@ -6161,6 +7054,49 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UpdateWorkerDeploymentVersionMetadataResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  ? /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/validate-compute-config
+  : post:
+      tags:
+        - WorkflowService
+      description: |-
+        Validates the compute config without attaching it to a Worker Deployment Version.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: ValidateWorkerDeploymentVersionComputeConfig
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.deployment_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateWorkerDeploymentVersionComputeConfigRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateWorkerDeploymentVersionComputeConfigResponse'
         default:
           description: Default error response
           content:
@@ -6230,6 +7166,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DescribeWorkerDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Creates a new Worker Deployment.
+
+         Experimental. This API might significantly change or be removed in a
+         future release.
+      operationId: CreateWorkerDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deploymentName
+          in: path
+          description: |-
+            The name of the Worker Deployment to create. If a Worker Deployment with
+             this name already exists, an error will be returned.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkerDeploymentRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkerDeploymentResponse'
         default:
           description: Default error response
           content:
@@ -8808,6 +9786,9 @@ components:
       properties:
         details:
           $ref: '#/components/schemas/Payloads'
+        identity:
+          type: string
+          description: The identity of the worker or client that requested the cancellation.
     ChildWorkflowExecutionCanceledEventAttributes:
       type: object
       properties:
@@ -9031,6 +10012,110 @@ components:
       description: |-
         Used by the worker versioning APIs, represents an unordered set of one or more versions which are
          considered to be compatible with each other. Currently the versions are always worker build IDs.
+    ComputeConfig:
+      type: object
+      properties:
+        scalingGroups:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ComputeConfigScalingGroup'
+          description: "Each scaling group describes a compute config for a specific subset of the worker \n deployment version: covering a specific set of task types and/or regions.\n Having different configurations for different task types, allows independent\n tuning of activity and workflow task processing (for example).\n\n The key of the map is the ID of the scaling group used to reference it in subsequent\n update calls."
+      description: |-
+        ComputeConfig stores configuration that helps a worker control plane
+         controller understand *when* and *how* to respond to worker lifecycle
+         events.
+    ComputeConfigScalingGroup:
+      type: object
+      properties:
+        taskQueueTypes:
+          type: array
+          items:
+            enum:
+              - TASK_QUEUE_TYPE_UNSPECIFIED
+              - TASK_QUEUE_TYPE_WORKFLOW
+              - TASK_QUEUE_TYPE_ACTIVITY
+              - TASK_QUEUE_TYPE_NEXUS
+            type: string
+            format: enum
+          description: "Optional. The set of task queue types this scaling group serves. \n If not provided, this scaling group serves all not otherwise defined\n task types."
+        provider:
+          allOf:
+            - $ref: '#/components/schemas/ComputeProvider'
+          description: |-
+            Stores instructions for a worker control plane controller how to respond
+             to worker lifeycle events.
+        scaler:
+          allOf:
+            - $ref: '#/components/schemas/ComputeScaler'
+          description: |-
+            Informs a worker lifecycle controller *when* and *how often* to perform
+             certain worker lifecycle actions like starting a serverless worker.
+    ComputeConfigScalingGroupUpdate:
+      type: object
+      properties:
+        scalingGroup:
+          $ref: '#/components/schemas/ComputeConfigScalingGroup'
+        updateMask:
+          type: string
+          description: |-
+            Controls which fields from `scaling_group` will be applied. Semantics:
+             - Mask is ignored for new scaling groups (only applicable when scaling group already exists).
+             - Empty mask for an existing scaling group is no-op: no change.
+             - Non-empty mask for an existing scaling group will update/unset only to the fields
+               mentioned in the mask.
+             - Accepted paths: "task_queue_types", "provider", "provider.type", "provider.details",
+               "provider.nexus_endpoint", "scaler", "scaler.type", "scaler.details"
+          format: field-mask
+    ComputeProvider:
+      type: object
+      properties:
+        type:
+          type: string
+          description: |-
+            Type of the compute provider. This string is implementation-specific and
+             can be used by implementations to understand how to interpret the
+             contents of the provider_details field.
+        details:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: |-
+            Contains provider-specific instructions and configuration.
+             For server-implemented providers, use the SDK's default content
+             converter to ensure the server can understand it.
+             For remote-implemented providers, you might use your own content
+             converters according to what the remote endpoints understand.
+        nexusEndpoint:
+          type: string
+          description: |-
+            Optional. If the compute provider is a Nexus service, this should point
+             there.
+      description: |-
+        ComputeProvider stores information used by a worker control plane controller
+         to respond to worker lifecycle events. For example, when a Task is received
+         on a TaskQueue that has no active pollers, a serverless worker lifecycle
+         controller might need to invoke an AWS Lambda Function that itself ends up
+         calling the SDK's worker.New() function.
+    ComputeScaler:
+      type: object
+      properties:
+        type:
+          type: string
+          description: |-
+            Type of the compute scaler. this string is implementation-specific and
+             can be used by implementations to understand how to interpret the
+             contents of the scaler_details field.
+        details:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: |-
+            Contains scaler-specific instructions and configuration.
+             For server-implemented scalers, use the SDK's default data
+             converter to ensure the server can understand it.
+             For remote-implemented scalers, you might use your own data
+             converters according to what the remote endpoints understand.
+      description: |-
+        ComputeScaler instructs the Temporal Service when to scale up or down the number of
+         Workers that comprise a WorkerDeployment.
     ConfigMetadata:
       type: object
       properties:
@@ -9065,6 +10150,33 @@ components:
             Contains the groups if the request is grouping by a field.
              The list might not be complete, and the counts of each group is approximate.
     CountActivityExecutionsResponse_AggregationGroup:
+      type: object
+      properties:
+        groupValues:
+          type: array
+          items:
+            $ref: '#/components/schemas/Payload'
+        count:
+          type: string
+    CountNexusOperationExecutionsResponse:
+      type: object
+      properties:
+        count:
+          type: string
+          description: |-
+            If `query` is not grouping by any field, the count is an approximate number
+             of operations that match the query.
+             If `query` is grouping by a field, the count is simply the sum of the counts
+             of the groups returned in the response. This number can be smaller than the
+             total number of operations matching the query.
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/CountNexusOperationExecutionsResponse_AggregationGroup'
+          description: |-
+            Contains the groups if the request is grouping by a field.
+             The list might not be complete, and the counts of each group is approximate.
+    CountNexusOperationExecutionsResponse_AggregationGroup:
       type: object
       properties:
         groupValues:
@@ -9179,6 +10291,61 @@ components:
         conflictToken:
           type: string
           format: bytes
+    CreateWorkerDeploymentRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deploymentName:
+          type: string
+          description: |-
+            The name of the Worker Deployment to create. If a Worker Deployment with
+             this name already exists, an error will be returned.
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: A unique identifier for this create request for idempotence. Typically UUIDv4.
+      description: Creates a new WorkerDeployment.
+    CreateWorkerDeploymentResponse:
+      type: object
+      properties:
+        conflictToken:
+          type: string
+          description: |-
+            This value is returned so that it can be optionally passed to APIs that
+             write to the WorkerDeployment state to ensure that the state did not
+             change between this API call and a future write.
+          format: bytes
+    CreateWorkerDeploymentVersionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
+        computeConfig:
+          allOf:
+            - $ref: '#/components/schemas/ComputeConfig'
+          description: |-
+            Optional. Contains the new worker compute configuration for the Worker
+             Deployment. Used for worker scale management.
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: |-
+            A unique identifier for this create request for idempotence. Typically UUIDv4.
+             If a second request with the same ID is recieved, it is considered a successful no-op.
+             Retrying with a different request ID for the same deployment name + build ID is an error.
+      description: Creates a new WorkerDeploymentVersion.
+    CreateWorkerDeploymentVersionResponse:
+      type: object
+      properties: {}
     CreateWorkflowRuleRequest:
       type: object
       properties:
@@ -9460,6 +10627,34 @@ components:
           description: |-
             Contains the historical state of failover_versions for the cluster, truncated to contain only the last N
              states to ensure that the list does not grow unbounded.
+    DescribeNexusOperationExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the operation, useful when run_id was not specified in the request.
+        info:
+          allOf:
+            - $ref: '#/components/schemas/NexusOperationExecutionInfo'
+          description: Information about the operation.
+        input:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: |-
+            Serialized operation input, passed as the request payload.
+             Only set if include_input was true in the request.
+        result:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: The result if the operation completed successfully.
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: The failure if the operation completed unsuccessfully.
+        longPollToken:
+          type: string
+          description: Token for follow-on long-poll requests. Absent only if the operation is complete.
+          format: bytes
     DescribeScheduleResponse:
       type: object
       properties:
@@ -9980,6 +11175,12 @@ components:
           description: |-
             True if the server supports Nexus operations.
              This flag is dependent both on server version and for Nexus to be enabled via server configuration.
+        serverScaledDeployments:
+          type: boolean
+          description: |-
+            True if the server supports server-scaled deployments.
+             This flag is dependent both on server version and for server-scaled deployments
+             to be enabled via server configuration.
       description: System capability details.
     GetWorkerBuildIdCompatibilityResponse:
       type: object
@@ -10157,6 +11358,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
             - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED
             - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED
           type: string
           format: enum
         version:
@@ -10193,6 +11395,10 @@ components:
           items:
             $ref: '#/components/schemas/Link'
           description: Links associated with the event.
+        principal:
+          allOf:
+            - $ref: '#/components/schemas/Principal'
+          description: Server-computed authenticated caller identity associated with this event.
         workflowExecutionStartedEventAttributes:
           $ref: '#/components/schemas/WorkflowExecutionStartedEventAttributes'
         workflowExecutionCompletedEventAttributes:
@@ -10311,6 +11517,8 @@ components:
           $ref: '#/components/schemas/WorkflowExecutionPausedEventAttributes'
         workflowExecutionUnpausedEventAttributes:
           $ref: '#/components/schemas/WorkflowExecutionUnpausedEventAttributes'
+        workflowExecutionTimeSkippingTransitionedEventAttributes:
+          $ref: '#/components/schemas/WorkflowExecutionTimeSkippingTransitionedEventAttributes'
       description: |-
         History events are the method by which Temporal SDKs advance (or recreate) workflow state.
          See the `EventType` enum for more info about what each event is for.
@@ -10369,6 +11577,8 @@ components:
           $ref: '#/components/schemas/Link_WorkflowEvent'
         batchJob:
           $ref: '#/components/schemas/Link_BatchJob'
+        nexusOperation:
+          $ref: '#/components/schemas/Link_NexusOperation'
       description: |-
         Link can be associated with history events. It might contain information about an external entity
          related to the history event. For example, workflow A makes a Nexus call that starts workflow B:
@@ -10383,6 +11593,16 @@ components:
         A link to a built-in batch job.
          Batch jobs can be used to perform operations on a set of workflows (e.g. terminate, signal, cancel, etc).
          This link can be put on workflow history events generated by actions taken by a batch job.
+    Link_NexusOperation:
+      type: object
+      properties:
+        namespace:
+          type: string
+        operationId:
+          type: string
+        runId:
+          type: string
+      description: A link to a standalone Nexus operation.
     Link_WorkflowEvent:
       type: object
       properties:
@@ -10460,6 +11680,17 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Endpoint'
+    ListNexusOperationExecutionsResponse:
+      type: object
+      properties:
+        operations:
+          type: array
+          items:
+            $ref: '#/components/schemas/NexusOperationExecutionListInfo'
+        nextPageToken:
+          type: string
+          description: Token to use to fetch the next page. If empty, there is no next page.
+          format: bytes
     ListScheduleMatchingTimesResponse:
       type: object
       properties:
@@ -10996,6 +12227,239 @@ components:
           type: string
           description: The request ID allocated at schedule time.
       description: Nexus operation completed successfully.
+    NexusOperationExecutionCancellationInfo:
+      type: object
+      properties:
+        requestedTime:
+          type: string
+          description: The time when cancellation was requested.
+          format: date-time
+        state:
+          enum:
+            - NEXUS_OPERATION_CANCELLATION_STATE_UNSPECIFIED
+            - NEXUS_OPERATION_CANCELLATION_STATE_SCHEDULED
+            - NEXUS_OPERATION_CANCELLATION_STATE_BACKING_OFF
+            - NEXUS_OPERATION_CANCELLATION_STATE_SUCCEEDED
+            - NEXUS_OPERATION_CANCELLATION_STATE_FAILED
+            - NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT
+            - NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED
+          type: string
+          format: enum
+        attempt:
+          type: integer
+          description: |-
+            The number of attempts made to deliver the cancel operation request.
+             This number represents a minimum bound since the attempt is incremented after the request completes.
+          format: int32
+        lastAttemptCompleteTime:
+          type: string
+          description: The time when the last attempt completed.
+          format: date-time
+        lastAttemptFailure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: The last attempt's failure, if any.
+        nextAttemptScheduleTime:
+          type: string
+          description: The time when the next attempt is scheduled.
+          format: date-time
+        blockedReason:
+          type: string
+          description: If the state is BLOCKED, blocked reason provides additional information.
+        reason:
+          type: string
+          description: A reason that may be specified in the CancelNexusOperationRequest.
+      description: NexusOperationExecutionCancellationInfo contains the state of a Nexus operation cancellation.
+    NexusOperationExecutionInfo:
+      type: object
+      properties:
+        operationId:
+          type: string
+          description: Unique identifier of this Nexus operation within its namespace along with run ID (below).
+        runId:
+          type: string
+        endpoint:
+          type: string
+          description: Endpoint name, resolved to a URL via the cluster's endpoint registry.
+        service:
+          type: string
+          description: Service name.
+        operation:
+          type: string
+          description: Operation name.
+        status:
+          enum:
+            - NEXUS_OPERATION_EXECUTION_STATUS_UNSPECIFIED
+            - NEXUS_OPERATION_EXECUTION_STATUS_RUNNING
+            - NEXUS_OPERATION_EXECUTION_STATUS_COMPLETED
+            - NEXUS_OPERATION_EXECUTION_STATUS_FAILED
+            - NEXUS_OPERATION_EXECUTION_STATUS_CANCELED
+            - NEXUS_OPERATION_EXECUTION_STATUS_TERMINATED
+            - NEXUS_OPERATION_EXECUTION_STATUS_TIMED_OUT
+          type: string
+          description: |-
+            A general status for this operation, indicates whether it is currently running or in one of the terminal statuses.
+             Updated once when the operation is originally scheduled, and again when it reaches a terminal status.
+          format: enum
+        state:
+          enum:
+            - PENDING_NEXUS_OPERATION_STATE_UNSPECIFIED
+            - PENDING_NEXUS_OPERATION_STATE_SCHEDULED
+            - PENDING_NEXUS_OPERATION_STATE_BACKING_OFF
+            - PENDING_NEXUS_OPERATION_STATE_STARTED
+            - PENDING_NEXUS_OPERATION_STATE_BLOCKED
+          type: string
+          description: More detailed breakdown of NEXUS_OPERATION_EXECUTION_STATUS_RUNNING.
+          format: enum
+        scheduleToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Schedule-to-close timeout for this operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        scheduleToStartTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Schedule-to-start timeout for this operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        startToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Start-to-close timeout for this operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        attempt:
+          type: integer
+          description: |-
+            The number of attempts made to start/deliver the operation request.
+             This number represents a minimum bound since the attempt is incremented after the request completes.
+          format: int32
+        scheduleTime:
+          type: string
+          description: Time the operation was originally scheduled via a StartNexusOperation request.
+          format: date-time
+        expirationTime:
+          type: string
+          description: Scheduled time + schedule to close timeout.
+          format: date-time
+        closeTime:
+          type: string
+          description: Time when the operation transitioned to a closed state.
+          format: date-time
+        lastAttemptCompleteTime:
+          type: string
+          description: The time when the last attempt completed.
+          format: date-time
+        lastAttemptFailure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: The last attempt's failure, if any.
+        nextAttemptScheduleTime:
+          type: string
+          description: The time when the next attempt is scheduled.
+          format: date-time
+        executionDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Elapsed time from schedule_time to now for running operations or to close_time for closed
+             operations, including all attempts and backoff between attempts.
+        cancellationInfo:
+          $ref: '#/components/schemas/NexusOperationExecutionCancellationInfo'
+        blockedReason:
+          type: string
+          description: If the state is BLOCKED, blocked reason provides additional information.
+        requestId:
+          type: string
+          description: |-
+            Server-generated request ID used as an idempotency token when submitting start requests to
+             the handler. Distinct from the request_id in StartNexusOperationRequest, which is the
+             caller-side idempotency key for the StartNexusOperation RPC itself.
+        operationToken:
+          type: string
+          description: Operation token. Only set for asynchronous operations after a successful StartOperation call.
+        stateTransitionCount:
+          type: string
+          description: Incremented each time the operation's state is mutated in persistence.
+        searchAttributes:
+          $ref: '#/components/schemas/SearchAttributes'
+        nexusHeader:
+          type: object
+          additionalProperties:
+            type: string
+          description: Header for context propagation and tracing purposes.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation.
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+          description: Links attached by the handler of this operation on start or completion.
+        identity:
+          type: string
+          description: The identity of the client who started this operation.
+      description: Full current state of a standalone Nexus operation, as of the time of the request.
+    NexusOperationExecutionListInfo:
+      type: object
+      properties:
+        operationId:
+          type: string
+          description: A unique identifier of this operation within its namespace along with run ID (below).
+        runId:
+          type: string
+          description: The run ID of the standalone Nexus operation.
+        endpoint:
+          type: string
+          description: Endpoint name.
+        service:
+          type: string
+          description: Service name.
+        operation:
+          type: string
+          description: Operation name.
+        scheduleTime:
+          type: string
+          description: Time the operation was originally scheduled via a StartNexusOperation request.
+          format: date-time
+        closeTime:
+          type: string
+          description: If the operation is in a terminal status, this field represents the time the operation transitioned to that status.
+          format: date-time
+        status:
+          enum:
+            - NEXUS_OPERATION_EXECUTION_STATUS_UNSPECIFIED
+            - NEXUS_OPERATION_EXECUTION_STATUS_RUNNING
+            - NEXUS_OPERATION_EXECUTION_STATUS_COMPLETED
+            - NEXUS_OPERATION_EXECUTION_STATUS_FAILED
+            - NEXUS_OPERATION_EXECUTION_STATUS_CANCELED
+            - NEXUS_OPERATION_EXECUTION_STATUS_TERMINATED
+            - NEXUS_OPERATION_EXECUTION_STATUS_TIMED_OUT
+          type: string
+          description: The status is updated once, when the operation is originally scheduled, and again when the operation reaches a terminal status.
+          format: enum
+        searchAttributes:
+          allOf:
+            - $ref: '#/components/schemas/SearchAttributes'
+          description: Search attributes from the start request.
+        stateTransitionCount:
+          type: string
+          description: Updated on terminal status.
+        executionDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            The difference between close time and scheduled time.
+             This field is only populated if the operation is closed.
+      description: |-
+        Limited Nexus operation information returned in the list response.
+         When adding fields here, ensure that it is also present in NexusOperationExecutionInfo (note that it may already be present in
+         NexusOperationExecutionInfo but not at the top-level).
     NexusOperationFailedEventAttributes:
       type: object
       properties:
@@ -11063,6 +12527,8 @@ components:
              Calls are retried internally by the server.
              (-- api-linter: core::0140::prepositions=disabled
                  aip.dev/not-precedent: "to" is used to indicate interval. --)
+             (-- api-linter: core::0142::time-field-names=disabled
+                 aip.dev/not-precedent: "timeout" is an acceptable suffix for duration fields in this API. --)
         nexusHeader:
           type: object
           additionalProperties:
@@ -11552,6 +13018,31 @@ components:
           description: The run ID of the activity, useful when run_id was not specified in the request.
         outcome:
           $ref: '#/components/schemas/ActivityExecutionOutcome'
+    PollNexusOperationExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the operation, useful when run_id was not specified in the request.
+        waitStage:
+          enum:
+            - NEXUS_OPERATION_WAIT_STAGE_UNSPECIFIED
+            - NEXUS_OPERATION_WAIT_STAGE_STARTED
+            - NEXUS_OPERATION_WAIT_STAGE_CLOSED
+          type: string
+          description: The current stage of the operation. May be more advanced than the stage requested in the poll.
+          format: enum
+        operationToken:
+          type: string
+          description: Operation token. Only populated for asynchronous operations after a successful StartOperation call.
+        result:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: The result if the operation completed successfully.
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: The failure if the operation completed unsuccessfully.
     PollWorkflowTaskQueueResponse:
       type: object
       properties:
@@ -11727,6 +13218,18 @@ components:
       description: |-
         UpdateWorkflowOptions represents updating workflow execution options after a workflow reset.
          Keep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest.
+    Principal:
+      type: object
+      properties:
+        type:
+          type: string
+          description: Low-cardinality category of the principal (e.g., "jwt", "users").
+        name:
+          type: string
+          description: Identifier within that category (e.g., sub JWT claim, email address).
+      description: |-
+        Principal is an authenticated caller identity computed by the server from trusted
+         authentication context.
     Priority:
       type: object
       properties:
@@ -12147,6 +13650,28 @@ components:
         reason:
           type: string
           description: Reason for requesting the cancellation
+    RequestCancelNexusOperationExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        operationId:
+          type: string
+        runId:
+          type: string
+          description: Operation run ID, targets the latest run if empty.
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: Used to de-dupe cancellation requests.
+        reason:
+          type: string
+          description: Reason for requesting the cancellation, recorded and available via the DescribeNexusOperationExecution API.
+    RequestCancelNexusOperationExecutionResponse:
+      type: object
+      properties: {}
     RequestCancelWorkflowExecutionRequest:
       type: object
       properties:
@@ -12242,6 +13767,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
             - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED
             - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED
           type: string
           description: The event type of the history event generated by the request.
           format: enum
@@ -12735,7 +14261,12 @@ components:
         currentDeploymentVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerDeploymentVersion'
-          description: "Specifies which Deployment Version should receive new workflow executions and tasks of\n existing unversioned or AutoUpgrade workflows.\n Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). \n Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\n is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
+          description: |-
+            Specifies which Deployment Version should receive new workflow executions and tasks of
+             existing unversioned or AutoUpgrade workflows.
+             Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.).
+             Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage
+             is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`).
         currentVersion:
           type: string
           description: Deprecated. Use `current_deployment_version`.
@@ -12775,7 +14306,9 @@ components:
           format: date-time
         revisionNumber:
           type: string
-          description: "Monotonically increasing value which is incremented on every mutation \n to any field of this message to achieve eventual consistency between task queues and their partitions."
+          description: |-
+            Monotonically increasing value which is incremented on every mutation
+             to any field of this message to achieve eventual consistency between task queues and their partitions.
     Schedule:
       type: object
       properties:
@@ -13555,6 +15088,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
+        timeSkippingConfig:
+          allOf:
+            - $ref: '#/components/schemas/TimeSkippingConfig'
+          description: Time-skipping configuration. If not set, time skipping is disabled.
     SignalWithStartWorkflowExecutionResponse:
       type: object
       properties:
@@ -13878,6 +15415,95 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
+    StartNexusOperationExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: |-
+            A unique identifier for this caller-side start request. Typically UUIDv4.
+             StartOperation requests sent to the handler will use a server-generated request ID.
+        operationId:
+          type: string
+          description: |-
+            Identifier for this operation. This is a caller-side ID, distinct from any internal
+             operation identifiers generated by the handler. Must be unique among operations in the
+             same namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.
+        endpoint:
+          type: string
+          description: Endpoint name, resolved to a URL via the cluster's endpoint registry.
+        service:
+          type: string
+          description: Service name.
+        operation:
+          type: string
+          description: Operation name.
+        scheduleToCloseTimeout:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Schedule-to-close timeout for this operation.
+             This is the only timeout settable for a Nexus operation.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "to" is used to indicate interval. --)
+        input:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: Serialized input to the operation. Passed as the request payload.
+        idReusePolicy:
+          enum:
+            - NEXUS_OPERATION_ID_REUSE_POLICY_UNSPECIFIED
+            - NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE
+            - NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY
+            - NEXUS_OPERATION_ID_REUSE_POLICY_REJECT_DUPLICATE
+          type: string
+          description: |-
+            Defines whether to allow re-using the operation id from a previously *closed* operation.
+             The default policy is NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+          format: enum
+        idConflictPolicy:
+          enum:
+            - NEXUS_OPERATION_ID_CONFLICT_POLICY_UNSPECIFIED
+            - NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL
+            - NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING
+          type: string
+          description: |-
+            Defines how to resolve an operation id conflict with a *running* operation.
+             The default policy is NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL.
+          format: enum
+        searchAttributes:
+          allOf:
+            - $ref: '#/components/schemas/SearchAttributes'
+          description: Search attributes for indexing.
+        nexusHeader:
+          type: object
+          additionalProperties:
+            type: string
+          description: |-
+            Header to attach to the Nexus request.
+             Users are responsible for encrypting sensitive data in this header as it is stored in workflow history and
+             transmitted to external services as-is.
+             This is useful for propagating tracing information.
+             Note these headers are not the same as Temporal headers on internal activities and child workflows, these are
+             transmitted to Nexus operations that may be external and are not traditional payloads.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation.
+    StartNexusOperationExecutionResponse:
+      type: object
+      properties:
+        runId:
+          type: string
+          description: The run ID of the operation that was started - or used (via NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING).
+        started:
+          type: boolean
+          description: If true, a new operation was started.
     StartWorkflowExecutionRequest:
       type: object
       properties:
@@ -14017,6 +15643,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/WorkerDeploymentOptions'
           description: Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`.
+        timeSkippingConfig:
+          allOf:
+            - $ref: '#/components/schemas/TimeSkippingConfig'
+          description: Time-skipping configuration. If not set, time skipping is disabled.
     StartWorkflowExecutionResponse:
       type: object
       properties:
@@ -14387,6 +16017,28 @@ components:
     TerminateActivityExecutionResponse:
       type: object
       properties: {}
+    TerminateNexusOperationExecutionRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        operationId:
+          type: string
+        runId:
+          type: string
+          description: Operation run ID, targets the latest run if empty.
+        identity:
+          type: string
+          description: The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: Used to de-dupe termination requests.
+        reason:
+          type: string
+          description: Reason for requesting the termination, recorded in the operation's result failure outcome.
+    TerminateNexusOperationExecutionResponse:
+      type: object
+      properties: {}
     TerminateWorkflowExecutionRequest:
       type: object
       properties:
@@ -14419,7 +16071,42 @@ components:
       properties: {}
     TerminatedFailureInfo:
       type: object
-      properties: {}
+      properties:
+        identity:
+          type: string
+          description: The identity of the worker or client that requested the termination.
+    TimeSkippingConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: "Enables or disables time skipping for this workflow execution.\n By default, this field is propagated to transitively related workflows (child workflows/start-as-new/reset) \n at the time they are started.\n Changes made after a transitively related workflow has started are not propagated."
+        disablePropagation:
+          type: boolean
+          description: If set, the enabled field is not propagated to transitively related workflows.
+        maxSkippedDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Maximum total virtual time that can be skipped.
+        maxElapsedDuration:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: |-
+            Maximum elapsed time since time skipping was enabled.
+             This includes both skipped time and real time elapsing.
+        maxTargetTime:
+          type: string
+          description: |-
+            Absolute virtual timestamp at which time skipping is disabled.
+             Time skipping will not advance beyond this point.
+          format: date-time
+      description: |-
+        Configuration for time skipping during a workflow execution.
+         When enabled, virtual time advances automatically whenever there is no in-flight work.
+         In-flight work includes activities, child workflows, Nexus operations, signal/cancel external workflow operations,
+         and possibly other features added in the future.
+         User timers are not classified as in-flight work and will be skipped over.
+         When time advances, it skips to the earlier of the next user timer or the configured bound, if either exists.
     TimeoutFailureInfo:
       type: object
       properties:
@@ -14781,6 +16468,13 @@ components:
              A non-null empty object will set the search attributes to an empty map.
              Note: you cannot only update the search attributes with `UpdateScheduleRequest`,
              you must also set the `schedule` field; otherwise, it will unset the schedule.
+        memo:
+          allOf:
+            - $ref: '#/components/schemas/Memo'
+          description: |-
+            Schedule memo to replace. If set, replaces the entire memo.
+             Do not set this field if you do not want to update the memo.
+             A non-null empty object will clear the memo.
     UpdateScheduleResponse:
       type: object
       properties: {}
@@ -14884,6 +16578,40 @@ components:
           allOf:
             - $ref: '#/components/schemas/WorkerConfig'
           description: The worker configuration. Will be returned if the command was sent to a single worker.
+    UpdateWorkerDeploymentVersionComputeConfigRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
+        computeConfigScalingGroups:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ComputeConfigScalingGroupUpdate'
+          description: |-
+            Optional. Contains the compute config scaling groups to add or update for the Worker
+             Deployment.
+        removeComputeConfigScalingGroups:
+          type: array
+          items:
+            type: string
+          description: Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
+        requestId:
+          type: string
+          description: |-
+            A unique identifier for this create request for idempotence. Typically UUIDv4.
+             If a second request with the same ID is recieved, it is considered a successful no-op.
+             Retrying with a different request ID for the same deployment name + build ID is an error.
+      description: Used to update the compute config of a Worker Deployment Version.
+    UpdateWorkerDeploymentVersionComputeConfigResponse:
+      type: object
+      properties: {}
     UpdateWorkerDeploymentVersionMetadataRequest:
       type: object
       properties:
@@ -15050,6 +16778,34 @@ components:
              that is a single JSON string for use in user interfaces. User interface formatting may apply to
              this text in common use. The payload data section is limited to 20000 bytes by default.
       description: Information a user can set, often for use by user interfaces.
+    ValidateWorkerDeploymentVersionComputeConfigRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
+        computeConfigScalingGroups:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ComputeConfigScalingGroupUpdate'
+          description: |-
+            Optional. Contains the compute config scaling groups to add or update for the Worker
+             Deployment.
+        removeComputeConfigScalingGroups:
+          type: array
+          items:
+            type: string
+          description: Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
+      description: Used to validate the compute config without attaching it to a Worker Deployment Version.
+    ValidateWorkerDeploymentVersionComputeConfigResponse:
+      type: object
+      properties: {}
     VersionDrainageInfo:
       type: object
       properties:
@@ -15231,7 +16987,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkerDeploymentInfo_WorkerDeploymentVersionSummary'
-          description: "Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be\n cleaned up automatically if all the following conditions meet:\n - It does not receive new executions (is not current or ramping)\n - It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status) \n - It is drained (see WorkerDeploymentVersionInfo.drainage_status)"
+          description: |-
+            Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be
+             cleaned up automatically if all the following conditions meet:
+             - It does not receive new executions (is not current or ramping)
+             - It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status)
+             - It is drained (see WorkerDeploymentVersionInfo.drainage_status)
         createTime:
           type: string
           format: date-time
@@ -15275,6 +17036,7 @@ components:
             - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING
             - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING
             - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED
+            - WORKER_DEPLOYMENT_VERSION_STATUS_CREATED
           type: string
           description: The status of the Worker Deployment Version.
           format: enum
@@ -15391,6 +17153,7 @@ components:
             - WORKER_DEPLOYMENT_VERSION_STATUS_RAMPING
             - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINING
             - WORKER_DEPLOYMENT_VERSION_STATUS_DRAINED
+            - WORKER_DEPLOYMENT_VERSION_STATUS_CREATED
           type: string
           description: The status of the Worker Deployment Version.
           format: enum
@@ -15400,6 +17163,7 @@ components:
           description: Required.
         deploymentName:
           type: string
+          description: Deprecated. User deployment_version.deployment_name.
         createTime:
           type: string
           format: date-time
@@ -15471,6 +17235,20 @@ components:
           allOf:
             - $ref: '#/components/schemas/VersionMetadata'
           description: Arbitrary user-provided metadata attached to this version.
+        computeConfig:
+          allOf:
+            - $ref: '#/components/schemas/ComputeConfig'
+          description: |-
+            Optional. Contains the new worker compute configuration for the Worker
+             Deployment. Used for worker scale management.
+        lastModifierIdentity:
+          type: string
+          description: |-
+            Identity of the last client who modified the configuration of this Version.
+             As of now, this field only covers changes through the following APIs:
+             - `CreateWorkerDeploymentVersion`
+             - `UpdateWorkerDeploymentVersionComputeConfig`
+             - `UpdateWorkerDeploymentVersionMetadata`
       description: "A Worker Deployment Version (Version, for short) represents all workers of the same \n code and config within a Deployment. Workers of the same Version are expected to \n behave exactly the same so when executions move between them there are no \n non-determinism issues.\n Worker Deployment Versions are created in Temporal server automatically when \n their first poller arrives to the server.\n Experimental. Worker Deployments are experimental and might significantly change in the future."
     WorkerDeploymentVersionInfo_VersionTaskQueueInfo:
       type: object
@@ -15843,6 +17621,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
             - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED
             - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED
           type: string
           format: enum
       description: EventReference is a direct reference to a history event through the event ID.
@@ -15913,6 +17692,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
             - EVENT_TYPE_WORKFLOW_EXECUTION_PAUSED
             - EVENT_TYPE_WORKFLOW_EXECUTION_UNPAUSED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIME_SKIPPING_TRANSITIONED
           type: string
           format: enum
       description: RequestIdReference is a indirect reference to a history event through the request ID.
@@ -16262,6 +18042,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: If set, overrides the workflow's priority sent by the SDK.
+        timeSkippingConfig:
+          allOf:
+            - $ref: '#/components/schemas/TimeSkippingConfig'
+          description: "Time-skipping configuration for this workflow execution.\n If not set, the time-skipping conf will not get updated upon request, \n i.e. the existing time-skipping conf will be preserved."
     WorkflowExecutionOptionsUpdatedEventAttributes:
       type: object
       properties:
@@ -16293,6 +18077,10 @@ components:
           description: |-
             Priority override upserted in this event. Represents the full priority; not just partial fields.
              Ignored if nil.
+        timeSkippingConfig:
+          allOf:
+            - $ref: '#/components/schemas/TimeSkippingConfig'
+          description: If set, the time-skipping configuration was changed. Contains the full updated configuration.
     WorkflowExecutionPauseInfo:
       type: object
       properties:
@@ -16598,6 +18386,27 @@ components:
         identity:
           type: string
           description: id of the client who requested termination
+    WorkflowExecutionTimeSkippingTransitionedEventAttributes:
+      type: object
+      properties:
+        targetTime:
+          type: string
+          description: The virtual time after time skipping was applied.
+          format: date-time
+        disabledAfterBound:
+          type: boolean
+          description: |-
+            when true, time skipping was disabled automatically due to a bound being reached.
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: "after" is used to indicate temporal ordering. --)
+        wallClockTime:
+          type: string
+          description: The wall-clock time when the time-skipping state changed event was generated.
+          format: date-time
+      description: |-
+        Attributes for an event indicating that time skipping state changed for a workflow execution,
+         either time was advanced or time skipping was disabled automatically due to a bound being reached.
+         The worker_may_ignore field in HistoryEvent should always be set true for this event.
     WorkflowExecutionTimedOutEventAttributes:
       type: object
       properties:

@@ -399,7 +399,7 @@ impl Started {
                 cause: Some(Box::new(Failure {
                     message: "Terminated".to_owned(),
                     failure_info: Some(FailureInfo::TerminatedFailureInfo(
-                        failure::TerminatedFailureInfo {},
+                        failure::TerminatedFailureInfo { identity: String::new() },
                     )),
                     ..Default::default()
                 })),

@@ -20,11 +20,13 @@ import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/enums/v1/deployment.proto";
 import "temporal/api/enums/v1/update.proto";
 import "temporal/api/enums/v1/activity.proto";
+import "temporal/api/enums/v1/nexus.proto";
 import "temporal/api/activity/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
+import "temporal/api/compute/v1/config.proto";
 import "temporal/api/deployment/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/filter/v1/message.proto";
@@ -197,6 +199,8 @@ message StartWorkflowExecutionRequest {
     temporal.api.common.v1.Priority priority = 27;
     // Deployment Options of the worker who will process the eager task. Passed when `request_eager_execution=true`.
     temporal.api.deployment.v1.WorkerDeploymentOptions eager_worker_deployment_options = 28;
+    // Time-skipping configuration. If not set, time skipping is disabled.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 29;
 }
 
 message StartWorkflowExecutionResponse {
@@ -275,7 +279,7 @@ message PollWorkflowTaskQueueRequest {
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 
     // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
-    reserved 7; 
+    reserved 7;
     reserved "worker_heartbeat";
 }
 
@@ -457,7 +461,7 @@ message PollActivityTaskQueueRequest {
     temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 
     // Removed in 1.55.0; was temporal.api.worker.v1.WorkerHeartbeat worker_heartbeat
-    reserved 7; 
+    reserved 7;
     reserved "worker_heartbeat";
 }
 
@@ -836,6 +840,8 @@ message SignalWithStartWorkflowExecutionRequest {
     temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
     // Priority metadata
     temporal.api.common.v1.Priority priority = 26;
+    // Time-skipping configuration. If not set, time skipping is disabled.
+    temporal.api.workflow.v1.TimeSkippingConfig time_skipping_config = 27;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -1267,6 +1273,11 @@ message GetSystemInfoResponse {
         // This flag is dependent both on server version and for Nexus to be enabled via server configuration.
         bool nexus = 11;
 
+        // True if the server supports server-scaled deployments.
+        // This flag is dependent both on server version and for server-scaled deployments
+        // to be enabled via server configuration.
+        bool server_scaled_deployments = 12;
+
     }
 }
 
@@ -1355,6 +1366,10 @@ message UpdateScheduleRequest {
     // Note: you cannot only update the search attributes with `UpdateScheduleRequest`,
     // you must also set the `schedule` field; otherwise, it will unset the schedule.
     temporal.api.common.v1.SearchAttributes search_attributes = 7;
+    // Schedule memo to replace. If set, replaces the entire memo.
+    // Do not set this field if you do not want to update the memo.
+    // A non-null empty object will clear the memo.
+    temporal.api.common.v1.Memo memo = 8;
 }
 
 message UpdateScheduleResponse {
@@ -2340,6 +2355,26 @@ message SetWorkerDeploymentRampingVersionResponse {
     float previous_percentage = 3 [deprecated = true];
 }
 
+// Creates a new WorkerDeployment.
+message CreateWorkerDeploymentRequest {
+    string namespace = 1;
+    // The name of the Worker Deployment to create. If a Worker Deployment with
+    // this name already exists, an error will be returned.
+    string deployment_name = 2;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 4;
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    string request_id = 5;
+}
+
+message CreateWorkerDeploymentResponse {
+    // This value is returned so that it can be optionally passed to APIs that
+    // write to the WorkerDeployment state to ensure that the state did not
+    // change between this API call and a future write.
+    bytes conflict_token = 1;
+}
+
 message ListWorkerDeploymentsRequest {
     string namespace = 1;
     int32 page_size = 2;
@@ -2364,6 +2399,28 @@ message ListWorkerDeploymentsResponse {
         // Summary of the ramping version of the Worker Deployment.
         temporal.api.deployment.v1.WorkerDeploymentInfo.WorkerDeploymentVersionSummary ramping_version_summary = 6;
     }
+}
+
+// Creates a new WorkerDeploymentVersion.
+message CreateWorkerDeploymentVersionRequest {
+    string namespace = 1;
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the new worker compute configuration for the Worker
+    // Deployment. Used for worker scale management.
+    temporal.api.compute.v1.ComputeConfig compute_config = 4;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+    
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    // If a second request with the same ID is recieved, it is considered a successful no-op.
+    // Retrying with a different request ID for the same deployment name + build ID is an error.
+    string request_id = 5;
+}
+
+message CreateWorkerDeploymentVersionResponse {
 }
 
 // Used for manual deletion of Versions. User can delete a Version only when all the
@@ -2398,6 +2455,53 @@ message DeleteWorkerDeploymentRequest {
 }
 
 message DeleteWorkerDeploymentResponse {
+}
+
+// Used to update the compute config of a Worker Deployment Version.
+message UpdateWorkerDeploymentVersionComputeConfigRequest {
+    string namespace = 1;
+
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the compute config scaling groups to add or update for the Worker
+    // Deployment.
+    map<string, temporal.api.compute.v1.ComputeConfigScalingGroupUpdate> compute_config_scaling_groups = 6;
+
+    // Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+    repeated string remove_compute_config_scaling_groups = 7;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    // If a second request with the same ID is recieved, it is considered a successful no-op.
+    // Retrying with a different request ID for the same deployment name + build ID is an error.
+    string request_id = 4;
+}
+
+message UpdateWorkerDeploymentVersionComputeConfigResponse {
+}
+
+// Used to validate the compute config without attaching it to a Worker Deployment Version.
+message ValidateWorkerDeploymentVersionComputeConfigRequest {
+    string namespace = 1;
+
+    // Required.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 2;
+
+    // Optional. Contains the compute config scaling groups to add or update for the Worker
+    // Deployment.
+    map<string, temporal.api.compute.v1.ComputeConfigScalingGroupUpdate> compute_config_scaling_groups = 6;
+
+    // Optional. Contains the compute config scaling groups to remove from the Worker Deployment.
+    repeated string remove_compute_config_scaling_groups = 7;
+
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+}
+
+message ValidateWorkerDeploymentVersionComputeConfigResponse {
 }
 
 // Used to update the user-defined metadata of a Worker Deployment Version.
@@ -2886,6 +2990,159 @@ message ListActivityExecutionsResponse {
     bytes next_page_token = 2;
 }
 
+message StartNexusOperationExecutionRequest {
+    string namespace = 1;
+    // The identity of the client who initiated this request.
+    string identity = 2;
+    // A unique identifier for this caller-side start request. Typically UUIDv4.
+    // StartOperation requests sent to the handler will use a server-generated request ID.
+    string request_id = 3;
+    // Identifier for this operation. This is a caller-side ID, distinct from any internal
+    // operation identifiers generated by the handler. Must be unique among operations in the
+    // same namespace, subject to the rules imposed by id_reuse_policy and id_conflict_policy.
+    string operation_id = 4;
+    // Endpoint name, resolved to a URL via the cluster's endpoint registry.
+    string endpoint = 5;
+    // Service name.
+    string service = 6;
+    // Operation name.
+    string operation = 7;
+
+    // Schedule-to-close timeout for this operation.
+    // This is the only timeout settable for a Nexus operation.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 8;
+
+    // Serialized input to the operation. Passed as the request payload.
+    temporal.api.common.v1.Payload input = 9;
+
+    // Defines whether to allow re-using the operation id from a previously *closed* operation.
+    // The default policy is NEXUS_OPERATION_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.NexusOperationIdReusePolicy id_reuse_policy = 10;
+    // Defines how to resolve an operation id conflict with a *running* operation.
+    // The default policy is NEXUS_OPERATION_ID_CONFLICT_POLICY_FAIL.
+    temporal.api.enums.v1.NexusOperationIdConflictPolicy id_conflict_policy = 11;
+
+    // Search attributes for indexing.
+    temporal.api.common.v1.SearchAttributes search_attributes = 12;
+    // Header to attach to the Nexus request.
+    // Users are responsible for encrypting sensitive data in this header as it is stored in workflow history and
+    // transmitted to external services as-is.
+    // This is useful for propagating tracing information.
+    // Note these headers are not the same as Temporal headers on internal activities and child workflows, these are
+    // transmitted to Nexus operations that may be external and are not traditional payloads.
+    map<string, string> nexus_header = 13;
+    // Metadata for use by user interfaces to display the fixed as-of-start summary and details of the operation.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 14;
+}
+
+message StartNexusOperationExecutionResponse {
+    // The run ID of the operation that was started - or used (via NEXUS_OPERATION_ID_CONFLICT_POLICY_USE_EXISTING).
+    string run_id = 1;
+    // If true, a new operation was started.
+    bool started = 2;
+}
+
+message DescribeNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID. If empty the request targets the latest run.
+    string run_id = 3;
+    // Include the input field in the response.
+    bool include_input = 4;
+    // Include the outcome (result/failure) in the response if the operation has completed.
+    bool include_outcome = 5;
+    // Token from a previous DescribeNexusOperationExecutionResponse. If present, long-poll until operation
+    // state changes from the state encoded in this token. If absent, return current state immediately.
+    // If present, run_id must also be present.
+    // Note that operation state may change multiple times between requests, therefore it is not
+    // guaranteed that a client making a sequence of long-poll requests will see a complete
+    // sequence of state changes.
+    bytes long_poll_token = 6;
+}
+
+message DescribeNexusOperationExecutionResponse {
+    // The run ID of the operation, useful when run_id was not specified in the request.
+    string run_id = 1;
+
+    // Information about the operation.
+    temporal.api.nexus.v1.NexusOperationExecutionInfo info = 2;
+
+    // Serialized operation input, passed as the request payload.
+    // Only set if include_input was true in the request.
+    temporal.api.common.v1.Payload input = 3;
+
+    // Only set if the operation is completed and include_outcome was true in the request.
+    oneof outcome {
+        // The result if the operation completed successfully.
+        temporal.api.common.v1.Payload result = 4;
+        // The failure if the operation completed unsuccessfully.
+        temporal.api.failure.v1.Failure failure = 5;
+    }
+
+    // Token for follow-on long-poll requests. Absent only if the operation is complete.
+    bytes long_poll_token = 6;
+}
+
+message PollNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID. If empty the request targets the latest run.
+    string run_id = 3;
+
+    // Stage to wait for. The operation may be in a more advanced stage when the poll is unblocked.
+    temporal.api.enums.v1.NexusOperationWaitStage wait_stage = 4;
+}
+
+message PollNexusOperationExecutionResponse {
+    // The run ID of the operation, useful when run_id was not specified in the request.
+    string run_id = 1;
+
+    // The current stage of the operation. May be more advanced than the stage requested in the poll.
+    temporal.api.enums.v1.NexusOperationWaitStage wait_stage = 2;
+
+    // Operation token. Only populated for asynchronous operations after a successful StartOperation call.
+    string operation_token = 3;
+
+    // The operation outcome, available if the operation is in a closed state.
+    oneof outcome {
+        // The result if the operation completed successfully.
+        temporal.api.common.v1.Payload result = 4;
+        // The failure if the operation completed unsuccessfully.
+        temporal.api.failure.v1.Failure failure = 5;
+    }
+}
+
+message ListNexusOperationExecutionsRequest {
+    string namespace = 1;
+    // Max number of operations to return per page.
+    int32 page_size = 2;
+    // Token returned in ListNexusOperationExecutionsResponse.
+    bytes next_page_token = 3;
+    // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+    // Search attributes that are avaialble for Nexus operations include:
+    // - OperationId
+    // - RunId
+    // - Endpoint
+    // - Service
+    // - Operation
+    // - RequestId
+    // - StartTime
+    // - ExecutionTime
+    // - CloseTime
+    // - ExecutionStatus
+    // - ExecutionDuration
+    // - StateTransitionCount
+    string query = 4;
+}
+
+message ListNexusOperationExecutionsResponse {
+    repeated temporal.api.nexus.v1.NexusOperationExecutionListInfo operations = 1;
+    // Token to use to fetch the next page. If empty, there is no next page.
+    bytes next_page_token = 2;
+}
+
 message CountActivityExecutionsRequest {
     string namespace = 1;
     // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
@@ -2898,6 +3155,31 @@ message CountActivityExecutionsResponse {
     // If `query` is grouping by a field, the count is simply the sum of the counts
     // of the groups returned in the response. This number can be smaller than the
     // total number of activities matching the query.
+    int64 count = 1;
+
+    // Contains the groups if the request is grouping by a field.
+    // The list might not be complete, and the counts of each group is approximate.
+    repeated AggregationGroup groups = 2;
+
+    message AggregationGroup {
+        repeated temporal.api.common.v1.Payload group_values = 1;
+        int64 count = 2;
+    }
+}
+
+message CountNexusOperationExecutionsRequest {
+    string namespace = 1;
+    // Visibility query, see https://docs.temporal.io/list-filter for the syntax.
+    // See also ListNexusOperationExecutionsRequest for search attributes available for Nexus operations.
+    string query = 2;
+}
+
+message CountNexusOperationExecutionsResponse {
+    // If `query` is not grouping by any field, the count is an approximate number
+    // of operations that match the query.
+    // If `query` is grouping by a field, the count is simply the sum of the counts
+    // of the groups returned in the response. This number can be smaller than the
+    // total number of operations matching the query.
     int64 count = 1;
 
     // Contains the groups if the request is grouping by a field.
@@ -2951,4 +3233,46 @@ message DeleteActivityExecutionRequest {
 }
 
 message DeleteActivityExecutionResponse {
+}
+
+message RequestCancelNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Used to de-dupe cancellation requests.
+    string request_id = 5;
+    // Reason for requesting the cancellation, recorded and available via the DescribeNexusOperationExecution API.
+    string reason = 6;
+}
+
+message RequestCancelNexusOperationExecutionResponse {
+}
+
+message TerminateNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // Used to de-dupe termination requests.
+    string request_id = 5;
+    // Reason for requesting the termination, recorded in the operation's result failure outcome.
+    string reason = 6;
+}
+
+message TerminateNexusOperationExecutionResponse {
+}
+
+message DeleteNexusOperationExecutionRequest {
+    string namespace = 1;
+    string operation_id = 2;
+    // Operation run ID, targets the latest run if empty.
+    string run_id = 3;
+}
+
+message DeleteNexusOperationExecutionResponse {
 }

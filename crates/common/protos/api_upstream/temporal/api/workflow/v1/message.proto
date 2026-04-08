@@ -566,6 +566,56 @@ message WorkflowExecutionOptions {
 
     // If set, overrides the workflow's priority sent by the SDK.
     temporal.api.common.v1.Priority priority = 2;
+
+    // Time-skipping configuration for this workflow execution.
+    // If not set, the time-skipping conf will not get updated upon request, 
+    // i.e. the existing time-skipping conf will be preserved.
+    TimeSkippingConfig time_skipping_config = 3;
+}
+
+// Configuration for time skipping during a workflow execution.
+// When enabled, virtual time advances automatically whenever there is no in-flight work.
+// In-flight work includes activities, child workflows, Nexus operations, signal/cancel external workflow operations,
+// and possibly other features added in the future.
+// User timers are not classified as in-flight work and will be skipped over.
+// When time advances, it skips to the earlier of the next user timer or the configured bound, if either exists.
+message TimeSkippingConfig {
+
+    // Enables or disables time skipping for this workflow execution.
+    // By default, this field is propagated to transitively related workflows (child workflows/start-as-new/reset) 
+    // at the time they are started.
+    // Changes made after a transitively related workflow has started are not propagated.
+    bool enabled = 1;
+
+    // If set, the enabled field is not propagated to transitively related workflows.
+    bool disable_propagation = 2;
+
+    // Optional bound that limits how long time skipping remains active.
+    // Once the bound is reached, time skipping is automatically disabled.
+    // It can later be re-enabled via UpdateWorkflowExecutionOptions.
+    //
+    // This is particularly useful in testing scenarios where workflows
+    // are expected to receive signals, updates, or other events while
+    // timers are in progress.
+    //
+    // This bound is not propagated to transitively related workflows. 
+    // When bound is also needed for transitively related workflows,
+    // it is recommended to set disable_propagation to true 
+    // and configure TimeSkippingConfig explicitly for transitively related workflows.
+    oneof bound {
+
+        // Maximum total virtual time that can be skipped.
+        google.protobuf.Duration max_skipped_duration = 4;
+
+        // Maximum elapsed time since time skipping was enabled.
+        // This includes both skipped time and real time elapsing.
+        // (-- api-linter: core::0142::time-field-names=disabled --)
+        google.protobuf.Duration max_elapsed_duration = 5;
+
+        // Absolute virtual timestamp at which time skipping is disabled.
+        // Time skipping will not advance beyond this point.
+        google.protobuf.Timestamp max_target_time = 6;
+    }
 }
 
 // Used to override the versioning behavior (and pinned deployment version, if applicable) of a

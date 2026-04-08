@@ -14,6 +14,7 @@ import "google/protobuf/timestamp.proto";
 import "temporal/api/enums/v1/deployment.proto";
 import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/common/v1/message.proto";
+import "temporal/api/compute/v1/config.proto";
 
 // Worker Deployment options set in SDK that need to be sent to server in every poll.
 // Experimental. Worker Deployments are experimental and might significantly change in the future.
@@ -102,6 +103,7 @@ message WorkerDeploymentVersionInfo {
 
     // Required.
     WorkerDeploymentVersion deployment_version = 11;
+    // Deprecated. User deployment_version.deployment_name.
     string deployment_name = 2;
     google.protobuf.Timestamp create_time = 3;
 
@@ -158,6 +160,17 @@ message WorkerDeploymentVersionInfo {
 
     // Arbitrary user-provided metadata attached to this version.
     VersionMetadata metadata = 10;
+
+    // Optional. Contains the new worker compute configuration for the Worker
+    // Deployment. Used for worker scale management.
+    temporal.api.compute.v1.ComputeConfig compute_config = 16;
+
+    // Identity of the last client who modified the configuration of this Version.
+    // As of now, this field only covers changes through the following APIs:
+    // - `CreateWorkerDeploymentVersion`
+    // - `UpdateWorkerDeploymentVersionComputeConfig`
+    // - `UpdateWorkerDeploymentVersionMetadata`
+    string last_modifier_identity = 17;
 }
 
 // Information about workflow drainage to help the user determine when it is safe
@@ -188,8 +201,8 @@ message WorkerDeploymentInfo {
     // Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be
     // cleaned up automatically if all the following conditions meet:
     // - It does not receive new executions (is not current or ramping)
-    // - It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status) 
-    // - It is drained (see WorkerDeploymentVersionInfo.drainage_status) 
+    // - It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status)
+    // - It is drained (see WorkerDeploymentVersionInfo.drainage_status)
     repeated WorkerDeploymentVersionSummary version_summaries = 2;
 
     google.protobuf.Timestamp create_time = 3;
@@ -271,7 +284,7 @@ message VersionMetadata {
 message RoutingConfig {
     // Specifies which Deployment Version should receive new workflow executions and tasks of
     // existing unversioned or AutoUpgrade workflows.
-    // Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). 
+    // Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.).
     // Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage
     // is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`).
     temporal.api.deployment.v1.WorkerDeploymentVersion current_deployment_version = 7;
@@ -299,7 +312,7 @@ message RoutingConfig {
     // Last time ramping version percentage was changed.
     // If ramping version is changed, this is also updated, even if the percentage stays the same.
     google.protobuf.Timestamp ramping_version_percentage_changed_time = 6;
-    // Monotonically increasing value which is incremented on every mutation 
+    // Monotonically increasing value which is incremented on every mutation
     // to any field of this message to achieve eventual consistency between task queues and their partitions.
     int64 revision_number = 10;
 }
