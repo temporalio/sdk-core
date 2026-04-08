@@ -69,12 +69,13 @@ use temporalio_common::{
     HasWorkflowDefinition,
     data_converters::{DataConverter, SerializationContextData},
     protos::{
-        coresdk::IntoPayloadsExt,
+        coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
         grpc::health::v1::health_client::HealthClient,
         proto_ts_to_system_time,
         temporal::api::{
             cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
             common::v1::{Memo, Payload, SearchAttributes, WorkflowType},
+            sdk::v1::UserMetadata,
             enums::v1::{TaskQueueKind, WorkflowExecutionStatus},
             errordetails::v1::WorkflowExecutionAlreadyStartedFailure,
             operatorservice::v1::operator_service_client::OperatorServiceClient,
@@ -1027,6 +1028,16 @@ where
         let workflow_id = options.workflow_id.clone();
         let task_queue_name = options.task_queue.clone();
 
+        let user_metadata =
+            if options.static_summary.is_some() || options.static_details.is_some() {
+                Some(UserMetadata {
+                    summary: options.static_summary.and_then(|s| s.as_json_payload().ok()),
+                    details: options.static_details.and_then(|s| s.as_json_payload().ok()),
+                })
+            } else {
+                None
+            };
+
         let run_id = if let Some(start_signal) = options.start_signal {
             // Use signal-with-start when a start_signal is provided
             let res = WorkflowService::signal_with_start_workflow_execution(
@@ -1057,6 +1068,7 @@ where
                     search_attributes: options.search_attributes.map(|d| d.into()),
                     cron_schedule: options.cron_schedule.unwrap_or_default(),
                     header: options.header.or(start_signal.header),
+                    user_metadata,
                     ..Default::default()
                 }
                 .into_request(),
@@ -1097,6 +1109,7 @@ where
                         completion_callbacks: options.completion_callbacks,
                         priority: Some(options.priority.into()),
                         header: options.header,
+                        user_metadata,
                         ..Default::default()
                     }
                     .into_request(),

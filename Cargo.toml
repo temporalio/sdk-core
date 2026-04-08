@@ -6,6 +6,7 @@ members = [
     "crates/macros",
     "crates/sdk",
     "crates/sdk-core-c-bridge",
+    "current-details-demo",
 ]
 resolver = "2"
 

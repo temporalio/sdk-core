@@ -238,6 +238,12 @@ pub struct WorkflowStartOptions {
 
     /// Headers to include with the start request.
     pub header: Option<Header>,
+
+    /// Single-line static summary for the workflow, shown in the Temporal UI.
+    pub static_summary: Option<String>,
+
+    /// Multi-line static details for the workflow, shown in the Temporal UI.
+    pub static_details: Option<String>,
 }
 
 /// A signal to send atomically when starting a workflow.
@@ -455,3 +461,29 @@ pub struct WorkflowListOptions {
 #[derive(Debug, Clone, Default, bon::Builder)]
 #[non_exhaustive]
 pub struct WorkflowCountOptions {}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workflow_start_options_static_summary_default_none() {
+        let opts = WorkflowStartOptions::new("tq", "wf-id").build();
+        assert!(opts.static_summary.is_none());
+        assert!(opts.static_details.is_none());
+    }
+
+    #[test]
+    fn workflow_start_options_static_summary_set() {
+        let opts = WorkflowStartOptions::new("tq", "wf-id")
+            .static_summary("Order fulfillment workflow".to_string())
+            .static_details("Validates the order, processes payment".to_string())
+            .build();
+        assert_eq!(opts.static_summary.as_deref(), Some("Order fulfillment workflow"));
+        assert_eq!(
+            opts.static_details.as_deref(),
+            Some("Validates the order, processes payment")
+        );
+    }
+}

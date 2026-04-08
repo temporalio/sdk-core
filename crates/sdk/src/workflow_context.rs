@@ -402,6 +402,11 @@ impl BaseWorkflowContext {
         self.inner.state_mutated.set(true);
     }
 
+    /// Return the current value of current_details.
+    pub(crate) fn current_details(&self) -> String {
+        self.inner.shared.borrow().current_details.clone()
+    }
+
     /// Cancel any cancellable operation by ID
     fn cancel(&self, cancellable_id: CancellableID) {
         self.send(RustWfCmd::Cancel(cancellable_id));
@@ -847,6 +852,21 @@ impl<W> SyncWorkflowContext<W> {
         ))
     }
 
+    /// Set the current free-form details string for this workflow execution.
+    ///
+    /// The value is surfaced to the Temporal server UI in real time via the
+    /// `__temporal_workflow_metadata` built-in query.
+    pub fn set_current_details(&self, details: impl Into<String>) {
+        self.base.inner.shared.borrow_mut().current_details = details.into();
+    }
+
+    /// Get the current details string previously set via [`set_current_details`].
+    ///
+    /// Returns an empty string if [`set_current_details`] has not been called.
+    pub fn get_current_details(&self) -> String {
+        self.base.inner.shared.borrow().current_details.clone()
+    }
+
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
@@ -1071,6 +1091,20 @@ impl<W> WorkflowContext<W> {
         self.sync.upsert_memo(attr_iter)
     }
 
+    /// Set the current free-form details string for this workflow execution.
+    ///
+    /// See [`SyncWorkflowContext::set_current_details`].
+    pub fn set_current_details(&self, details: impl Into<String>) {
+        self.sync.set_current_details(details)
+    }
+
+    /// Get the current details string previously set via [`set_current_details`].
+    ///
+    /// See [`SyncWorkflowContext::get_current_details`].
+    pub fn get_current_details(&self) -> String {
+        self.sync.get_current_details()
+    }
+
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.sync.force_task_fail(with)
@@ -1186,6 +1220,8 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
+    /// Current free-form details string, surfaced via `__temporal_workflow_metadata` query.
+    pub(crate) current_details: String,
 }
 
 /// A Future that can be cancelled.
@@ -2083,5 +2119,51 @@ impl StartedNexusOperation {
         self.unblock_dat
             .base_ctx
             .cancel(CancellableID::NexusOp(self.unblock_dat.schedule_seq));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporalio_common::{
+        data_converters::PayloadConverter,
+        protos::coresdk::workflow_activation::InitializeWorkflow,
+    };
+    use tokio::sync::watch;
+
+    fn make_base_ctx() -> BaseWorkflowContext {
+        let (cancel_tx, cancel_rx) = watch::channel(None);
+        // cancel_tx must be kept alive for the duration of the test
+        std::mem::forget(cancel_tx);
+        let (ctx, _rx) = BaseWorkflowContext::new(
+            "ns".into(),
+            "tq".into(),
+            "run-id".into(),
+            InitializeWorkflow::default(),
+            cancel_rx,
+            PayloadConverter::default(),
+        );
+        ctx
+    }
+
+    #[test]
+    fn current_details_defaults_to_empty_string() {
+        let ctx = make_base_ctx();
+        assert_eq!(ctx.current_details(), "");
+    }
+
+    #[test]
+    fn set_and_get_current_details_roundtrip() {
+        let ctx = make_base_ctx();
+        ctx.inner.shared.borrow_mut().current_details = "my details".into();
+        assert_eq!(ctx.current_details(), "my details");
+    }
+
+    #[test]
+    fn set_current_details_overwrites_previous() {
+        let ctx = make_base_ctx();
+        ctx.inner.shared.borrow_mut().current_details = "first".into();
+        ctx.inner.shared.borrow_mut().current_details = "second".into();
+        assert_eq!(ctx.current_details(), "second");
     }
 }

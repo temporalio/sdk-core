@@ -108,8 +108,8 @@ impl ActivityOptions {
                 }
                 .into(),
             ),
-            user_metadata: self.summary.map(|s| UserMetadata {
-                summary: Some(s.into()),
+            user_metadata: self.summary.and_then(|s| s.as_json_payload().ok()).map(|summary| UserMetadata {
+                summary: Some(summary),
                 details: None,
             }),
         }
@@ -251,8 +251,8 @@ impl ChildWorkflowOptions {
     ) -> WorkflowCommand {
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
-                summary: self.static_summary.map(Into::into),
-                details: self.static_details.map(Into::into),
+                summary: self.static_summary.and_then(|s| s.as_json_payload().ok()),
+                details: self.static_details.and_then(|s| s.as_json_payload().ok()),
             })
         } else {
             None

@@ -14,6 +14,7 @@ use std::{
     sync::mpsc::Receiver,
     task::{Context, Poll},
 };
+
 use temporalio_common::{
     data_converters::PayloadConverter,
     protos::{
@@ -248,15 +249,45 @@ impl WorkflowFuture {
                         converter: &self.payload_converter,
                     };
 
-                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.execution.dispatch_query(&query_type, data)
-                    })) {
-                        Ok(r) => r,
-                        Err(e) => Some(Err(anyhow!(
-                            "Panic in query handler: {}",
-                            panic_formatter(e)
-                        )
-                        .into())),
+                    let dispatch_result = if query_type == "__temporal_workflow_metadata" {
+                        // Build the proto-JSON representation of WorkflowMetadata.
+                        // The Go SDK uses "json/protobuf" (proto JSON) encoding, so we match that.
+                        // Proto JSON uses lowerCamelCase field names; the only field we set is
+                        // `current_details` → `currentDetails`.
+                        let details = self.base_ctx.current_details();
+                        let json_bytes = if details.is_empty() {
+                            b"{}".to_vec()
+                        } else {
+                            // serde_json::to_string produces a properly escaped JSON string.
+                            let escaped = serde_json::to_string(&details)
+                                .unwrap_or_else(|_| "\"\"".to_string());
+                            format!("{{\"currentDetails\":{escaped}}}").into_bytes()
+                        };
+                        let payload = Payload {
+                            metadata: [
+                                ("encoding".to_string(), b"json/protobuf".to_vec()),
+                                (
+                                    "messageType".to_string(),
+                                    b"temporal.api.sdk.v1.WorkflowMetadata".to_vec(),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                            data: json_bytes,
+                            ..Default::default()
+                        };
+                        Some(Ok(payload))
+                    } else {
+                        match panic::catch_unwind(AssertUnwindSafe(|| {
+                            self.execution.dispatch_query(&query_type, data)
+                        })) {
+                            Ok(r) => r,
+                            Err(e) => Some(Err(anyhow!(
+                                "Panic in query handler: {}",
+                                panic_formatter(e)
+                            )
+                            .into())),
+                        }
                     };
 
                     let response = match dispatch_result {
