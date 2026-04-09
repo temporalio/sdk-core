@@ -62,11 +62,7 @@ rstest = "0.26"
 [features]
 default = []
 antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
-examples = ["serde/derive", "dep:serde_json"]
-
-[dependencies.serde_json]
-version = "1"
-optional = true
+examples = ["serde/derive"]
 
 [[example]]
 name = "hello-world-worker"
