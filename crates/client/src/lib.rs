@@ -1033,10 +1033,10 @@ where
             Some(UserMetadata {
                 summary: options
                     .static_summary
-                    .map(|s| s.as_json_payload().unwrap_or_default()),
+                    .map(|s| s.as_json_payload().expect("String-to-JSON payload serialization is infallible")),
                 details: options
                     .static_details
-                    .map(|s| s.as_json_payload().unwrap_or_default()),
+                    .map(|s| s.as_json_payload().expect("String-to-JSON payload serialization is infallible")),
             })
         } else {
             None

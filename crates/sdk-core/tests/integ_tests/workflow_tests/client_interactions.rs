@@ -676,7 +676,8 @@ async fn static_summary_and_details_visible_after_start() {
         Some(b"json/plain".as_slice()),
     );
     assert_eq!(
-        serde_json::from_slice::<String>(&summary_payload.data).unwrap(),
+        serde_json::from_slice::<String>(&summary_payload.data)
+            .expect("summary payload data should deserialize as a JSON string"),
         "my static summary",
     );
 
@@ -686,7 +687,8 @@ async fn static_summary_and_details_visible_after_start() {
         Some(b"json/plain".as_slice()),
     );
     assert_eq!(
-        serde_json::from_slice::<String>(&details_payload.data).unwrap(),
+        serde_json::from_slice::<String>(&details_payload.data)
+            .expect("details payload data should deserialize as a JSON string"),
         "my static details",
     );
 }

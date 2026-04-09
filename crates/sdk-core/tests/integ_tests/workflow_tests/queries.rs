@@ -454,7 +454,7 @@ async fn workflow_metadata_query_returns_current_details() {
     t.add_full_wf_task();
 
     let tasks = [
-        // First task: workflow starts, sets current_details, and blocks on wait_condition.
+        // First task: workflow starts, sets current_details, and blocks on pending.
         hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
         // Second task: legacy query for __temporal_workflow_metadata while workflow is blocked.
         {
@@ -564,6 +564,17 @@ async fn workflow_metadata_query_empty_details() {
             .response
             .as_ref()
             .expect("Expected a response payload");
+
+        assert_eq!(
+            payload.metadata.get("encoding").map(|v| v.as_slice()),
+            Some(b"json/protobuf".as_slice()),
+            "Expected json/protobuf encoding"
+        );
+        assert_eq!(
+            payload.metadata.get("messageType").map(|v| v.as_slice()),
+            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
+            "Expected WorkflowMetadata messageType"
+        );
 
         // With no current_details set the field is omitted per proto3 JSON rules.
         assert_eq!(
