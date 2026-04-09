@@ -467,14 +467,12 @@ async fn workflow_metadata_query_returns_current_details() {
 
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
         asserts.then(|wft| {
-            // First activation: workflow runs and blocks. Should produce no CompleteWorkflow command.
-            let has_complete = wft
-                .commands
-                .iter()
-                .any(|c| c.command_type() == CommandType::CompleteWorkflowExecution);
+            // First activation: workflow runs, sets current_details, and blocks.
+            // No commands should be emitted.
             assert!(
-                !has_complete,
-                "Workflow should not complete on first activation"
+                wft.commands.is_empty(),
+                "Expected no commands on first activation, got: {:?}",
+                wft.commands
             );
         });
     });
