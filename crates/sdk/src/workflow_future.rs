@@ -249,16 +249,21 @@ impl WorkflowFuture {
                     };
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
-                        // Build the proto-JSON representation of WorkflowMetadata.
-                        let details = self.base_ctx.current_details();
-                        let json_bytes = if details.is_empty() {
-                            b"{}".to_vec()
-                        } else {
-                            // serde_json::to_string produces a properly escaped JSON string.
-                            let escaped = serde_json::to_string(&details)
-                                .unwrap_or_else(|_| "\"\"".to_string());
-                            format!("{{\"currentDetails\":{escaped}}}").into_bytes()
-                        };
+                        // Mirror the proto JSON shape of temporal.api.sdk.v1.WorkflowMetadata.
+                        // Field names are camelCase per proto3 JSON; skip_serializing_if matches
+                        // proto3 default-field omission behavior.
+                        #[derive(serde::Serialize)]
+                        struct WorkflowMetadataJson {
+                            #[serde(
+                                rename = "currentDetails",
+                                skip_serializing_if = "String::is_empty"
+                            )]
+                            current_details: String,
+                        }
+                        let json_bytes = serde_json::to_vec(&WorkflowMetadataJson {
+                            current_details: self.base_ctx.current_details(),
+                        })
+                        .expect("WorkflowMetadata serialization is infallible");
                         let payload = Payload {
                             metadata: [
                                 ("encoding".to_string(), b"json/protobuf".to_vec()),
