@@ -1731,23 +1731,26 @@ async fn wf_task_latency_recorded_on_dropped_wft() {
     core.drain_pollers_and_shutdown().await;
 
     // Both WFT processing attempts should have recorded latency, even the dropped one
-    let body = get_text(format!("http://{addr}/metrics")).await;
-    let latency_line = body
-        .lines()
-        .find(|l| l.starts_with("temporal_workflow_task_execution_latency_count{"));
-    match latency_line {
-        Some(line) => {
-            assert!(
-                line.ends_with(" 2"),
-                "Expected latency count of 2 (both reported and dropped WFT), got: {line}"
-            );
-        }
-        None => panic!(
-            "wf_task_execution_latency metric not found. Available metrics:\n{}",
-            body.lines()
-                .filter(|l| l.contains("workflow"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ),
-    }
+    eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                let line = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_latency_count{"))
+                    .ok_or_else(|| anyhow!("wf_task_execution_latency metric not found"))?
+                    .to_string();
+                if !line.ends_with(" 2") {
+                    bail!(
+                        "Expected latency count of 2 (both reported and dropped WFT), got: {line}"
+                    );
+                }
+                Ok(())
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
 }
