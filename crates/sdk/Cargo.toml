@@ -10,13 +10,16 @@ repository = "https://github.com/temporalio/sdk-core"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 readme = "README.md"
+autoexamples = false
 
 [dependencies]
 async-trait = "0.1"
 anyhow = "1.0"
 bon = { workspace = true }
 derive_more = { workspace = true }
-futures-util = { version = "0.3", default-features = false, features = ["async-await-macro"] }
+futures-util = { version = "0.3", default-features = false, features = [
+  "async-await-macro",
+] }
 gethostname = "1.0.2"
 parking_lot = { version = "0.12", features = ["send_guard"] }
 prost-types = { workspace = true }
@@ -59,6 +62,141 @@ rstest = "0.26"
 [features]
 default = []
 antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
+examples = ["serde/derive", "dep:serde_json"]
+
+[dependencies.serde_json]
+version = "1"
+optional = true
+
+[[example]]
+name = "hello-world-worker"
+path = "examples/hello_world/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "hello-world-starter"
+path = "examples/hello_world/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "activity-heartbeating-worker"
+path = "examples/activity_heartbeating/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "activity-heartbeating-starter"
+path = "examples/activity_heartbeating/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "timer-examples-worker"
+path = "examples/timer_examples/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "timer-examples-starter"
+path = "examples/timer_examples/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "message-passing-worker"
+path = "examples/message_passing/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "message-passing-starter"
+path = "examples/message_passing/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "child-workflows-worker"
+path = "examples/child_workflows/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "child-workflows-starter"
+path = "examples/child_workflows/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "continue-as-new-worker"
+path = "examples/continue_as_new/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "continue-as-new-starter"
+path = "examples/continue_as_new/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "saga-worker"
+path = "examples/saga/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "saga-starter"
+path = "examples/saga/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "local-activities-worker"
+path = "examples/local_activities/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "local-activities-starter"
+path = "examples/local_activities/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "search-attributes-worker"
+path = "examples/search_attributes/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "search-attributes-starter"
+path = "examples/search_attributes/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "updatable-timer-worker"
+path = "examples/updatable_timer/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "updatable-timer-starter"
+path = "examples/updatable_timer/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "polling-worker"
+path = "examples/polling/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "polling-starter"
+path = "examples/polling/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "cancellation-worker"
+path = "examples/cancellation/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "cancellation-starter"
+path = "examples/cancellation/starter.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "schedules-worker"
+path = "examples/schedules/worker.rs"
+required-features = ["examples"]
+
+[[example]]
+name = "schedules-starter"
+path = "examples/schedules/starter.rs"
+required-features = ["examples"]
 
 [lints]
 workspace = true

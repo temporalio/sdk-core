@@ -592,38 +592,71 @@ async fn latency_metrics(
         .await
         .unwrap();
 
-    let body = get_text(format!("http://{addr}/metrics")).await;
-    let matching_line = body
-        .lines()
-        .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
-        .unwrap();
+    struct MetricLines {
+        end_to_end: String,
+        execution: String,
+        long_request: Vec<String>,
+    }
+
+    let metrics = eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                let end_to_end = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
+                    .ok_or_else(|| anyhow!("endtoend_latency metric not found"))?
+                    .to_string();
+                let execution = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_latency"))
+                    .ok_or_else(|| anyhow!("task_execution_latency metric not found"))?
+                    .to_string();
+                let long_request: Vec<String> = body
+                    .lines()
+                    .filter(|l| l.starts_with("temporal_long_request_latency"))
+                    .map(String::from)
+                    .collect();
+                if long_request.len() <= 1 {
+                    bail!("long_request_latency metrics not yet available");
+                }
+                Ok(MetricLines {
+                    end_to_end,
+                    execution,
+                    long_request,
+                })
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
 
     if use_seconds_latency {
         if show_units {
-            assert!(matching_line.contains("temporal_workflow_endtoend_latency_seconds"));
+            assert!(
+                metrics
+                    .end_to_end
+                    .contains("temporal_workflow_endtoend_latency_seconds")
+            );
         }
-        assert!(matching_line.contains("le=\"0.1\""));
+        assert!(metrics.end_to_end.contains("le=\"0.1\""));
     } else {
         if show_units {
-            assert!(matching_line.contains("temporal_workflow_endtoend_latency_milliseconds"));
+            assert!(
+                metrics
+                    .end_to_end
+                    .contains("temporal_workflow_endtoend_latency_milliseconds")
+            );
         }
-        assert!(matching_line.contains("le=\"100\""));
+        assert!(metrics.end_to_end.contains("le=\"100\""));
     }
 
-    let matching_line = body
-        .lines()
-        .find(|l| l.starts_with("temporal_workflow_task_execution_latency"))
-        .unwrap();
-    assert!(matching_line.contains("le=\"1337\""));
-
-    // Ensure poll metrics show up as long polls properly
-    let matching_lines = body
-        .lines()
-        .filter(|l| l.starts_with("temporal_long_request_latency"))
-        .collect::<Vec<_>>();
-    assert!(matching_lines.len() > 1);
+    assert!(metrics.execution.contains("le=\"1337\""));
     assert!(
-        matching_lines
+        metrics
+            .long_request
             .iter()
             .any(|l| l.contains("PollWorkflowTaskQueue"))
     );
@@ -956,6 +989,9 @@ async fn nexus_metrics() {
         enable_remote_activities: false,
         enable_nexus: true,
     };
+    // Nexus operation handling involves internal async coordination that can
+    // trigger false positives in nondeterminism detection.
+    starter.sdk_config.detect_nondeterministic_futures = false;
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
     let endpoint = mk_nexus_endpoint(&mut starter).await;
@@ -1643,4 +1679,78 @@ async fn terminal_metric_not_recorded_on_rejected_completion() {
                 .join("\n")
         ),
     }
+}
+
+#[tokio::test]
+async fn wf_task_latency_recorded_on_dropped_wft() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let meter = rt.telemetry().get_temporal_metric_meter().unwrap();
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(
+        temporalio_common::protos::temporal::api::enums::v1::EventType::WorkflowExecutionStarted,
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock_worker_client(),
+    );
+    mh.num_expected_fails = 1;
+    mh.num_expected_completions = Some(0.into());
+
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    mock.set_temporal_meter(meter);
+    let core = mock_worker(mock);
+
+    // First poll (attempt=1): fail the activation — this is reported to the server
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "test failure".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+    core.handle_eviction().await;
+
+    // Second poll (attempt=2): fail again — this goes through WFTFailedDontReport/DropWft
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "test failure".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+
+    core.drain_pollers_and_shutdown().await;
+
+    // Both WFT processing attempts should have recorded latency, even the dropped one
+    eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                let line = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_latency_count{"))
+                    .ok_or_else(|| anyhow!("wf_task_execution_latency metric not found"))?
+                    .to_string();
+                if !line.ends_with(" 2") {
+                    bail!(
+                        "Expected latency count of 2 (both reported and dropped WFT), got: {line}"
+                    );
+                }
+                Ok(())
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
 }

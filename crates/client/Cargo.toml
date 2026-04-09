@@ -12,8 +12,10 @@ categories = ["development-tools"]
 readme = "README.md"
 
 [features]
+default = ["envconfig"]
 telemetry = ["dep:opentelemetry"]
 core-based-sdk = []
+envconfig = ["temporalio-common/envconfig"]
 
 [dependencies]
 anyhow = "1.0"
@@ -51,6 +53,7 @@ mockall = "0.14"
 prost = "0.14"
 prost-types = { workspace = true }
 rstest = "0.26"
+tempfile = "3"
 
 [lints]
 workspace = true

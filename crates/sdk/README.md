@@ -81,20 +81,24 @@ impl GreetingWorkflow {
 
 ### Running a Worker
 
+The simplest way to configure a connection is with environment variables and/or a `temporal.toml`
+config file. See the [`envconfig` module docs](https://docs.rs/temporalio-client/latest/temporalio_client/envconfig/) for supported variables and
+the TOML format.
+
 ```rust
-use temporalio_client::{Client, ClientOptions, Connection, ConnectionOptions};
+use temporalio_client::{Client, ClientOptions, Connection, envconfig::LoadClientConfigProfileOptions};
 use temporalio_sdk::{Worker, WorkerOptions};
-use temporalio_sdk_core::{CoreRuntime, RuntimeOptions, Url};
-use std::str::FromStr;
+use temporalio_sdk_core::{CoreRuntime, RuntimeOptions};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = CoreRuntime::new_assume_tokio(RuntimeOptions::builder().build()?)?;
 
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?).build()
-    ).await?;
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     let worker_options = WorkerOptions::new("my-task-queue")
         .register_activities(MyActivities { counter: Default::default() })
@@ -170,6 +174,42 @@ Workflow code must be deterministic. This means:
   - `select!` — deterministic select (polls in declaration order)
   - `join!` — deterministic join for a fixed number of futures
   - `join_all` — deterministic join for a dynamic collection of futures
+
+### Runtime Nondeterminism Detection
+
+The Rust SDK includes a runtime nondeterminism detector that monitors async wake sources inside
+workflow code. It is **enabled by default** and can be disabled via
+`WorkerOptions::detect_nondeterministic_futures(false)`.
+
+**How it works:** The SDK tracks which async wake-ups originate from SDK-provided primitives (timers,
+activities, child workflows, etc.) versus external sources. When a non-SDK wake is detected, the
+workflow task is failed with a descriptive error.
+
+**What it catches:**
+
+- `tokio::time::sleep` / `tokio::time::interval` -- use `ctx.timer()` instead
+- `tokio::net` / `tokio::fs` / any async IO -- perform IO in activities, not workflows
+- `tokio::spawn` -- do not spawn tasks from workflow code
+- `std::thread::spawn` with async channels -- all cross-thread wakes are flagged
+- Direct use of `tokio::sync` channels (oneshot, mpsc, watch) -- use `ctx.state_mut()` +
+  `ctx.wait_condition()` for inter-future coordination instead
+
+**Detection timing:** Detection is based on observing non-SDK wake sources. Because these wakes fire
+asynchronously (e.g., a tokio timer fires after the activation that started it), the failure is
+typically reported on the *next* workflow task, not the one that introduced the nondeterministic
+code. The workflow task that started the operation completes normally; the subsequent task fails
+with the detection error. The server then retries from that point.
+
+**What it does NOT catch:**
+
+- `futures::select!` without `biased` -- randomizes poll order within a single poll. Use
+  `workflows::select!` or `futures::select! { biased; ... }` for deterministic ordering
+- Any combinator that only affects the order in which ready futures are polled
+- Purely synchronous nondeterminism (e.g., `std::time::SystemTime::now()`, `rand::random()`)
+
+**Disabling detection:** Set `detect_nondeterministic_futures(false)` on `WorkerOptions`. This may
+be useful during migration or for advanced users who understand the determinism constraints and want
+to use patterns that trigger false positives.
 
 ### Timers
 
@@ -305,22 +345,18 @@ among other operations.
 
 ```rust
 use temporalio_client::{
-    Client, ClientOptions, Connection, ConnectionOptions,
+    Client, ClientOptions, Connection,
+    envconfig::LoadClientConfigProfileOptions,
     WorkflowOptions, GetWorkflowResultOptions,
 };
-use temporalio_sdk_core::{Url, CoreRuntime, RuntimeOptions};
-use std::str::FromStr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let connection = Connection::connect(
-        ConnectionOptions::new(Url::from_str("http://localhost:7233")?)
-            .identity("my-client".to_string())
-            .build()
-    ).await?;
-
-    // "default" is your namespace
-    let client = Client::new(connection, ClientOptions::new("default").build());
+    let (conn_options, client_options) = ClientOptions::load_from_config(
+        LoadClientConfigProfileOptions::default()
+    )?;
+    let connection = Connection::connect(conn_options).await?;
+    let client = Client::new(connection, client_options);
 
     // Start a workflow
     let handle = client.start_workflow(

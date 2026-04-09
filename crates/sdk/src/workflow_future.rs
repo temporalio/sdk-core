@@ -1,6 +1,7 @@
 use crate::{
     BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
     WorkflowTermination, panic_formatter,
+    workflow_executor::{SdkWakeGuard, WakeTracker},
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
 use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
@@ -30,12 +31,13 @@ use temporalio_common::{
                 RequestCancelNexusOperation, ScheduleActivity, ScheduleLocalActivity, StartTimer,
                 UpdateResponse, WorkflowCommand, query_result, update_response, workflow_command,
             },
-            workflow_completion,
-            workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
+            workflow_completion::{
+                self, WorkflowActivationCompletion, workflow_activation_completion,
+            },
         },
         temporal::api::{
             common::v1::{Payload, Payloads},
-            enums::v1::VersioningBehavior,
+            enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
             failure::v1::Failure,
         },
         utilities::TryIntoOrNone,
@@ -57,6 +59,7 @@ impl WorkflowFunction {
 
     /// Start a workflow function, returning a future that will resolve when the workflow does,
     /// and a channel that can be used to send it activations.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_workflow(
         &self,
         namespace: String,
@@ -65,6 +68,7 @@ impl WorkflowFunction {
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
         payload_converter: PayloadConverter,
+        detect_nondeterministic: bool,
     ) -> Result<
         (
             impl Future<Output = WorkflowResult<Payload>> + use<>,
@@ -93,6 +97,12 @@ impl WorkflowFunction {
         let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
             .context("Failed to create workflow execution")?;
 
+        let wake_tracking = if detect_nondeterministic {
+            Some(WakeTracker::new())
+        } else {
+            None
+        };
+
         let (tx, incoming_activations) = unbounded_channel();
         Ok((
             WorkflowFuture {
@@ -107,6 +117,7 @@ impl WorkflowFunction {
                 payload_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
+                wake_tracking,
             },
             tx,
         ))
@@ -143,6 +154,9 @@ pub(crate) struct WorkflowFuture {
     )>,
     /// Stores in-progress signal futures
     signal_futures: Vec<LocalBoxFuture<'static, Result<(), crate::workflows::WorkflowError>>>,
+    /// Nondeterminism detection tracker. When present, a tracking waker is used
+    /// for polling user workflow code, and any non-SDK wake is flagged.
+    wake_tracking: Option<WakeTracker>,
 }
 
 impl WorkflowFuture {
@@ -158,6 +172,7 @@ impl WorkflowFuture {
             UnblockEvent::NexusOperationComplete(seq, _) => CommandID::NexusOpComplete(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
+        let _guard = SdkWakeGuard::new();
         let _ = unblocker
             .ok_or_else(|| anyhow!("Command {cmd_id:?} not found to unblock!"))?
             .unblocker
@@ -165,13 +180,13 @@ impl WorkflowFuture {
         Ok(())
     }
 
-    fn fail_wft(&self, run_id: String, fail: Error) {
+    fn fail_wft(&self, run_id: String, fail: Error, cause: Option<WorkflowTaskFailedCause>) {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
             .send(WorkflowActivationCompletion::fail(
                 run_id,
                 fail.into(),
-                None,
+                cause,
             ))
             .expect("Completion channel intact");
     }
@@ -315,6 +330,7 @@ impl WorkflowFuture {
                 }
                 Variant::CancelWorkflow(c) => {
                     // TODO: Cancel pending futures, etc
+                    let _guard = SdkWakeGuard::new();
                     self.cancel_sender
                         .send(Some(c.reason))
                         .expect("Cancel rx not dropped");
@@ -453,7 +469,9 @@ impl Future for WorkflowFuture {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         'activations: loop {
-            // WF must always receive an activation first before responding with commands
+            // WF must always receive an activation first before responding with commands.
+            // Use the executor waker (cx) for the activation channel -- these wakes are
+            // always legitimate and should not be tracked.
             let activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
@@ -489,72 +507,47 @@ impl Future for WorkflowFuture {
                 return Err(WorkflowTermination::Evicted).into();
             }
 
+            if self
+                .wake_tracking
+                .as_mut()
+                .is_some_and(|t| t.take_non_sdk_wake())
+            {
+                self.fail_wft(
+                    run_id,
+                    anyhow!(
+                        "[TMPRL1100] Nondeterministic future detected: a waker was invoked by a \
+                         non-SDK source. This usually means workflow code is using nondeterministic \
+                         operations like tokio async functions or channels, other async libraries, \
+                         or std::thread. Use SDK-provided alternatives \
+                         (ctx.timer(), ctx.state_mut() + ctx.wait_condition(), etc.) instead."
+                    ),
+                    Some(WorkflowTaskFailedCause::NonDeterministicError)
+                );
+                continue 'activations;
+            }
+
             let mut should_poll_wf = false;
             for WorkflowActivationJob { variant } in activation.jobs {
                 match self.handle_job(variant, &mut activation_cmds) {
                     Ok(should_poll) => should_poll_wf |= should_poll,
                     Err(e) => {
-                        self.fail_wft(run_id, e);
+                        self.fail_wft(run_id, e, None);
                         continue 'activations;
                     }
                 }
             }
 
-            // Re-poll all futures after state changes: a state_mut call in
-            // any future can unblock a wait_condition in another.
-            self.base_ctx.take_state_mutated();
-            loop {
-                // Poll signals
-                let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
-                    .into_iter()
-                    .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
-                        Poll::Ready(Ok(())) => None,
-                        Poll::Ready(Err(e)) => Some(Err(e)),
-                        Poll::Pending => Some(Ok(sig_fut)),
-                    })
-                    .collect();
-                match signal_result {
-                    Ok(remaining) => self.signal_futures = remaining,
-                    Err(e) => {
-                        self.fail_wft(run_id, anyhow!("Signal handler error: {}", e));
-                        continue 'activations;
-                    }
-                }
-
-                // Poll updates
-                self.update_futures = std::mem::take(&mut self.update_futures)
-                    .into_iter()
-                    .filter_map(
-                        |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
-                            Poll::Ready(v) => {
-                                // Push into the command channel here rather than
-                                // activation_cmds directly to avoid completing an update
-                                // before any final un-awaited commands started from within
-                                // it.
-                                self.base_ctx.send(
-                                    update_response(
-                                        instance_id,
-                                        match v {
-                                            Ok(v) => update_response::Response::Completed(v),
-                                            Err(e) => update_response::Response::Rejected(e.into()),
-                                        },
-                                    )
-                                    .into(),
-                                );
-                                None
-                            }
-                            Poll::Pending => Some((instance_id, update_fut)),
-                        },
-                    )
-                    .collect();
-
-                if should_poll_wf && self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
-                    continue 'activations;
-                }
-
-                if !self.base_ctx.take_state_mutated() {
-                    break;
-                }
+            // Poll sub-futures using the tracked context if available,
+            // otherwise use the executor context.
+            let repoll = if let Some(ref tracker) = self.wake_tracking {
+                let waker = tracker.new_per_poll_waker(cx.waker());
+                let mut tcx = Context::from_waker(&waker);
+                self.poll_sub_futures(&mut tcx, should_poll_wf, &run_id, &mut activation_cmds)?
+            } else {
+                self.poll_sub_futures(cx, should_poll_wf, &run_id, &mut activation_cmds)?
+            };
+            if repoll {
+                continue 'activations;
             }
 
             // TODO: deadlock detector
@@ -574,6 +567,73 @@ impl Future for WorkflowFuture {
 // Separate impl block down here just to keep it close to the future poll implementation which
 // it is specific to.
 impl WorkflowFuture {
+    /// Runs the inner re-poll loop for signal, update, and workflow futures.
+    /// Returns `Ok(true)` if the activation loop should continue (restart from
+    /// the top), `Ok(false)` if the activation is fully processed.
+    fn poll_sub_futures(
+        &mut self,
+        cx: &mut Context<'_>,
+        should_poll_wf: bool,
+        run_id: &str,
+        activation_cmds: &mut Vec<WorkflowCommand>,
+    ) -> Result<bool, Error> {
+        self.base_ctx.take_state_mutated();
+        loop {
+            // Poll signals
+            let signal_result: Result<Vec<_>, _> = std::mem::take(&mut self.signal_futures)
+                .into_iter()
+                .filter_map(|mut sig_fut| match sig_fut.poll_unpin(cx) {
+                    Poll::Ready(Ok(())) => None,
+                    Poll::Ready(Err(e)) => Some(Err(e)),
+                    Poll::Pending => Some(Ok(sig_fut)),
+                })
+                .collect();
+            match signal_result {
+                Ok(remaining) => self.signal_futures = remaining,
+                Err(e) => {
+                    self.fail_wft(
+                        run_id.to_owned(),
+                        anyhow!("Signal handler error: {}", e),
+                        None,
+                    );
+                    return Ok(true);
+                }
+            }
+
+            // Poll updates
+            self.update_futures = std::mem::take(&mut self.update_futures)
+                .into_iter()
+                .filter_map(
+                    |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
+                        Poll::Ready(v) => {
+                            self.base_ctx.send(
+                                update_response(
+                                    instance_id,
+                                    match v {
+                                        Ok(v) => update_response::Response::Completed(v),
+                                        Err(e) => update_response::Response::Rejected(e.into()),
+                                    },
+                                )
+                                .into(),
+                            );
+                            None
+                        }
+                        Poll::Pending => Some((instance_id, update_fut)),
+                    },
+                )
+                .collect();
+
+            if should_poll_wf && self.poll_wf_future(cx, run_id, activation_cmds)? {
+                return Ok(true);
+            }
+
+            if !self.base_ctx.take_state_mutated() {
+                break;
+            }
+        }
+        Ok(false)
+    }
+
     /// Returns true if the workflow future polling loop should be continued
     fn poll_wf_future(
         &mut self,
@@ -700,7 +760,7 @@ impl WorkflowFuture {
                     );
                 }
                 RustWfCmd::ForceWFTFailure(err) => {
-                    self.fail_wft(run_id.to_string(), err);
+                    self.fail_wft(run_id.to_string(), err, None);
                     return Ok(true);
                 }
                 RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker } => {

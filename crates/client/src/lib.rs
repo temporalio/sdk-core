@@ -9,6 +9,9 @@ extern crate tracing;
 
 mod async_activity_handle;
 pub mod callback_based;
+/// Configuration loading from environment variables and TOML files.
+#[cfg(feature = "envconfig")]
+pub mod envconfig;
 pub mod errors;
 pub mod grpc;
 mod metrics;

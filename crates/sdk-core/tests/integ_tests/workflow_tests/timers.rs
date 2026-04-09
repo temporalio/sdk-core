@@ -338,6 +338,9 @@ async fn wait_condition_waker_in_futures_unordered() {
     let t = canned_histories::single_timer_wf_completes("1");
     let mock_cfg = MockPollCfg::from_hist_builder(t);
     let mut worker = build_fake_sdk(mock_cfg);
+    // FuturesUnordered uses internal wakers that forward wake calls outside the
+    // SdkWakeGuard scope.
+    worker.set_detect_nondeterministic_futures(false);
     worker.register_workflow::<WaitConditionWakerWf>();
     worker.run().await.unwrap();
 }

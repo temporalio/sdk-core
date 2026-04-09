@@ -527,6 +527,7 @@ impl LocalActivityManager {
                 retry_policy: Some(sa.retry_policy.into()),
                 priority: Some(Default::default()),
                 is_local: true,
+                run_id: String::new(),
             })),
         }))
     }
