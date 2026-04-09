@@ -353,6 +353,7 @@ impl Workflows {
                         attempt,
                     },
                 metrics: run_metrics,
+                workflow_id: wf_id,
             } => {
                 let reserved_act_permits =
                     self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
@@ -384,6 +385,7 @@ impl Workflows {
                         nonfirst_local_activity_execution_attempts,
                     },
                     versioning_behavior,
+                    workflow_id: wf_id.clone(),
                 };
                 let sticky_attrs = self.sticky_attrs.clone();
                 // Do not return new WFT if we would not cache, because returned new WFTs are
@@ -436,6 +438,7 @@ impl Workflows {
                                 task_token,
                                 WorkflowTaskFailedCause::GrpcMessageTooLarge,
                                 failure,
+                                wf_id,
                             );
                             self.handle_activation_failed(run_id, completion_time, new_outcome)
                                 .await;
@@ -481,11 +484,11 @@ impl Workflows {
         outcome: FailedActivationWFTReport,
     ) -> WFTReportStatus {
         match outcome {
-            FailedActivationWFTReport::Report(tt, cause, failure) => {
+            FailedActivationWFTReport::Report(tt, cause, failure, workflow_id) => {
                 warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
                 self.handle_wft_reporting_errs(run_id, || async {
                     self.client
-                        .fail_workflow_task(tt, cause, failure.failure)
+                        .fail_workflow_task(tt, cause, failure.failure, workflow_id)
                         .await
                 })
                 .await;
@@ -1043,7 +1046,7 @@ struct WorkflowTaskInfo {
 
 #[derive(Debug)]
 enum FailedActivationWFTReport {
-    Report(TaskToken, WorkflowTaskFailedCause, Failure),
+    Report(TaskToken, WorkflowTaskFailedCause, Failure, String),
     ReportLegacyQueryFailure(TaskToken, Failure),
 }
 
@@ -1051,6 +1054,7 @@ struct ServerCommandsWithWorkflowInfo {
     task_token: TaskToken,
     action: ActivationAction,
     metrics: MetricsContext,
+    workflow_id: String,
 }
 impl Debug for ServerCommandsWithWorkflowInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

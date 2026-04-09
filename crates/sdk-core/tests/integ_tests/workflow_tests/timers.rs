@@ -214,7 +214,7 @@ async fn mismatched_timer_ids_errors() {
     let t = canned_histories::single_timer("badid");
     let mut mock_cfg = MockPollCfg::from_hist_builder(t);
     mock_cfg.num_expected_fails = 1;
-    mock_cfg.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+    mock_cfg.expect_fail_wft_matcher = Box::new(move |_, cause, f, _| {
         matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
             && matches!(f, Some(Failure {message, .. })
         if message.contains("Timer fired event did not have expected timer id 1"))

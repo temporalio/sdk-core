@@ -99,6 +99,7 @@ prost = { workspace = true }
 prost-types = "0.14"
 tonic-prost-build = { workspace = true }
 pbjson-build = { workspace = true }
+prost-reflect = "0.15"
 
 [lints]
 workspace = true

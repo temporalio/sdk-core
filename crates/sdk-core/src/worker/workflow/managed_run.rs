@@ -412,6 +412,7 @@ impl ManagedRun {
                     tt,
                     WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
                     Failure::application_failure(reason, true).into(),
+                    self.workflow_id().to_string(),
                 ))
             } else {
                 ActivationCompleteOutcome::DoNothing
@@ -440,6 +441,7 @@ impl ManagedRun {
                         result: Box::new(qr),
                     },
                     metrics: self.metrics.clone(),
+                    workflow_id: self.workflow_id().to_owned(),
                 }),
                 resp_chan,
             );
@@ -642,7 +644,10 @@ impl ManagedRun {
                     });
             } else {
                 ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
-                    tt, cause, failure,
+                    tt,
+                    cause,
+                    failure,
+                    self.workflow_id().to_string(),
                 ))
             }
         } else {
@@ -1080,6 +1085,7 @@ impl ManagedRun {
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
+        let wf_id = self.workflow_id().to_owned();
         let mut machines_wft_response = self.wfm.prepare_for_wft_response();
         if data.activation_was_eviction
             && (machines_wft_response.commands().peek().is_some()
@@ -1140,6 +1146,7 @@ impl ManagedRun {
                     attempt,
                 },
                 metrics: self.metrics.clone(),
+                workflow_id: wf_id,
             })
         } else {
             ActivationCompleteOutcome::DoNothing
@@ -1222,6 +1229,10 @@ impl ManagedRun {
 
     fn run_id(&self) -> &str {
         &self.wfm.machines.run_id
+    }
+
+    fn workflow_id(&self) -> &str {
+        &self.wfm.machines.workflow_id
     }
 }
 
