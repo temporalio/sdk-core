@@ -852,7 +852,7 @@ impl<W> SyncWorkflowContext<W> {
         ))
     }
 
-    /// Set the current free-form details string for this workflow execution.
+    /// Set the current details string for this workflow execution.
     ///
     /// The value is surfaced to the Temporal server UI in real time via the
     /// `__temporal_workflow_metadata` built-in query.
@@ -1084,7 +1084,7 @@ impl<W> WorkflowContext<W> {
         self.sync.upsert_memo(attr_iter)
     }
 
-    /// Set the current free-form details string for this workflow execution.
+    /// Set the current details string for this workflow execution.
     ///
     /// See [`SyncWorkflowContext::set_current_details`].
     pub fn set_current_details(&self, details: impl Into<String>) {
@@ -1206,7 +1206,7 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
-    /// Current free-form details string, surfaced via `__temporal_workflow_metadata` query.
+    /// Current details string, surfaced via `__temporal_workflow_metadata` query.
     pub(crate) current_details: String,
 }
 
