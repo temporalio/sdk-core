@@ -1,4 +1,4 @@
-use crate::common::{CoreWfStarter, get_integ_connection, integ_namespace};
+use crate::common::{CoreWfStarter, TestWorker, get_integ_connection, integ_namespace};
 use futures::{FutureExt, future::BoxFuture};
 use std::{
     sync::{
@@ -12,17 +12,27 @@ use temporalio_client::{
 };
 use temporalio_common::{
     data_converters::{
-        DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
-        PayloadConverter, SerializationContext, SerializationContextData, TemporalDeserializable,
-        TemporalSerializable,
+        DataConverter, DefaultFailureConverter, FailureConverter, MultiArgs2, PayloadCodec,
+        PayloadConversionError, PayloadConverter, RawValue, SerializationContext,
+        SerializationContextData, TemporalDeserializable, TemporalError, TemporalSerializable,
     },
-    protos::temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    protos::{
+        DEFAULT_WORKFLOW_TYPE, canned_histories,
+        temporal::api::{
+            common::v1::Payload, enums::v1::WorkflowTaskFailedCause,
+            failure::v1::failure::FailureInfo, history::v1::history_event::Attributes,
+        },
+    },
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions,
+    WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
+};
+use temporalio_sdk_core::test_help::{
+    MockPollCfg, ResponseType, build_mock_pollers, mock_worker, mock_worker_client,
 };
 
 #[derive(Clone, Debug)]
@@ -501,7 +511,7 @@ async fn codec_encodes_and_decodes_payloads() {
 /// Apply `f` to every failure in the cause chain.
 fn walk_failure_chain(
     failure: &mut temporalio_common::protos::temporal::api::failure::v1::Failure,
-    f: fn(&mut temporalio_common::protos::temporal::api::failure::v1::Failure),
+    mut f: impl FnMut(&mut temporalio_common::protos::temporal::api::failure::v1::Failure),
 ) {
     let mut curr = Some(failure);
     while let Some(node) = curr {
@@ -533,6 +543,42 @@ impl temporalio_common::data_converters::FailureConverter for UpperCaseFailureCo
         context: &SerializationContextData,
     ) -> temporalio_common::data_converters::TemporalError {
         walk_failure_chain(&mut failure, |f| f.message = f.message.to_lowercase());
+        DefaultFailureConverter.to_error(failure, payload_converter, context)
+    }
+}
+
+struct PrefixFailureConverter {
+    outgoing_prefix: &'static str,
+    incoming_prefix: &'static str,
+}
+
+impl FailureConverter for PrefixFailureConverter {
+    fn to_failure(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> temporalio_common::protos::temporal::api::failure::v1::Failure {
+        let mut failure = DefaultFailureConverter.to_failure(error, payload_converter, context);
+        if !self.outgoing_prefix.is_empty() {
+            walk_failure_chain(&mut failure, |f| {
+                f.message = format!("{}{}", self.outgoing_prefix, f.message);
+            });
+        }
+        failure
+    }
+
+    fn to_error(
+        &self,
+        mut failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> TemporalError {
+        if !self.incoming_prefix.is_empty() {
+            walk_failure_chain(&mut failure, |f| {
+                f.message = format!("{}{}", self.incoming_prefix, f.message);
+            });
+        }
         DefaultFailureConverter.to_error(failure, payload_converter, context)
     }
 }
@@ -616,6 +662,78 @@ async fn custom_failure_converter_applied_to_workflow_failure() {
         "Failure message on server should reflect custom converter (uppercase), got: {}",
         failure.message,
     );
+}
+
+#[workflow]
+struct PanickingOnceWorkflow {
+    did_panic: Arc<AtomicUsize>,
+}
+
+#[workflow_methods(factory_only)]
+impl PanickingOnceWorkflow {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.timer(Duration::from_secs(1)).await;
+        if ctx.state(|wf| wf.did_panic.fetch_add(1, Ordering::SeqCst)) == 0 {
+            panic!("workflow panic marker");
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn custom_failure_converter_applied_to_workflow_panic_failures() {
+    let wf_id = "workflow-panic-failure-converter";
+    let history = canned_histories::workflow_fails_with_failure_after_timer("1");
+    let mock_client = mock_worker_client();
+    let mut mock_cfg = MockPollCfg::from_resp_batches(wf_id, history, [1, 2, 2], mock_client);
+    mock_cfg.using_rust_sdk = true;
+    mock_cfg.num_expected_fails = 1;
+    mock_cfg.expect_fail_wft_matcher = Box::new(|_, cause, failure| {
+        *cause == WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure
+            && failure.as_ref().is_some_and(|failure| {
+                failure.message
+                    == "panic-converted:Workflow function panicked: workflow panic marker"
+                    && matches!(
+                        failure.failure_info,
+                        Some(FailureInfo::ApplicationFailureInfo(_))
+                    )
+            })
+    });
+
+    let mut mock = build_mock_pollers(mock_cfg);
+    mock.worker_cfg(|cfg| {
+        cfg.max_cached_workflows = 1;
+        cfg.ignore_evicts_on_shutdown = false;
+    });
+    let core = mock_worker(mock);
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        PrefixFailureConverter {
+            outgoing_prefix: "panic-converted:",
+            incoming_prefix: "",
+        },
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let mut worker = TestWorker::new(temporalio_sdk::Worker::new_from_core(
+        Arc::new(core),
+        data_converter,
+    ));
+
+    let did_panic = Arc::new(AtomicUsize::new(0));
+    let did_panic_clone = did_panic.clone();
+    worker.register_workflow_with_factory(move || PanickingOnceWorkflow {
+        did_panic: did_panic_clone.clone(),
+    });
+    worker
+        .submit_wf(
+            DEFAULT_WORKFLOW_TYPE,
+            vec![],
+            WorkflowStartOptions::new("fake_tq".to_owned(), wf_id.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }
 
 #[workflow]
@@ -781,6 +899,15 @@ impl FailWithDetailsActivities {
     }
 }
 
+struct PanickingActivities;
+#[activities]
+impl PanickingActivities {
+    #[activity]
+    async fn always_panic(_ctx: ActivityContext, _input: String) -> Result<String, ActivityError> {
+        panic!("activity panic marker");
+    }
+}
+
 #[workflow]
 #[derive(Default)]
 struct ActivityFailDetailsWorkflow;
@@ -806,6 +933,35 @@ impl ActivityFailDetailsWorkflow {
         .map_err(|e| {
             temporalio_sdk::WorkflowTermination::Failed(anyhow::anyhow!("activity failed: {}", e))
         })
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ActivityPanicWorkflow;
+#[workflow_methods]
+impl ActivityPanicWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        let err = ctx
+            .start_activity(
+                PanickingActivities::always_panic,
+                "trigger".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    retry_policy: Some(
+                        temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        },
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+
+        Ok(err.to_string())
     }
 }
 
@@ -902,6 +1058,76 @@ async fn codec_applied_to_outgoing_activity_failure_payloads() {
     );
 }
 
+#[tokio::test]
+async fn custom_failure_converter_applied_to_activity_panic_failures() {
+    let wf_name = ActivityPanicWorkflow::name();
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        PrefixFailureConverter {
+            outgoing_prefix: "activity-converted:",
+            incoming_prefix: "",
+        },
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<ActivityPanicWorkflow>();
+    starter.sdk_config.register_activities(PanickingActivities);
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityPanicWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
+
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let activity_failed_attrs = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::ActivityTaskFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find ActivityTaskFailed event");
+
+    let failure = activity_failed_attrs
+        .failure
+        .as_ref()
+        .expect("should have failure");
+    let app_failure = failure.cause.as_deref().unwrap_or(failure);
+    assert_eq!(
+        app_failure.message,
+        "activity-converted:Activity function panicked: activity panic marker",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Receive path: activity failures are converted through the failure converter
 // before reaching workflow code
@@ -935,6 +1161,53 @@ impl ActivityFailConverterWorkflow {
             .unwrap_err();
 
         Ok(err.to_string())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ChildStartCancelledFromHistoryWorkflow;
+
+#[workflow_methods]
+impl ChildStartCancelledFromHistoryWorkflow {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let start = ctx.child_workflow(
+            temporalio_common::UntypedWorkflow::new("child"),
+            RawValue::new(vec![]),
+            ChildWorkflowOptions {
+                workflow_id: "child-id-1".to_owned(),
+                cancel_type:
+                    temporalio_common::protos::coresdk::child_workflow::ChildWorkflowCancellationType::WaitCancellationCompleted,
+                ..Default::default()
+            },
+        );
+
+        ctx.cancelled().await;
+        start.cancel();
+        let err = start
+            .await
+            .expect_err("child start should resolve as cancelled");
+
+        match err {
+            ChildWorkflowExecutionError::Cancelled { source, .. } => match source.as_ref() {
+                TemporalError::ChildWorkflow {
+                    workflow_id,
+                    cause: Some(cause),
+                    ..
+                } => {
+                    assert_eq!(workflow_id, "child-id-1");
+                    assert!(
+                        cause.message().unwrap_or_default().starts_with("decoded:"),
+                        "expected decoded cancellation cause, got {cause:?}"
+                    );
+                }
+                other => panic!("expected child workflow metadata, got {other:?}"),
+            },
+            other => panic!("expected cancelled child start, got {other:?}"),
+        }
+
+        Ok(())
     }
 }
 
@@ -974,6 +1247,34 @@ async fn activity_failure_converted_through_failure_converter() {
 
     let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result, "Activity failed: activity went boom");
+}
+
+#[tokio::test]
+async fn child_start_cancellation_converted_through_failure_converter() {
+    let history = canned_histories::cancel_child_workflow_before_started_event("child-id-1");
+    let mut mock_cfg = MockPollCfg::from_resps(history, [ResponseType::AllHistory]);
+    mock_cfg.using_rust_sdk = true;
+
+    let mut mock = build_mock_pollers(mock_cfg);
+    mock.worker_cfg(|cfg| {
+        cfg.max_cached_workflows = 1;
+        cfg.ignore_evicts_on_shutdown = false;
+    });
+    let core = mock_worker(mock);
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        PrefixFailureConverter {
+            outgoing_prefix: "",
+            incoming_prefix: "decoded:",
+        },
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let mut worker = TestWorker::new(temporalio_sdk::Worker::new_from_core(
+        Arc::new(core),
+        data_converter,
+    ));
+    worker.register_workflow::<ChildStartCancelledFromHistoryWorkflow>();
+    worker.run_until_done().await.unwrap();
 }
 
 // ---------------------------------------------------------------------------

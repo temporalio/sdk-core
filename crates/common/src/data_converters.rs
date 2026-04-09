@@ -1686,6 +1686,45 @@ mod tests {
         assert_eq!(source.to_string(), "root cause");
     }
 
+    #[derive(Debug, thiserror::Error)]
+    #[error("inner cause")]
+    struct InnerCause;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("outer wrapper")]
+    struct OuterCause {
+        #[source]
+        source: InnerCause,
+    }
+
+    #[test]
+    fn plain_error_source_chain_is_preserved_in_failure() {
+        let pc = PayloadConverter::default();
+        let ctx = SerializationContextData::Workflow;
+        let error = OuterCause { source: InnerCause };
+
+        let failure = DefaultFailureConverter.to_failure(Box::new(error), &pc, &ctx);
+
+        assert_eq!(failure.message, "outer wrapper");
+        assert_matches!(
+            failure.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        );
+        let cause = failure
+            .cause
+            .as_ref()
+            .expect("failure should preserve causes");
+        assert_eq!(cause.message, "inner cause");
+        assert_matches!(
+            cause.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        );
+
+        let round_tripped = DefaultFailureConverter.to_error(failure, &pc, &ctx);
+        let source = round_tripped.source().expect("error should have a source");
+        assert_eq!(source.to_string(), "inner cause");
+    }
+
     #[test]
     fn deeply_nested_cause_chain() {
         let pc = PayloadConverter::default();
