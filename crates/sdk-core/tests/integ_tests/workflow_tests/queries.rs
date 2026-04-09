@@ -413,20 +413,6 @@ async fn query_returns_workflow_context_view_info() {
     worker.run().await.unwrap();
 }
 
-/// Workflow that blocks indefinitely without ever setting current_details.
-#[workflow]
-#[derive(Default)]
-struct NoCurrentDetailsWf;
-
-#[workflow_methods]
-impl NoCurrentDetailsWf {
-    #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        std::future::pending::<()>().await;
-        Ok(())
-    }
-}
-
 /// Workflow that sets current_details and then blocks indefinitely.
 /// The pending await keeps the workflow alive when the metadata query arrives.
 #[workflow]
@@ -524,6 +510,20 @@ async fn workflow_metadata_query_returns_current_details() {
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<CurrentDetailsWf>();
     worker.run().await.unwrap();
+}
+
+/// Workflow that blocks indefinitely without ever setting current_details.
+#[workflow]
+#[derive(Default)]
+struct NoCurrentDetailsWf;
+
+#[workflow_methods]
+impl NoCurrentDetailsWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        std::future::pending::<()>().await;
+        Ok(())
+    }
 }
 
 /// Verify that `__temporal_workflow_metadata` returns `{}` when `set_current_details` was never
