@@ -649,8 +649,8 @@ async fn static_summary_and_details_visible_after_start() {
             ImmediatelyCompletingWf::run,
             (),
             WorkflowStartOptions::new(task_queue, wf_name)
-                .static_summary("my static summary".to_string())
-                .static_details("my static details".to_string())
+                .static_summary("my static summary")
+                .static_details("my static details")
                 .build(),
         )
         .await
