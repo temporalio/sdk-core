@@ -180,6 +180,7 @@ impl DataConverter {
             failure_info,
             ..
         } = failure;
+        let cause_context = Self::nested_failure_context(*context, failure_info.as_ref());
 
         let encoded_attributes = match encoded_attributes {
             Some(ea) => codec_fn(context, vec![ea]).await.into_iter().next(),
@@ -216,7 +217,7 @@ impl DataConverter {
 
         let cause = match cause {
             Some(c) => Some(Box::new(
-                Box::pin(Self::apply_codec_to_failure(*c, context, codec_fn)).await,
+                Box::pin(Self::apply_codec_to_failure(*c, &cause_context, codec_fn)).await,
             )),
             None => None,
         };
@@ -228,6 +229,22 @@ impl DataConverter {
             encoded_attributes,
             cause,
             failure_info,
+        }
+    }
+
+    fn nested_failure_context(
+        context: SerializationContextData,
+        failure_info: Option<&FailureInfo>,
+    ) -> SerializationContextData {
+        match failure_info {
+            Some(FailureInfo::ActivityFailureInfo(_)) => SerializationContextData::Activity,
+            Some(FailureInfo::ChildWorkflowExecutionFailureInfo(_)) => {
+                SerializationContextData::Workflow
+            }
+            Some(FailureInfo::NexusOperationExecutionFailureInfo(_)) => {
+                SerializationContextData::Nexus
+            }
+            _ => context,
         }
     }
 }
@@ -1979,6 +1996,44 @@ mod tests {
         }
     }
 
+    struct ContextAwareFailureCodec;
+    impl PayloadCodec for ContextAwareFailureCodec {
+        fn encode(
+            &self,
+            _: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Vec<Payload>> {
+            async move { payloads }.boxed()
+        }
+
+        fn decode(
+            &self,
+            context: &SerializationContextData,
+            payloads: Vec<Payload>,
+        ) -> BoxFuture<'static, Vec<Payload>> {
+            let prefix = match context {
+                SerializationContextData::Workflow => b"wf:".as_slice(),
+                SerializationContextData::Activity => b"act:".as_slice(),
+                SerializationContextData::Nexus => b"nex:".as_slice(),
+                SerializationContextData::None => b"none:".as_slice(),
+            }
+            .to_vec();
+
+            async move {
+                payloads
+                    .into_iter()
+                    .map(|mut payload| {
+                        if payload.data.starts_with(&prefix) {
+                            payload.data.drain(..prefix.len());
+                        }
+                        payload
+                    })
+                    .collect()
+            }
+            .boxed()
+        }
+    }
+
     #[tokio::test]
     async fn decode_failure_applies_codec_to_detail_payloads() {
         let dc = DataConverter::new(
@@ -2027,6 +2082,69 @@ mod tests {
                 );
             }
             other => panic!("expected Application, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn decode_failure_uses_nested_activity_context_for_activity_causes() {
+        let dc = DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            ContextAwareFailureCodec,
+        );
+        let plaintext = b"\"activity detail\"".to_vec();
+        let mut encoded_data = b"act:".to_vec();
+        encoded_data.extend_from_slice(&plaintext);
+        let failure = Failure {
+            message: "Activity task failed".into(),
+            cause: Some(Box::new(Failure {
+                message: "application failure".into(),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        r#type: "TestError".into(),
+                        details: Some(Payloads {
+                            payloads: vec![Payload {
+                                metadata: {
+                                    let mut hm = HashMap::new();
+                                    hm.insert("encoding".to_string(), b"json/plain".to_vec());
+                                    hm
+                                },
+                                data: encoded_data,
+                                external_payloads: vec![],
+                            }],
+                        }),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            })),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+                activity_type: Some(crate::protos::temporal::api::common::v1::ActivityType {
+                    name: "test-activity".into(),
+                }),
+                activity_id: "activity-id".into(),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+
+        let error = dc
+            .decode_failure(failure, &SerializationContextData::Workflow)
+            .await;
+
+        match error {
+            TemporalError::Activity {
+                cause: Some(cause), ..
+            } => match cause.as_ref() {
+                TemporalError::Application {
+                    details: Some(details),
+                    ..
+                } => {
+                    assert_eq!(details.payloads[0].data, plaintext);
+                }
+                other => panic!("expected Application cause, got {other:?}"),
+            },
+            other => panic!("expected Activity, got {other:?}"),
         }
     }
 

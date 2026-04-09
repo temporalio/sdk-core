@@ -1,6 +1,7 @@
 //! Contains errors that can be returned by clients.
 
 use http::uri::InvalidUri;
+use std::{error::Error, fmt};
 use temporalio_common::{
     data_converters::{PayloadConversionError, TemporalError},
     protos::temporal::api::{common::v1::Payload, query::v1::QueryRejected},
@@ -123,7 +124,7 @@ pub enum WorkflowUpdateError {
     NotFound(#[source] tonic::Status),
 
     /// The update failed with an application-level failure.
-    #[error("Update failed: {0}")]
+    #[error("Update failed: {}", TemporalErrorChain(.0))]
     Failed(#[source] TemporalError),
 
     /// Error serializing input or deserializing output.
@@ -154,7 +155,7 @@ impl WorkflowUpdateError {
 #[non_exhaustive]
 pub enum WorkflowGetResultError {
     /// The workflow finished in failure.
-    #[error("Workflow failed: {0}")]
+    #[error("Workflow failed: {}", TemporalErrorChain(.0))]
     Failed(#[source] TemporalError),
 
     /// The workflow was cancelled.
@@ -220,6 +221,20 @@ impl WorkflowGetResultError {
                 | Self::Timeout
                 | Self::ContinuedAsNew
         )
+    }
+}
+
+struct TemporalErrorChain<'a>(&'a TemporalError);
+
+impl fmt::Display for TemporalErrorChain<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut source = self.0.source();
+        while let Some(err) = source {
+            write!(f, ": {err}")?;
+            source = err.source();
+        }
+        Ok(())
     }
 }
 
@@ -292,3 +307,66 @@ impl AsyncActivityError {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ClientNewError {}
+
+#[cfg(test)]
+mod tests {
+    use super::{WorkflowGetResultError, WorkflowUpdateError};
+    use temporalio_common::{
+        data_converters::TemporalError, protos::temporal::api::enums::v1::RetryState,
+    };
+
+    #[test]
+    fn workflow_get_result_error_includes_nested_activity_cause_message() {
+        let error = WorkflowGetResultError::Failed(TemporalError::Activity {
+            message: "Activity task failed".into(),
+            stack_trace: String::new(),
+            scheduled_event_id: 1,
+            started_event_id: 2,
+            identity: "worker".into(),
+            activity_type: "test-activity".into(),
+            activity_id: "activity-id".into(),
+            retry_state: RetryState::NonRetryableFailure,
+            cause: Some(Box::new(TemporalError::Application {
+                message: "boom".into(),
+                stack_trace: String::new(),
+                r#type: "TestError".into(),
+                non_retryable: false,
+                details: None,
+                next_retry_delay: None,
+                cause: None,
+            })),
+        });
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Workflow failed: Activity task failed"));
+        assert!(rendered.contains("boom"));
+    }
+
+    #[test]
+    fn workflow_update_error_includes_nested_child_workflow_cause_message() {
+        let error = WorkflowUpdateError::Failed(TemporalError::ChildWorkflow {
+            message: "Child workflow task failed".into(),
+            stack_trace: String::new(),
+            namespace: "default".into(),
+            workflow_id: "child-id".into(),
+            run_id: "child-run".into(),
+            workflow_type: "child-type".into(),
+            initiated_event_id: 3,
+            started_event_id: 4,
+            retry_state: RetryState::InProgress,
+            cause: Some(Box::new(TemporalError::Application {
+                message: "child boom".into(),
+                stack_trace: String::new(),
+                r#type: "ChildError".into(),
+                non_retryable: false,
+                details: None,
+                next_retry_delay: None,
+                cause: None,
+            })),
+        });
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Update failed: Child workflow task failed"));
+        assert!(rendered.contains("child boom"));
+    }
+}
