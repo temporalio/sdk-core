@@ -429,7 +429,7 @@ impl CurrentDetailsWf {
     }
 }
 
-/// Verify that `__temporal_workflow_metadata` returns a proto-JSON-encoded `WorkflowMetadata`
+/// Verify that the query returns a proto-JSON-encoded `WorkflowMetadata`
 /// whose `current_details` field reflects the value set by `set_current_details`.
 #[tokio::test]
 async fn workflow_metadata_query_returns_current_details() {
@@ -526,7 +526,7 @@ impl NoCurrentDetailsWf {
     }
 }
 
-/// Verify that `__temporal_workflow_metadata` returns `{}` when `set_current_details` was never
+/// Verify that the query returns `{}` when `set_current_details` was never
 /// called, matching proto3 JSON behavior where default (empty) fields are omitted.
 #[tokio::test]
 async fn workflow_metadata_query_empty_details() {

@@ -855,7 +855,7 @@ impl<W> SyncWorkflowContext<W> {
     /// Set the current details string for this workflow execution.
     ///
     /// The value is surfaced to the Temporal server UI in real time via the
-    /// `__temporal_workflow_metadata` built-in query.
+    /// the workflow metadata query.
     pub fn set_current_details(&self, details: impl Into<String>) {
         self.base.inner.shared.borrow_mut().current_details = details.into();
     }
@@ -1208,7 +1208,7 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
-    /// Current details string, surfaced via `__temporal_workflow_metadata` query.
+    /// Current details string, surfaced via the workflow metadata query.
     pub(crate) current_details: String,
 }
 
