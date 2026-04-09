@@ -250,8 +250,6 @@ impl WorkflowFuture {
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
                         // Mirror the proto JSON shape of temporal.api.sdk.v1.WorkflowMetadata.
-                        // Field names are camelCase per proto3 JSON; skip_serializing_if matches
-                        // proto3 default-field omission behavior.
                         #[derive(serde::Serialize)]
                         struct WorkflowMetadataJson {
                             #[serde(
