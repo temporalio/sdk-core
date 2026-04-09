@@ -1033,10 +1033,10 @@ where
             Some(UserMetadata {
                 summary: options
                     .static_summary
-                    .and_then(|s| s.as_json_payload().ok()),
+                    .map(|s| s.as_json_payload().unwrap_or_default()),
                 details: options
                     .static_details
-                    .and_then(|s| s.as_json_payload().ok()),
+                    .map(|s| s.as_json_payload().unwrap_or_default()),
             })
         } else {
             None
