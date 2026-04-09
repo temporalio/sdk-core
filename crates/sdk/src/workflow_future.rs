@@ -16,7 +16,7 @@ use std::{
     task::{Context, Poll},
 };
 use temporalio_common::{
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{DataConverter, SerializationContextData, TemporalError},
     protos::{
         coresdk::{
             workflow_activation::{
@@ -38,7 +38,6 @@ use temporalio_common::{
         temporal::api::{
             common::v1::{Payload, Payloads},
             enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
-            failure::v1::Failure,
         },
         utilities::TryIntoOrNone,
     },
@@ -631,16 +630,21 @@ impl WorkflowFuture {
                 Ok(r) => r,
                 Err(e) => {
                     let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
+                    let failure = self.data_converter.to_failure(
+                        Box::new(TemporalError::Application {
+                            message: errmsg.clone(),
+                            stack_trace: String::new(),
+                            r#type: String::new(),
+                            non_retryable: true,
+                            details: None,
+                            next_retry_delay: None,
+                            cause: None,
+                        }),
+                        &SerializationContextData::Workflow,
+                    );
                     warn!("{}", errmsg);
                     self.outgoing_completions
-                        .send(WorkflowActivationCompletion::fail(
-                            run_id,
-                            Failure {
-                                message: errmsg,
-                                ..Default::default()
-                            },
-                            None,
-                        ))
+                        .send(WorkflowActivationCompletion::fail(run_id, failure, None))
                         .expect("Completion channel intact");
                     // Loop back up because we're about to get evicted
                     return Ok(true);

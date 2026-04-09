@@ -1374,15 +1374,9 @@ impl FailureConverter for DefaultFailureConverter {
         match error.downcast::<TemporalError>() {
             Ok(tf) => tf.into_failure(),
             Err(error) => {
-                // Unknown error type — wrap as ApplicationFailureInfo.
-                Failure {
-                    message: error.to_string(),
-                    source: "RustSDK".into(),
-                    failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                        ApplicationFailureInfo::default(),
-                    )),
-                    ..Default::default()
-                }
+                let mut failure = generic_error_to_application_failure(error.as_ref());
+                failure.source = "RustSDK".into();
+                failure
             }
         }
     }
@@ -1396,6 +1390,20 @@ impl FailureConverter for DefaultFailureConverter {
         TemporalError::from_failure(failure, payload_converter)
     }
 }
+
+fn generic_error_to_application_failure(error: &dyn std::error::Error) -> Failure {
+    Failure {
+        message: error.to_string(),
+        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+            ApplicationFailureInfo::default(),
+        )),
+        cause: error
+            .source()
+            .map(|cause| Box::new(generic_error_to_application_failure(cause))),
+        ..Default::default()
+    }
+}
+
 impl PayloadCodec for DefaultPayloadCodec {
     fn encode(
         &self,

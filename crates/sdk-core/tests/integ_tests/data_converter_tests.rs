@@ -32,7 +32,7 @@ use temporalio_sdk::{
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{
-    MockPollCfg, ResponseType, build_mock_pollers, mock_worker, mock_worker_client,
+    MockPollCfg, build_mock_pollers, mock_worker, mock_worker_client,
 };
 
 #[derive(Clone, Debug)]
@@ -1183,7 +1183,6 @@ impl ChildStartCancelledFromHistoryWorkflow {
             },
         );
 
-        ctx.cancelled().await;
         start.cancel();
         let err = start
             .await
@@ -1251,8 +1250,23 @@ async fn activity_failure_converted_through_failure_converter() {
 
 #[tokio::test]
 async fn child_start_cancellation_converted_through_failure_converter() {
-    let history = canned_histories::cancel_child_workflow_before_started_event("child-id-1");
-    let mut mock_cfg = MockPollCfg::from_resps(history, [ResponseType::AllHistory]);
+    let mut history = temporalio_common::protos::TestHistoryBuilder::default();
+    history.add_by_type(
+        temporalio_common::protos::temporal::api::enums::v1::EventType::WorkflowExecutionStarted,
+    );
+    history.add_full_wf_task();
+    history.add_workflow_execution_completed();
+
+    let mut mock_cfg = MockPollCfg::from_hist_builder(history);
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(|wft| {
+            assert_eq!(wft.commands.len(), 1);
+            assert_matches!(
+                wft.commands[0].command_type(),
+                temporalio_common::protos::temporal::api::enums::v1::CommandType::CompleteWorkflowExecution
+            );
+        });
+    });
     mock_cfg.using_rust_sdk = true;
 
     let mut mock = build_mock_pollers(mock_cfg);

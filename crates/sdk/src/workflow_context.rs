@@ -2031,35 +2031,31 @@ where
             }
             ChildWorkflowStartFut::Running(inner) => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(pending) => Poll::Ready(match pending.status {
-                    ChildWorkflowStartStatus::Succeeded(s) => Ok(StartedChildWorkflow {
-                        run_id: s.run_id,
-                        common: pending.common,
-                        _phantom: PhantomData,
-                    }),
-                    ChildWorkflowStartStatus::Failed(f) => {
-                        Err(ChildWorkflowExecutionError::StartFailed {
-                            workflow_id: f.workflow_id,
-                            workflow_type: f.workflow_type,
-                            cause: StartChildWorkflowExecutionFailedCause::try_from(f.cause)
-                                .unwrap_or(StartChildWorkflowExecutionFailedCause::Unspecified),
-                        })
-                    }
-                    ChildWorkflowStartStatus::Cancelled(c) => {
-                        let failure = c.failure.unwrap_or_default();
-                        let te = TemporalError::Cancelled {
-                            message: failure.message,
-                            stack_trace: String::new(),
-                            details: None,
-                            cause: None,
-                        };
-                        Err(ChildWorkflowExecutionError::Cancelled {
-                            message: te.message().unwrap_or_default().to_owned(),
-                            details: None,
-                            source: Box::new(te),
-                        })
-                    }
-                }),
+                Poll::Ready(pending) => {
+                    let PendingChildWorkflow { status, common, .. } = pending;
+                    Poll::Ready(match status {
+                        ChildWorkflowStartStatus::Succeeded(s) => Ok(StartedChildWorkflow {
+                            run_id: s.run_id,
+                            common,
+                            _phantom: PhantomData,
+                        }),
+                        ChildWorkflowStartStatus::Failed(f) => {
+                            Err(ChildWorkflowExecutionError::StartFailed {
+                                workflow_id: f.workflow_id,
+                                workflow_type: f.workflow_type,
+                                cause: StartChildWorkflowExecutionFailedCause::try_from(f.cause)
+                                    .unwrap_or(StartChildWorkflowExecutionFailedCause::Unspecified),
+                            })
+                        }
+                        ChildWorkflowStartStatus::Cancelled(c) => {
+                            let failure = c.failure.unwrap_or_default();
+                            let te = common
+                                .data_converter
+                                .to_error(failure, &SerializationContextData::Workflow);
+                            Err(ChildWorkflowExecutionError::from_temporal_error(te))
+                        }
+                    })
+                }
             },
             ChildWorkflowStartFut::Terminated => panic!("polled after termination"),
         };

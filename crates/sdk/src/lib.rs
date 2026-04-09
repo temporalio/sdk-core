@@ -135,7 +135,7 @@ use std::{
 use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
     ActivityDefinition, WorkflowDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{DataConverter, SerializationContextData, TemporalError},
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
@@ -954,9 +954,20 @@ impl ActivityHalf {
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
-                            format!("Activity function panicked: {}", panic_formatter(e)),
-                            true,
+                        Err(e) => ActivityExecutionResult::fail(codec_data_converter.to_failure(
+                            Box::new(TemporalError::Application {
+                                message: format!(
+                                    "Activity function panicked: {}",
+                                    panic_formatter(e)
+                                ),
+                                stack_trace: String::new(),
+                                r#type: String::new(),
+                                non_retryable: true,
+                                details: None,
+                                next_retry_delay: None,
+                                cause: None,
+                            }),
+                            &SerializationContextData::Activity,
                         )),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
