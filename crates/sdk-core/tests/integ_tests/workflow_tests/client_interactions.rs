@@ -1,7 +1,8 @@
 use crate::common::CoreWfStarter;
 use temporalio_client::{
     UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowDescribeOptions,
-    WorkflowExecuteUpdateOptions, WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
+    WorkflowExecuteUpdateOptions, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
@@ -672,7 +673,10 @@ async fn static_summary_and_details_visible_after_start() {
 
     let summary_payload = user_metadata.summary.expect("summary present");
     assert_eq!(
-        summary_payload.metadata.get("encoding").map(|v| v.as_slice()),
+        summary_payload
+            .metadata
+            .get("encoding")
+            .map(|v| v.as_slice()),
         Some(b"json/plain".as_slice()),
     );
     assert_eq!(
@@ -683,7 +687,10 @@ async fn static_summary_and_details_visible_after_start() {
 
     let details_payload = user_metadata.details.expect("details present");
     assert_eq!(
-        details_payload.metadata.get("encoding").map(|v| v.as_slice()),
+        details_payload
+            .metadata
+            .get("encoding")
+            .map(|v| v.as_slice()),
         Some(b"json/plain".as_slice()),
     );
     assert_eq!(

@@ -1034,12 +1034,14 @@ where
         let user_metadata = if options.static_summary.is_some() || options.static_details.is_some()
         {
             Some(UserMetadata {
-                summary: options
-                    .static_summary
-                    .map(|s| s.as_json_payload().expect("String-to-JSON payload serialization is infallible")),
-                details: options
-                    .static_details
-                    .map(|s| s.as_json_payload().expect("String-to-JSON payload serialization is infallible")),
+                summary: options.static_summary.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
+                details: options.static_details.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
             })
         } else {
             None

@@ -578,7 +578,8 @@ async fn workflow_metadata_query_empty_details() {
 
         // With no current_details set the field is omitted per proto3 JSON rules.
         assert_eq!(
-            &payload.data, b"{}",
+            &payload.data,
+            b"{}",
             "Expected {{}} when current_details is empty, got: {}",
             String::from_utf8_lossy(&payload.data)
         );
