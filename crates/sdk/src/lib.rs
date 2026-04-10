@@ -158,7 +158,7 @@ use temporalio_common::{
         temporal::api::{
             common::v1::Payload,
             enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{Failure, failure},
+            failure::v1::{ApplicationFailureInfo, Failure, failure},
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -988,16 +988,12 @@ impl ActivityHalf {
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail({
-                                let mut f = codec_data_converter
-                                    .to_failure(nre, &SerializationContextData::Activity);
-                                if let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
-                                    f.failure_info.as_mut()
-                                {
-                                    fi.non_retryable = true;
-                                }
-                                f
-                            }),
+                            ActivityError::NonRetryable(nre) => {
+                                ActivityExecutionResult::fail(force_failure_non_retryable(
+                                    codec_data_converter
+                                        .to_failure(nre, &SerializationContextData::Activity),
+                                ))
+                            }
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
@@ -1352,6 +1348,32 @@ impl Display for EndPrintingAttempts {
 }
 impl PrintablePanicType for EndPrintingAttempts {
     type NextType = EndPrintingAttempts;
+}
+
+fn force_failure_non_retryable(mut failure: Failure) -> Failure {
+    match failure.failure_info.as_mut() {
+        Some(failure::FailureInfo::ApplicationFailureInfo(fi)) => {
+            fi.non_retryable = true;
+            failure
+        }
+        Some(failure::FailureInfo::ServerFailureInfo(fi)) => {
+            fi.non_retryable = true;
+            failure
+        }
+        _ => Failure {
+            // Activities marked NonRetryable must keep suppressing retries even
+            // when a custom converter chooses a failure kind without that flag.
+            message: failure.message.clone(),
+            failure_info: Some(failure::FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    non_retryable: true,
+                    ..Default::default()
+                },
+            )),
+            cause: Some(Box::new(failure)),
+            ..Default::default()
+        },
+    }
 }
 
 #[cfg(test)]

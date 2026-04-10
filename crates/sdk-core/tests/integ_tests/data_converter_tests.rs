@@ -583,6 +583,31 @@ impl FailureConverter for PrefixFailureConverter {
     }
 }
 
+struct GenericFailureConverter;
+
+impl FailureConverter for GenericFailureConverter {
+    fn to_failure(
+        &self,
+        error: Box<dyn std::error::Error + Send + Sync>,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> temporalio_common::protos::temporal::api::failure::v1::Failure {
+        let mut failure = DefaultFailureConverter.to_failure(error, payload_converter, context);
+        failure.message = format!("generic:{}", failure.message);
+        failure.failure_info = None;
+        failure
+    }
+
+    fn to_error(
+        &self,
+        failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> TemporalError {
+        DefaultFailureConverter.to_error(failure, payload_converter, context)
+    }
+}
+
 #[workflow]
 #[derive(Default)]
 struct CustomConverterFailWorkflow;
@@ -1166,6 +1191,37 @@ impl ActivityFailConverterWorkflow {
 
 #[workflow]
 #[derive(Default)]
+struct NonRetryableActivityWithCustomConverterWorkflow;
+#[workflow_methods]
+impl NonRetryableActivityWithCustomConverterWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>, _input: String) -> WorkflowResult<String> {
+        let err = ctx
+            .start_activity(
+                FailingActivities::always_fail,
+                "input".to_string(),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    retry_policy: Some(
+                        temporalio_common::protos::temporal::api::common::v1::RetryPolicy {
+                            initial_interval: Some(temporalio_common::prost_dur!(from_millis(10))),
+                            backoff_coefficient: 1.0,
+                            maximum_attempts: 5,
+                            ..Default::default()
+                        },
+                    ),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap_err();
+
+        Ok(err.to_string())
+    }
+}
+
+#[workflow]
+#[derive(Default)]
 struct ChildStartCancelledFromHistoryWorkflow;
 
 #[workflow_methods]
@@ -1246,6 +1302,97 @@ async fn activity_failure_converted_through_failure_converter() {
 
     let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result, "Activity failed: activity went boom");
+}
+
+#[tokio::test]
+async fn custom_failure_converter_preserves_non_retryable_activity_errors() {
+    let wf_name = NonRetryableActivityWithCustomConverterWorkflow::name();
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        GenericFailureConverter,
+        temporalio_common::data_converters::DefaultPayloadCodec,
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter
+        .sdk_config
+        .register_workflow::<NonRetryableActivityWithCustomConverterWorkflow>();
+    starter.sdk_config.register_activities(FailingActivities);
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            NonRetryableActivityWithCustomConverterWorkflow::run,
+            "trigger".to_string(),
+            WorkflowStartOptions::new(task_queue, wf_id.clone()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let result = handle.get_result(Default::default()).await.unwrap();
+    assert!(
+        result.contains("activity went boom"),
+        "workflow should still observe the activity failure, got: {result}",
+    );
+
+    let client = starter.get_client().await;
+    let events = client
+        .get_workflow_handle::<UntypedWorkflow>(&wf_id)
+        .fetch_history(Default::default())
+        .await
+        .unwrap()
+        .into_events();
+
+    let activity_started_count = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.attributes.as_ref(),
+                Some(Attributes::ActivityTaskStartedEventAttributes(_))
+            )
+        })
+        .count();
+    assert_eq!(
+        activity_started_count, 1,
+        "ActivityError::NonRetryable must suppress retries even when a custom failure converter \
+         returns a non-application failure",
+    );
+
+    let activity_failed_attrs = events
+        .iter()
+        .find_map(|e| {
+            if let Attributes::ActivityTaskFailedEventAttributes(attrs) =
+                e.attributes.as_ref().unwrap()
+            {
+                Some(attrs)
+            } else {
+                None
+            }
+        })
+        .expect("Should find ActivityTaskFailed event");
+    let failure = activity_failed_attrs
+        .failure
+        .as_ref()
+        .expect("should have failure");
+    let app_info = std::iter::successors(Some(failure), |f| f.cause.as_deref())
+        .find_map(|f| match f.failure_info.as_ref() {
+            Some(FailureInfo::ApplicationFailureInfo(info)) => Some(info),
+            _ => None,
+        })
+        .expect("Should find ApplicationFailureInfo in failure chain");
+    assert!(
+        app_info.non_retryable,
+        "ActivityError::NonRetryable must leave a non-retryable marker on the failure chain",
+    );
 }
 
 #[tokio::test]
