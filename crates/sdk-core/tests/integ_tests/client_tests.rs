@@ -255,7 +255,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, mut header_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("[::]:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let server_handle = tokio::spawn(async move {
