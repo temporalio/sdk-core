@@ -413,6 +413,13 @@ where
                                 }
                             }
 
+                            let endpoint = t
+                                .resp
+                                .request
+                                .as_ref()
+                                .map(|r| r.endpoint.clone())
+                                .unwrap_or_default();
+
                             let (service, operation, request_kind) = t
                                 .resp
                                 .request
@@ -456,6 +463,7 @@ where
                             Some(Ok(NexusTask {
                                 variant: Some(nexus_task::Variant::Task(t.resp)),
                                 request_deadline,
+                                endpoint,
                             }))
                         },
                         Err(e) => Some(Err(PollError::TonicError(e)))
@@ -463,6 +471,7 @@ where
                     TaskStreamInput::Cancel(c) => Some(Ok(NexusTask {
                         variant: Some(nexus_task::Variant::CancelTask(c)),
                         request_deadline: None,
+                        endpoint: String::new(),
                     })),
                     TaskStreamInput::SourceComplete => {
                         source_done.cancel();
