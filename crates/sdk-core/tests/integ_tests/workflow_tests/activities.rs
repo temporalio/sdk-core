@@ -21,7 +21,8 @@ use temporalio_common::{
     protos::{
         DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
         coresdk::{
-            ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion, IntoPayloadsExt,
+            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            IntoPayloadsExt,
             activity_result::{
                 self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
             },
@@ -1286,7 +1287,7 @@ async fn pass_activity_summary_to_metadata() {
     let wf_id = mock_cfg.hists[0].wf_id.clone();
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let expected_user_metadata = Some(UserMetadata {
-        summary: Some(b"activity summary".into()),
+        summary: Some("activity summary".as_json_payload().unwrap()),
         details: None,
     });
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
