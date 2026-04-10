@@ -16,7 +16,7 @@ use std::{
     task::{Context, Poll},
 };
 use temporalio_common::{
-    data_converters::PayloadConverter,
+    data_converters::{DataConverter, SerializationContextData, TemporalError},
     protos::{
         coresdk::{
             workflow_activation::{
@@ -38,7 +38,6 @@ use temporalio_common::{
         temporal::api::{
             common::v1::{Payload, Payloads},
             enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
-            failure::v1::Failure,
         },
         utilities::TryIntoOrNone,
     },
@@ -67,7 +66,7 @@ impl WorkflowFunction {
         run_id: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         detect_nondeterministic: bool,
     ) -> Result<
         (
@@ -90,12 +89,16 @@ impl WorkflowFunction {
             run_id,
             init_workflow_job,
             cancel_rx,
-            payload_converter.clone(),
+            data_converter.clone(),
         );
 
         // Create the workflow execution using the factory
-        let execution = (self.factory)(input, payload_converter.clone(), base_ctx.clone())
-            .context("Failed to create workflow execution")?;
+        let execution = (self.factory)(
+            input,
+            data_converter.payload_converter().clone(),
+            base_ctx.clone(),
+        )
+        .context("Failed to create workflow execution")?;
 
         let wake_tracking = if detect_nondeterministic {
             Some(WakeTracker::new())
@@ -114,7 +117,7 @@ impl WorkflowFunction {
                 incoming_activations,
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
-                payload_converter,
+                data_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
                 wake_tracking,
@@ -145,8 +148,8 @@ pub(crate) struct WorkflowFuture {
     cancel_sender: watch::Sender<Option<String>>,
     /// Base workflow context for sending commands
     base_ctx: BaseWorkflowContext,
-    /// Payload converter for serialization/deserialization
-    payload_converter: PayloadConverter,
+    /// Data converter for serialization/deserialization and failure conversion
+    data_converter: DataConverter,
     /// Stores in-progress update futures
     update_futures: Vec<(
         String,
@@ -260,7 +263,7 @@ impl WorkflowFuture {
                             payloads: q.arguments,
                         },
                         headers: q.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
@@ -279,14 +282,14 @@ impl WorkflowFuture {
                             response: Some(payload),
                         }),
                         // TODO [rust-sdk-branch]: Return list of known queries in error
-                        None => query_result::Variant::Failed(Failure {
-                            message: format!("No query handler for '{}'", query_type),
-                            ..Default::default()
-                        }),
-                        Some(Err(e)) => query_result::Variant::Failed(Failure {
-                            message: e.to_string(),
-                            ..Default::default()
-                        }),
+                        None => query_result::Variant::Failed(self.data_converter.to_failure(
+                            format!("No query handler for '{}'", query_type).into(),
+                            &SerializationContextData::Workflow,
+                        )),
+                        Some(Err(e)) => query_result::Variant::Failed(
+                            self.data_converter
+                                .to_failure(Box::new(e), &SerializationContextData::Workflow),
+                        ),
                     };
 
                     outgoing_cmds.push(
@@ -312,7 +315,7 @@ impl WorkflowFuture {
                             payloads: sig.input,
                         },
                         headers: sig.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
@@ -344,7 +347,7 @@ impl WorkflowFuture {
                     let data = DispatchData {
                         payloads: Payloads { payloads: u.input },
                         headers: u.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let trait_val_result = if u.run_validator {
@@ -378,10 +381,13 @@ impl WorkflowFuture {
                             }
                         }
                         Some(Err(e)) => {
+                            let failure = self
+                                .data_converter
+                                .to_failure(Box::new(e), &SerializationContextData::Workflow);
                             outgoing_cmds.push(
                                 update_response(
                                     protocol_instance_id.clone(),
-                                    update_response::Response::Rejected(anyhow!(e).into()),
+                                    update_response::Response::Rejected(failure),
                                 )
                                 .into(),
                             );
@@ -391,16 +397,14 @@ impl WorkflowFuture {
                         }
                     }
                     if not_found {
+                        let failure = self.data_converter.to_failure(
+                            format!("No update handler registered for update name {}", name).into(),
+                            &SerializationContextData::Workflow,
+                        );
                         outgoing_cmds.push(
                             update_response(
                                 protocol_instance_id,
-                                update_response::Response::Rejected(
-                                    format!(
-                                        "No update handler registered for update name {}",
-                                        name
-                                    )
-                                    .into(),
-                                ),
+                                update_response::Response::Rejected(failure),
                             )
                             .into(),
                         );
@@ -581,7 +585,12 @@ impl WorkflowFuture {
                                     instance_id,
                                     match v {
                                         Ok(v) => update_response::Response::Completed(v),
-                                        Err(e) => update_response::Response::Rejected(e.into()),
+                                        Err(e) => update_response::Response::Rejected(
+                                            self.data_converter.to_failure(
+                                                Box::new(e),
+                                                &SerializationContextData::Workflow,
+                                            ),
+                                        ),
                                     },
                                 )
                                 .into(),
@@ -621,16 +630,21 @@ impl WorkflowFuture {
                 Ok(r) => r,
                 Err(e) => {
                     let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
+                    let failure = self.data_converter.to_failure(
+                        Box::new(TemporalError::Application {
+                            message: errmsg.clone(),
+                            stack_trace: String::new(),
+                            r#type: String::new(),
+                            non_retryable: true,
+                            details: None,
+                            next_retry_delay: None,
+                            cause: None,
+                        }),
+                        &SerializationContextData::Workflow,
+                    );
                     warn!("{}", errmsg);
                     self.outgoing_completions
-                        .send(WorkflowActivationCompletion::fail(
-                            run_id,
-                            Failure {
-                                message: errmsg,
-                                ..Default::default()
-                            },
-                            None,
-                        ))
+                        .send(WorkflowActivationCompletion::fail(run_id, failure, None))
                         .expect("Completion channel intact");
                     // Loop back up because we're about to get evicted
                     return Ok(true);
@@ -762,11 +776,11 @@ impl WorkflowFuture {
                         panic!("Don't explicitly return WorkflowTermination::Evicted")
                     }
                     WorkflowTermination::Failed(e) => {
+                        let failure = self
+                            .data_converter
+                            .to_failure(anyhow_to_box(e), &SerializationContextData::Workflow);
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                            failure: Some(Failure {
-                                message: format!("Workflow execution error: {e}"),
-                                ..Default::default()
-                            }),
+                            failure: Some(failure),
                         })
                     }
                 },
@@ -787,6 +801,18 @@ enum CommandID {
     CancelExternal(u32),
     NexusOpStart(u32),
     NexusOpComplete(u32),
+}
+
+/// Convert an `anyhow::Error` into `Box<dyn Error>`, preserving the inner
+/// type for downcasting by the failure converter. `anyhow::Error` doesn't
+/// implement `std::error::Error`, so a plain `.into()` would lose the
+/// wrapped type. Instead we try to extract a `TemporalError` first.
+fn anyhow_to_box(e: anyhow::Error) -> Box<dyn std::error::Error + Send + Sync + 'static> {
+    use temporalio_common::data_converters::TemporalError;
+    match e.downcast::<TemporalError>() {
+        Ok(te) => Box::new(te),
+        Err(e) => e.into_boxed_dyn_error(),
+    }
 }
 
 fn update_response(

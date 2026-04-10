@@ -109,10 +109,7 @@ use temporalio_common::{
         GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
-    protos::temporal::api::{
-        common::v1::{Payload, Payloads},
-        failure::v1::Failure,
-    },
+    protos::temporal::api::common::v1::{Payload, Payloads},
 };
 
 /// Error type for workflow operations
@@ -125,15 +122,6 @@ pub enum WorkflowError {
     /// Workflow execution error
     #[error("Workflow execution error: {0}")]
     Execution(#[from] anyhow::Error),
-}
-
-impl From<WorkflowError> for Failure {
-    fn from(err: WorkflowError) -> Self {
-        Failure {
-            message: err.to_string(),
-            ..Default::default()
-        }
-    }
 }
 
 /// Trait implemented by workflow structs to enable execution by the worker.

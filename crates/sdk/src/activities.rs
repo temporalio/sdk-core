@@ -251,7 +251,7 @@ pub enum ActivityError {
 }
 
 impl ActivityError {
-    /// Construct a cancelled error without details
+    /// Construct a cancelled error without details.
     pub fn cancelled() -> Self {
         Self::Cancelled { details: None }
     }

@@ -498,7 +498,7 @@ async fn nexus_async(
                 Some(nexus_operation_result::Status::Failed(f)) => f
             );
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            assert_eq!(f.cause.unwrap().message, "Workflow execution error: broken");
+            assert_eq!(f.cause.unwrap().message, "broken");
         }
         Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
             let f = assert_matches!(

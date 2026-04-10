@@ -41,7 +41,7 @@ use uuid::Uuid;
 /// Enumerates terminal states for a particular workflow execution
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-pub enum WorkflowExecutionResult<T> {
+pub(crate) enum WorkflowExecutionResult<T> {
     /// The workflow finished successfully
     Succeeded(T),
     /// The workflow finished in failure
@@ -267,14 +267,21 @@ where
         let raw = self.get_result_raw(opts).await?;
         match raw {
             WorkflowExecutionResult::Succeeded(v) => Ok(v),
-            WorkflowExecutionResult::Failed(f) => Err(WorkflowGetResultError::Failed(Box::new(f))),
+            WorkflowExecutionResult::Failed(f) => {
+                let err = self
+                    .client
+                    .data_converter()
+                    .decode_failure(f, &SerializationContextData::Workflow)
+                    .await;
+                Err(WorkflowGetResultError::Failed(err))
+            }
             WorkflowExecutionResult::Cancelled { details } => {
                 Err(WorkflowGetResultError::Cancelled { details })
             }
             WorkflowExecutionResult::Terminated { details } => {
                 Err(WorkflowGetResultError::Terminated { details })
             }
-            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::TimedOut),
+            WorkflowExecutionResult::TimedOut => Err(WorkflowGetResultError::Timeout),
             WorkflowExecutionResult::ContinuedAsNew => Err(WorkflowGetResultError::ContinuedAsNew),
         }
     }
@@ -805,7 +812,12 @@ where
                 .await
                 .map_err(WorkflowUpdateError::from),
             Some(update::v1::outcome::Value::Failure(failure)) => {
-                Err(WorkflowUpdateError::Failed(Box::new(failure)))
+                let err = self
+                    .client
+                    .data_converter()
+                    .decode_failure(failure, &SerializationContextData::Workflow)
+                    .await;
+                Err(WorkflowUpdateError::Failed(err))
             }
             None => Err(WorkflowUpdateError::Other(
                 "Update returned no outcome value".into(),

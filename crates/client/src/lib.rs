@@ -35,6 +35,7 @@ pub use async_activity_handle::{
     ActivityHeartbeatResponse, ActivityIdentifier, AsyncActivityHandle,
 };
 
+pub use errors::*;
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use options_structs::*;
 pub use replaceable::SharedReplaceableClient;
@@ -42,8 +43,8 @@ pub use retry::RetryOptions;
 pub use tonic;
 pub use workflow_handle::{
     UntypedQuery, UntypedSignal, UntypedUpdate, UntypedWorkflow, UntypedWorkflowHandle,
-    WorkflowExecutionDescription, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
-    WorkflowHistory, WorkflowUpdateHandle,
+    WorkflowExecutionDescription, WorkflowExecutionInfo, WorkflowHandle, WorkflowHistory,
+    WorkflowUpdateHandle,
 };
 
 use crate::{
@@ -55,7 +56,6 @@ use crate::{
     request_extensions::RequestExt,
     worker::ClientWorkerSet,
 };
-use errors::*;
 use futures_util::{stream, stream::Stream};
 use http::Uri;
 use parking_lot::RwLock;

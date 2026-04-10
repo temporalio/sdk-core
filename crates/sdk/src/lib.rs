@@ -97,12 +97,14 @@ macro_rules! __temporal_join {
 use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
+pub use temporalio_common::protos::temporal::api::enums::v1::{RetryState, TimeoutType};
 pub use workflow_context::{
     ActivityExecutionError, ActivityOptions, BaseWorkflowContext, CancellableFuture,
     ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions, ParentWorkflowInfo,
-    RootWorkflowInfo, Signal, SignalData, StartChildWorkflowExecutionFailedCause,
-    StartedChildWorkflow, SyncWorkflowContext, TimerOptions, WorkflowContext, WorkflowContextView,
+    ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions,
+    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
+    StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
+    TimerOptions, WorkflowContext, WorkflowContextView,
 };
 
 use crate::{
@@ -133,7 +135,7 @@ use std::{
 use temporalio_client::{Client, NamespacedClient};
 use temporalio_common::{
     ActivityDefinition, WorkflowDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{DataConverter, SerializationContextData, TemporalError},
     payload_visitor::{decode_payloads, encode_payloads},
     protos::{
         TaskToken,
@@ -156,7 +158,7 @@ use temporalio_common::{
         temporal::api::{
             common::v1::Payload,
             enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{Failure, failure},
+            failure::v1::{ApplicationFailureInfo, Failure, failure},
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -803,7 +805,6 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
-            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
@@ -812,7 +813,7 @@ impl WorkflowHalf {
                         run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
-                        payload_converter,
+                        common.data_converter.clone(),
                         self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
@@ -953,9 +954,20 @@ impl ActivityHalf {
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
-                            format!("Activity function panicked: {}", panic_formatter(e)),
-                            true,
+                        Err(e) => ActivityExecutionResult::fail(codec_data_converter.to_failure(
+                            Box::new(TemporalError::Application {
+                                message: format!(
+                                    "Activity function panicked: {}",
+                                    panic_formatter(e)
+                                ),
+                                stack_trace: String::new(),
+                                r#type: String::new(),
+                                non_retryable: true,
+                                details: None,
+                                next_retry_delay: None,
+                                cause: None,
+                            }),
+                            &SerializationContextData::Activity,
                         )),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
@@ -963,10 +975,8 @@ impl ActivityHalf {
                                 source,
                                 explicit_delay,
                             } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(source),
-                                    false,
-                                );
+                                let mut f = codec_data_converter
+                                    .to_failure(source, &SerializationContextData::Activity);
                                 if let Some(d) = explicit_delay
                                     && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
                                         f.failure_info.as_mut()
@@ -978,12 +988,12 @@ impl ActivityHalf {
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(nre),
-                                    true,
-                                ),
-                            ),
+                            ActivityError::NonRetryable(nre) => {
+                                ActivityExecutionResult::fail(force_failure_non_retryable(
+                                    codec_data_converter
+                                        .to_failure(nre, &SerializationContextData::Activity),
+                                ))
+                            }
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
@@ -1338,6 +1348,32 @@ impl Display for EndPrintingAttempts {
 }
 impl PrintablePanicType for EndPrintingAttempts {
     type NextType = EndPrintingAttempts;
+}
+
+fn force_failure_non_retryable(mut failure: Failure) -> Failure {
+    match failure.failure_info.as_mut() {
+        Some(failure::FailureInfo::ApplicationFailureInfo(fi)) => {
+            fi.non_retryable = true;
+            failure
+        }
+        Some(failure::FailureInfo::ServerFailureInfo(fi)) => {
+            fi.non_retryable = true;
+            failure
+        }
+        _ => Failure {
+            // Activities marked NonRetryable must keep suppressing retries even
+            // when a custom converter chooses a failure kind without that flag.
+            message: failure.message.clone(),
+            failure_info: Some(failure::FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    non_retryable: true,
+                    ..Default::default()
+                },
+            )),
+            cause: Some(Box::new(failure)),
+            ..Default::default()
+        },
+    }
 }
 
 #[cfg(test)]
