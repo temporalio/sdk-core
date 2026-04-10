@@ -237,12 +237,8 @@ let result = started.result().await?;
 ### Continue-As-New
 
 ```rust
-// To continue as new, return an error with WorkflowTermination::ContinueAsNew
-Err(WorkflowTermination::continue_as_new(ContinueAsNewWorkflowExecution {
-    workflow_type: "MyWorkflow".to_string(),
-    arguments: vec![new_input.into()],
-    ..Default::default()
-}))
+// To continue as new, use the workflow context helper and propagate the termination
+ctx.continue_as_new(&new_input, ContinueAsNewOptions::default())?;
 ```
 
 ### Patching (Versioning)

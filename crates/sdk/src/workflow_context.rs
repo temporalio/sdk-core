@@ -1,15 +1,15 @@
 mod options;
 
 pub use options::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
-    SignalData, TimerOptions,
+    ActivityOptions, ChildWorkflowOptions, ContinueAsNewOptions, LocalActivityOptions,
+    NexusOperationOptions, Signal, SignalData, TimerOptions,
 };
 pub use temporalio_common::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause;
 
 use crate::{
     CancelExternalWfResult, CancellableID, CancellableIDWithReason, CommandCreateRequest,
     CommandSubscribeChildWorkflowCompletion, NexusStartResult, RustWfCmd, SignalExternalWfResult,
-    SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
+    SupportsCancelReason, TimerResult, UnblockEvent, Unblockable, WorkflowTermination,
     workflow_context::options::IntoWorkflowCommand, workflow_executor::SdkWakeGuard,
 };
 use futures_util::{
@@ -731,6 +731,31 @@ impl<W> SyncWorkflowContext<W> {
         .fuse()
     }
 
+    /// Signal that this workflow should continue as a new workflow execution with the given input and
+    /// options.
+    ///
+    /// This always returns an `Err` which should be propigated.
+    pub fn continue_as_new(
+        &self,
+        input: &<W::Run as WorkflowDefinition>::Input,
+        opts: ContinueAsNewOptions,
+    ) -> Result<std::convert::Infallible, WorkflowTermination>
+    where
+        W: crate::workflows::WorkflowImplementation,
+    {
+        let pc = &self.base.inner.payload_converter;
+        let ctx = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: pc,
+        };
+        let arguments = pc
+            .to_payloads(&ctx, input)
+            .map_err(WorkflowTermination::failed)?;
+        let workflow_type = self.workflow_initial_info().workflow_type.clone();
+        let proto = opts.into_proto(workflow_type, arguments);
+        Err(WorkflowTermination::continue_as_new(proto))
+    }
+
     /// Request to create a timer
     pub fn timer<T: Into<TimerOptions>>(&self, opts: T) -> impl CancellableFuture<TimerResult> {
         self.base.timer(opts)
@@ -1133,6 +1158,21 @@ impl<W> WorkflowContext<W> {
         }
         self.sync.base.set_state_mutated();
         result
+    }
+
+    /// Signal that this workflow should continue as a new workflow execution with the given input and
+    /// options.
+    ///
+    /// This always returns an `Err` which should be propigated
+    pub fn continue_as_new(
+        &self,
+        input: &<W::Run as WorkflowDefinition>::Input,
+        opts: ContinueAsNewOptions,
+    ) -> Result<std::convert::Infallible, WorkflowTermination>
+    where
+        W: crate::workflows::WorkflowImplementation,
+    {
+        self.sync.continue_as_new(input, opts)
     }
 
     /// Wait for some condition on workflow state to become true, yielding the workflow if not.
@@ -2107,5 +2147,211 @@ impl StartedNexusOperation {
         self.unblock_dat
             .base_ctx
             .cancel(CancellableID::NexusOp(self.unblock_dat.schedule_seq));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use temporalio_common::{
+        data_converters::{TemporalDeserializable, TemporalSerializable},
+        protos::{
+            coresdk::{AsJsonPayloadExt, common::VersioningIntent},
+            temporal::api::common::v1::{Payload, RetryPolicy},
+        },
+    };
+    use temporalio_macros::{workflow, workflow_methods};
+
+    #[workflow]
+    #[derive(Default)]
+    struct TestWorkflow;
+
+    #[workflow_methods]
+    impl TestWorkflow {
+        #[run]
+        async fn run(_ctx: &mut WorkflowContext<Self>, _input: u8) -> crate::WorkflowResult<()> {
+            unreachable!("test workflow run should not be polled")
+        }
+    }
+
+    fn test_context() -> WorkflowContext<TestWorkflow> {
+        let init = InitializeWorkflow {
+            workflow_type: TestWorkflow.name().to_string(),
+            ..Default::default()
+        };
+        let (_, cancelled_rx) = watch::channel(None);
+        let (base, _cmd_rx) = BaseWorkflowContext::new(
+            "default".to_string(),
+            "orig-task-queue".to_string(),
+            "run-id".to_string(),
+            init,
+            cancelled_rx,
+            PayloadConverter::default(),
+        );
+        WorkflowContext::from_base(base, Rc::new(RefCell::new(TestWorkflow)))
+    }
+
+    #[test]
+    fn workflow_context_continue_as_new_serializes_input_and_defaults() {
+        let ctx = test_context();
+
+        let termination = ctx
+            .continue_as_new(&7, ContinueAsNewOptions::default())
+            .expect_err("continue_as_new should terminate the workflow");
+        assert!(
+            matches!(termination, WorkflowTermination::ContinueAsNew(_)),
+            "expected continue-as-new termination, got {termination:?}"
+        );
+        let WorkflowTermination::ContinueAsNew(cmd) = termination else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            *cmd,
+            temporalio_common::protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution {
+                workflow_type: TestWorkflow.name().to_string(),
+                arguments: vec![7u8.as_json_payload().unwrap()],
+                versioning_intent: VersioningIntent::Unspecified as i32,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn sync_workflow_context_continue_as_new_applies_options() {
+        let ctx = test_context();
+        let sync = ctx.sync_context();
+        let mut memo = HashMap::new();
+        memo.insert(
+            "memo-key".to_string(),
+            Payload::from(b"memo-value".as_slice()),
+        );
+        let mut headers = HashMap::new();
+        headers.insert(
+            "header-key".to_string(),
+            Payload::from(b"header-value".as_slice()),
+        );
+        let mut search_attributes = SearchAttributes::default();
+        search_attributes.indexed_fields.insert(
+            "CustomKeywordField".to_string(),
+            Payload::from(b"value".as_slice()),
+        );
+
+        let termination = sync
+            .continue_as_new(
+                &11,
+                ContinueAsNewOptions {
+                    workflow_type: Some("next-workflow".to_string()),
+                    task_queue: Some("next-task-queue".to_string()),
+                    run_timeout: Some(Duration::from_secs(10)),
+                    task_timeout: Some(Duration::from_secs(3)),
+                    memo: Some(memo.clone()),
+                    headers: Some(headers.clone()),
+                    search_attributes: Some(search_attributes.clone()),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 5,
+                        ..Default::default()
+                    }),
+                    versioning_intent: Some(VersioningIntent::Compatible),
+                },
+            )
+            .expect_err("continue_as_new should terminate the workflow");
+        assert!(
+            matches!(termination, WorkflowTermination::ContinueAsNew(_)),
+            "expected continue-as-new termination, got {termination:?}"
+        );
+        let WorkflowTermination::ContinueAsNew(cmd) = termination else {
+            unreachable!()
+        };
+
+        assert_eq!(
+            *cmd,
+            temporalio_common::protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution {
+                workflow_type: "next-workflow".to_string(),
+                task_queue: "next-task-queue".to_string(),
+                arguments: vec![11u8.as_json_payload().unwrap()],
+                workflow_run_timeout: Some(Duration::from_secs(10).try_into().unwrap()),
+                workflow_task_timeout: Some(Duration::from_secs(3).try_into().unwrap()),
+                memo,
+                headers,
+                search_attributes: Some(search_attributes),
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 5,
+                    ..Default::default()
+                }),
+                versioning_intent: VersioningIntent::Compatible as i32,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn continue_as_new_reports_serialization_errors() {
+        #[derive(Debug)]
+        struct FailingInput;
+
+        impl TemporalSerializable for FailingInput {
+            fn to_payload(
+                &self,
+                _ctx: &temporalio_common::data_converters::SerializationContext<'_>,
+            ) -> Result<Payload, temporalio_common::data_converters::PayloadConversionError>
+            {
+                Err(
+                    temporalio_common::data_converters::PayloadConversionError::EncodingError(
+                        std::io::Error::other("serialization failure").into(),
+                    ),
+                )
+            }
+        }
+
+        impl TemporalDeserializable for FailingInput {
+            fn from_payload(
+                _ctx: &temporalio_common::data_converters::SerializationContext<'_>,
+                _payload: Payload,
+            ) -> Result<Self, temporalio_common::data_converters::PayloadConversionError>
+            {
+                unreachable!("test input is only serialized")
+            }
+        }
+
+        #[workflow]
+        #[derive(Default)]
+        struct FailingWorkflow;
+
+        #[workflow_methods]
+        impl FailingWorkflow {
+            #[run]
+            async fn run(
+                _ctx: &mut WorkflowContext<Self>,
+                _input: FailingInput,
+            ) -> crate::WorkflowResult<()> {
+                unreachable!("test workflow run should not be polled")
+            }
+        }
+
+        let init = InitializeWorkflow {
+            workflow_type: "failing-workflow".to_string(),
+            ..Default::default()
+        };
+        let (_, cancelled_rx) = watch::channel(None);
+        let (base, _cmd_rx) = BaseWorkflowContext::new(
+            "default".to_string(),
+            "orig-task-queue".to_string(),
+            "run-id".to_string(),
+            init,
+            cancelled_rx,
+            PayloadConverter::default(),
+        );
+        let ctx = WorkflowContext::from_base(base, Rc::new(RefCell::new(FailingWorkflow)));
+
+        let err = ctx
+            .continue_as_new(&FailingInput, ContinueAsNewOptions::default())
+            .expect_err("serialization errors should be surfaced");
+
+        let WorkflowTermination::Failed(err) = err else {
+            panic!("expected failed termination, got {err:?}");
+        };
+        assert_eq!(err.to_string(), "Encoding error: serialization failure");
     }
 }
