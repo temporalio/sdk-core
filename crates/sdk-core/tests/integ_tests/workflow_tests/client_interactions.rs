@@ -664,38 +664,9 @@ async fn static_summary_and_details_visible_after_start() {
         .await
         .unwrap();
 
-    let user_metadata = description
-        .raw_description
-        .execution_config
-        .expect("execution_config present")
-        .user_metadata
-        .expect("user_metadata present");
+    let summary = description.static_summary().expect("summary present");
+    assert_eq!(summary, "my static summary",);
 
-    let summary_payload = user_metadata.summary.expect("summary present");
-    assert_eq!(
-        summary_payload
-            .metadata
-            .get("encoding")
-            .map(|v| v.as_slice()),
-        Some(b"json/plain".as_slice()),
-    );
-    assert_eq!(
-        serde_json::from_slice::<String>(&summary_payload.data)
-            .expect("summary payload data should deserialize as a JSON string"),
-        "my static summary",
-    );
-
-    let details_payload = user_metadata.details.expect("details present");
-    assert_eq!(
-        details_payload
-            .metadata
-            .get("encoding")
-            .map(|v| v.as_slice()),
-        Some(b"json/plain".as_slice()),
-    );
-    assert_eq!(
-        serde_json::from_slice::<String>(&details_payload.data)
-            .expect("details payload data should deserialize as a JSON string"),
-        "my static details",
-    );
+    let details = description.static_details().expect("details present");
+    assert_eq!(details, "my static details",);
 }

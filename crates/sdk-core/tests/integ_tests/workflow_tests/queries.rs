@@ -520,7 +520,7 @@ struct NoCurrentDetailsWf;
 #[workflow_methods]
 impl NoCurrentDetailsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
-    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.wait_condition(|_| false).await;
         Ok(())
     }
