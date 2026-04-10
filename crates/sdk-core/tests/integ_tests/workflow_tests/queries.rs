@@ -424,7 +424,7 @@ impl CurrentDetailsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         ctx.set_current_details("details from workflow");
-        std::future::pending::<()>().await;
+        ctx.wait_condition(|_| false).await;
         Ok(())
     }
 }
@@ -521,7 +521,7 @@ struct NoCurrentDetailsWf;
 impl NoCurrentDetailsWf {
     #[run(name = DEFAULT_WORKFLOW_TYPE)]
     async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        std::future::pending::<()>().await;
+        ctx.wait_condition(|_| false).await;
         Ok(())
     }
 }

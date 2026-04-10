@@ -265,6 +265,7 @@ impl WorkflowFuture {
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
                         // Mirror the proto JSON shape of temporal.api.sdk.v1.WorkflowMetadata.
+                        // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization, and this will no longer be necessary.
                         #[derive(serde::Serialize)]
                         struct WorkflowMetadataJson {
                             #[serde(
