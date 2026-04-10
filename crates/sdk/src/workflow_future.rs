@@ -263,15 +263,46 @@ impl WorkflowFuture {
                         converter: &self.payload_converter,
                     };
 
-                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.execution.dispatch_query(&query_type, data)
-                    })) {
-                        Ok(r) => r,
-                        Err(e) => Some(Err(anyhow!(
-                            "Panic in query handler: {}",
-                            panic_formatter(e)
-                        )
-                        .into())),
+                    let dispatch_result = if query_type == "__temporal_workflow_metadata" {
+                        // Mirror the proto JSON shape of temporal.api.sdk.v1.WorkflowMetadata.
+                        // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization, and this will no longer be necessary.
+                        #[derive(serde::Serialize)]
+                        struct WorkflowMetadataJson {
+                            #[serde(
+                                rename = "currentDetails",
+                                skip_serializing_if = "String::is_empty"
+                            )]
+                            current_details: String,
+                        }
+                        let json_bytes = serde_json::to_vec(&WorkflowMetadataJson {
+                            current_details: self.base_ctx.current_details(),
+                        })
+                        .expect("WorkflowMetadata serialization is infallible");
+                        let payload = Payload {
+                            metadata: [
+                                ("encoding".to_string(), b"json/protobuf".to_vec()),
+                                (
+                                    "messageType".to_string(),
+                                    b"temporal.api.sdk.v1.WorkflowMetadata".to_vec(),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                            data: json_bytes,
+                            ..Default::default()
+                        };
+                        Some(Ok(payload))
+                    } else {
+                        match panic::catch_unwind(AssertUnwindSafe(|| {
+                            self.execution.dispatch_query(&query_type, data)
+                        })) {
+                            Ok(r) => r,
+                            Err(e) => Some(Err(anyhow!(
+                                "Panic in query handler: {}",
+                                panic_formatter(e)
+                            )
+                            .into())),
+                        }
                     };
 
                     let response = match dispatch_result {

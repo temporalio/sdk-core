@@ -402,6 +402,11 @@ impl BaseWorkflowContext {
         self.inner.state_mutated.set(true);
     }
 
+    /// Return the current value of current_details.
+    pub(crate) fn current_details(&self) -> String {
+        self.inner.shared.borrow().current_details.clone()
+    }
+
     /// Cancel any cancellable operation by ID
     fn cancel(&self, cancellable_id: CancellableID) {
         self.send(RustWfCmd::Cancel(cancellable_id));
@@ -872,6 +877,14 @@ impl<W> SyncWorkflowContext<W> {
         ))
     }
 
+    /// Set the current details string for this workflow execution.
+    ///
+    /// The value is surfaced to the Temporal server UI in real time via the
+    /// the workflow metadata query.
+    pub fn set_current_details(&self, details: impl Into<String>) {
+        self.base.inner.shared.borrow_mut().current_details = details.into();
+    }
+
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.base.send(with.into());
@@ -1096,6 +1109,13 @@ impl<W> WorkflowContext<W> {
         self.sync.upsert_memo(attr_iter)
     }
 
+    /// Set the current details string for this workflow execution.
+    ///
+    /// See [`SyncWorkflowContext::set_current_details`].
+    pub fn set_current_details(&self, details: impl Into<String>) {
+        self.sync.set_current_details(details)
+    }
+
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
     pub fn force_task_fail(&self, with: anyhow::Error) {
         self.sync.force_task_fail(with)
@@ -1228,6 +1248,8 @@ pub(crate) struct WorkflowContextSharedData {
     pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
+    /// Current details string, surfaced via the workflow metadata query.
+    pub(crate) current_details: String,
 }
 
 /// A Future that can be cancelled.

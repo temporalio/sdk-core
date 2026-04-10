@@ -24,6 +24,7 @@ gethostname = "1.0.2"
 parking_lot = { version = "0.12", features = ["send_guard"] }
 prost-types = { workspace = true }
 serde = "1.0"
+serde_json = { workspace = true }
 thiserror = "2"
 tokio = { version = "1.47", features = [
   "rt",
@@ -61,11 +62,7 @@ rstest = "0.26"
 [features]
 default = []
 antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
-examples = ["serde/derive", "dep:serde_json"]
-
-[dependencies.serde_json]
-version = "1"
-optional = true
+examples = ["serde/derive"]
 
 [[example]]
 name = "hello-world-worker"

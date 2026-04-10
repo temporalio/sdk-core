@@ -17,7 +17,7 @@ use temporalio_common::protos::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult};
 use temporalio_sdk_core::test_help::{
-    MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
+    LegacyQueryResult, MockPollCfg, ResponseType, hist_to_poll_resp, mock_worker_client,
 };
 
 /// A workflow that returns Pending on first poll and Ready on second poll.
@@ -410,5 +410,184 @@ async fn query_returns_workflow_context_view_info() {
 
     let mut worker = build_fake_sdk(mock_cfg);
     worker.register_workflow::<ContextViewWf>();
+    worker.run().await.unwrap();
+}
+
+/// Workflow that sets current_details and then blocks indefinitely.
+/// The pending await keeps the workflow alive when the metadata query arrives.
+#[workflow]
+#[derive(Default)]
+struct CurrentDetailsWf;
+
+#[workflow_methods]
+impl CurrentDetailsWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.set_current_details("details from workflow");
+        ctx.wait_condition(|_| false).await;
+        Ok(())
+    }
+}
+
+/// Verify that the query returns a proto-JSON-encoded `WorkflowMetadata`
+/// whose `current_details` field reflects the value set by `set_current_details`.
+#[tokio::test]
+async fn workflow_metadata_query_returns_current_details() {
+    let wfid = "workflow_metadata_query_test";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let tasks = [
+        // First task: workflow starts, sets current_details, and blocks on pending.
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        // Second task: legacy query for __temporal_workflow_metadata while workflow is blocked.
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
+            pr.query = Some(WorkflowQuery {
+                query_type: "__temporal_workflow_metadata".to_string(),
+                query_args: None,
+                header: None,
+            });
+            pr.history = Some(Default::default());
+            pr
+        },
+    ];
+
+    let mut mock_cfg = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
+    mock_cfg.num_expected_legacy_query_resps = 1;
+
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts.then(|wft| {
+            // First activation: workflow runs, sets current_details, and blocks.
+            // No commands should be emitted.
+            assert!(
+                wft.commands.is_empty(),
+                "Expected no commands on first activation, got: {:?}",
+                wft.commands
+            );
+        });
+    });
+
+    // The legacy query response goes through respond_legacy_query, not complete_workflow_activation.
+    // Use expect_legacy_query_matcher to assert on the actual payload sent to the server.
+    mock_cfg.expect_legacy_query_matcher = Box::new(|_, result| {
+        let LegacyQueryResult::Succeeded(qr) = result else {
+            panic!("Expected Succeeded legacy query result");
+        };
+        let Some(query_result::Variant::Succeeded(success)) = &qr.variant else {
+            panic!("Expected Succeeded query result variant");
+        };
+        let payload = success
+            .response
+            .as_ref()
+            .expect("Expected a response payload in __temporal_workflow_metadata response");
+
+        assert_eq!(
+            payload.metadata.get("encoding").map(|v| v.as_slice()),
+            Some(b"json/protobuf".as_slice()),
+            "Expected json/protobuf encoding"
+        );
+        assert_eq!(
+            payload.metadata.get("messageType").map(|v| v.as_slice()),
+            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
+            "Expected WorkflowMetadata messageType"
+        );
+
+        // The data is proto-JSON: {"currentDetails":"..."}
+        let json: serde_json::Value =
+            serde_json::from_slice(&payload.data).expect("Response data should be valid JSON");
+        assert_eq!(
+            json["currentDetails"].as_str(),
+            Some("details from workflow"),
+            "current_details should match what the workflow set"
+        );
+
+        true
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<CurrentDetailsWf>();
+    worker.run().await.unwrap();
+}
+
+/// Workflow that blocks indefinitely without ever setting current_details.
+#[workflow]
+#[derive(Default)]
+struct NoCurrentDetailsWf;
+
+#[workflow_methods]
+impl NoCurrentDetailsWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.wait_condition(|_| false).await;
+        Ok(())
+    }
+}
+
+/// Verify that the query returns `{}` when `set_current_details` was never
+/// called, matching proto3 JSON behavior where default (empty) fields are omitted.
+#[tokio::test]
+async fn workflow_metadata_query_empty_details() {
+    let wfid = "workflow_metadata_query_empty_test";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
+            pr.query = Some(WorkflowQuery {
+                query_type: "__temporal_workflow_metadata".to_string(),
+                query_args: None,
+                header: None,
+            });
+            pr.history = Some(Default::default());
+            pr
+        },
+    ];
+
+    let mut mock_cfg = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_worker_client());
+    mock_cfg.num_expected_legacy_query_resps = 1;
+
+    mock_cfg.expect_legacy_query_matcher = Box::new(|_, result| {
+        let LegacyQueryResult::Succeeded(qr) = result else {
+            panic!("Expected Succeeded legacy query result");
+        };
+        let Some(query_result::Variant::Succeeded(success)) = &qr.variant else {
+            panic!("Expected Succeeded query result variant");
+        };
+        let payload = success
+            .response
+            .as_ref()
+            .expect("Expected a response payload");
+
+        assert_eq!(
+            payload.metadata.get("encoding").map(|v| v.as_slice()),
+            Some(b"json/protobuf".as_slice()),
+            "Expected json/protobuf encoding"
+        );
+        assert_eq!(
+            payload.metadata.get("messageType").map(|v| v.as_slice()),
+            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
+            "Expected WorkflowMetadata messageType"
+        );
+
+        // With no current_details set the field is omitted per proto3 JSON rules.
+        assert_eq!(
+            &payload.data,
+            b"{}",
+            "Expected {{}} when current_details is empty, got: {}",
+            String::from_utf8_lossy(&payload.data)
+        );
+
+        true
+    });
+
+    let mut worker = build_fake_sdk(mock_cfg);
+    worker.register_workflow::<NoCurrentDetailsWf>();
     worker.run().await.unwrap();
 }

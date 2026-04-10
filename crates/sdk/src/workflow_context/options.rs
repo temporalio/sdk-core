@@ -110,10 +110,16 @@ impl ActivityOptions {
                 }
                 .into(),
             ),
-            user_metadata: self.summary.map(|s| UserMetadata {
-                summary: Some(s.into()),
-                details: None,
-            }),
+            user_metadata: self
+                .summary
+                .map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                })
+                .map(|summary| UserMetadata {
+                    summary: Some(summary),
+                    details: None,
+                }),
         }
     }
 }
@@ -202,7 +208,11 @@ impl LocalActivityOptions {
             ),
             user_metadata: self
                 .summary
-                .and_then(|summary| summary.as_json_payload().ok())
+                .map(|summary| {
+                    summary
+                        .as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                })
                 .map(|summary| UserMetadata {
                     summary: Some(summary),
                     details: None,
@@ -253,8 +263,14 @@ impl ChildWorkflowOptions {
     ) -> WorkflowCommand {
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
-                summary: self.static_summary.map(Into::into),
-                details: self.static_details.map(Into::into),
+                summary: self.static_summary.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
+                details: self.static_details.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
             })
         } else {
             None
