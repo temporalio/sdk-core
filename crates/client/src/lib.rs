@@ -9,6 +9,7 @@ extern crate tracing;
 
 mod async_activity_handle;
 pub mod callback_based;
+mod dns;
 /// Configuration loading from environment variables and TOML files.
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
@@ -143,17 +144,42 @@ struct ConnectionInner {
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
     workers: Arc<ClientWorkerSet>,
+    _dns_task: Option<Arc<dns::DnsReresolutionHandle>>,
 }
 
 impl Connection {
     /// Connect to a Temporal service.
     pub async fn connect(options: ConnectionOptions) -> Result<Self, ClientConnectError> {
-        let service = if let Some(service_override) = options.service_override {
-            GrpcMetricSvc {
-                inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
-                metrics: options.metrics_meter.clone().map(MetricsContext::new),
-                disable_errcode_label: options.disable_error_code_metric_tags,
-            }
+        let dns_lb_opts = dns::validate_and_get_dns_lb(&options)?.cloned();
+        let (service, dns_task) = if let Some(service_override) = options.service_override {
+            (
+                GrpcMetricSvc {
+                    inner: ChannelOrGrpcOverride::GrpcOverride(service_override),
+                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                    disable_errcode_label: options.disable_error_code_metric_tags,
+                },
+                None,
+            )
+        } else if let Some(dns_opts) = &dns_lb_opts {
+            let (channel, sender) = dns::create_balanced_channel(&options).await?;
+            let handle = dns::spawn_dns_reresolution(
+                sender,
+                options.target.clone(),
+                options.tls_options.clone(),
+                options.keep_alive.clone(),
+                options.override_origin.clone(),
+                dns_opts.resolution_interval,
+            );
+            (
+                ServiceBuilder::new()
+                    .layer_fn(move |channel| GrpcMetricSvc {
+                        inner: ChannelOrGrpcOverride::Channel(channel),
+                        metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                        disable_errcode_label: options.disable_error_code_metric_tags,
+                    })
+                    .service(channel),
+                Some(handle),
+            )
         } else {
             let channel = Channel::from_shared(options.target.to_string())?;
             let channel = add_tls_to_channel(options.tls_options.as_ref(), channel).await?;
@@ -176,13 +202,16 @@ impl Connection {
             } else {
                 channel.connect().await?
             };
-            ServiceBuilder::new()
-                .layer_fn(move |channel| GrpcMetricSvc {
-                    inner: ChannelOrGrpcOverride::Channel(channel),
-                    metrics: options.metrics_meter.clone().map(MetricsContext::new),
-                    disable_errcode_label: options.disable_error_code_metric_tags,
-                })
-                .service(channel)
+            (
+                ServiceBuilder::new()
+                    .layer_fn(move |channel| GrpcMetricSvc {
+                        inner: ChannelOrGrpcOverride::Channel(channel),
+                        metrics: options.metrics_meter.clone().map(MetricsContext::new),
+                        disable_errcode_label: options.disable_error_code_metric_tags,
+                    })
+                    .service(channel),
+                None,
+            )
         };
 
         let headers = Arc::new(RwLock::new(ClientHeaders {
@@ -224,6 +253,7 @@ impl Connection {
                 client_version: options.client_version,
                 capabilities,
                 workers: Arc::new(ClientWorkerSet::new()),
+                _dns_task: dns_task,
             }),
         })
     }
