@@ -4,7 +4,7 @@ use temporalio_client::WorkflowStartOptions;
 use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
-        coresdk::{AsJsonPayloadExt, workflow_commands::ContinueAsNewWorkflowExecution},
+        coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
         temporal::api::{
             command::v1::command::Attributes,
             enums::v1::{CommandType, ContinueAsNewVersioningBehavior},
@@ -14,7 +14,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
+use temporalio_sdk::{ContinueAsNewOptions, WorkflowContext, WorkflowResult, WorkflowTermination};
 use temporalio_sdk_core::{TunerHolder, test_help::MockPollCfg};
 
 #[workflow]
@@ -27,15 +27,9 @@ impl ContinueAsNewWf {
     async fn run(ctx: &mut WorkflowContext<Self>, run_ct: u8) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
         if run_ct < 5 {
-            Err(WorkflowTermination::continue_as_new(
-                ContinueAsNewWorkflowExecution {
-                    arguments: vec![(run_ct + 1).as_json_payload().unwrap()],
-                    ..Default::default()
-                },
-            ))
-        } else {
-            Ok(())
+            ctx.continue_as_new(&(run_ct + 1), ContinueAsNewOptions::default())?;
         }
+        Ok(())
     }
 }
 
@@ -145,12 +139,8 @@ impl ContinueAsNewSuggestedWf {
         ctx.timer(Duration::from_millis(500)).await;
         // Second WFT: flag should be true (set on WFT started event 8)
         assert!(ctx.continue_as_new_suggested());
-        Err(WorkflowTermination::continue_as_new(
-            ContinueAsNewWorkflowExecution {
-                arguments: vec![[1].into()],
-                ..Default::default()
-            },
-        ))
+        ctx.continue_as_new(&(), ContinueAsNewOptions::default())?;
+        Ok(())
     }
 }
 
