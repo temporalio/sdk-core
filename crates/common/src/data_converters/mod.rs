@@ -109,6 +109,11 @@ impl DataConverter {
         &self.payload_converter
     }
 
+    /// Returns the failure converter component of this data converter.
+    pub fn failure_converter(&self) -> &(dyn FailureConverter + Send + Sync) {
+        self.failure_converter.as_ref()
+    }
+
     /// Returns the codec component of this data converter.
     pub fn codec(&self) -> &(dyn PayloadCodec + Send + Sync) {
         self.codec.as_ref()

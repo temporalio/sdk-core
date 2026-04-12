@@ -1,6 +1,6 @@
 use crate::{
     BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
-    WorkflowTermination, panic_formatter,
+    WorkflowTermination, convert_failure_with_fallback, panic_formatter,
     workflow_executor::{SdkWakeGuard, WakeTracker},
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
@@ -17,7 +17,8 @@ use std::{
 };
 use temporalio_common::{
     data_converters::{
-        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
+        DataConverter, GenericPayloadConverter, PayloadConverter, SerializationContext,
+        SerializationContextData,
     },
     protos::{
         coresdk::{
@@ -69,7 +70,7 @@ impl WorkflowFunction {
         run_id: String,
         init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         detect_nondeterministic: bool,
     ) -> Result<
         (
@@ -85,6 +86,7 @@ impl WorkflowFunction {
             "otel.kind" = "server"
         );
 
+        let payload_converter = data_converter.payload_converter().clone();
         let input = init_workflow_job.arguments.clone();
         let (base_ctx, cmd_receiver) = BaseWorkflowContext::new(
             namespace,
@@ -116,6 +118,7 @@ impl WorkflowFunction {
                 incoming_activations,
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
+                data_converter,
                 payload_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
@@ -147,7 +150,9 @@ pub(crate) struct WorkflowFuture {
     cancel_sender: watch::Sender<Option<String>>,
     /// Base workflow context for sending commands
     base_ctx: BaseWorkflowContext,
-    /// Payload converter for serialization/deserialization
+    /// Data converter for workflow failure conversion and payload serialization.
+    data_converter: DataConverter,
+    /// Payload converter used directly by workflow command serialization paths.
     payload_converter: PayloadConverter,
     /// Stores in-progress update futures
     update_futures: Vec<(
@@ -652,10 +657,13 @@ impl WorkflowFuture {
                     self.outgoing_completions
                         .send(WorkflowActivationCompletion::fail(
                             run_id,
-                            Failure {
-                                message: errmsg,
-                                ..Default::default()
-                            },
+                            convert_failure_with_fallback(
+                                &self.data_converter,
+                                Box::new(crate::ApplicationFailure::non_retryable(anyhow!(
+                                    "{errmsg}"
+                                ))),
+                                SerializationContextData::Workflow,
+                            ),
                             None,
                         ))
                         .expect("Completion channel intact");
@@ -790,10 +798,11 @@ impl WorkflowFuture {
                     }
                     WorkflowTermination::Failed(e) => {
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                            failure: Some(Failure {
-                                message: format!("Workflow execution error: {e}"),
-                                ..Default::default()
-                            }),
+                            failure: Some(convert_failure_with_fallback(
+                                &self.data_converter,
+                                e.into_boxed_dyn_error(),
+                                SerializationContextData::Workflow,
+                            )),
                         })
                     }
                 },

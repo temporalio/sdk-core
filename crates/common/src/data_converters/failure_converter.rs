@@ -4,9 +4,7 @@ use crate::{
         ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
         ChildWorkflowSignalError,
     },
-    protos::temporal::api::failure::v1::{
-        ApplicationFailureInfo, Failure, failure::FailureInfo,
-    },
+    protos::temporal::api::failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
 };
 
 /// Converts between Rust errors and Temporal [`Failure`] protobufs.
@@ -102,11 +100,15 @@ fn classify_source_chain<'a>(
 fn encode_classified_failure(classified: ClassifiedFailure<'_>) -> Failure {
     match classified {
         ClassifiedFailure::Application(app) => encode_application_failure(app),
-        ClassifiedFailure::ActivityExecution(activity) => encode_activity_execution_failure(activity),
+        ClassifiedFailure::ActivityExecution(activity) => {
+            encode_activity_execution_failure(activity)
+        }
         ClassifiedFailure::ChildWorkflowExecution(child) => {
             encode_child_workflow_execution_failure(child)
         }
-        ClassifiedFailure::ChildWorkflowSignal(signal) => encode_child_workflow_signal_failure(signal),
+        ClassifiedFailure::ChildWorkflowSignal(signal) => {
+            encode_child_workflow_signal_failure(signal)
+        }
         ClassifiedFailure::Generic(err) => encode_generic_application_failure(err),
     }
 }
@@ -114,14 +116,21 @@ fn encode_classified_failure(classified: ClassifiedFailure<'_>) -> Failure {
 fn encode_application_failure(app: &ApplicationFailure) -> Failure {
     let mut failure = Failure {
         message: app.to_string(),
-        cause: app.source_error().chain().next().map(encode_nested_failure).map(Box::new),
-        failure_info: Some(FailureInfo::ApplicationFailureInfo(ApplicationFailureInfo {
-            r#type: app.type_name().unwrap_or_default().to_owned(),
-            non_retryable: app.is_non_retryable(),
-            details: app.details().cloned(),
-            next_retry_delay: app.next_retry_delay().and_then(|d| d.try_into().ok()),
-            category: app.category() as i32,
-        })),
+        cause: app
+            .source_error()
+            .chain()
+            .next()
+            .map(encode_nested_failure)
+            .map(Box::new),
+        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+            ApplicationFailureInfo {
+                r#type: app.type_name().unwrap_or_default().to_owned(),
+                non_retryable: app.is_non_retryable(),
+                details: app.details().cloned(),
+                next_retry_delay: app.next_retry_delay().and_then(|d| d.try_into().ok()),
+                category: app.category() as i32,
+            },
+        )),
         ..Default::default()
     };
     if failure.message.is_empty() {
@@ -158,11 +167,15 @@ fn encode_child_workflow_signal_failure(err: &ChildWorkflowSignalError) -> Failu
 fn encode_nested_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
     match classify_error(err) {
         ClassifiedFailure::Application(app) => encode_application_failure(app),
-        ClassifiedFailure::ActivityExecution(activity) => encode_activity_execution_failure(activity),
+        ClassifiedFailure::ActivityExecution(activity) => {
+            encode_activity_execution_failure(activity)
+        }
         ClassifiedFailure::ChildWorkflowExecution(child) => {
             encode_child_workflow_execution_failure(child)
         }
-        ClassifiedFailure::ChildWorkflowSignal(signal) => encode_child_workflow_signal_failure(signal),
+        ClassifiedFailure::ChildWorkflowSignal(signal) => {
+            encode_child_workflow_signal_failure(signal)
+        }
         ClassifiedFailure::Generic(err) => encode_generic_application_failure(err),
     }
 }
@@ -248,7 +261,9 @@ mod tests {
             )),
             ..Default::default()
         };
-        let wrapped = WrapperError(ActivityExecutionError::Failed(Box::new(activity_failure.clone())));
+        let wrapped = WrapperError(ActivityExecutionError::Failed(Box::new(
+            activity_failure.clone(),
+        )));
         let converted = convert(Box::new(wrapped) as Box<dyn std::error::Error>);
         assert_eq!(converted, activity_failure);
     }

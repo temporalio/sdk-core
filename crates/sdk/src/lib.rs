@@ -806,7 +806,6 @@ impl WorkflowHalf {
             _ => None,
         }) {
             let workflow_type = sw.workflow_type.clone();
-            let payload_converter = common.data_converter.payload_converter().clone();
             let (wff, activations) = {
                 if let Some(factory) = self.workflow_definitions.get_workflow(&workflow_type) {
                     match WorkflowFunction::from_invocation(factory).start_workflow(
@@ -815,7 +814,7 @@ impl WorkflowHalf {
                         run_id.clone(),
                         std::mem::take(sw),
                         completions_tx.clone(),
-                        payload_converter,
+                        common.data_converter.clone(),
                         self.detect_nondeterministic_futures,
                     ) {
                         Ok(result) => result,
@@ -942,6 +941,7 @@ impl ActivityHalf {
 
                 let (ctx, args) =
                     ActivityContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let activity_data_converter = data_converter.clone();
                 let codec_data_converter = data_converter.clone();
 
                 tokio::spawn(async move {
@@ -951,19 +951,28 @@ impl ActivityHalf {
                                 .record("temporalWorkflowID", &info.workflow_id)
                                 .record("temporalRunID", &info.run_id);
                         }
-                        (act_fn)(args, data_converter, ctx).await
+                        (act_fn)(args, activity_data_converter, ctx).await
                     }
                     .instrument(span);
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
+                    let activity_context = SerializationContextData::Activity;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
-                            format!("Activity function panicked: {}", panic_formatter(e)),
-                            true,
+                        Err(e) => ActivityExecutionResult::fail(convert_failure_with_fallback(
+                            &data_converter,
+                            Box::new(ApplicationFailure::non_retryable(anyhow!(
+                                "Activity function panicked: {}",
+                                panic_formatter(e)
+                            ))),
+                            activity_context,
                         )),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
                             ActivityError::Application(app) => {
-                                ActivityExecutionResult::fail(app.into())
+                                ActivityExecutionResult::fail(convert_failure_with_fallback(
+                                    &data_converter,
+                                    Box::new(app),
+                                    activity_context,
+                                ))
                             }
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
@@ -1312,6 +1321,25 @@ fn _panic_formatter<T: 'static + PrintablePanicType>(panic: Box<dyn Any>) -> Box
 }
 trait PrintablePanicType: Display {
     type NextType: PrintablePanicType;
+}
+
+pub(crate) fn convert_failure_with_fallback(
+    data_converter: &DataConverter,
+    error: Box<dyn std::error::Error>,
+    context: SerializationContextData,
+) -> Failure {
+    let original_error = error.to_string();
+    data_converter
+        .failure_converter()
+        .to_failure(error, data_converter.payload_converter(), &context)
+        .unwrap_or_else(|converter_error| {
+            Failure::application_failure(
+                format!(
+                    "Failed converting error to failure: {converter_error}, original error message: {original_error}"
+                ),
+                false,
+            )
+        })
 }
 impl PrintablePanicType for &str {
     type NextType = String;

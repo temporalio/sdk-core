@@ -1,6 +1,7 @@
 use crate::common::{CoreWfStarter, get_integ_connection, integ_namespace};
 use futures::{FutureExt, future::BoxFuture};
 use std::{
+    io,
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -9,22 +10,25 @@ use std::{
 };
 use temporalio_client::{
     Client, ClientOptions, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
+    errors::WorkflowGetResultError,
 };
 use temporalio_common::{
     data_converters::{
-        DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
-        PayloadConverter, SerializationContext, SerializationContextData, TemporalDeserializable,
-        TemporalSerializable,
+        DataConverter, DefaultFailureConverter, DefaultPayloadCodec, FailureConverter, MultiArgs2,
+        PayloadCodec, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
-    protos::{
-        coresdk::AsJsonPayloadExt,
-        temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    protos::coresdk::AsJsonPayloadExt,
+    protos::temporal::api::{
+        common::v1::{Payload, RetryPolicy},
+        failure::v1::failure::FailureInfo,
+        history::v1::history_event::Attributes,
     },
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, WorkflowContext, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -91,6 +95,52 @@ impl TestActivities {
     }
 }
 
+const FAILURE_CONVERTER_ERROR_MESSAGE: &str = "intentional failure converter error";
+const WORKFLOW_FAILURE_MESSAGE: &str = "workflow converter fallback failure";
+const ACTIVITY_PANIC_MESSAGE: &str = "activity converter fallback panic";
+
+#[derive(Debug)]
+struct FailingFailureConverter;
+
+impl FailureConverter for FailingFailureConverter {
+    fn to_failure(
+        &self,
+        _err: Box<dyn std::error::Error>,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
+    ) -> Result<
+        temporalio_common::protos::temporal::api::failure::v1::Failure,
+        PayloadConversionError,
+    > {
+        Err(PayloadConversionError::EncodingError(Box::new(
+            io::Error::other(FAILURE_CONVERTER_ERROR_MESSAGE),
+        )))
+    }
+
+    fn to_error(
+        &self,
+        _failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        _payload_converter: &PayloadConverter,
+        _context: &SerializationContextData,
+    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
+        unreachable!("failure decoding is out of scope for these tests")
+    }
+}
+
+async fn starter_with_failing_failure_converter(test_name: &str) -> CoreWfStarter {
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        FailingFailureConverter,
+        DefaultPayloadCodec,
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+    CoreWfStarter::new_with_overrides(test_name, None, Some(client))
+}
+
 #[workflow]
 #[derive(Default)]
 struct DataConverterTestWorkflow;
@@ -136,6 +186,133 @@ impl DescribeDataConverterWorkflow {
 
         Ok(output)
     }
+}
+
+#[workflow]
+#[derive(Default)]
+struct WorkflowFailureFallbackWorkflow;
+#[workflow_methods]
+impl WorkflowFailureFallbackWorkflow {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Err(WorkflowTermination::failed(anyhow::anyhow!(
+            WORKFLOW_FAILURE_MESSAGE
+        )))
+    }
+}
+
+struct PanicActivities;
+#[activities]
+impl PanicActivities {
+    #[activity]
+    async fn panic_activity(_ctx: ActivityContext, _input: String) -> Result<(), ActivityError> {
+        panic!("{ACTIVITY_PANIC_MESSAGE}");
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct ActivityPanicFallbackWorkflow;
+#[workflow_methods]
+impl ActivityPanicFallbackWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let _ = ctx
+            .start_activity(
+                PanicActivities::panic_activity,
+                String::new(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .retry_policy(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    })
+                    .build(),
+            )
+            .await
+            .expect_err("activity should fail");
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn custom_failure_converter_fallback_applied_to_workflow_failures() {
+    let wf_name = WorkflowFailureFallbackWorkflow::name();
+    let mut starter = starter_with_failing_failure_converter(wf_name).await;
+    starter
+        .sdk_config
+        .register_workflow::<WorkflowFailureFallbackWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            WorkflowFailureFallbackWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let failure = match handle.get_result(Default::default()).await.unwrap_err() {
+        WorkflowGetResultError::Failed(failure) => failure,
+        err => panic!("unexpected workflow result error: {err:?}"),
+    };
+    assert_eq!(
+        failure.message,
+        format!(
+            "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: {WORKFLOW_FAILURE_MESSAGE}"
+        )
+    );
+    assert!(matches!(
+        failure.failure_info,
+        Some(FailureInfo::ApplicationFailureInfo(_))
+    ));
+}
+
+#[tokio::test]
+async fn custom_failure_converter_fallback_applied_to_activity_panic_failures() {
+    let wf_name = ActivityPanicFallbackWorkflow::name();
+    let mut starter = starter_with_failing_failure_converter(wf_name).await;
+    starter.sdk_config.register_activities(PanicActivities);
+    starter
+        .sdk_config
+        .register_workflow::<ActivityPanicFallbackWorkflow>();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityPanicFallbackWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
+
+    let history = handle.fetch_history(Default::default()).await.unwrap();
+    let activity_failure = history
+        .into_events()
+        .into_iter()
+        .find_map(|event| match event.attributes {
+            Some(Attributes::ActivityTaskFailedEventAttributes(attrs)) => attrs.failure,
+            _ => None,
+        })
+        .expect("workflow history should contain an activity failure");
+
+    assert_eq!(
+        activity_failure.message,
+        format!(
+            "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: Activity function panicked: {ACTIVITY_PANIC_MESSAGE}"
+        )
+    );
+    assert!(matches!(
+        activity_failure.failure_info,
+        Some(FailureInfo::ApplicationFailureInfo(_))
+    ));
 }
 
 #[tokio::test]
