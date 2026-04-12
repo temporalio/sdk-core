@@ -291,8 +291,7 @@ work.
 
 Activities return `Result<T, ActivityError>` with the following error types:
 
-- **`ActivityError::Retryable`** - Transient failure, will be retried
-- **`ActivityError::NonRetryable`** - Permanent failure, will not be retried
+- **`ActivityError::Application`** - Application failure metadata is carried by `ApplicationFailure`
 - **`ActivityError::Cancelled`** - Activity was cancelled
 - **`ActivityError::WillCompleteAsync`** - Activity will complete asynchronously
 

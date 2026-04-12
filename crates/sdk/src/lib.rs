@@ -97,6 +97,7 @@ macro_rules! __temporal_join {
 use workflow_future::WorkflowFunction;
 
 pub use temporalio_client::Namespace;
+pub use temporalio_common::error::ApplicationFailure;
 pub use workflow_context::{
     ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, BaseWorkflowContext,
     CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
@@ -155,9 +156,7 @@ use temporalio_common::{
             workflow_completion::WorkflowActivationCompletion,
         },
         temporal::api::{
-            common::v1::Payload,
-            enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{Failure, failure},
+            common::v1::Payload, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
     },
     worker::{WorkerDeploymentOptions, WorkerTaskTypes, build_id_from_current_exe},
@@ -960,31 +959,12 @@ impl ActivityHalf {
                         )),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
-                            ActivityError::Retryable {
-                                source,
-                                explicit_delay,
-                            } => ActivityExecutionResult::fail({
-                                let mut f = Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(source),
-                                    false,
-                                );
-                                if let Some(d) = explicit_delay
-                                    && let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
-                                        f.failure_info.as_mut()
-                                {
-                                    fi.next_retry_delay = d.try_into().ok();
-                                }
-                                f
-                            }),
+                            ActivityError::Application(app) => {
+                                ActivityExecutionResult::fail(app.into())
+                            }
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
-                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(
-                                    anyhow::Error::from_boxed(nre),
-                                    true,
-                                ),
-                            ),
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
                             }
@@ -1262,6 +1242,11 @@ impl WorkflowTermination {
 
     /// Construct a [WorkflowTermination::Failed] variant from any error.
     pub fn failed(err: impl Into<anyhow::Error>) -> Self {
+        Self::Failed(err.into())
+    }
+
+    /// Construct a [WorkflowTermination::Failed] variant from an application failure.
+    pub fn failed_application(err: ApplicationFailure) -> Self {
         Self::Failed(err.into())
     }
 }

@@ -2,7 +2,8 @@
 use std::time::Duration;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, ApplicationFailure, WorkflowContext, WorkflowResult,
+    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -132,8 +133,10 @@ impl BookingActivities {
     #[activity]
     pub async fn book_car(_ctx: ActivityContext, trip_id: String) -> Result<String, ActivityError> {
         if trip_id.contains("fail") {
-            return Err(ActivityError::NonRetryable(
-                anyhow::anyhow!("Car booking failed for trip {trip_id}").into(),
+            return Err(ActivityError::application(
+                ApplicationFailure::non_retryable(anyhow::anyhow!(
+                    "Car booking failed for trip {trip_id}"
+                )),
             ));
         }
         Ok(format!("car-{trip_id}"))

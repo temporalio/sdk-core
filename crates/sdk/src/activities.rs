@@ -61,6 +61,7 @@ use temporalio_common::{
     data_converters::{
         DataConverter, GenericPayloadConverter, SerializationContext, SerializationContextData,
     },
+    error::ApplicationFailure,
     protos::{
         coresdk::{ActivityHeartbeat, activity_task},
         temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
@@ -229,22 +230,13 @@ pub struct ActivityInfo {
 /// Returned as errors from activity functions.
 #[derive(Debug)]
 pub enum ActivityError {
-    /// This error can be returned from activities to allow the explicit configuration of certain
-    /// error properties. It's also the default error type that arbitrary errors will be converted
-    /// into.
-    Retryable {
-        /// The underlying error
-        source: Box<dyn std::error::Error + Send + Sync + 'static>,
-        /// If specified, the next retry (if there is one) will occur after this delay
-        explicit_delay: Option<StdDuration>,
-    },
+    /// Return this error to attach application-failure metadata to an activity failure.
+    Application(ApplicationFailure),
     /// Return this error to indicate your activity is cancelling
     Cancelled {
         /// Some data to save as the cancellation reason
         details: Option<Payload>,
     },
-    /// Return this error to indicate that the activity should not be retried.
-    NonRetryable(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// Return this error to indicate that the activity will be completed outside of this activity
     /// definition, by an external client.
     WillCompleteAsync,
@@ -255,6 +247,11 @@ impl ActivityError {
     pub fn cancelled() -> Self {
         Self::Cancelled { details: None }
     }
+
+    /// Construct an application activity error.
+    pub fn application(err: ApplicationFailure) -> Self {
+        Self::Application(err)
+    }
 }
 
 impl<E> From<E> for ActivityError
@@ -262,10 +259,7 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(source: E) -> Self {
-        Self::Retryable {
-            source: source.into().into_boxed_dyn_error(),
-            explicit_delay: None,
-        }
+        Self::Application(ApplicationFailure::new(source))
     }
 }
 

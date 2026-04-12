@@ -46,8 +46,9 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityExecutionError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    WorkflowContext, WorkflowContextView, WorkflowResult, WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, ApplicationFailure, CancellableFuture,
+    LocalActivityOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
@@ -2696,10 +2697,11 @@ async fn local_act_retry_explicit_delay() {
             // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
             let last_attempt = self.attempts.fetch_add(1, Ordering::Relaxed);
             if 0 == last_attempt {
-                Err(ActivityError::Retryable {
-                    source: anyhow!("Explicit backoff error").into_boxed_dyn_error(),
-                    explicit_delay: Some(Duration::from_millis(300)),
-                })
+                Err(ActivityError::application(
+                    ApplicationFailure::builder(anyhow!("Explicit backoff error"))
+                        .next_retry_delay(Duration::from_millis(300))
+                        .build(),
+                ))
             } else if 2 == last_attempt {
                 Ok(())
             } else {
