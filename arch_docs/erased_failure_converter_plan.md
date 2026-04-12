@@ -307,14 +307,16 @@ That keeps all recognition rules in one place.
 
 The classifier should not treat "anything with a `source()`" as transparent.
 
-Instead, start with a narrow allowlist of wrapper shapes that are known to add context without
+Instead, start with a narrow set of chain-walking rules that are known to add context without
 changing the semantic failure category:
 
-- `anyhow::Error`
-  - including plain `anyhow!(...)` construction
-  - including `Context` / `.context(...)` / `.with_context(...)` layers
-- `WorkflowError::Execution(anyhow::Error)`
-- `WorkflowTermination::Failed(anyhow::Error)`
+- walk the erased `source()` chain looking for recognized SDK failure categories
+- stop relying on wrapper-type recovery that would require `temporalio_common` to depend on SDK
+  wrapper types directly
+
+Because `temporalio_common` cannot depend back on `temporalio_sdk`, SDK-local wrappers such as
+`WorkflowError::Execution(anyhow::Error)` and `WorkflowTermination::Failed(anyhow::Error)` should
+be unwrapped at the SDK call sites before invoking the shared failure converter.
 
 Initial non-goals for wrapper transparency:
 
@@ -497,9 +499,8 @@ Changes:
 
 - implement a private classifier enum and chain-walking helper
 - implement the initial transparent-wrapper allowlist explicitly:
-  - `anyhow::Error` and `anyhow` context layers
-  - `WorkflowError::Execution`
-  - `WorkflowTermination::Failed`
+  - source-chain walking inside `temporalio_common`
+  - SDK-local wrappers are unwrapped before calling into `temporalio_common`
 - define what counts as a semantic failure category versus a transparent wrapper
 - keep the recognition list explicit rather than relying on ad hoc downcasts at each call site
 - keep all conversion from classified variants to `Failure` in one module
