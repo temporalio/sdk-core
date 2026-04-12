@@ -1,9 +1,15 @@
 //! Shared error types used across Temporal SDK crates.
 
-use crate::protos::temporal::api::{
-    common::v1::Payloads,
-    enums::v1::ApplicationErrorCategory,
-    failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+use crate::{
+    data_converters::PayloadConversionError,
+    protos::{
+        coresdk::child_workflow::StartChildWorkflowExecutionFailedCause,
+        temporal::api::{
+            common::v1::Payloads,
+            enums::v1::ApplicationErrorCategory,
+            failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+        },
+    },
 };
 use std::time::Duration;
 
@@ -116,6 +122,67 @@ impl From<ApplicationFailure> for Failure {
         ));
         failure
     }
+}
+
+/// Error type for activity execution outcomes.
+#[derive(Debug, thiserror::Error)]
+pub enum ActivityExecutionError {
+    /// The activity failed with the given failure details.
+    #[error("Activity failed: {}", .0.message)]
+    Failed(Box<Failure>),
+    /// The activity was cancelled.
+    #[error("Activity cancelled: {}", .0.message)]
+    Cancelled(Box<Failure>),
+    /// Failed to serialize input or deserialize result payload.
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
+}
+
+impl ActivityExecutionError {
+    /// Returns true if this error represents a timeout.
+    pub fn is_timeout(&self) -> bool {
+        match self {
+            ActivityExecutionError::Failed(f) => f.is_timeout().is_some(),
+            _ => false,
+        }
+    }
+}
+
+/// Error returned when a child workflow execution fails.
+#[derive(Debug, thiserror::Error)]
+pub enum ChildWorkflowExecutionError {
+    /// The child workflow failed.
+    #[error("Child workflow failed: {}", .0.message)]
+    Failed(Box<Failure>),
+    /// The child workflow was cancelled.
+    #[error("Child workflow cancelled: {}", .0.message)]
+    Cancelled(Box<Failure>),
+    /// The child workflow failed to start (e.g., workflow ID already exists).
+    #[error(
+        "Child workflow start failed: workflow_id={workflow_id}, workflow_type={workflow_type}, cause={cause:?}"
+    )]
+    StartFailed {
+        /// The workflow ID that was requested.
+        workflow_id: String,
+        /// The workflow type that was requested.
+        workflow_type: String,
+        /// The cause of the start failure.
+        cause: StartChildWorkflowExecutionFailedCause,
+    },
+    /// Failed to serialize input or deserialize the child workflow result payload.
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
+}
+
+/// Error returned when signaling a child workflow fails.
+#[derive(Debug, thiserror::Error)]
+pub enum ChildWorkflowSignalError {
+    /// The signal delivery failed.
+    #[error("Child workflow signal failed: {}", .0.message)]
+    Failed(Box<Failure>),
+    /// Failed to serialize the signal input payload.
+    #[error("Signal payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
 }
 
 #[cfg(test)]

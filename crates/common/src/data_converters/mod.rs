@@ -1,7 +1,11 @@
 //! Contains traits for and default implementations of data converters, codecs, and other
 //! serialization related functionality.
 
-use crate::protos::temporal::api::{common::v1::Payload, failure::v1::Failure};
+mod failure_converter;
+
+pub use failure_converter::{DefaultFailureConverter, FailureConverter};
+
+use crate::protos::temporal::api::common::v1::Payload;
 use futures::{FutureExt, future::BoxFuture};
 use std::{collections::HashMap, sync::Arc};
 
@@ -196,26 +200,6 @@ impl std::error::Error for PayloadConversionError {
     }
 }
 
-/// Converts between Rust errors and Temporal [`Failure`] protobufs.
-pub trait FailureConverter {
-    /// Convert an error into a Temporal failure protobuf.
-    fn to_failure(
-        &self,
-        error: Box<dyn std::error::Error>,
-        payload_converter: &PayloadConverter,
-        context: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError>;
-
-    /// Convert a Temporal failure protobuf back into a Rust error.
-    fn to_error(
-        &self,
-        failure: Failure,
-        payload_converter: &PayloadConverter,
-        context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
-}
-/// Default (currently unimplemented) failure converter.
-pub struct DefaultFailureConverter;
 /// Encodes and decodes payloads, enabling encryption or compression.
 pub trait PayloadCodec {
     /// Encode payloads before they are sent to the server.
@@ -670,24 +654,6 @@ impl Default for DataConverter {
             DefaultFailureConverter,
             DefaultPayloadCodec,
         )
-    }
-}
-impl FailureConverter for DefaultFailureConverter {
-    fn to_failure(
-        &self,
-        _: Box<dyn std::error::Error>,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
-    ) -> Result<Failure, PayloadConversionError> {
-        todo!()
-    }
-    fn to_error(
-        &self,
-        _: Failure,
-        _: &PayloadConverter,
-        _: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        todo!()
     }
 }
 impl PayloadCodec for DefaultPayloadCodec {

@@ -72,6 +72,7 @@ extern crate tracing;
 extern crate self as temporalio_sdk;
 
 pub mod activities;
+pub mod error;
 pub mod interceptors;
 mod workflow_context;
 mod workflow_executor;
@@ -96,13 +97,15 @@ macro_rules! __temporal_join {
 
 use workflow_future::WorkflowFunction;
 
+pub use error::{
+    ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
+    ChildWorkflowSignalError,
+};
 pub use temporalio_client::Namespace;
-pub use temporalio_common::error::ApplicationFailure;
 pub use workflow_context::{
-    ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, BaseWorkflowContext,
-    CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions, NexusOperationOptions,
-    ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
+    ActivityCloseTimeouts, ActivityOptions, BaseWorkflowContext, CancellableFuture,
+    ChildWorkflowOptions, ContinueAsNewOptions, ExternalWorkflowHandle, LocalActivityOptions,
+    NexusOperationOptions, ParentWorkflowInfo, RootWorkflowInfo, Signal, SignalData,
     StartChildWorkflowExecutionFailedCause, StartedChildWorkflow, SyncWorkflowContext,
     TimerOptions, WorkflowContext, WorkflowContextView,
 };
