@@ -287,7 +287,7 @@ impl WorkflowFuture {
                                 current_details: self.base_ctx.current_details(),
                             },
                         );
-                        Some(payload.map_err(|e| anyhow::Error::from(e).into()))
+                        Some(Ok(payload?))
                     } else {
                         match panic::catch_unwind(AssertUnwindSafe(|| {
                             self.execution.dispatch_query(&query_type, data)
