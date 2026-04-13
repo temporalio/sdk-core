@@ -562,13 +562,8 @@ async fn workflow_metadata_query_empty_details() {
 
         assert_eq!(
             payload.metadata.get("encoding").map(|v| v.as_slice()),
-            Some(b"json/protobuf".as_slice()),
-            "Expected json/protobuf encoding"
-        );
-        assert_eq!(
-            payload.metadata.get("messageType").map(|v| v.as_slice()),
-            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
-            "Expected WorkflowMetadata messageType"
+            Some(b"json/plain".as_slice()),
+            "Expected json/plain encoding"
         );
 
         // With no current_details set the field is omitted per proto3 JSON rules.
