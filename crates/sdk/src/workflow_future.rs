@@ -16,7 +16,7 @@ use std::{
     task::{Context, Poll},
 };
 use temporalio_common::{
-    data_converters::PayloadConverter,
+    data_converters::{GenericPayloadConverter,PayloadConverter,SerializationContext,SerializationContextData},
     protos::{
         coresdk::{
             workflow_activation::{
@@ -274,24 +274,18 @@ impl WorkflowFuture {
                             )]
                             current_details: String,
                         }
-                        let json_bytes = serde_json::to_vec(&WorkflowMetadataJson {
-                            current_details: self.base_ctx.current_details(),
-                        })
-                        .expect("WorkflowMetadata serialization is infallible");
-                        let payload = Payload {
-                            metadata: [
-                                ("encoding".to_string(), b"json/protobuf".to_vec()),
-                                (
-                                    "messageType".to_string(),
-                                    b"temporal.api.sdk.v1.WorkflowMetadata".to_vec(),
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                            data: json_bytes,
-                            ..Default::default()
+                        let converter = PayloadConverter::default();
+                        let ctx = SerializationContext {
+                            data: &SerializationContextData::Workflow,
+                            converter: &converter,
                         };
-                        Some(Ok(payload))
+                        let payload = converter.to_payload(
+                            &ctx,
+                            &WorkflowMetadataJson {
+                                current_details: self.base_ctx.current_details(),
+                            },
+                        );
+                        Some(payload.map_err(|e| anyhow::Error::from(e).into()))
                     } else {
                         match panic::catch_unwind(AssertUnwindSafe(|| {
                             self.execution.dispatch_query(&query_type, data)
