@@ -119,7 +119,7 @@ fn encode_application_failure(app: &ApplicationFailure) -> Failure {
         cause: app
             .source_error()
             .chain()
-            .next()
+            .nth(1)
             .map(encode_nested_failure)
             .map(Box::new),
         failure_info: Some(FailureInfo::ApplicationFailureInfo(
@@ -250,6 +250,17 @@ mod tests {
         assert!(info.non_retryable);
         assert_eq!(info.category(), ApplicationErrorCategory::Benign);
         assert_eq!(info.details.unwrap().payloads[0].data, b"details".to_vec());
+    }
+
+    #[test]
+    fn application_failures_do_not_duplicate_their_source_as_cause() {
+        let failure = convert(
+            Box::new(ApplicationFailure::new(anyhow::anyhow!("app boom")))
+                as Box<dyn std::error::Error>,
+        );
+
+        assert_eq!(failure.message, "app boom");
+        assert!(failure.cause.is_none());
     }
 
     #[test]
