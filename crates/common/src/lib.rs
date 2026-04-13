@@ -16,6 +16,7 @@ pub mod fsm_trait;
 pub mod payload_visitor;
 mod priority;
 pub mod protos;
+pub mod request_headers;
 pub mod telemetry;
 pub mod worker;
 mod workflow_definition;

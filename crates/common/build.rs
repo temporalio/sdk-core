@@ -1,4 +1,5 @@
 use prost::Message;
+use prost_reflect::ReflectMessage;
 use prost_types::{
     DescriptorProto, FieldDescriptorProto, FileDescriptorSet, MessageOptions,
     field_descriptor_proto::{Label, Type},
@@ -58,8 +59,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
     let mut builder = tonic_prost_build::configure()
-        // We don't actually want to build the grpc definitions - we don't need them (for now).
-        // Just build the message structs.
         .build_server(false)
         .build_client(true)
         // Make conversions easier for some types
@@ -177,6 +176,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
     generate_payload_visitor(&out, &descriptor_file)?;
+    generate_request_headers(&out, &descriptor_file)?;
     // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization
     let descriptors = std::fs::read(&descriptor_file)?;
     pbjson_build::Builder::new()
@@ -404,18 +404,7 @@ impl PayloadVisitorGenerator {
     }
 
     fn to_map_entry_name(field_name: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in field_name.chars() {
-            if c == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
+        let mut result = to_pascal_case(field_name);
         result.push_str("Entry");
         result
     }
@@ -598,7 +587,7 @@ impl PayloadVisitorGenerator {
     }
 
     fn generate_impl(&self, proto_name: &str, fields: &[PayloadFieldInfo]) -> String {
-        let rust_path = self.proto_to_rust_path(proto_name);
+        let rust_path = proto_to_rust_path(proto_name);
 
         let mut impl_body = String::new();
 
@@ -633,7 +622,7 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
         proto_path: &str,
         kind: &PayloadFieldKind,
     ) -> String {
-        let rust_field = Self::to_snake_case(field_name);
+        let rust_field = to_snake_case(field_name);
 
         match kind {
             PayloadFieldKind::SinglePayload => {
@@ -734,12 +723,12 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
                 // Get the full rust path to the oneof enum
                 let enum_path = self.proto_to_rust_oneof_enum_path(parent_proto_name, oneof_name);
                 // The field in the struct is snake_case of the oneof field name
-                let rust_field = Self::to_snake_case(oneof_name);
+                let rust_field = to_snake_case(oneof_name);
 
                 let mut arms = String::new();
 
                 for variant in variants {
-                    let variant_name = Self::to_pascal_case(&variant.name);
+                    let variant_name = to_pascal_case(&variant.name);
                     arms.push_str(&format!(
                         "                {enum_path}::{variant}(msg) => msg.visit_payloads_mut(visitor).await,\n",
                         enum_path = enum_path,
@@ -772,74 +761,71 @@ impl crate::payload_visitor::PayloadVisitable for {rust_path} {{
         }
     }
 
-    fn proto_to_rust_path(&self, proto_name: &str) -> String {
-        let parts: Vec<&str> = proto_name.split('.').collect();
-        let mut rust_parts = Vec::new();
-
-        // Handle the package -> module mapping
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last part is the type name - keep PascalCase
-                rust_parts.push((*part).to_string());
-            } else {
-                // Package parts become snake_case modules
-                rust_parts.push(Self::to_snake_case(part));
-            }
-        }
-
-        // The protos module structure
-        let path = rust_parts.join("::");
-
-        // Map to the actual crate paths
-        format!("crate::protos::{}", path)
-    }
-
     fn proto_to_rust_oneof_enum_path(&self, parent_proto_name: &str, oneof_name: &str) -> String {
         let parts: Vec<&str> = parent_proto_name.split('.').collect();
         let mut rust_parts = Vec::new();
 
         // All parts become snake_case modules (struct name becomes a module containing the enum)
         for part in parts.iter() {
-            rust_parts.push(Self::to_snake_case(part));
+            rust_parts.push(to_snake_case(part));
         }
 
         let module_path = rust_parts.join("::");
         // The enum name is PascalCase of the oneof field name
-        let enum_name = Self::to_pascal_case(oneof_name);
+        let enum_name = to_pascal_case(oneof_name);
 
         format!("crate::protos::{}::{}", module_path, enum_name)
     }
+}
 
-    fn to_snake_case(s: &str) -> String {
-        let mut result = String::new();
-        for (i, c) in s.chars().enumerate() {
-            if c.is_uppercase() {
-                if i > 0 {
-                    result.push('_');
-                }
-                result.push(c.to_ascii_lowercase());
-            } else {
-                result.push(c);
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
             }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
         }
-        result
+    }
+    result
+}
+
+fn to_pascal_case(s: &str) -> String {
+    let mut result = String::new();
+    let mut capitalize_next = true;
+    for c in s.chars() {
+        if c == '_' {
+            capitalize_next = true;
+        } else if capitalize_next {
+            result.push(c.to_ascii_uppercase());
+            capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Convert a proto fully-qualified name to a Rust type path under `crate::protos::`.
+fn proto_to_rust_path(proto_name: &str) -> String {
+    let parts: Vec<&str> = proto_name.split('.').collect();
+    let mut rust_parts = Vec::new();
+
+    for (i, part) in parts.iter().enumerate() {
+        if i == parts.len() - 1 {
+            // Last part is the type name - keep PascalCase
+            rust_parts.push((*part).to_string());
+        } else {
+            // Package parts become snake_case modules
+            rust_parts.push(to_snake_case(part));
+        }
     }
 
-    fn to_pascal_case(s: &str) -> String {
-        let mut result = String::new();
-        let mut capitalize_next = true;
-        for c in s.chars() {
-            if c == '_' {
-                capitalize_next = true;
-            } else if capitalize_next {
-                result.push(c.to_ascii_uppercase());
-                capitalize_next = false;
-            } else {
-                result.push(c);
-            }
-        }
-        result
-    }
+    let path = rust_parts.join("::");
+    format!("crate::protos::{}", path)
 }
 
 fn is_message_type(field: &FieldDescriptorProto) -> bool {
@@ -854,4 +840,231 @@ fn is_map_entry(options: &Option<MessageOptions>) -> bool {
     options
         .as_ref()
         .is_some_and(|o| o.map_entry.unwrap_or(false))
+}
+
+/// Generate request header extraction implementations by parsing proto descriptors.
+fn generate_request_headers(
+    out_dir: &Path,
+    descriptor_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut descriptor_bytes = Vec::new();
+    File::open(descriptor_path)?.read_to_end(&mut descriptor_bytes)?;
+
+    // Use prost_reflect to parse descriptors with extension support
+    let descriptor_set = prost_reflect::DescriptorPool::decode(descriptor_bytes.as_slice())
+        .map_err(|e| format!("Failed to decode descriptor pool: {}", e))?;
+
+    let mut generator = RequestHeaderGenerator::new();
+    generator.process_descriptors_reflect(&descriptor_set)?;
+
+    let output_path = out_dir.join("request_header_impl.rs");
+    let mut file = File::create(&output_path)?;
+    file.write_all(generator.generate().as_bytes())?;
+
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct MethodHeaderInfo {
+    request_rust_type: String,
+    headers: Vec<HeaderInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderInfo {
+    header_name: String,
+    value_template: String,
+    field_paths: Vec<String>,
+}
+
+/// Generator for request header extraction implementations.
+struct RequestHeaderGenerator {
+    /// Methods that have request_header annotations
+    method_headers: Vec<MethodHeaderInfo>,
+}
+
+impl RequestHeaderGenerator {
+    fn new() -> Self {
+        Self {
+            method_headers: Vec::new(),
+        }
+    }
+
+    fn process_descriptors_reflect(
+        &mut self,
+        descriptor_pool: &prost_reflect::DescriptorPool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let request_header_ext = descriptor_pool
+            .get_extension_by_name("temporal.api.protometa.v1.request_header")
+            .ok_or("Could not find request_header extension")?;
+
+        for service in descriptor_pool.services() {
+            for method in service.methods() {
+                let method_options = method.options();
+                if !method_options.has_extension(&request_header_ext) {
+                    continue;
+                }
+                let extension_value = method_options.get_extension(&request_header_ext);
+                let request_rust_type =
+                    proto_to_rust_path(method.input().full_name());
+
+                // Collect annotation messages (may be single or repeated)
+                let messages: Vec<_> = match &*extension_value {
+                    prost_reflect::Value::List(list) => list
+                        .iter()
+                        .filter_map(|v| match v {
+                            prost_reflect::Value::Message(m) => Some(m),
+                            _ => None,
+                        })
+                        .collect(),
+                    prost_reflect::Value::Message(m) => vec![m],
+                    _ => continue,
+                };
+
+                let headers: Vec<_> = messages
+                    .into_iter()
+                    .filter_map(parse_annotation)
+                    .collect();
+
+                if !headers.is_empty() {
+                    self.method_headers.push(MethodHeaderInfo {
+                        request_rust_type,
+                        headers,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn generate(&self) -> String {
+        let mut output = String::from(
+            r#"// Generated from descriptors.bin - DO NOT EDIT
+
+/// Extract headers from request messages based on proto annotations
+pub fn extract_temporal_request_headers(
+    request: &dyn Any,
+    existing_metadata: Option<&MetadataMap>,
+) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+
+    // Extract headers from proto annotations
+"#,
+        );
+
+        for method_info in &self.method_headers {
+            for header in &method_info.headers {
+                output.push_str(&generate_header_check(
+                    &method_info.request_rust_type,
+                    header,
+                ));
+            }
+        }
+
+        output.push_str("    headers\n}\n");
+        output
+    }
+}
+
+fn parse_annotation(msg: &prost_reflect::DynamicMessage) -> Option<HeaderInfo> {
+    let header_name = msg
+        .get_field(&msg.descriptor().get_field_by_name("header")?)
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    let value_template = msg
+        .get_field(&msg.descriptor().get_field_by_name("value")?)
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    if header_name.is_empty() || value_template.is_empty() {
+        return None;
+    }
+
+    let field_paths = parse_field_paths(&value_template);
+    Some(HeaderInfo {
+        header_name,
+        value_template,
+        field_paths,
+    })
+}
+
+fn parse_field_paths(template: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut chars = template.chars();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let path: String = chars.by_ref().take_while(|&c| c != '}').collect();
+            if !path.is_empty() {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+fn generate_header_check(request_rust_type: &str, header: &HeaderInfo) -> String {
+    if header.field_paths.is_empty() {
+        // Static header value (no field interpolation)
+        return format!(
+            r#"    if request.downcast_ref::<{type_}>().is_some()
+        && existing_metadata.is_none_or(|md| md.get("{hdr}").is_none()) {{
+            headers.push(("{hdr}".to_string(), "{val}".to_string()));
+    }}
+"#,
+            type_ = request_rust_type,
+            hdr = header.header_name,
+            val = header.value_template
+        );
+    }
+
+    let mut output = String::new();
+    for field_path in &header.field_paths {
+        let parts: Vec<&str> = field_path.split('.').collect();
+        let template_str = header
+            .value_template
+            .replace(&format!("{{{}}}", field_path), "{}");
+
+        // Build the if-let chain: downcast, then optional intermediate fields
+        let mut conditions = format!(
+            "    if let Some(req) = request.downcast_ref::<{}>()",
+            request_rust_type
+        );
+        let mut current = "req".to_string();
+        for (i, part) in parts[..parts.len() - 1].iter().enumerate() {
+            let binding = format!("f{}", i);
+            conditions.push_str(&format!(
+                "\n        && let Some({}) = {}.{}.as_ref()",
+                binding,
+                current,
+                to_snake_case(part)
+            ));
+            current = binding;
+        }
+        let last_field = to_snake_case(parts[parts.len() - 1]);
+        let val_ref = format!("{}.{}", current, last_field);
+
+        // Value expression: passthrough or format with template
+        let value_expr = if template_str == "{}" {
+            format!("{}.to_string()", val_ref)
+        } else {
+            format!("format!(\"{}\", {})", template_str, val_ref)
+        };
+
+        output.push_str(&format!(
+            r#"{conditions}
+        && !{val_ref}.is_empty()
+        && existing_metadata.is_none_or(|md| md.get("{hdr}").is_none()) {{
+            headers.push(("{hdr}".to_string(), {value_expr}));
+    }}
+"#,
+            conditions = conditions,
+            val_ref = val_ref,
+            hdr = header.header_name,
+            value_expr = value_expr
+        ));
+    }
+    output
 }

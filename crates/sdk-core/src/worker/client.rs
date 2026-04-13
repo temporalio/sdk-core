@@ -166,6 +166,7 @@ pub trait WorkerClient: Sync + Send {
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskCompletedResponse>;
     /// Complete a Nexus task
     async fn complete_nexus_task(
@@ -178,18 +179,21 @@ pub trait WorkerClient: Sync + Send {
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
     /// Cancel an activity task
     async fn cancel_activity_task(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskCanceledResponse>;
     /// Fail an activity task
     async fn fail_activity_task(
         &self,
         task_token: TaskToken,
         failure: Option<Failure>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskFailedResponse>;
     /// Fail a workflow task
     async fn fail_workflow_task(
@@ -197,6 +201,7 @@ pub trait WorkerClient: Sync + Send {
         task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
+        workflow_id: String,
     ) -> Result<RespondWorkflowTaskFailedResponse>;
     /// Fail a Nexus task
     async fn fail_nexus_task(
@@ -414,6 +419,7 @@ impl WorkerClient for WorkerClientBag {
             force_create_new_workflow_task: request.force_create_new_workflow_task,
             worker_version_stamp: self.worker_version_stamp(),
             binary_checksum: self.binary_checksum(),
+            resource_id: format!("workflow:{}", request.workflow_id),
             query_results: request
                 .query_responses
                 .into_iter()
@@ -441,7 +447,6 @@ impl WorkerClient for WorkerClientBag {
             deployment: None,
             versioning_behavior: request.versioning_behavior.into(),
             deployment_options: self.deployment_options(),
-            resource_id: Default::default(),
         };
         Ok(self
             .connection
@@ -455,6 +460,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
             .connection
@@ -470,7 +476,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                    resource_id: Default::default(),
+                    resource_id,
                 }
                 .into_request(),
             )
@@ -503,6 +509,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         Ok(self
             .connection
@@ -513,7 +520,7 @@ impl WorkerClient for WorkerClientBag {
                     details,
                     identity: self.identity(),
                     namespace: self.namespace.clone(),
-                    resource_id: Default::default(),
+                    resource_id,
                 }
                 .into_request(),
             )
@@ -525,6 +532,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
             .connection
@@ -540,7 +548,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                    resource_id: Default::default(),
+                    resource_id,
                 }
                 .into_request(),
             )
@@ -552,6 +560,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_token: TaskToken,
         failure: Option<Failure>,
+        resource_id: String,
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
             .connection
@@ -569,7 +578,7 @@ impl WorkerClient for WorkerClientBag {
                     // Will never be set, deprecated.
                     deployment: None,
                     deployment_options: self.deployment_options(),
-                    resource_id: Default::default(),
+                    resource_id,
                 }
                 .into_request(),
             )
@@ -582,6 +591,7 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
+        workflow_id: String,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
         let request = RespondWorkflowTaskFailedRequest {
@@ -596,7 +606,7 @@ impl WorkerClient for WorkerClientBag {
             // Will never be set, deprecated.
             deployment: None,
             deployment_options: self.deployment_options(),
-            resource_id: Default::default(),
+            resource_id: format!("workflow:{}", workflow_id),
         };
         Ok(self
             .connection
@@ -746,11 +756,12 @@ impl WorkerClient for WorkerClientBag {
         namespace: String,
         worker_heartbeat: Vec<WorkerHeartbeat>,
     ) -> Result<RecordWorkerHeartbeatResponse> {
+        let connection = self.connection.inner_cow();
         let request = RecordWorkerHeartbeatRequest {
             namespace,
             identity: self.identity(),
             worker_heartbeat,
-            resource_id: Default::default(),
+            resource_id: format!("worker:{}", connection.worker_grouping_key()),
         };
         Ok(self
             .connection
@@ -875,6 +886,8 @@ pub struct WorkflowTaskCompletion {
     pub metering_metadata: MeteringMetadata,
     /// Versioning behavior of the workflow, if any.
     pub versioning_behavior: VersioningBehavior,
+    /// Workflow ID
+    pub workflow_id: String,
 }
 
 #[derive(Clone, Default)]

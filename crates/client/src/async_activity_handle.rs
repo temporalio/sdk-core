@@ -17,6 +17,18 @@ use temporalio_common::protos::{
 };
 use tonic::IntoRequest;
 
+/// Generate resource_id for routing based on workflow_id and activity_id.
+/// Uses "workflow:workflow_id" when workflow_id is not empty, otherwise "activity:activity_id".
+fn generate_resource_id(workflow_id: &str, activity_id: &str) -> String {
+    if !workflow_id.is_empty() {
+        format!("workflow:{}", workflow_id)
+    } else if !activity_id.is_empty() {
+        format!("activity:{}", activity_id)
+    } else {
+        String::new()
+    }
+}
+
 /// Identifies an async activity for completion outside a worker.
 #[derive(Debug, Clone)]
 pub enum ActivityIdentifier {
@@ -110,7 +122,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         activity_id: activity_id.clone(),
                         result,
                         identity: self.client.identity(),
-                        resource_id: Default::default(),
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                     }
                     .into_request(),
                 )
@@ -159,7 +171,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         failure: Some(failure),
                         identity: self.client.identity(),
                         last_heartbeat_details,
-                        resource_id: Default::default(),
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                     }
                     .into_request(),
                 )
@@ -205,6 +217,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         activity_id: activity_id.clone(),
                         details,
                         identity: self.client.identity(),
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                         ..Default::default()
                     }
                     .into_request(),
@@ -233,7 +246,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         details,
                         identity: self.client.identity(),
                         namespace: self.client.namespace(),
-                        resource_id: Default::default(),
+                        resource_id: String::new(), // Resource id is unavailable for task token
                     }
                     .into_request(),
                 )
@@ -256,7 +269,7 @@ impl<CT: WorkflowService + NamespacedClient + Clone> AsyncActivityHandle<CT> {
                         activity_id: activity_id.clone(),
                         details,
                         identity: self.client.identity(),
-                        resource_id: Default::default(),
+                        resource_id: generate_resource_id(workflow_id, activity_id),
                     }
                     .into_request(),
                 )

@@ -246,6 +246,15 @@ message Link {
     }
 }
 
+// Principal is an authenticated caller identity computed by the server from trusted
+// authentication context.
+message Principal {
+    // Low-cardinality category of the principal (e.g., "jwt", "users").
+    string type = 1;
+    // Identifier within that category (e.g., sub JWT claim, email address).
+    string name = 2;
+}
+
 // Priority contains metadata that controls relative ordering of task processing
 // when tasks are backed up in a queue. Initially, Priority will be used in
 // matching (workflow and activity) task queues. Later it may be used in history
