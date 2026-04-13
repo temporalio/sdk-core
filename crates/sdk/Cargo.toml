@@ -57,12 +57,15 @@ version = "0.2"
 [dev-dependencies]
 futures = "0.3"
 rstest = "0.26"
-serde_json = { workspace = true }
 
 [features]
 default = []
 antithesis_assertions = ["temporalio-sdk-core/antithesis_assertions"]
-examples = ["serde/derive"]
+examples = ["serde/derive", "dep:serde_json"]
+
+[dependencies.serde_json]
+version = "1"
+optional = true
 
 [[example]]
 name = "hello-world-worker"
