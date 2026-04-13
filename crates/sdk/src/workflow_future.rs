@@ -16,7 +16,9 @@ use std::{
     task::{Context, Poll},
 };
 use temporalio_common::{
-    data_converters::{GenericPayloadConverter,PayloadConverter,SerializationContext,SerializationContextData},
+    data_converters::{
+        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
+    },
     protos::{
         coresdk::{
             workflow_activation::{
