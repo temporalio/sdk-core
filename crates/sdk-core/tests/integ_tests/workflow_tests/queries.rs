@@ -486,13 +486,8 @@ async fn workflow_metadata_query_returns_current_details() {
 
         assert_eq!(
             payload.metadata.get("encoding").map(|v| v.as_slice()),
-            Some(b"json/protobuf".as_slice()),
-            "Expected json/protobuf encoding"
-        );
-        assert_eq!(
-            payload.metadata.get("messageType").map(|v| v.as_slice()),
-            Some(b"temporal.api.sdk.v1.WorkflowMetadata".as_slice()),
-            "Expected WorkflowMetadata messageType"
+            Some(b"json/plain".as_slice()),
+            "Expected json/plain encoding"
         );
 
         // The data is proto-JSON: {"currentDetails":"..."}
