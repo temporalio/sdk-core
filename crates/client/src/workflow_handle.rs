@@ -75,6 +75,7 @@ impl WorkflowExecutionDescription {
     }
 
     /// The static summary set when the workflow was started, if any.
+    // TOOD: Use DataConverter to avoid direct dependency on serde_json
     pub fn static_summary(&self) -> Option<String> {
         let payload = self
             .raw_description
@@ -88,6 +89,7 @@ impl WorkflowExecutionDescription {
     }
 
     /// The static details set when the workflow was started, if any.
+    // TOOD: Use DataConverter to avoid direct dependency on serde_json
     pub fn static_details(&self) -> Option<String> {
         let payload = self
             .raw_description
