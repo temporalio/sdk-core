@@ -7,14 +7,19 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{Client, ClientOptions, UntypedWorkflow, WorkflowStartOptions};
+use temporalio_client::{
+    Client, ClientOptions, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
+};
 use temporalio_common::{
     data_converters::{
         DataConverter, DefaultFailureConverter, MultiArgs2, PayloadCodec, PayloadConversionError,
         PayloadConverter, SerializationContext, SerializationContextData, TemporalDeserializable,
         TemporalSerializable,
     },
-    protos::temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    protos::{
+        coresdk::AsJsonPayloadExt,
+        temporal::api::{common::v1::Payload, history::v1::history_event::Attributes},
+    },
     worker::WorkerTaskTypes,
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
@@ -96,6 +101,33 @@ impl DataConverterTestWorkflow {
         ctx: &mut WorkflowContext<Self>,
         input: TrackedWrapper,
     ) -> WorkflowResult<TrackedWrapper> {
+        let output = ctx
+            .start_activity(
+                TestActivities::process_tracked,
+                input,
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        Ok(output)
+    }
+}
+
+#[workflow]
+#[derive(Default)]
+struct DescribeDataConverterWorkflow;
+#[workflow_methods]
+impl DescribeDataConverterWorkflow {
+    #[run]
+    async fn run(
+        ctx: &mut WorkflowContext<Self>,
+        input: TrackedWrapper,
+    ) -> WorkflowResult<TrackedWrapper> {
+        ctx.upsert_memo([("tracked".to_string(), input.0.data.as_json_payload()?)]);
         let output = ctx
             .start_activity(
                 TestActivities::process_tracked,
@@ -378,4 +410,60 @@ async fn codec_encodes_and_decodes_payloads() {
         codec.decode_count() > 0,
         "Codec should have decoded payloads, but decode_count was 0"
     );
+}
+
+#[tokio::test]
+async fn describe_decodes_workflow_payload_fields() {
+    let wf_name = DescribeDataConverterWorkflow::name();
+    let codec = Arc::new(XorCodec::new(0x42));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter.sdk_config.register_activities(TestActivities);
+    starter.sdk_config.task_types = WorkerTaskTypes::all();
+    starter
+        .sdk_config
+        .register_workflow::<DescribeDataConverterWorkflow>();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let handle = worker
+        .submit_workflow(
+            DescribeDataConverterWorkflow::run,
+            TrackedWrapper(TrackedValue::new("codec-describe".to_string())),
+            WorkflowStartOptions::new(starter.get_task_queue(), wf_id)
+                .static_summary("codec summary")
+                .static_details("codec details")
+                .build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let decode_count_before = codec.decode_count();
+    let desc = handle
+        .describe(WorkflowDescribeOptions::default())
+        .await
+        .unwrap();
+
+    assert!(
+        codec.decode_count() > decode_count_before,
+        "Describe should have decoded response payloads"
+    );
+    assert_eq!(
+        desc.memo().unwrap().fields["tracked"],
+        "codec-describe".as_json_payload().unwrap()
+    );
+    assert_eq!(desc.static_summary(), Some("codec summary"));
+    assert_eq!(desc.static_details(), Some("codec details"));
 }
