@@ -238,6 +238,12 @@ pub struct WorkflowStartOptions {
 
     /// Headers to include with the start request.
     pub header: Option<Header>,
+
+    /// Single-line static summary for the workflow, shown in the Temporal UI.
+    pub static_summary: Option<String>,
+
+    /// Multi-line static details for the workflow, shown in the Temporal UI.
+    pub static_details: Option<String>,
 }
 
 /// A signal to send atomically when starting a workflow.

@@ -73,6 +73,34 @@ impl WorkflowExecutionDescription {
     fn new(raw_description: DescribeWorkflowExecutionResponse) -> Self {
         Self { raw_description }
     }
+
+    /// The static summary set when the workflow was started, if any.
+    // TOOD: Use DataConverter to avoid direct dependency on serde_json
+    pub fn static_summary(&self) -> Option<String> {
+        let payload = self
+            .raw_description
+            .execution_config
+            .as_ref()?
+            .user_metadata
+            .as_ref()?
+            .summary
+            .as_ref()?;
+        serde_json::from_slice(&payload.data).ok()
+    }
+
+    /// The static details set when the workflow was started, if any.
+    // TOOD: Use DataConverter to avoid direct dependency on serde_json
+    pub fn static_details(&self) -> Option<String> {
+        let payload = self
+            .raw_description
+            .execution_config
+            .as_ref()?
+            .user_metadata
+            .as_ref()?
+            .details
+            .as_ref()?;
+        serde_json::from_slice(&payload.data).ok()
+    }
 }
 
 // TODO [rust-sdk-branch]: Could implment stream a-la ListWorkflowsStream
