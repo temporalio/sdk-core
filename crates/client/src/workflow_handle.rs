@@ -97,8 +97,7 @@ pub enum WorkflowExecutionResult<T> {
 /// Access to the underlying Protobuf message is provided by [`raw`](Self::raw).
 #[derive(Debug, Clone)]
 pub struct WorkflowExecutionDescription {
-    /// The raw proto response from the server after payloads have been decoded
-    /// through the client's codec.
+    /// The raw proto response from the server.
     pub raw_description: DescribeWorkflowExecutionResponse,
     history_length: usize,
     static_summary: Option<String>,
@@ -147,63 +146,53 @@ impl WorkflowExecutionDescription {
 
     /// The workflow ID.
     pub fn id(&self) -> &str {
-        self.workflow_info()
-            .and_then(|info| info.execution.as_ref())
-            .map(|e| e.workflow_id.as_str())
-            .unwrap_or("")
+        self.execution().workflow_id.as_str()
     }
 
     /// The run ID.
     pub fn run_id(&self) -> &str {
-        self.workflow_info()
-            .and_then(|info| info.execution.as_ref())
-            .map(|e| e.run_id.as_str())
-            .unwrap_or("")
+        self.execution().run_id.as_str()
     }
 
     /// The workflow type name.
     pub fn workflow_type(&self) -> &str {
-        self.workflow_info()
-            .and_then(|info| info.r#type.as_ref())
-            .map(|t| t.name.as_str())
-            .unwrap_or("")
+        self.workflow_type_info().name.as_str()
     }
 
     /// The current status of the workflow execution.
     pub fn status(
         &self,
     ) -> temporalio_common::protos::temporal::api::enums::v1::WorkflowExecutionStatus {
-        self.workflow_info()
-            .map(workflow::WorkflowExecutionInfo::status)
-            .unwrap_or_default()
+        self.workflow_info().status()
     }
 
     /// When the workflow was created.
     pub fn start_time(&self) -> Option<std::time::SystemTime> {
         self.workflow_info()
-            .and_then(|info| info.start_time.as_ref())
+            .start_time
+            .as_ref()
             .and_then(proto_ts_to_system_time)
     }
 
     /// When the workflow run started or should start.
     pub fn execution_time(&self) -> Option<std::time::SystemTime> {
         self.workflow_info()
-            .and_then(|info| info.execution_time.as_ref())
+            .execution_time
+            .as_ref()
             .and_then(proto_ts_to_system_time)
     }
 
     /// When the workflow was closed, if closed.
     pub fn close_time(&self) -> Option<std::time::SystemTime> {
         self.workflow_info()
-            .and_then(|info| info.close_time.as_ref())
+            .close_time
+            .as_ref()
             .and_then(proto_ts_to_system_time)
     }
 
     /// The task queue the workflow runs on.
     pub fn task_queue(&self) -> &str {
-        self.workflow_info()
-            .map(|info| info.task_queue.as_str())
-            .unwrap_or("")
+        self.workflow_info().task_queue.as_str()
     }
 
     /// Number of events in history.
@@ -213,20 +202,22 @@ impl WorkflowExecutionDescription {
 
     /// Workflow memo after codec decoding.
     pub fn memo(&self) -> Option<&temporalio_common::protos::temporal::api::common::v1::Memo> {
-        self.workflow_info().and_then(|info| info.memo.as_ref())
+        self.workflow_info().memo.as_ref()
     }
 
     /// Parent workflow ID, if this is a child workflow.
     pub fn parent_id(&self) -> Option<&str> {
         self.workflow_info()
-            .and_then(|info| info.parent_execution.as_ref())
+            .parent_execution
+            .as_ref()
             .map(|e| e.workflow_id.as_str())
     }
 
     /// Parent run ID, if this is a child workflow.
     pub fn parent_run_id(&self) -> Option<&str> {
         self.workflow_info()
-            .and_then(|info| info.parent_execution.as_ref())
+            .parent_execution
+            .as_ref()
             .map(|e| e.run_id.as_str())
     }
 
@@ -234,8 +225,7 @@ impl WorkflowExecutionDescription {
     pub fn search_attributes(
         &self,
     ) -> Option<&temporalio_common::protos::temporal::api::common::v1::SearchAttributes> {
-        self.workflow_info()
-            .and_then(|info| info.search_attributes.as_ref())
+        self.workflow_info().search_attributes.as_ref()
     }
 
     /// Static summary configured on the workflow, if present.
@@ -258,8 +248,27 @@ impl WorkflowExecutionDescription {
         self.raw_description
     }
 
-    fn workflow_info(&self) -> Option<&workflow::WorkflowExecutionInfo> {
-        self.raw_description.workflow_execution_info.as_ref()
+    fn workflow_info(&self) -> &workflow::WorkflowExecutionInfo {
+        self.raw_description
+            .workflow_execution_info
+            .as_ref()
+            .expect("describe response missing workflow_execution_info")
+    }
+
+    fn execution(&self) -> &ProtoWorkflowExecution {
+        self.workflow_info()
+            .execution
+            .as_ref()
+            .expect("describe response missing workflow_execution_info.execution")
+    }
+
+    fn workflow_type_info(
+        &self,
+    ) -> &temporalio_common::protos::temporal::api::common::v1::WorkflowType {
+        self.workflow_info()
+            .r#type
+            .as_ref()
+            .expect("describe response missing workflow_execution_info.type")
     }
 }
 
