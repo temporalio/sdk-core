@@ -71,9 +71,12 @@ use std::{
 };
 use temporalio_common::{
     HasWorkflowDefinition,
-    data_converters::{DataConverter, SerializationContextData},
+    data_converters::{
+        DataConverter, GenericPayloadConverter, PayloadConverter, SerializationContext,
+        SerializationContextData,
+    },
     protos::{
-        coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
+        coresdk::IntoPayloadsExt,
         grpc::health::v1::health_client::HealthClient,
         proto_ts_to_system_time,
         temporal::api::{
@@ -1063,13 +1066,20 @@ where
 
         let user_metadata = if options.static_summary.is_some() || options.static_details.is_some()
         {
+            let payload_converter = PayloadConverter::default();
+            let context = SerializationContext {
+                data: &SerializationContextData::Workflow,
+                converter: &payload_converter,
+            };
             Some(UserMetadata {
                 summary: options.static_summary.map(|s| {
-                    s.as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &s)
                         .expect("String-to-JSON payload serialization is infallible")
                 }),
                 details: options.static_details.map(|s| {
-                    s.as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &s)
                         .expect("String-to-JSON payload serialization is infallible")
                 }),
             })

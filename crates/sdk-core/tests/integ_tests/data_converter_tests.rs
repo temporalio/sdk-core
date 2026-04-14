@@ -464,6 +464,20 @@ async fn describe_decodes_workflow_payload_fields() {
         desc.memo().unwrap().fields["tracked"],
         "codec-describe".as_json_payload().unwrap()
     );
+    let raw_user_metadata = desc
+        .raw_description
+        .execution_config
+        .as_ref()
+        .and_then(|cfg| cfg.user_metadata.as_ref())
+        .expect("describe response should include user metadata");
+    assert_eq!(
+        raw_user_metadata.summary,
+        Some("codec summary".as_json_payload().unwrap())
+    );
+    assert_eq!(
+        raw_user_metadata.details,
+        Some("codec details".as_json_payload().unwrap())
+    );
     assert_eq!(desc.static_summary(), Some("codec summary"));
     assert_eq!(desc.static_details(), Some("codec details"));
 }

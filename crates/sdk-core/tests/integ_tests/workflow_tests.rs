@@ -44,7 +44,7 @@ use temporalio_common::{
     protos::{
         DEFAULT_WORKFLOW_TYPE, canned_histories,
         coresdk::{
-            ActivityTaskCompletion, IntoCompletion,
+            ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
             activity_result::ActivityExecutionResult,
             workflow_activation::{WorkflowActivationJob, workflow_activation_job},
             workflow_commands::{
@@ -1061,7 +1061,7 @@ async fn pass_timer_summary_to_metadata() {
     let mut mock_cfg = MockPollCfg::from_hist_builder(t);
     let wf_id = mock_cfg.hists[0].wf_id.clone();
     let expected_user_metadata = Some(UserMetadata {
-        summary: Some(b"timer summary".into()),
+        summary: Some("timer summary".as_json_payload().unwrap()),
         details: None,
     });
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
