@@ -284,6 +284,7 @@ async fn multi_args_serializes_as_multiple_payloads() {
 /// A codec that XORs payload data with a key and tracks encode/decode operations.
 struct XorCodec {
     key: u8,
+    gate_on_metadata: bool,
     encode_count: AtomicUsize,
     decode_count: AtomicUsize,
 }
@@ -291,7 +292,17 @@ struct XorCodec {
 impl XorCodec {
     fn new(key: u8) -> Self {
         Self {
+            gate_on_metadata: true,
             key,
+            encode_count: AtomicUsize::new(0),
+            decode_count: AtomicUsize::new(0),
+        }
+    }
+
+    fn new_with_metadata_gate(key: u8, gate_on_metadata: bool) -> Self {
+        Self {
+            key,
+            gate_on_metadata,
             encode_count: AtomicUsize::new(0),
             decode_count: AtomicUsize::new(0),
         }
@@ -316,12 +327,15 @@ impl PayloadCodec for XorCodec {
         eprintln!("XorCodec::encode called with {} payloads", count);
         self.encode_count.fetch_add(count, Ordering::SeqCst);
         let key = self.key;
+        let gate_on_metadata = self.gate_on_metadata;
         async move {
             payloads
                 .into_iter()
                 .map(|mut p| {
                     p.data = p.data.iter().map(|b| b ^ key).collect();
-                    p.metadata.insert("xor_encoded".to_string(), vec![key]);
+                    if gate_on_metadata {
+                        p.metadata.insert("xor_encoded".to_string(), vec![key]);
+                    }
                     p
                 })
                 .collect()
@@ -338,11 +352,12 @@ impl PayloadCodec for XorCodec {
         eprintln!("XorCodec::decode called with {} payloads", count);
         self.decode_count.fetch_add(count, Ordering::SeqCst);
         let key = self.key;
+        let gate_on_metadata = self.gate_on_metadata;
         async move {
             payloads
                 .into_iter()
                 .map(|mut p| {
-                    if p.metadata.remove("xor_encoded").is_some() {
+                    if !gate_on_metadata || p.metadata.remove("xor_encoded").is_some() {
                         p.data = p.data.iter().map(|b| b ^ key).collect();
                     }
                     p
@@ -478,6 +493,63 @@ async fn describe_decodes_workflow_payload_fields() {
         raw_user_metadata.details,
         Some("codec details".as_json_payload().unwrap())
     );
+    assert_eq!(desc.static_summary(), Some("codec summary"));
+    assert_eq!(desc.static_details(), Some("codec details"));
+}
+
+#[tokio::test]
+async fn describe_decodes_user_metadata_with_ungated_xor_codec() {
+    let wf_name = DescribeDataConverterWorkflow::name();
+    let codec = Arc::new(XorCodec::new_with_metadata_gate(0x42, false));
+
+    let connection = get_integ_connection(None).await;
+    let data_converter = DataConverter::new(
+        PayloadConverter::default(),
+        DefaultFailureConverter,
+        codec.clone(),
+    );
+    let client_opts = ClientOptions::new(integ_namespace())
+        .data_converter(data_converter)
+        .build();
+    let client = Client::new(connection, client_opts).unwrap();
+
+    let mut starter = CoreWfStarter::new_with_overrides(wf_name, None, Some(client));
+    starter.sdk_config.register_activities(TestActivities);
+    starter.sdk_config.task_types = WorkerTaskTypes::all();
+    starter
+        .sdk_config
+        .register_workflow::<DescribeDataConverterWorkflow>();
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    let handle = worker
+        .submit_workflow(
+            DescribeDataConverterWorkflow::run,
+            TrackedWrapper(TrackedValue::new("codec-describe".to_string())),
+            WorkflowStartOptions::new(starter.get_task_queue(), wf_id)
+                .static_summary("codec summary")
+                .static_details("codec details")
+                .build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let decode_count_before = codec.decode_count();
+    let desc = handle
+        .describe(WorkflowDescribeOptions::default())
+        .await
+        .unwrap();
+
+    assert!(
+        codec.decode_count() > decode_count_before,
+        "Describe should have decoded response payloads"
+    );
+    assert_eq!(
+        desc.memo().unwrap().fields["tracked"],
+        "codec-describe".as_json_payload().unwrap()
+    );
+    // Making sure codec isn't used when decoding user metadata
     assert_eq!(desc.static_summary(), Some("codec summary"));
     assert_eq!(desc.static_details(), Some("codec details"));
 }
