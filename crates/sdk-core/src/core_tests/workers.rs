@@ -1,5 +1,5 @@
 use crate::{
-    CompleteNexusError, PollError, prost_dur,
+    CompleteNexusError, PollError, WorkerClient, prost_dur,
     test_help::{
         MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, WorkerExt,
         WorkerTestHelpers, build_fake_worker, build_mock_pollers, mock_worker, test_worker_cfg,
@@ -1018,6 +1018,7 @@ async fn nexus_start_operation_failure_with_application_failure_info() {
 #[tokio::test]
 async fn nexus_start_operation_failure_with_canceled_failure_info() {
     let mut client = mock_worker_client();
+    let client_id = client.identity();
     client
         .expect_complete_nexus_task()
         .times(1)
@@ -1059,6 +1060,7 @@ async fn nexus_start_operation_failure_with_canceled_failure_info() {
                 message: "operation canceled".to_string(),
                 failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
                     details: None,
+                    identity: client_id,
                 })),
                 ..Default::default()
             },
@@ -1138,6 +1140,7 @@ async fn nexus_start_operation_failure_with_invalid_failure_info(
 #[case::canceled_failure(
     FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
         details: None,
+        identity: "test".to_string(),
     }),
     NexusOperationErrorState::Canceled
 )]
