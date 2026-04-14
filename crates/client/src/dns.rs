@@ -39,6 +39,7 @@ pub(crate) fn validate_and_get_dns_lb(
         .ok_or_else(|| ClientConnectError::InvalidConfig("target URL has no host".to_owned()))?;
 
     match host {
+        url::Host::Domain("localhost") => Ok(None),
         url::Host::Domain(_) => Ok(Some(dns_opts)),
         url::Host::Ipv4(_) | url::Host::Ipv6(_) => Ok(None),
     }
@@ -283,6 +284,12 @@ mod tests {
             .service_override(svc)
             .build();
         assert!(validate_and_get_dns_lb(&opts).is_err());
+    }
+
+    #[test]
+    fn localhost_returns_none() {
+        let opts = ConnectionOptions::new(Url::parse("http://localhost:7233").unwrap()).build();
+        assert!(validate_and_get_dns_lb(&opts).unwrap().is_none());
     }
 
     #[test]
