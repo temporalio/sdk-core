@@ -46,7 +46,7 @@ jobs:
   test:
     name: Unit Tests
     # Give extra time to ensure pushes to main have time to populate the cache
-    timeout-minutes: ${{ github.ref == 'refs/heads/master' && 20 || 15 }}
+    timeout-minutes: ${{ matrix.timeoutMinutes || (github.ref == 'refs/heads/master' && 20 || 15) }}
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +60,7 @@ jobs:
             runsOn: macos-14
           - os: macos-intel
             runsOn: macos-15-intel
+            timeoutMinutes: 20
     runs-on: ${{ matrix.runsOn || matrix.os }}
     steps:
       - uses: actions/checkout@v4
