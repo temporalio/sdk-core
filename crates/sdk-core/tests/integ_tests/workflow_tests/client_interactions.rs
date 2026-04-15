@@ -1,7 +1,8 @@
 use crate::common::CoreWfStarter;
 use temporalio_client::{
-    UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowExecuteUpdateOptions, WorkflowQueryOptions,
-    WorkflowSignalOptions, WorkflowStartOptions,
+    UntypedQuery, UntypedSignal, UntypedUpdate, WorkflowDescribeOptions,
+    WorkflowExecuteUpdateOptions, WorkflowQueryOptions, WorkflowSignalOptions,
+    WorkflowStartOptions,
 };
 use temporalio_common::{
     data_converters::{PayloadConverter, RawValue},
@@ -619,4 +620,53 @@ async fn test_typed_signal_query_update() {
 
     let result = handle.get_result(Default::default()).await.unwrap();
     assert_eq!(result.counter, 100);
+}
+
+#[workflow]
+#[derive(Default)]
+struct ImmediatelyCompletingWf;
+
+#[workflow_methods]
+impl ImmediatelyCompletingWf {
+    #[run]
+    async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        Ok(())
+    }
+}
+
+/// Verify that `static_summary` and `static_details` set in `WorkflowStartOptions` are
+/// stored on the server and visible via `DescribeWorkflowExecution`.
+#[tokio::test]
+async fn static_summary_and_details_visible_after_start() {
+    let wf_name = "static_summary_and_details_visible_after_start";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<ImmediatelyCompletingWf>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ImmediatelyCompletingWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name)
+                .static_summary("my static summary")
+                .static_details("my static details")
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    worker.run_until_done().await.unwrap();
+
+    let description = handle
+        .describe(WorkflowDescribeOptions::default())
+        .await
+        .unwrap();
+
+    let summary = description.static_summary().expect("summary present");
+    assert_eq!(summary, "my static summary",);
+
+    let details = description.static_details().expect("details present");
+    assert_eq!(details, "my static details",);
 }

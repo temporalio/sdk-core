@@ -158,6 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
+                "./protos/api_upstream/temporal/api/sdk/v1/workflow_metadata.proto",
                 "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
                 "./protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
                 "./protos/api_upstream/temporal/api/errordetails/v1/message.proto",

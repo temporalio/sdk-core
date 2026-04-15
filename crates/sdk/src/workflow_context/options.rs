@@ -5,10 +5,12 @@ use temporalio_common::protos::{
     coresdk::{
         AsJsonPayloadExt,
         child_workflow::ChildWorkflowCancellationType,
+        common::VersioningIntent,
         nexus::NexusOperationCancellationType,
         workflow_commands::{
-            ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
-            ScheduleNexusOperation, StartChildWorkflowExecution, WorkflowCommand,
+            ActivityCancellationType, ContinueAsNewWorkflowExecution, ScheduleActivity,
+            ScheduleLocalActivity, ScheduleNexusOperation, StartChildWorkflowExecution,
+            WorkflowCommand,
         },
     },
     temporal::api::{
@@ -108,10 +110,16 @@ impl ActivityOptions {
                 }
                 .into(),
             ),
-            user_metadata: self.summary.map(|s| UserMetadata {
-                summary: Some(s.into()),
-                details: None,
-            }),
+            user_metadata: self
+                .summary
+                .map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                })
+                .map(|summary| UserMetadata {
+                    summary: Some(summary),
+                    details: None,
+                }),
         }
     }
 }
@@ -200,7 +208,11 @@ impl LocalActivityOptions {
             ),
             user_metadata: self
                 .summary
-                .and_then(|summary| summary.as_json_payload().ok())
+                .map(|summary| {
+                    summary
+                        .as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                })
                 .map(|summary| UserMetadata {
                     summary: Some(summary),
                     details: None,
@@ -251,8 +263,14 @@ impl ChildWorkflowOptions {
     ) -> WorkflowCommand {
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
-                summary: self.static_summary.map(Into::into),
-                details: self.static_details.map(Into::into),
+                summary: self.static_summary.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
+                details: self.static_details.map(|s| {
+                    s.as_json_payload()
+                        .expect("String-to-JSON payload serialization is infallible")
+                }),
             })
         } else {
             None
@@ -426,6 +444,58 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                 }
                 .into(),
             ),
+        }
+    }
+}
+
+/// Options for continuing a workflow as a new execution.
+///
+/// Unset fields inherit the current workflow's values where applicable.
+#[derive(Default, Debug, bon::Builder)]
+#[non_exhaustive]
+pub struct ContinueAsNewOptions {
+    /// Override the workflow type for the new execution. If `None`, reuses the current type.
+    pub workflow_type: Option<String>,
+    /// Task queue for the new execution. If `None`, reuses the current task queue.
+    pub task_queue: Option<String>,
+    /// Timeout for a single run of the new workflow.
+    pub run_timeout: Option<Duration>,
+    /// Timeout of a single workflow task.
+    pub task_timeout: Option<Duration>,
+    /// If set, the new workflow will have this memo. If `None`, reuses the current memo.
+    pub memo: Option<HashMap<String, Payload>>,
+    /// If set, the new workflow will have these headers.
+    pub headers: Option<HashMap<String, Payload>>,
+    /// If set, the new workflow will have these search attributes. If `None`, reuses the current
+    /// search attributes.
+    pub search_attributes: Option<SearchAttributes>,
+    /// If set, the new workflow will have this retry policy. If `None`, reuses the current policy.
+    pub retry_policy: Option<RetryPolicy>,
+    /// Whether the new workflow should run on a worker with a compatible build id.
+    pub versioning_intent: Option<VersioningIntent>,
+}
+
+impl ContinueAsNewOptions {
+    pub(crate) fn into_proto(
+        self,
+        workflow_type: String,
+        arguments: Vec<Payload>,
+    ) -> ContinueAsNewWorkflowExecution {
+        ContinueAsNewWorkflowExecution {
+            workflow_type: self.workflow_type.unwrap_or(workflow_type),
+            task_queue: self.task_queue.unwrap_or_default(),
+            arguments,
+            workflow_run_timeout: self.run_timeout.and_then(|t| t.try_into().ok()),
+            workflow_task_timeout: self.task_timeout.and_then(|t| t.try_into().ok()),
+            memo: self.memo.unwrap_or_default(),
+            headers: self.headers.unwrap_or_default(),
+            search_attributes: self.search_attributes,
+            retry_policy: self.retry_policy,
+            versioning_intent: self
+                .versioning_intent
+                .unwrap_or(VersioningIntent::Unspecified)
+                .into(),
+            ..Default::default()
         }
     }
 }

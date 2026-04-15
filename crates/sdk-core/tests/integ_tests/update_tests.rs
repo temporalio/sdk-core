@@ -1168,7 +1168,7 @@ async fn worker_restarted_in_middle_of_update() {
         // Allow it to start again, the second time
         BARR.wait().await;
         // Poke the workflow off the sticky queue to get it to complete faster than WFT timeout
-        WorkflowService::reset_sticky_task_queue(
+        let _ = WorkflowService::reset_sticky_task_queue(
             &mut client.clone(),
             ResetStickyTaskQueueRequest {
                 namespace: client.namespace(),
@@ -1179,8 +1179,7 @@ async fn worker_restarted_in_middle_of_update() {
             }
             .into_request(),
         )
-        .await
-        .unwrap();
+        .await;
     };
     let run = async {
         // This run attempt will get shut down

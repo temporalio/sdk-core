@@ -1680,3 +1680,77 @@ async fn terminal_metric_not_recorded_on_rejected_completion() {
         ),
     }
 }
+
+#[tokio::test]
+async fn wf_task_latency_recorded_on_dropped_wft() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(get_integ_runtime_options(telemopts)).unwrap();
+    let meter = rt.telemetry().get_temporal_metric_meter().unwrap();
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(
+        temporalio_common::protos::temporal::api::enums::v1::EventType::WorkflowExecutionStarted,
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock_worker_client(),
+    );
+    mh.num_expected_fails = 1;
+    mh.num_expected_completions = Some(0.into());
+
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    mock.set_temporal_meter(meter);
+    let core = mock_worker(mock);
+
+    // First poll (attempt=1): fail the activation — this is reported to the server
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "test failure".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+    core.handle_eviction().await;
+
+    // Second poll (attempt=2): fail again — this goes through WFTFailedDontReport/DropWft
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+        act.run_id,
+        "test failure".into(),
+        None,
+    ))
+    .await
+    .unwrap();
+
+    core.drain_pollers_and_shutdown().await;
+
+    // Both WFT processing attempts should have recorded latency, even the dropped one
+    eventually(
+        || {
+            let endpoint = format!("http://{addr}/metrics");
+            async move {
+                let body = get_text(endpoint).await;
+                let line = body
+                    .lines()
+                    .find(|l| l.starts_with("temporal_workflow_task_execution_latency_count{"))
+                    .ok_or_else(|| anyhow!("wf_task_execution_latency metric not found"))?
+                    .to_string();
+                if !line.ends_with(" 2") {
+                    bail!(
+                        "Expected latency count of 2 (both reported and dropped WFT), got: {line}"
+                    );
+                }
+                Ok(())
+            }
+        },
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+}

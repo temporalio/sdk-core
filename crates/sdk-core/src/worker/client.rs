@@ -44,8 +44,11 @@ use uuid::Uuid;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
+/// The result of a legacy query sent via `respond_legacy_query`.
 pub enum LegacyQueryResult {
+    /// The query handler returned a result successfully.
     Succeeded(QueryResult),
+    /// The query handler failed.
     Failed(workflow_completion::Failure),
 }
 
