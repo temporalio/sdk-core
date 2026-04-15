@@ -425,14 +425,31 @@ pub struct Worker {
     client_worker_registrator: Arc<ClientWorkerRegistrator>,
     /// Status of the worker
     status: Arc<RwLock<WorkerStatus>>,
-    /// Set during validate() when server supports graceful poll cancellation on shutdown.
-    /// Shared with pollers so they can decide per-poll whether to hard-kill or wait.
-    graceful_poll_shutdown: Arc<AtomicBool>,
-    /// Set during validate() when the namespace has the poller_autoscaling capability,
-    /// enabling scale-down on poll timeout even without an explicit scaling decision.
-    poller_autoscaling: Arc<AtomicBool>,
+    /// Capabilities as returned by a describe namespace rpc. Not set until after validate() is
+    /// called.
+    capabilities: Arc<NamespaceCapabilities>,
     /// Handle for the spawned ShutdownWorker RPC task, awaited during shutdown.
     shutdown_rpc_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+/// Namespace capabilities discovered via `describe_namespace` during worker validation.
+pub struct NamespaceCapabilities {
+    pub(crate) graceful_poll_shutdown: AtomicBool,
+    pub(crate) poller_autoscaling: AtomicBool,
+}
+
+impl NamespaceCapabilities {
+    /// Returns true if the server supports graceful poll cancellation on shutdown, so pollers
+    /// can let in-flight polls complete rather than hard-killing them.
+    pub fn graceful_poll_shutdown(&self) -> bool {
+        self.graceful_poll_shutdown.load(Ordering::Relaxed)
+    }
+
+    /// Returns true if pollers may scale down on poll timeout even without an explicit scaling
+    /// decision from the server.
+    pub fn poller_autoscaling(&self) -> bool {
+        self.poller_autoscaling.load(Ordering::Relaxed)
+    }
 }
 
 struct AllPermitsTracker {
@@ -508,10 +525,14 @@ impl Worker {
                 });
                 if let Some(caps) = ns_info.and_then(|ns| ns.capabilities) {
                     if caps.worker_poll_complete_on_shutdown {
-                        self.graceful_poll_shutdown.store(true, Ordering::Relaxed);
+                        self.capabilities
+                            .graceful_poll_shutdown
+                            .store(true, Ordering::Relaxed);
                     }
                     if caps.poller_autoscaling {
-                        self.poller_autoscaling.store(true, Ordering::Relaxed);
+                        self.capabilities
+                            .poller_autoscaling
+                            .store(true, Ordering::Relaxed);
                     }
                 }
                 Ok(NamespaceInfo { limits })
@@ -634,8 +655,10 @@ impl Worker {
         let wf_sticky_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let act_last_suc_poll_time = Arc::new(AtomicCell::new(None));
         let nexus_last_suc_poll_time = Arc::new(AtomicCell::new(None));
-        let graceful_poll_shutdown = Arc::new(AtomicBool::new(false));
-        let poller_autoscaling = Arc::new(AtomicBool::new(false));
+        let capabilities = Arc::new(NamespaceCapabilities {
+            graceful_poll_shutdown: AtomicBool::new(false),
+            poller_autoscaling: AtomicBool::new(false),
+        });
 
         let nexus_slots = MeteredPermitDealer::new(
             tuner.nexus_task_slot_supplier(),
@@ -656,8 +679,7 @@ impl Worker {
                         &wft_slots,
                         wf_last_suc_poll_time.clone(),
                         wf_sticky_last_suc_poll_time.clone(),
-                        graceful_poll_shutdown.clone(),
-                        poller_autoscaling.clone(),
+                        capabilities.clone(),
                     )
                     .boxed();
                     let stream = if !client.is_mock() {
@@ -687,8 +709,7 @@ impl Worker {
                             max_tps: config.max_task_queue_activities_per_second,
                         },
                         act_last_suc_poll_time.clone(),
-                        graceful_poll_shutdown.clone(),
-                        poller_autoscaling.clone(),
+                        capabilities.clone(),
                     );
                     Some(Box::from(ap) as BoxedActPoller)
                 } else {
@@ -706,8 +727,7 @@ impl Worker {
                         Some(move |np| np_metrics.record_num_pollers(np)),
                         nexus_last_suc_poll_time.clone(),
                         shared_namespace_worker,
-                        graceful_poll_shutdown.clone(),
-                        poller_autoscaling.clone(),
+                        capabilities.clone(),
                     )) as BoxedNexusPoller)
                 } else {
                     None
@@ -927,8 +947,7 @@ impl Worker {
             nexus_mgr,
             client_worker_registrator,
             status: worker_status,
-            graceful_poll_shutdown,
-            poller_autoscaling,
+            capabilities,
             shutdown_rpc_handle: Mutex::new(None),
         })
     }
@@ -1345,6 +1364,11 @@ impl Worker {
     /// Return this worker's config
     pub fn get_config(&self) -> &WorkerConfig {
         &self.config
+    }
+
+    /// Returns the namespace capabilities discovered during [Worker::validate].
+    pub fn get_namespace_capabilities(&self) -> &NamespaceCapabilities {
+        &self.capabilities
     }
 
     /// Initiate shutdown, including spawning the `ShutdownWorker` RPC so the server can complete
