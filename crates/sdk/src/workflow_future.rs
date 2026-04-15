@@ -16,7 +16,9 @@ use std::{
     task::{Context, Poll},
 };
 use temporalio_common::{
-    data_converters::PayloadConverter,
+    data_converters::{
+        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
+    },
     protos::{
         coresdk::{
             workflow_activation::{
@@ -263,15 +265,40 @@ impl WorkflowFuture {
                         converter: &self.payload_converter,
                     };
 
-                    let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.execution.dispatch_query(&query_type, data)
-                    })) {
-                        Ok(r) => r,
-                        Err(e) => Some(Err(anyhow!(
-                            "Panic in query handler: {}",
-                            panic_formatter(e)
-                        )
-                        .into())),
+                    let dispatch_result = if query_type == "__temporal_workflow_metadata" {
+                        // Mirror the proto JSON shape of temporal.api.sdk.v1.WorkflowMetadata.
+                        // TODO [rust-sdk-branch]: support normal JSON and proto JSON serialization, and this will no longer be necessary.
+                        #[derive(serde::Serialize)]
+                        struct WorkflowMetadataJson {
+                            #[serde(
+                                rename = "currentDetails",
+                                skip_serializing_if = "String::is_empty"
+                            )]
+                            current_details: String,
+                        }
+                        let converter = PayloadConverter::default();
+                        let ctx = SerializationContext {
+                            data: &SerializationContextData::Workflow,
+                            converter: &converter,
+                        };
+                        let payload = converter.to_payload(
+                            &ctx,
+                            &WorkflowMetadataJson {
+                                current_details: self.base_ctx.current_details(),
+                            },
+                        );
+                        Some(Ok(payload?))
+                    } else {
+                        match panic::catch_unwind(AssertUnwindSafe(|| {
+                            self.execution.dispatch_query(&query_type, data)
+                        })) {
+                            Ok(r) => r,
+                            Err(e) => Some(Err(anyhow!(
+                                "Panic in query handler: {}",
+                                panic_formatter(e)
+                            )
+                            .into())),
+                        }
                     };
 
                     let response = match dispatch_result {

@@ -130,6 +130,7 @@ pub extern "C" fn temporal_core_client_connect(
             cb,
             options.grpc_override_callback_user_data,
         ));
+        connection_options.dns_load_balancing = None;
     }
     // Spawn async call
     let user_data = UserDataHandle(user_data);
@@ -1272,7 +1273,12 @@ impl TryFrom<&ConnectionOptions> for temporalio_client::ConnectionOptions {
                 .maybe_headers(headers)
                 .maybe_binary_headers(binary_headers)
                 .maybe_api_key(api_key)
-                .maybe_http_connect_proxy(http_connect_proxy)
+                .maybe_http_connect_proxy(http_connect_proxy.clone())
+                .dns_load_balancing(if http_connect_proxy.is_some() {
+                    None
+                } else {
+                    Some(temporalio_client::DnsLoadBalancingOptions::default())
+                })
                 .maybe_tls_options(tls_cfg)
                 .build(),
         )

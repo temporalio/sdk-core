@@ -640,8 +640,8 @@ async fn pass_child_workflow_summary_to_metadata() {
     let t = canned_histories::single_child_workflow(wf_id);
     let mut mock_cfg = MockPollCfg::from_hist_builder(t);
     let expected_user_metadata = Some(UserMetadata {
-        summary: Some(b"child summary".into()),
-        details: Some(b"child details".into()),
+        summary: Some("child summary".as_json_payload().unwrap()),
+        details: Some("child details".as_json_payload().unwrap()),
     });
     mock_cfg.completion_asserts_from_expectations(|mut asserts| {
         asserts

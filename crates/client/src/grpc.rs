@@ -2094,6 +2094,7 @@ mod tests {
         let opts = ConnectionOptions::new(url::Url::parse("http://localhost:7233").unwrap())
             .skip_get_system_info(true)
             .service_override(service_override)
+            .dns_load_balancing(None)
             .build();
         let mut connection = crate::Connection::connect(opts).await.unwrap();
 

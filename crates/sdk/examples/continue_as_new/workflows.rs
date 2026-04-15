@@ -1,10 +1,7 @@
 #![allow(unreachable_pub)]
 use std::time::Duration;
-use temporalio_common::protos::coresdk::{
-    AsJsonPayloadExt, workflow_commands::ContinueAsNewWorkflowExecution,
-};
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{WorkflowContext, WorkflowResult, WorkflowTermination};
+use temporalio_sdk::{ContinueAsNewOptions, WorkflowContext, WorkflowResult};
 
 #[workflow]
 #[derive(Default)]
@@ -18,18 +15,12 @@ impl ContinueAsNewWorkflow {
         ctx.timer(Duration::from_millis(100)).await;
 
         if current_iteration < max_iterations {
-            Err(WorkflowTermination::continue_as_new(
-                ContinueAsNewWorkflowExecution {
-                    arguments: vec![
-                        (current_iteration + 1, max_iterations)
-                            .as_json_payload()
-                            .unwrap(),
-                    ],
-                    ..Default::default()
-                },
-            ))
-        } else {
-            Ok(format!("Completed after {max_iterations} iterations"))
+            ctx.continue_as_new(
+                &(current_iteration + 1, max_iterations),
+                ContinueAsNewOptions::default(),
+            )?;
         }
+
+        Ok(format!("Completed after {max_iterations} iterations"))
     }
 }

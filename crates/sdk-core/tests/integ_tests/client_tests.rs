@@ -255,7 +255,7 @@ async fn namespace_header_attached_to_relevant_calls() {
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, mut header_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = TcpListener::bind("[::]:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let server_handle = tokio::spawn(async move {
@@ -394,6 +394,7 @@ async fn http_proxy() {
         target_addr: tcp_proxy_addr.to_string(),
         basic_auth: None,
     });
+    opts.dns_load_balancing = None;
     let connection = Connection::connect(opts.clone()).await.unwrap();
     let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
     let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
@@ -422,6 +423,7 @@ async fn http_proxy() {
             target_addr: format!("unix:{}", sock_path.to_str().unwrap()),
             basic_auth: None,
         });
+        opts.dns_load_balancing = None;
         let connection = Connection::connect(opts.clone()).await.unwrap();
         let client_opts = temporalio_client::ClientOptions::new("my-namespace").build();
         let proxied_client = temporalio_client::Client::new(connection, client_opts).unwrap();
