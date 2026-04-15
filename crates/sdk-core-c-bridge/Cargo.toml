@@ -33,7 +33,7 @@ serde_json = { workspace = true }
 tokio = "1.47"
 tokio-stream = "0.1"
 tokio-util = "0.7"
-tonic = { workspace = true }
+tonic = { workspace = true, default-features = false }
 tracing = "0.1"
 url = "2.5"
 # This is only needed as an explicit dependency so we can enable static as a feature

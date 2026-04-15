@@ -24,7 +24,7 @@ derive_more = { version = "2.0", features = [
     "try_into",
 ] }
 thiserror = "2"
-tonic = "0.14"
+tonic = { version = "0.14", default-features = false }
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 opentelemetry = { version = "0.31", features = ["metrics"] }
