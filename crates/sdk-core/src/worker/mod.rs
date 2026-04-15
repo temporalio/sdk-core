@@ -1417,6 +1417,7 @@ impl Worker {
             .as_ref()
             .map(|hm| hm.heartbeat_callback.clone()());
         let handle = tokio::spawn(async move {
+            let start_time = std::time::Instant::now();
             match client
                 .shutdown_worker(sticky_name, task_queue, task_queue_types, heartbeat)
                 .await
@@ -1434,6 +1435,10 @@ impl Worker {
                 }
                 _ => {}
             }
+            warn!(
+                "shutdown_worker rpc completed, took {:?}",
+                start_time.elapsed()
+            )
         });
         *guard = Some(handle);
     }

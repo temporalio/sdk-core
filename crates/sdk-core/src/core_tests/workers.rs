@@ -1330,8 +1330,7 @@ async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
 /// without dbg_panic!.
 #[tokio::test]
 async fn all_permits_tracker_timeout_accommodates_graceful_poll_delay() {
-    use crate::abstractions::tests::fixed_size_permit_dealer;
-    use crate::worker::WorkflowSlotKind;
+    use crate::{abstractions::tests::fixed_size_permit_dealer, worker::WorkflowSlotKind};
 
     let dealer = fixed_size_permit_dealer::<WorkflowSlotKind>(5);
     let rcv = dealer.get_extant_count_rcv();
