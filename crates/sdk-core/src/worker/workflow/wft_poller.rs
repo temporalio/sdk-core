@@ -216,10 +216,6 @@ fn new_wft_poller(
                 return match poller.poll().await {
                     Some(Ok((wft, permit))) => {
                         if wft == PollWorkflowTaskQueueResponse::default() {
-                            if shutdown_token.is_cancelled() {
-                                poller.shutdown_box().await;
-                                return None;
-                            }
                             // We get the default proto in the event that the long poll times out.
                             debug!("Poll wft timeout");
                             metrics.wf_tq_poll_empty();
@@ -297,50 +293,24 @@ mod tests {
         assert_matches!(stream.next().await, None);
     }
 
-    /// empty responses after shutdown are retried indefinitely in
-    /// new_wft_poller, causing the WFT stream to spin. This is what caused the workflow_load
-    /// heavy test to hang on CI when the server has enableCancelWorkerPollsOnShutdown.
+    /// When the underlying poller returns None (indicating shutdown), the wrapping WFT stream
+    /// should also return None to terminate.
     #[tokio::test]
-    async fn empty_response_after_shutdown_terminates_wft_stream() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let poll_count = Arc::new(AtomicUsize::new(0));
-        let poll_count_clone = poll_count.clone();
-
+    async fn poller_returning_none_terminates_wft_stream() {
         let mut mock_poller = mock_poller();
-        mock_poller.expect_poll().returning(move || {
-            poll_count_clone.fetch_add(1, Ordering::SeqCst);
-            Some(Ok(PollWorkflowTaskQueueResponse::default()))
-        });
-        mock_poller.expect_shutdown().returning(|| ());
+        mock_poller.expect_poll().times(1).returning(|| None);
+        mock_poller.expect_shutdown().times(1).returning(|| ());
 
         let sem = Arc::new(fixed_size_permit_dealer::<WorkflowSlotKind>(10));
-        let shutdown_token = CancellationToken::new();
 
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
-            shutdown_token.clone(),
+            CancellationToken::new(),
         );
         pin_mut!(stream);
 
-        shutdown_token.cancel();
-
-        let result = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next()).await;
-        assert!(
-            result.is_ok(),
-            "WFT stream should terminate promptly after shutdown, not spin on retries"
-        );
-        assert!(
-            result.unwrap().is_none(),
-            "WFT stream should return None on empty response after shutdown"
-        );
-
-        let total = poll_count.load(Ordering::SeqCst);
-        assert!(
-            total < 5,
-            "Expected WFT stream to terminate quickly, but poller was called {total} times"
-        );
+        assert_matches!(stream.next().await, None);
     }
 
     #[tokio::test]

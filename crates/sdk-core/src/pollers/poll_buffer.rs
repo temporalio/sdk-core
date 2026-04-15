@@ -367,8 +367,6 @@ where
                         };
                     let graceful_shutdown = graceful_shutdown.clone();
                     let poll_task = tokio::spawn(async move {
-                        let shutdown_clone = shutdown.clone();
-
                         let r = if graceful_shutdown.load(Ordering::Relaxed) {
                             pf(timeout_override).await
                         } else {
@@ -389,10 +387,11 @@ where
                         }
                         let (should_forward, backoff_duration) = report_handle.poll_result(&r);
                         if let Some(duration) = backoff_duration {
-                            // Apply backoff BEFORE dropping active_guard to prevent next poll from starting
+                            // Apply backoff BEFORE dropping active_guard to prevent next poll from
+                            // starting
                             tokio::select! {
                                 _ = tokio::time::sleep(duration) => return,
-                                _ = shutdown_clone.cancelled() => (),
+                                _ = shutdown.cancelled() => (),
                             };
                         }
                         drop(active_guard);
