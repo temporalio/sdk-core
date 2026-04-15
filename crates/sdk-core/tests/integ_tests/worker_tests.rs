@@ -18,7 +18,10 @@ use std::{
     },
     time::Duration,
 };
-use temporalio_client::{Connection, WorkflowStartOptions};
+use temporalio_client::{
+    Connection, UntypedWorkflow, WorkflowFetchHistoryOptions, WorkflowStartOptions,
+    WorkflowTerminateOptions,
+};
 use temporalio_common::{
     data_converters::{DataConverter, RawValue},
     protos::{
@@ -1139,4 +1142,105 @@ fn test_default_build_id() {
     let o = WorkerOptions::new("task_queue").build();
     assert!(!o.deployment_options.version.build_id.is_empty());
     assert_ne!(o.deployment_options.version.build_id, "undetermined");
+}
+
+#[workflow]
+#[derive(Default)]
+struct ShutdownTimerActivityLoopWf;
+
+#[workflow_methods]
+impl ShutdownTimerActivityLoopWf {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        loop {
+            ctx.timer(Duration::from_millis(100)).await;
+            ctx.start_activity(
+                StdActivities::no_op,
+                (),
+                ActivityOptions {
+                    start_to_close_timeout: Some(Duration::from_secs(10)),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+        }
+    }
+}
+
+/// Starts 10 workflows that each run a tight timer+activity loop, then shuts down the worker
+/// and verifies:
+///   1. Shutdown completes rapidly (< 5s)
+///   2. No workflow task failures or timeouts appear in any workflow's history
+#[tokio::test]
+async fn shutdown_during_active_timer_activity_workflows() {
+    let wf_name = "shutdown_during_active_timer_activity_workflows";
+    let num_workflows = 10;
+
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(StdActivities);
+    let mut worker = starter.worker().await;
+    worker.register_workflow::<ShutdownTimerActivityLoopWf>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut wf_ids = Vec::with_capacity(num_workflows);
+    for i in 0..num_workflows {
+        let wf_id = format!("{task_queue}-{i}");
+        worker
+            .submit_workflow(
+                ShutdownTimerActivityLoopWf::run,
+                (),
+                WorkflowStartOptions::new(task_queue.clone(), wf_id.clone()).build(),
+            )
+            .await
+            .unwrap();
+        wf_ids.push(wf_id);
+    }
+    // Don't wait for workflow completion — these loop forever
+    worker.fetch_results = false;
+
+    let shutdown_handle = worker.inner_mut().shutdown_handle();
+    let run_fut = async { worker.run_until_done().await.unwrap() };
+
+    let shutdown_fut = async {
+        // Let workflows run a few iterations
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        shutdown_handle();
+    };
+
+    let shutdown_start = std::time::Instant::now();
+    tokio::join!(run_fut, shutdown_fut);
+    let shutdown_elapsed = shutdown_start.elapsed();
+
+    assert!(
+        shutdown_elapsed < Duration::from_secs(5),
+        "Worker shutdown took {shutdown_elapsed:?}, expected < 5s"
+    );
+
+    let client = starter.get_client().await;
+    for wf_id in &wf_ids {
+        client
+            .get_workflow_handle::<UntypedWorkflow>(wf_id)
+            .terminate(WorkflowTerminateOptions::default())
+            .await
+            .unwrap();
+
+        let history = client
+            .get_workflow_handle::<UntypedWorkflow>(wf_id)
+            .fetch_history(WorkflowFetchHistoryOptions::default())
+            .await
+            .unwrap();
+        let bad_events: Vec<_> = history
+            .events()
+            .iter()
+            .filter(|e| {
+                e.event_type() == EventType::WorkflowTaskFailed
+                    || e.event_type() == EventType::WorkflowTaskTimedOut
+            })
+            .collect();
+        assert!(
+            bad_events.is_empty(),
+            "Workflow {wf_id} had unexpected WFT failures/timeouts: {bad_events:?}"
+        );
+    }
 }
