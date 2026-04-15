@@ -39,7 +39,6 @@ async-trait = "0.1"
 bon = { workspace = true }
 crossbeam-channel = "0.5"
 crossbeam-utils = "0.8"
-dashmap = "6.1"
 derive_more = { workspace = true }
 enum_dispatch = "0.3"
 enum-iterator = "2"
