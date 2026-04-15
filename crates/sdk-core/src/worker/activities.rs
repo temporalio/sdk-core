@@ -756,7 +756,7 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer,
         pollers::{ActivityTaskOptions, LongPollBuffer},
         prost_dur,
-        worker::{PollerBehavior, client::mocks::mock_worker_client},
+        worker::{NamespaceCapabilities, PollerBehavior, client::mocks::mock_worker_client},
     };
     use crossbeam_utils::atomic::AtomicCell;
     use temporalio_common::protos::coresdk::activity_result::ActivityExecutionResult;
@@ -804,8 +804,10 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -898,8 +900,10 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -974,8 +978,10 @@ mod tests {
                 max_tps: None,
             },
             Arc::new(AtomicCell::new(None)),
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
+            Arc::new(NamespaceCapabilities {
+                graceful_poll_shutdown: AtomicBool::new(false),
+                poller_autoscaling: AtomicBool::new(false),
+            }),
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
