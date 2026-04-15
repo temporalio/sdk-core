@@ -22,7 +22,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 backoff = "0.4"
 base64 = "0.22"
-bon = "3"
+bon = { version = "3", default-features = false, features = ["alloc"] }
 derive_more = { workspace = true }
 dyn-clone = "1.0"
 bytes = "1.10"
@@ -46,7 +46,7 @@ tonic = { workspace = true, default-features = false, features = ["tls-ring", "t
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", default-features = false, features = ["v4"] }
 rand = "0.10"
 
 [dependencies.temporalio-common]

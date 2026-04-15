@@ -47,7 +47,6 @@ flate2 = { version = "1.1", optional = true }
 futures = { version = "0.3", default-features = false }
 futures-util = { version = "0.3", default-features = false }
 gethostname = "1.0.2"
-governor = "0.10"
 hyper = { version = "1.7", optional = true }
 itertools = "0.14"
 lru = "0.16"
@@ -99,7 +98,7 @@ tokio-stream = { version = "0.1", default-features = false }
 tonic = { workspace = true, default-features = false, features = ["tls-ring", "tls-native-roots", "transport", "codegen"] }
 tracing = "0.1"
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", default-features = false, features = ["v4"] }
 # Only need specific features to decompress zip files for ephemeral server download
 zip = { version = "8.4", optional = true, default-features = false, features = [
   "deflate",
