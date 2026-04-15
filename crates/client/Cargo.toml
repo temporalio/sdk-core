@@ -35,7 +35,13 @@ hyper-util = "0.1.16"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 parking_lot = "0.12"
 thiserror = { workspace = true }
-tokio = { version = "1.47", features = ["net", "time"] }
+tokio = { version = "1.47", default-features = false, features = [
+  "io-util",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
 tonic = { workspace = true, default-features = false, features = ["tls-ring", "tls-native-roots", "channel"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
@@ -54,6 +60,14 @@ prost = "0.14"
 prost-types = { workspace = true }
 rstest = "0.26"
 tempfile = "3"
+tokio = { version = "1.47", default-features = false, features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
 
 [lints]
 workspace = true

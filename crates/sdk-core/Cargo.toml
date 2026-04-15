@@ -53,17 +53,18 @@ itertools = "0.14"
 lru = "0.16"
 mockall = "0.14"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.31", features = [
+opentelemetry_sdk = { version = "0.31", default-features = false, features = [
   "rt-tokio",
   "metrics",
   "spec_unstable_metrics_views",
 ], optional = true }
-opentelemetry-otlp = { version = "0.31", features = [
+opentelemetry-otlp = { version = "0.31", default-features = false, features = [
   "tokio",
   "metrics",
-  "tls",
+  "tls-roots",
   "http-proto",
   "grpc-tonic",
+  "reqwest-rustls",
 ], optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
@@ -84,16 +85,17 @@ slotmap = "1.0"
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
 thiserror = { workspace = true }
-tokio = { version = "1.47", features = [
+tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",
   "parking_lot",
   "time",
   "fs",
   "process",
+  "macros",
 ] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", default-features = false }
 tonic = { workspace = true, default-features = false, features = ["tls-ring", "tls-native-roots", "transport", "codegen"] }
 tracing = "0.1"
 url = "2.5"
@@ -138,7 +140,7 @@ hyper-util = { version = "0.1", features = [
 rstest = "0.26"
 semver = "1.0"
 temporalio-sdk = { path = "../sdk" }
-tokio = { version = "1.47", features = [
+tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",
   "parking_lot",
@@ -146,8 +148,9 @@ tokio = { version = "1.47", features = [
   "fs",
   "process",
   "test-util",
+  "macros",
 ] }
-tokio-stream = { version = "0.1", features = ["net"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
 tonic = { workspace = true, default-features = false, features = ["router"] }
 tracing-subscriber = { version = "0.3", default-features = false }
 trybuild = { version = "1.0", features = ["diff"] }
@@ -203,6 +206,7 @@ name = "workflow_replay"
 path = "benches/workflow_replay_bench.rs"
 test = false
 harness = false
+required-features = ["test-utilities"]
 
 # The integration test runner should compile with the same configuration as the
 # rest of the integration tests so that artifacts are shared and no additional
