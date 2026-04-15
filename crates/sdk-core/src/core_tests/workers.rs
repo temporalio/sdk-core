@@ -1299,7 +1299,7 @@ async fn graceful_shutdown_sends_shutdown_worker_rpc_during_initiate() {
     let mw = MockWorkerInputs::new(stream.boxed());
     let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
 
-    // validate() reads describe_namespace and sets graceful_poll_shutdown = true
+    // validate() reads describe_namespace and sets capabilities.graceful_poll_shutdown = true
     worker.validate().await.unwrap();
 
     let poll_fut = worker.poll_workflow_activation();

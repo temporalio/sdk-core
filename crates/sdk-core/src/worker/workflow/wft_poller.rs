@@ -4,12 +4,12 @@ use crate::{
     pollers::{BoxedWFPoller, LongPollBuffer, Poller, WorkflowTaskOptions, WorkflowTaskPoller},
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::{workflow_poller, workflow_sticky_poller},
-    worker::{WorkflowSlotKind, client::WorkerClient, wft_poller_behavior},
+    worker::{NamespaceCapabilities, WorkflowSlotKind, client::WorkerClient, wft_poller_behavior},
 };
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{Stream, stream};
 use std::{
-    sync::{Arc, OnceLock, atomic::AtomicBool},
+    sync::{Arc, OnceLock},
     time::SystemTime,
 };
 use temporalio_common::protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -26,8 +26,7 @@ pub(crate) fn make_wft_poller(
     wft_slots: &MeteredPermitDealer<WorkflowSlotKind>,
     last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
     sticky_last_successful_poll_time: Arc<AtomicCell<Option<SystemTime>>>,
-    graceful_poll_shutdown: Arc<AtomicBool>,
-    server_supports_autoscaling: Arc<AtomicBool>,
+    capabilities: Arc<NamespaceCapabilities>,
 ) -> impl Stream<
     Item = Result<
         (
@@ -61,8 +60,7 @@ pub(crate) fn make_wft_poller(
             wft_poller_shared: wft_poller_shared.clone(),
         },
         last_successful_poll_time,
-        graceful_poll_shutdown.clone(),
-        server_supports_autoscaling.clone(),
+        capabilities.clone(),
     );
     let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
         let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
@@ -78,19 +76,14 @@ pub(crate) fn make_wft_poller(
             }),
             WorkflowTaskOptions { wft_poller_shared },
             sticky_last_successful_poll_time,
-            graceful_poll_shutdown,
-            server_supports_autoscaling,
+            capabilities,
         )
     });
     let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
         wf_task_poll_buffer,
         sticky_queue_poller,
     ));
-    new_wft_poller(
-        wf_task_poll_buffer,
-        metrics.clone(),
-        shutdown_token.child_token(),
-    )
+    new_wft_poller(wf_task_poll_buffer, metrics.clone())
 }
 
 /// Info that needs to be shared across the sticky and non-sticky wft pollers to prioritize sticky
@@ -199,7 +192,6 @@ impl WFTPollerShared {
 fn new_wft_poller(
     poller: BoxedWFPoller,
     metrics: MetricsContext,
-    shutdown_token: CancellationToken,
 ) -> impl Stream<
     Item = Result<
         (
@@ -209,47 +201,44 @@ fn new_wft_poller(
         tonic::Status,
     >,
 > {
-    stream::unfold(
-        (poller, metrics, shutdown_token),
-        |(poller, metrics, shutdown_token)| async move {
-            loop {
-                return match poller.poll().await {
-                    Some(Ok((wft, permit))) => {
-                        if wft == PollWorkflowTaskQueueResponse::default() {
-                            // We get the default proto in the event that the long poll times out.
-                            debug!("Poll wft timeout");
-                            metrics.wf_tq_poll_empty();
+    stream::unfold((poller, metrics), |(poller, metrics)| async move {
+        loop {
+            return match poller.poll().await {
+                Some(Ok((wft, permit))) => {
+                    if wft == PollWorkflowTaskQueueResponse::default() {
+                        // We get the default proto in the event that the long poll times out.
+                        debug!("Poll wft timeout");
+                        metrics.wf_tq_poll_empty();
+                        continue;
+                    }
+                    if let Some(dur) = wft.sched_to_start() {
+                        metrics.wf_task_sched_to_start_latency(dur);
+                    }
+                    let work = match validate_wft(wft) {
+                        Ok(w) => w,
+                        Err(e) => {
+                            error!(error=?e, "Server returned an unparseable workflow task");
                             continue;
                         }
-                        if let Some(dur) = wft.sched_to_start() {
-                            metrics.wf_task_sched_to_start_latency(dur);
-                        }
-                        let work = match validate_wft(wft) {
-                            Ok(w) => w,
-                            Err(e) => {
-                                error!(error=?e, "Server returned an unparseable workflow task");
-                                continue;
-                            }
-                        };
-                        metrics.wf_tq_poll_ok();
-                        Some((Ok((work, permit)), (poller, metrics, shutdown_token)))
-                    }
-                    Some(Err(e)) => {
-                        warn!(error=?e, "Error while polling for workflow tasks");
-                        Some((Err(e), (poller, metrics, shutdown_token)))
-                    }
-                    // If poller returns None, it's dead, thus we also return None to terminate
-                    // this stream.
-                    None => {
-                        // Make sure we call the actual shutdown function here to propagate any
-                        // panics inside the polling tasks as errors.
-                        poller.shutdown_box().await;
-                        None
-                    }
-                };
-            }
-        },
-    )
+                    };
+                    metrics.wf_tq_poll_ok();
+                    Some((Ok((work, permit)), (poller, metrics)))
+                }
+                Some(Err(e)) => {
+                    warn!(error=?e, "Error while polling for workflow tasks");
+                    Some((Err(e), (poller, metrics)))
+                }
+                // If poller returns None, it's dead, thus we also return None to terminate
+                // this stream.
+                None => {
+                    // Make sure we call the actual shutdown function here to propagate any
+                    // panics inside the polling tasks as errors.
+                    poller.shutdown_box().await;
+                    None
+                }
+            };
+        }
+    })
 }
 
 #[allow(clippy::result_large_err)]
@@ -287,7 +276,6 @@ mod tests {
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
-            CancellationToken::new(),
         );
         pin_mut!(stream);
         assert_matches!(stream.next().await, None);
@@ -306,7 +294,6 @@ mod tests {
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
-            CancellationToken::new(),
         );
         pin_mut!(stream);
 
@@ -324,7 +311,6 @@ mod tests {
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
-            CancellationToken::new(),
         );
         pin_mut!(stream);
         assert_matches!(stream.next().await, Some(Err(_)));

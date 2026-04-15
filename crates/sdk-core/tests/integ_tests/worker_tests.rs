@@ -1025,6 +1025,13 @@ async fn shutdown_during_active_timer_activity_workflows() {
     let mut worker = starter.worker().await;
     worker.register_workflow::<ShutdownTimerActivityLoopWf>();
 
+    let core = worker.core_worker();
+    core.validate().await.unwrap();
+    assert!(
+        core.get_namespace_capabilities().graceful_poll_shutdown(),
+        "Server must support graceful poll shutdown for this test"
+    );
+
     let task_queue = starter.get_task_queue().to_owned();
     let mut wf_ids = Vec::with_capacity(num_workflows);
     for i in 0..num_workflows {
