@@ -48,11 +48,10 @@ impl HeartbeatingWorkflow {
             .start_activity(
                 HeartbeatingActivities::long_running_activity,
                 total_steps,
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(30)),
-                    heartbeat_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::builder()
+                    .start_to_close_timeout(Duration::from_secs(30))
+                    .heartbeat_timeout(Duration::from_secs(5))
+                    .build(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;

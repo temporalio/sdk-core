@@ -1024,11 +1024,10 @@ async fn la_resolve_same_time_as_other_cancel() {
             let mut normal_act = ctx.start_activity(
                 DelayWithCancellation::delay,
                 Duration::from_secs(9),
-                ActivityOptions {
-                    cancellation_type: ActivityCancellationType::TryCancel,
-                    start_to_close_timeout: Some(Duration::from_secs(9000)),
-                    ..Default::default()
-                },
+                ActivityOptions::builder()
+                    .cancellation_type(ActivityCancellationType::TryCancel)
+                    .start_to_close_timeout(Duration::from_secs(9000))
+                    .build(),
             );
             // Make new task
             ctx.timer(Duration::from_millis(1)).await;

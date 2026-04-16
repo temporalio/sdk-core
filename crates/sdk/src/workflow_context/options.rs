@@ -31,7 +31,9 @@ pub(crate) trait IntoWorkflowCommand {
 }
 
 /// Options for scheduling an activity
-#[derive(Default, Debug)]
+#[derive(Default, Debug, bon::Builder)]
+#[non_exhaustive]
+#[builder(on(String, into), state_mod(vis = "pub"))]
 pub struct ActivityOptions {
     /// Identifier to use for tracking the activity in Workflow history.
     /// The `activityId` can be accessed by the activity function.
@@ -67,6 +69,7 @@ pub struct ActivityOptions {
     /// heartbeat or activity start.
     pub heartbeat_timeout: Option<Duration>,
     /// Determines what the SDK does when the Activity is cancelled.
+    #[builder(default)]
     pub cancellation_type: ActivityCancellationType,
     /// Activity retry policy
     pub retry_policy: Option<RetryPolicy>,
@@ -75,10 +78,21 @@ pub struct ActivityOptions {
     /// Priority for the activity
     pub priority: Option<Priority>,
     /// If true, disable eager execution for this activity
+    #[builder(default)]
     pub do_not_eagerly_execute: bool,
 }
 
 impl ActivityOptions {
+    /// Creates activity options with only `start_to_close_timeout` set.
+    pub fn start_to_close_timeout(duration: Duration) -> Self {
+        Self::builder().start_to_close_timeout(duration).build()
+    }
+
+    /// Creates activity options with only `schedule_to_close_timeout` set.
+    pub fn schedule_to_close_timeout(duration: Duration) -> Self {
+        Self::builder().schedule_to_close_timeout(duration).build()
+    }
+
     pub(crate) fn into_command(
         self,
         activity_type: String,
@@ -525,6 +539,56 @@ impl ContinueAsNewOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activity_options_builder_defaults_match_default_impl() {
+        let built = ActivityOptions::builder().build();
+        let defaulted = ActivityOptions::default();
+
+        assert_eq!(built.activity_id, defaulted.activity_id);
+        assert_eq!(built.task_queue, defaulted.task_queue);
+        assert_eq!(
+            built.schedule_to_start_timeout,
+            defaulted.schedule_to_start_timeout
+        );
+        assert_eq!(
+            built.start_to_close_timeout,
+            defaulted.start_to_close_timeout
+        );
+        assert_eq!(
+            built.schedule_to_close_timeout,
+            defaulted.schedule_to_close_timeout
+        );
+        assert_eq!(built.heartbeat_timeout, defaulted.heartbeat_timeout);
+        assert_eq!(built.cancellation_type, defaulted.cancellation_type);
+        assert_eq!(built.retry_policy, defaulted.retry_policy);
+        assert_eq!(built.summary, defaulted.summary);
+        assert_eq!(built.priority, defaulted.priority);
+        assert_eq!(
+            built.do_not_eagerly_execute,
+            defaulted.do_not_eagerly_execute
+        );
+    }
+
+    #[test]
+    fn activity_options_start_to_close_timeout_constructor_sets_only_that_timeout() {
+        let opts = ActivityOptions::start_to_close_timeout(Duration::from_secs(5));
+
+        assert_eq!(opts.start_to_close_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(opts.schedule_to_close_timeout, None);
+        assert_eq!(opts.schedule_to_start_timeout, None);
+        assert_eq!(opts.heartbeat_timeout, None);
+    }
+
+    #[test]
+    fn activity_options_schedule_to_close_timeout_constructor_sets_only_that_timeout() {
+        let opts = ActivityOptions::schedule_to_close_timeout(Duration::from_secs(5));
+
+        assert_eq!(opts.start_to_close_timeout, None);
+        assert_eq!(opts.schedule_to_close_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(opts.schedule_to_start_timeout, None);
+        assert_eq!(opts.heartbeat_timeout, None);
+    }
 
     #[test]
     fn child_workflow_run_timeout_uses_run_timeout_field() {
