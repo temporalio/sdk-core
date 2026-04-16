@@ -5,7 +5,7 @@ use crate::{
     protos::{
         coresdk::child_workflow::StartChildWorkflowExecutionFailedCause,
         temporal::api::{
-            common::v1::Payloads,
+            common::v1::{Payload, Payloads},
             enums::v1::ApplicationErrorCategory,
             failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
         },
@@ -157,6 +157,34 @@ impl From<ApplicationFailure> for Failure {
         ));
         failure
     }
+}
+
+/// A typed outbound error surface used before encoding to a Temporal failure proto.
+#[derive(Debug)]
+pub enum OutgoingError {
+    /// An error produced while completing an activity.
+    Activity(OutgoingActivityError),
+    /// An error produced while failing a workflow execution.
+    Workflow(OutgoingWorkflowError),
+}
+
+/// A typed outbound activity error.
+#[derive(Debug)]
+pub enum OutgoingActivityError {
+    /// An activity application failure.
+    Application(Box<ApplicationFailure>),
+    /// An activity cancellation with optional details.
+    Cancelled {
+        /// Optional cancellation details payload.
+        details: Option<Payload>,
+    },
+}
+
+/// A typed outbound workflow failure.
+#[derive(Debug)]
+pub enum OutgoingWorkflowError {
+    /// A workflow failure represented as an erased Rust error.
+    Failed(Box<dyn std::error::Error>),
 }
 
 /// A normalized incoming Temporal failure decoded from a protobuf [`Failure`].

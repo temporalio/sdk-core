@@ -1,6 +1,7 @@
 use crate::{
-    BaseWorkflowContext, CancellableID, RustWfCmd, TimerResult, UnblockEvent, WorkflowResult,
-    WorkflowTermination, convert_failure_with_fallback, panic_formatter,
+    BaseWorkflowContext, CancellableID, OutgoingError, OutgoingWorkflowError, RustWfCmd,
+    TimerResult, UnblockEvent, WorkflowResult, WorkflowTermination, convert_failure_with_fallback,
+    panic_formatter,
     workflow_executor::{SdkWakeGuard, WakeTracker},
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
@@ -660,8 +661,8 @@ impl WorkflowFuture {
                             run_id,
                             convert_failure_with_fallback(
                                 &self.data_converter,
-                                Box::new(crate::ApplicationFailure::non_retryable(anyhow!(
-                                    "{errmsg}"
+                                OutgoingError::Workflow(OutgoingWorkflowError::Failed(Box::new(
+                                    crate::ApplicationFailure::non_retryable(anyhow!("{errmsg}")),
                                 ))),
                                 SerializationContextData::Workflow,
                             ),
@@ -801,7 +802,9 @@ impl WorkflowFuture {
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
                             failure: Some(convert_failure_with_fallback(
                                 &self.data_converter,
-                                e.into_boxed_dyn_error(),
+                                OutgoingError::Workflow(OutgoingWorkflowError::Failed(
+                                    e.into_boxed_dyn_error(),
+                                )),
                                 SerializationContextData::Workflow,
                             )),
                         })

@@ -99,7 +99,7 @@ use workflow_future::WorkflowFunction;
 
 pub use error::{
     ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
-    ChildWorkflowSignalError,
+    ChildWorkflowSignalError, OutgoingActivityError, OutgoingError, OutgoingWorkflowError,
 };
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
@@ -959,10 +959,13 @@ impl ActivityHalf {
                     let result = match output {
                         Err(e) => ActivityExecutionResult::fail(convert_failure_with_fallback(
                             &data_converter,
-                            Box::new(ApplicationFailure::non_retryable(anyhow!(
-                                "Activity function panicked: {}",
-                                panic_formatter(e)
-                            ))),
+                            OutgoingError::Activity(OutgoingActivityError::Application(
+                                ApplicationFailure::non_retryable(anyhow!(
+                                    "Activity function panicked: {}",
+                                    panic_formatter(e)
+                                ))
+                                .into(),
+                            )),
                             activity_context,
                         )),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
@@ -970,12 +973,20 @@ impl ActivityHalf {
                             ActivityError::Application(app) => {
                                 ActivityExecutionResult::fail(convert_failure_with_fallback(
                                     &data_converter,
-                                    Box::new(app),
+                                    OutgoingError::Activity(OutgoingActivityError::Application(
+                                        app,
+                                    )),
                                     activity_context,
                                 ))
                             }
                             ActivityError::Cancelled { details } => {
-                                ActivityExecutionResult::cancel_from_details(details)
+                                ActivityExecutionResult::cancel(convert_failure_with_fallback(
+                                    &data_converter,
+                                    OutgoingError::Activity(OutgoingActivityError::Cancelled {
+                                        details,
+                                    }),
+                                    activity_context,
+                                ))
                             }
                             ActivityError::WillCompleteAsync => {
                                 ActivityExecutionResult::will_complete_async()
@@ -1325,13 +1336,18 @@ trait PrintablePanicType: Display {
 
 pub(crate) fn convert_failure_with_fallback(
     data_converter: &DataConverter,
-    error: Box<dyn std::error::Error>,
+    error: OutgoingError,
     context: SerializationContextData,
 ) -> Failure {
-    let original_error = error.to_string();
+    let original_error = match &error {
+        OutgoingError::Activity(OutgoingActivityError::Application(app)) => app.to_string(),
+        OutgoingError::Activity(OutgoingActivityError::Cancelled { .. }) => {
+            "Activity cancelled".to_string()
+        }
+        OutgoingError::Workflow(OutgoingWorkflowError::Failed(err)) => err.to_string(),
+    };
     data_converter
-        .failure_converter()
-        .to_failure(error, data_converter.payload_converter(), &context)
+        .to_failure(&context, error)
         .unwrap_or_else(|converter_error| {
             Failure::application_failure(
                 format!(

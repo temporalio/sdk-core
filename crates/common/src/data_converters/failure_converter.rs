@@ -3,9 +3,12 @@ use crate::{
     error::{
         ActivityExecutionError, ApplicationFailure, CancelledError, ChildWorkflowExecutionError,
         ChildWorkflowSignalError, IncomingActivityError, IncomingChildWorkflowExecutionError,
-        IncomingError, ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
+        IncomingError, OutgoingActivityError, OutgoingError, OutgoingWorkflowError,
+        ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
     },
-    protos::temporal::api::failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
+    protos::temporal::api::failure::v1::{
+        ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo,
+    },
 };
 
 /// Converts between Rust errors and Temporal [`Failure`] protobufs.
@@ -13,7 +16,7 @@ pub trait FailureConverter {
     /// Convert an error into a Temporal failure protobuf.
     fn to_failure(
         &self,
-        error: Box<dyn std::error::Error>,
+        error: OutgoingError,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError>;
@@ -128,11 +131,16 @@ enum ClassifiedFailure<'a> {
 impl FailureConverter for DefaultFailureConverter {
     fn to_failure(
         &self,
-        error: Box<dyn std::error::Error>,
+        error: OutgoingError,
         _: &PayloadConverter,
         _: &SerializationContextData,
     ) -> Result<Failure, PayloadConversionError> {
-        Ok(encode_classified_failure(classify_error(error.as_ref())))
+        Ok(match error {
+            OutgoingError::Activity(activity) => encode_outgoing_activity_error(activity),
+            OutgoingError::Workflow(OutgoingWorkflowError::Failed(err)) => {
+                encode_classified_failure(classify_error(err.as_ref()))
+            }
+        })
     }
 
     fn to_error(
@@ -146,18 +154,27 @@ impl FailureConverter for DefaultFailureConverter {
 }
 
 fn classify_error<'a>(err: &'a (dyn std::error::Error + 'static)) -> ClassifiedFailure<'a> {
-    if let Some(app) = err.downcast_ref::<ApplicationFailure>() {
-        ClassifiedFailure::Application(app)
-    } else if let Some(activity) = err.downcast_ref::<ActivityExecutionError>() {
-        ClassifiedFailure::ActivityExecution(activity)
-    } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
-        ClassifiedFailure::ChildWorkflowExecution(child)
-    } else if let Some(signal) = err.downcast_ref::<ChildWorkflowSignalError>() {
-        ClassifiedFailure::ChildWorkflowSignal(signal)
+    if let Some(classified) = classify_known_error(err) {
+        classified
     } else if let Some(classified) = classify_source_chain(err) {
         classified
     } else {
         ClassifiedFailure::Generic(err)
+    }
+}
+
+fn classify_known_error<'a>(
+    err: &'a (dyn std::error::Error + 'static),
+) -> Option<ClassifiedFailure<'a>> {
+    if let Some(app) = err.downcast_ref::<ApplicationFailure>() {
+        Some(ClassifiedFailure::Application(app))
+    } else if let Some(activity) = err.downcast_ref::<ActivityExecutionError>() {
+        Some(ClassifiedFailure::ActivityExecution(activity))
+    } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
+        Some(ClassifiedFailure::ChildWorkflowExecution(child))
+    } else {
+        err.downcast_ref::<ChildWorkflowSignalError>()
+            .map(ClassifiedFailure::ChildWorkflowSignal)
     }
 }
 
@@ -166,19 +183,8 @@ fn classify_source_chain<'a>(
 ) -> Option<ClassifiedFailure<'a>> {
     let mut current = err.source();
     while let Some(cause) = current {
-        if let Some(app) = cause.downcast_ref::<ApplicationFailure>() {
-            return Some(ClassifiedFailure::Application(app));
-        } else if let Some(activity) = cause.downcast_ref::<ActivityExecutionError>() {
-            return Some(ClassifiedFailure::ActivityExecution(activity));
-        } else if let Some(child) = cause.downcast_ref::<ChildWorkflowExecutionError>() {
-            return Some(ClassifiedFailure::ChildWorkflowExecution(child));
-        } else {
-            if let Some(signal) = cause
-                .downcast_ref::<ChildWorkflowSignalError>()
-                .map(ClassifiedFailure::ChildWorkflowSignal)
-            {
-                return Some(signal);
-            }
+        if let Some(classified) = classify_known_error(cause) {
+            return Some(classified);
         }
         current = cause.source();
     }
@@ -251,6 +257,19 @@ fn encode_child_workflow_signal_failure(err: &ChildWorkflowSignalError) -> Failu
     match err {
         ChildWorkflowSignalError::Failed(failure) => failure.as_ref().clone(),
         ChildWorkflowSignalError::Serialization(err) => encode_generic_application_failure(err),
+    }
+}
+
+fn encode_outgoing_activity_error(err: OutgoingActivityError) -> Failure {
+    match err {
+        OutgoingActivityError::Application(app) => encode_application_failure(&app),
+        OutgoingActivityError::Cancelled { details } => Failure {
+            message: "Activity cancelled".to_string(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                details: details.map(Into::into),
+            })),
+            ..Default::default()
+        },
     }
 }
 
@@ -336,7 +355,7 @@ mod tests {
     fn convert(err: impl Into<Box<dyn std::error::Error>>) -> Failure {
         DefaultFailureConverter
             .to_failure(
-                err.into(),
+                OutgoingError::Workflow(OutgoingWorkflowError::Failed(err.into())),
                 &PayloadConverter::default(),
                 &SerializationContextData::Workflow,
             )
@@ -345,7 +364,7 @@ mod tests {
 
     #[test]
     fn plain_errors_become_application_failures() {
-        let failure = convert(Box::new(PlainError) as Box<dyn std::error::Error>);
+        let failure = convert(PlainError);
         assert_eq!(failure.message, "plain boom");
         assert!(matches!(
             failure.failure_info,
@@ -355,7 +374,7 @@ mod tests {
 
     #[test]
     fn application_failures_preserve_metadata() {
-        let failure = convert(Box::new(
+        let failure = convert(
             ApplicationFailure::builder(anyhow::anyhow!("app boom"))
                 .type_name("MyType".to_owned())
                 .non_retryable(true)
@@ -367,7 +386,7 @@ mod tests {
                     }],
                 })
                 .build(),
-        ) as Box<dyn std::error::Error>);
+        );
         let Some(FailureInfo::ApplicationFailureInfo(info)) = failure.failure_info else {
             panic!("expected application failure info");
         };
@@ -380,10 +399,7 @@ mod tests {
 
     #[test]
     fn application_failures_do_not_duplicate_their_source_as_cause() {
-        let failure = convert(
-            Box::new(ApplicationFailure::new(anyhow::anyhow!("app boom")))
-                as Box<dyn std::error::Error>,
-        );
+        let failure = convert(ApplicationFailure::new(anyhow::anyhow!("app boom")));
 
         assert_eq!(failure.message, "app boom");
         assert!(failure.cause.is_none());
@@ -401,7 +417,7 @@ mod tests {
         let wrapped = WrapperError(ActivityExecutionError::Failed(Box::new(
             activity_failure.clone(),
         )));
-        let converted = convert(Box::new(wrapped) as Box<dyn std::error::Error>);
+        let converted = convert(wrapped);
         assert_eq!(converted, activity_failure);
     }
 
@@ -417,7 +433,7 @@ mod tests {
         let app = ApplicationFailure::new(anyhow::Error::new(ActivityExecutionError::Failed(
             Box::new(activity_failure.clone()),
         )));
-        let converted = convert(Box::new(app) as Box<dyn std::error::Error>);
+        let converted = convert(app);
         assert!(matches!(
             converted.failure_info,
             Some(FailureInfo::ApplicationFailureInfo(_))
@@ -431,7 +447,7 @@ mod tests {
             workflow_id: "wf-id".to_owned(),
             workflow_type: "wf-type".to_owned(),
             cause: crate::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists,
-        }) as Box<dyn std::error::Error>);
+        }));
         assert!(matches!(
             failure.failure_info,
             Some(FailureInfo::ApplicationFailureInfo(_))
@@ -625,5 +641,22 @@ mod tests {
             panic!("expected failed child-workflow signal error");
         };
         assert_eq!(decoded_failure.as_ref(), &failure);
+    }
+
+    #[test]
+    fn outgoing_cancelled_activity_errors_encode_to_cancelled_failures() {
+        let failure = DefaultFailureConverter
+            .to_failure(
+                OutgoingError::Activity(OutgoingActivityError::Cancelled { details: None }),
+                &PayloadConverter::default(),
+                &SerializationContextData::Activity,
+            )
+            .unwrap();
+
+        assert_eq!(failure.message, "Activity cancelled");
+        assert!(matches!(
+            failure.failure_info,
+            Some(FailureInfo::CanceledFailureInfo(_))
+        ));
     }
 }

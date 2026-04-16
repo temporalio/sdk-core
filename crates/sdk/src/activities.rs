@@ -231,7 +231,7 @@ pub struct ActivityInfo {
 #[derive(Debug)]
 pub enum ActivityError {
     /// Return this error to attach application-failure metadata to an activity failure.
-    Application(ApplicationFailure),
+    Application(Box<ApplicationFailure>),
     /// Return this error to indicate your activity is cancelling
     Cancelled {
         /// Some data to save as the cancellation reason
@@ -250,7 +250,7 @@ impl ActivityError {
 
     /// Construct an application activity error.
     pub fn application(err: ApplicationFailure) -> Self {
-        Self::Application(err)
+        Self::Application(err.into())
     }
 }
 
@@ -259,7 +259,7 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(source: E) -> Self {
-        Self::Application(ApplicationFailure::new(source))
+        Self::Application(ApplicationFailure::new(source).into())
     }
 }
 

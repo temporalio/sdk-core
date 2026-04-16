@@ -2,5 +2,5 @@
 
 pub use temporalio_common::error::{
     ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
-    ChildWorkflowSignalError,
+    ChildWorkflowSignalError, OutgoingActivityError, OutgoingError, OutgoingWorkflowError,
 };

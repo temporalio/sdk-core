@@ -130,6 +130,16 @@ impl DataConverter {
         Ok(hint.adapt(normalized))
     }
 
+    /// Encode a typed Rust error surface into a Temporal failure.
+    pub fn to_failure(
+        &self,
+        context: &SerializationContextData,
+        error: crate::error::OutgoingError,
+    ) -> Result<crate::protos::temporal::api::failure::v1::Failure, PayloadConversionError> {
+        self.failure_converter
+            .to_failure(error, &self.payload_converter, context)
+    }
+
     /// Returns the codec component of this data converter.
     pub fn codec(&self) -> &(dyn PayloadCodec + Send + Sync) {
         self.codec.as_ref()

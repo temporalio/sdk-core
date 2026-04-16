@@ -18,7 +18,7 @@ use temporalio_common::{
         PayloadCodec, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
-    error::IncomingError,
+    error::{IncomingError, OutgoingError},
     protos::coresdk::AsJsonPayloadExt,
     protos::temporal::api::{
         common::v1::{Payload, RetryPolicy},
@@ -106,7 +106,7 @@ struct FailingFailureConverter;
 impl FailureConverter for FailingFailureConverter {
     fn to_failure(
         &self,
-        _err: Box<dyn std::error::Error>,
+        _err: OutgoingError,
         _payload_converter: &PayloadConverter,
         _context: &SerializationContextData,
     ) -> Result<
