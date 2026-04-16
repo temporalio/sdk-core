@@ -21,7 +21,7 @@ futures-util = { version = "0.3", default-features = false, features = [
   "async-await-macro",
 ] }
 gethostname = "1.0.2"
-parking_lot = { version = "0.12", features = ["send_guard"] }
+parking_lot = { version = "0.12" }
 prost-types = { workspace = true }
 serde = "1.0"
 thiserror = "2"
