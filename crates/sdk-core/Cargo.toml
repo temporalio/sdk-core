@@ -65,7 +65,7 @@ opentelemetry-otlp = { version = "0.31", features = [
   "http-proto",
   "grpc-tonic",
 ], optional = true }
-parking_lot = { version = "0.12", features = ["send_guard"] }
+parking_lot = { version = "0.12" }
 pid = "4.0"
 pin-project = "1.1"
 prost = { workspace = true }
