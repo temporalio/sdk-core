@@ -18,6 +18,7 @@ use temporalio_common::{
         PayloadCodec, PayloadConversionError, PayloadConverter, SerializationContext,
         SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
+    error::IncomingError,
     protos::coresdk::AsJsonPayloadExt,
     protos::temporal::api::{
         common::v1::{Payload, RetryPolicy},
@@ -119,11 +120,11 @@ impl FailureConverter for FailingFailureConverter {
 
     fn to_error(
         &self,
-        _failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
-        _payload_converter: &PayloadConverter,
-        _context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        unreachable!("failure decoding is out of scope for these tests")
+        failure: temporalio_common::protos::temporal::api::failure::v1::Failure,
+        payload_converter: &PayloadConverter,
+        context: &SerializationContextData,
+    ) -> Result<IncomingError, PayloadConversionError> {
+        DefaultFailureConverter.to_error(failure, payload_converter, context)
     }
 }
 

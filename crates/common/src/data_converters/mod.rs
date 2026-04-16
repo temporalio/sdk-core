@@ -3,7 +3,9 @@
 
 mod failure_converter;
 
-pub use failure_converter::{DefaultFailureConverter, FailureConverter};
+pub use failure_converter::{
+    ActivityExecutionDecodeHint, DefaultFailureConverter, FailureConverter, FailureDecodeHint,
+};
 
 use crate::protos::temporal::api::common::v1::Payload;
 use futures::{FutureExt, future::BoxFuture};
@@ -112,6 +114,19 @@ impl DataConverter {
     /// Returns the failure converter component of this data converter.
     pub fn failure_converter(&self) -> &(dyn FailureConverter + Send + Sync) {
         self.failure_converter.as_ref()
+    }
+
+    /// Decode a Temporal failure into a caller-facing Rust error surface.
+    pub fn to_error<H: FailureDecodeHint>(
+        &self,
+        context: &SerializationContextData,
+        failure: crate::protos::temporal::api::failure::v1::Failure,
+        hint: H,
+    ) -> Result<H::Output, PayloadConversionError> {
+        let normalized =
+            self.failure_converter
+                .to_error(failure, &self.payload_converter, context)?;
+        Ok(hint.adapt(normalized))
     }
 
     /// Returns the codec component of this data converter.

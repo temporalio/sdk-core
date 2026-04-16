@@ -94,6 +94,7 @@ impl WorkflowFunction {
             run_id,
             init_workflow_job,
             cancel_rx,
+            data_converter.clone(),
             payload_converter.clone(),
         );
 

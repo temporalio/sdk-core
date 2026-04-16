@@ -1,8 +1,9 @@
 use super::{PayloadConversionError, PayloadConverter, SerializationContextData};
 use crate::{
     error::{
-        ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
-        ChildWorkflowSignalError,
+        ActivityExecutionError, ApplicationFailure, CancelledError, ChildWorkflowExecutionError,
+        ChildWorkflowSignalError, IncomingActivityError, IncomingChildWorkflowExecutionError,
+        IncomingError, ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
     },
     protos::temporal::api::failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
 };
@@ -23,11 +24,52 @@ pub trait FailureConverter {
         failure: Failure,
         payload_converter: &PayloadConverter,
         context: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError>;
+    ) -> Result<IncomingError, PayloadConversionError>;
 }
 
 /// Default failure converter.
 pub struct DefaultFailureConverter;
+
+/// Adapts a normalized incoming failure into a caller-facing error surface.
+pub trait FailureDecodeHint {
+    /// The caller-facing error type produced by this hint.
+    type Output;
+
+    /// Adapt a normalized incoming error to the caller-facing output.
+    fn adapt(self, normalized: IncomingError) -> Self::Output;
+}
+
+/// Decode hint for activity execution results.
+#[derive(Debug, Clone, Copy)]
+pub struct ActivityExecutionDecodeHint {
+    /// Whether the workflow-side resolution was cancelled rather than failed.
+    pub cancelled: bool,
+}
+
+impl FailureDecodeHint for ActivityExecutionDecodeHint {
+    type Output = ActivityExecutionError;
+
+    fn adapt(self, normalized: IncomingError) -> Self::Output {
+        match normalized {
+            IncomingError::Activity(activity) => {
+                let failure = Box::new(activity.into_failure());
+                if self.cancelled {
+                    ActivityExecutionError::Cancelled(failure)
+                } else {
+                    ActivityExecutionError::Failed(failure)
+                }
+            }
+            other => {
+                let failure = Box::new(other.into_failure());
+                if self.cancelled {
+                    ActivityExecutionError::Cancelled(failure)
+                } else {
+                    ActivityExecutionError::Failed(failure)
+                }
+            }
+        }
+    }
+}
 
 enum ClassifiedFailure<'a> {
     Application(&'a ApplicationFailure),
@@ -49,11 +91,11 @@ impl FailureConverter for DefaultFailureConverter {
 
     fn to_error(
         &self,
-        _: Failure,
+        failure: Failure,
         _: &PayloadConverter,
         _: &SerializationContextData,
-    ) -> Result<Box<dyn std::error::Error>, PayloadConversionError> {
-        todo!()
+    ) -> Result<IncomingError, PayloadConversionError> {
+        Ok(decode_failure(failure))
     }
 }
 
@@ -114,14 +156,16 @@ fn encode_classified_failure(classified: ClassifiedFailure<'_>) -> Failure {
 }
 
 fn encode_application_failure(app: &ApplicationFailure) -> Failure {
+    let source = app.source_error().as_ref();
+    let cause = match classify_error(source) {
+        ClassifiedFailure::Application(_) | ClassifiedFailure::Generic(_) => {
+            source.source().map(encode_nested_failure).map(Box::new)
+        }
+        _ => Some(Box::new(encode_nested_failure(source))),
+    };
     let mut failure = Failure {
         message: app.to_string(),
-        cause: app
-            .source_error()
-            .chain()
-            .nth(1)
-            .map(encode_nested_failure)
-            .map(Box::new),
+        cause,
         failure_info: Some(FailureInfo::ApplicationFailureInfo(
             ApplicationFailureInfo {
                 r#type: app.type_name().unwrap_or_default().to_owned(),
@@ -191,13 +235,46 @@ fn encode_generic_application_failure(err: &(dyn std::error::Error + 'static)) -
     }
 }
 
+fn decode_failure(failure: Failure) -> IncomingError {
+    let cause = failure.cause.clone().map(|cause| decode_failure(*cause));
+    match failure.failure_info.as_ref() {
+        Some(FailureInfo::ApplicationFailureInfo(_)) | None => {
+            IncomingError::Application(ApplicationFailure::from_failure(failure, cause))
+        }
+        Some(FailureInfo::TimeoutFailureInfo(_)) => {
+            IncomingError::Timeout(TimeoutError::new(failure, cause))
+        }
+        Some(FailureInfo::CanceledFailureInfo(_)) => {
+            IncomingError::Cancelled(CancelledError::new(failure, cause))
+        }
+        Some(FailureInfo::TerminatedFailureInfo(_)) => {
+            IncomingError::Terminated(TerminatedError::new(failure, cause))
+        }
+        Some(FailureInfo::ServerFailureInfo(_)) => {
+            IncomingError::Server(ServerError::new(failure, cause))
+        }
+        Some(FailureInfo::ResetWorkflowFailureInfo(_)) => {
+            IncomingError::ResetWorkflow(ResetWorkflowError::new(failure, cause))
+        }
+        Some(FailureInfo::ActivityFailureInfo(_)) => {
+            IncomingError::Activity(IncomingActivityError::new(failure, cause))
+        }
+        Some(FailureInfo::ChildWorkflowExecutionFailureInfo(_)) => {
+            IncomingError::ChildWorkflowExecution(IncomingChildWorkflowExecutionError::new(
+                failure, cause,
+            ))
+        }
+        Some(_) => IncomingError::Application(ApplicationFailure::from_failure(failure, cause)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protos::temporal::api::{
         common::v1::Payload,
         enums::v1::ApplicationErrorCategory,
-        failure::v1::{ActivityFailureInfo, failure::FailureInfo},
+        failure::v1::{ActivityFailureInfo, TimeoutFailureInfo, failure::FailureInfo},
     };
     #[derive(Debug, thiserror::Error)]
     #[error("plain boom")]
@@ -311,5 +388,109 @@ mod tests {
             Some(FailureInfo::ApplicationFailureInfo(_))
         ));
         assert!(failure.message.contains("Child workflow start failed"));
+    }
+
+    #[test]
+    fn application_failures_decode_with_metadata_and_proto() {
+        let failure = Failure {
+            message: "app boom".to_owned(),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    r#type: "MyType".to_owned(),
+                    non_retryable: true,
+                    ..Default::default()
+                },
+            )),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Application(app) = decoded else {
+            panic!("expected application error");
+        };
+        assert_eq!(app.type_name(), Some("MyType"));
+        assert!(app.is_non_retryable());
+        assert_eq!(app.failure(), Some(&failure));
+    }
+
+    #[test]
+    fn application_failures_decode_with_normalized_cause() {
+        let failure = Failure {
+            message: "app boom".to_owned(),
+            cause: Some(Box::new(Failure {
+                message: "timed out".to_owned(),
+                failure_info: Some(FailureInfo::TimeoutFailureInfo(
+                    TimeoutFailureInfo::default(),
+                )),
+                ..Default::default()
+            })),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Application(app) = decoded else {
+            panic!("expected application error");
+        };
+        assert_eq!(app.failure(), Some(&failure));
+        assert!(matches!(app.cause(), Some(IncomingError::Timeout(_))));
+    }
+
+    #[test]
+    fn activity_decode_hint_preserves_activity_failure_proto() {
+        let failure = Failure {
+            message: "activity failed".to_owned(),
+            cause: Some(Box::new(Failure {
+                message: "timed out".to_owned(),
+                failure_info: Some(FailureInfo::TimeoutFailureInfo(
+                    TimeoutFailureInfo::default(),
+                )),
+                ..Default::default()
+            })),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(
+                ActivityFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ActivityExecutionDecodeHint { cancelled: false },
+            )
+            .unwrap();
+
+        let ActivityExecutionError::Failed(decoded_failure) = decoded else {
+            panic!("expected failed activity execution error");
+        };
+        assert_eq!(decoded_failure.as_ref(), &failure);
+        assert!(
+            decoded_failure
+                .cause
+                .as_ref()
+                .is_some_and(|cause| cause.is_timeout().is_some())
+        );
     }
 }

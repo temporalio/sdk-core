@@ -26,6 +26,8 @@ pub struct ApplicationFailure {
     #[builder(default = ApplicationErrorCategory::Unspecified)]
     category: ApplicationErrorCategory,
     details: Option<Payloads>,
+    failure: Option<Failure>,
+    cause: Option<Box<IncomingError>>,
 }
 
 impl ApplicationFailure {
@@ -38,6 +40,8 @@ impl ApplicationFailure {
             next_retry_delay: None,
             category: ApplicationErrorCategory::Unspecified,
             details: None,
+            failure: None,
+            cause: None,
         }
     }
 
@@ -78,6 +82,34 @@ impl ApplicationFailure {
     pub fn details(&self) -> Option<&Payloads> {
         self.details.as_ref()
     }
+
+    /// Returns the original failure proto when this application failure was decoded from one.
+    pub fn failure(&self) -> Option<&Failure> {
+        self.failure.as_ref()
+    }
+
+    /// Returns the normalized cause, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        self.cause.as_deref()
+    }
+
+    pub(crate) fn from_failure(failure: Failure, cause: Option<IncomingError>) -> Self {
+        let app_info = failure
+            .maybe_application_failure()
+            .cloned()
+            .unwrap_or_default();
+        let type_name = (!app_info.r#type.is_empty()).then_some(app_info.r#type.clone());
+        Self {
+            source: anyhow::anyhow!(failure.message.clone()),
+            type_name,
+            non_retryable: app_info.non_retryable,
+            next_retry_delay: app_info.next_retry_delay.and_then(|d| d.try_into().ok()),
+            category: app_info.category(),
+            details: app_info.details,
+            failure: Some(failure),
+            cause: cause.map(Box::new),
+        }
+    }
 }
 
 impl std::fmt::Display for ApplicationFailure {
@@ -100,6 +132,9 @@ impl From<anyhow::Error> for ApplicationFailure {
 
 impl From<ApplicationFailure> for Failure {
     fn from(value: ApplicationFailure) -> Self {
+        if let Some(failure) = value.failure {
+            return failure;
+        }
         let mut failure = value
             .source
             .chain()
@@ -123,6 +158,123 @@ impl From<ApplicationFailure> for Failure {
         failure
     }
 }
+
+/// A normalized incoming Temporal failure decoded from a protobuf [`Failure`].
+#[derive(Debug)]
+pub enum IncomingError {
+    /// A decoded application failure.
+    Application(ApplicationFailure),
+    /// A decoded timeout failure.
+    Timeout(TimeoutError),
+    /// A decoded cancellation failure.
+    Cancelled(CancelledError),
+    /// A decoded terminated failure.
+    Terminated(TerminatedError),
+    /// A decoded server failure.
+    Server(ServerError),
+    /// A decoded reset-workflow failure.
+    ResetWorkflow(ResetWorkflowError),
+    /// A decoded activity failure wrapper.
+    Activity(IncomingActivityError),
+    /// A decoded child-workflow failure wrapper.
+    ChildWorkflowExecution(IncomingChildWorkflowExecutionError),
+}
+
+impl IncomingError {
+    /// Returns the original failure proto for this normalized error.
+    pub fn failure(&self) -> &Failure {
+        match self {
+            IncomingError::Application(err) => err
+                .failure()
+                .expect("decoded application failures retain their original proto"),
+            IncomingError::Timeout(err) => err.failure(),
+            IncomingError::Cancelled(err) => err.failure(),
+            IncomingError::Terminated(err) => err.failure(),
+            IncomingError::Server(err) => err.failure(),
+            IncomingError::ResetWorkflow(err) => err.failure(),
+            IncomingError::Activity(err) => err.failure(),
+            IncomingError::ChildWorkflowExecution(err) => err.failure(),
+        }
+    }
+
+    /// Returns the normalized cause, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        match self {
+            IncomingError::Application(err) => err.cause(),
+            IncomingError::Timeout(err) => err.cause(),
+            IncomingError::Cancelled(err) => err.cause(),
+            IncomingError::Terminated(err) => err.cause(),
+            IncomingError::Server(err) => err.cause(),
+            IncomingError::ResetWorkflow(err) => err.cause(),
+            IncomingError::Activity(err) => err.cause(),
+            IncomingError::ChildWorkflowExecution(err) => err.cause(),
+        }
+    }
+
+    /// Consumes this normalized error and returns the retained proto failure.
+    pub fn into_failure(self) -> Failure {
+        match self {
+            IncomingError::Application(err) => err.into(),
+            IncomingError::Timeout(err) => err.into_failure(),
+            IncomingError::Cancelled(err) => err.into_failure(),
+            IncomingError::Terminated(err) => err.into_failure(),
+            IncomingError::Server(err) => err.into_failure(),
+            IncomingError::ResetWorkflow(err) => err.into_failure(),
+            IncomingError::Activity(err) => err.into_failure(),
+            IncomingError::ChildWorkflowExecution(err) => err.into_failure(),
+        }
+    }
+}
+
+macro_rules! incoming_failure_wrapper {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Debug)]
+        pub struct $name {
+            failure: Failure,
+            cause: Option<Box<IncomingError>>,
+        }
+
+        impl $name {
+            /// Creates a new normalized incoming error wrapper.
+            pub fn new(failure: Failure, cause: Option<IncomingError>) -> Self {
+                Self {
+                    failure,
+                    cause: cause.map(Box::new),
+                }
+            }
+
+            /// Returns the original failure proto.
+            pub fn failure(&self) -> &Failure {
+                &self.failure
+            }
+
+            /// Returns the normalized cause, if any.
+            pub fn cause(&self) -> Option<&IncomingError> {
+                self.cause.as_deref()
+            }
+
+            /// Consumes this wrapper and returns the retained proto failure.
+            pub fn into_failure(self) -> Failure {
+                self.failure
+            }
+        }
+    };
+}
+
+incoming_failure_wrapper!(TimeoutError, "A normalized timeout failure.");
+incoming_failure_wrapper!(CancelledError, "A normalized cancellation failure.");
+incoming_failure_wrapper!(TerminatedError, "A normalized terminated failure.");
+incoming_failure_wrapper!(ServerError, "A normalized server failure.");
+incoming_failure_wrapper!(ResetWorkflowError, "A normalized reset-workflow failure.");
+incoming_failure_wrapper!(
+    IncomingActivityError,
+    "A normalized activity failure wrapper."
+);
+incoming_failure_wrapper!(
+    IncomingChildWorkflowExecutionError,
+    "A normalized child-workflow execution failure wrapper."
+);
 
 /// Error type for activity execution outcomes.
 #[derive(Debug, thiserror::Error)]

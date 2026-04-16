@@ -35,8 +35,9 @@ use std::{
 use temporalio_common::{
     ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
-        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-        SerializationContextData, TemporalDeserializable,
+        ActivityExecutionDecodeHint, DataConverter, GenericPayloadConverter,
+        PayloadConversionError, PayloadConverter, SerializationContext, SerializationContextData,
+        TemporalDeserializable,
     },
     error::{ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError},
     protos::{
@@ -98,6 +99,7 @@ struct WorkflowContextInner {
     am_cancelled: watch::Receiver<Option<String>>,
     shared: RefCell<WorkflowContextSharedData>,
     seq_nums: RefCell<WfCtxProtectedDat>,
+    data_converter: DataConverter,
     payload_converter: PayloadConverter,
     state_mutated: Cell<bool>,
 }
@@ -288,6 +290,7 @@ impl BaseWorkflowContext {
         run_id: String,
         init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
+        data_converter: DataConverter,
         payload_converter: PayloadConverter,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
@@ -317,6 +320,7 @@ impl BaseWorkflowContext {
                         next_signal_external_wf_sequence_number: 1,
                         next_nexus_op_sequence_number: 1,
                     }),
+                    data_converter,
                     payload_converter,
                     state_mutated: Cell::new(false),
                 }),
@@ -429,7 +433,7 @@ impl BaseWorkflowContext {
             }
             .into(),
         );
-        ActivityFut::running(cmd, self.inner.payload_converter.clone())
+        ActivityFut::running(cmd, self.inner.data_converter.clone())
     }
 
     /// Request to run a local activity
@@ -455,7 +459,7 @@ impl BaseWorkflowContext {
         };
         ActivityFut::running(
             LATimerBackoffFut::new(AD::name().to_string(), payloads, opts, self.clone()),
-            self.inner.payload_converter.clone(),
+            self.inner.data_converter.clone(),
         )
     }
 
@@ -1462,7 +1466,7 @@ enum ActivityFut<F, Output> {
     /// Running activity that will deserialize output on completion.
     Running {
         inner: F,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         _phantom: PhantomData<Output>,
     },
     Terminated,
@@ -1476,10 +1480,10 @@ impl<F, Output> ActivityFut<F, Output> {
         }
     }
 
-    fn running(inner: F, payload_converter: PayloadConverter) -> Self {
+    fn running(inner: F, data_converter: DataConverter) -> Self {
         Self::Running {
             inner,
-            payload_converter,
+            data_converter,
             _phantom: PhantomData,
         }
     }
@@ -1502,7 +1506,7 @@ where
             }
             ActivityFut::Running {
                 inner,
-                payload_converter,
+                data_converter,
                 ..
             } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
@@ -1519,20 +1523,23 @@ where
                             let payload = success.result.unwrap_or_default();
                             let ctx = SerializationContext {
                                 data: &SerializationContextData::Workflow,
-                                converter: payload_converter,
+                                converter: data_converter.payload_converter(),
                             };
-                            payload_converter
+                            data_converter
+                                .payload_converter()
                                 .from_payload::<Output>(&ctx, payload)
                                 .map_err(ActivityExecutionError::Serialization)
                         }
-                        activity_resolution::Status::Failed(f) => Err(
-                            ActivityExecutionError::Failed(Box::new(f.failure.unwrap_or_default())),
-                        ),
-                        activity_resolution::Status::Cancelled(c) => {
-                            Err(ActivityExecutionError::Cancelled(Box::new(
-                                c.failure.unwrap_or_default(),
-                            )))
-                        }
+                        activity_resolution::Status::Failed(f) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            f.failure.unwrap_or_default(),
+                            ActivityExecutionDecodeHint { cancelled: false },
+                        )?),
+                        activity_resolution::Status::Cancelled(c) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            c.failure.unwrap_or_default(),
+                            ActivityExecutionDecodeHint { cancelled: true },
+                        )?),
                         activity_resolution::Status::Backoff(_) => {
                             panic!("DoBackoff should be handled by LATimerBackoffFut")
                         }
@@ -2135,6 +2142,7 @@ mod tests {
             "run-id".to_string(),
             init,
             cancelled_rx,
+            DataConverter::default(),
             PayloadConverter::default(),
         );
         WorkflowContext::from_base(base, Rc::new(RefCell::new(TestWorkflow)))
@@ -2289,6 +2297,7 @@ mod tests {
             "run-id".to_string(),
             init,
             cancelled_rx,
+            DataConverter::default(),
             PayloadConverter::default(),
         );
         let ctx = WorkflowContext::from_base(base, Rc::new(RefCell::new(FailingWorkflow)));
