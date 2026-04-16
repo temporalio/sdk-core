@@ -74,16 +74,15 @@ pub(crate) async fn priority_values_sent_to_server() {
             let activity = ctx.start_activity(
                 PriorityActivities::echo,
                 "hello".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    priority: Some(Priority {
+                ActivityOptions::builder()
+                    .start_to_close_timeout(Duration::from_secs(5))
+                    .priority(Priority {
                         priority_key: Some(5),
                         fairness_key: Some("fair-act".to_string()),
                         fairness_weight: Some(1.1),
-                    }),
-                    do_not_eagerly_execute: true,
-                    ..Default::default()
-                },
+                    })
+                    .do_not_eagerly_execute(true)
+                    .build(),
             );
             let _ = started.result().await;
             let _ = activity.await;

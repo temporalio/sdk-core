@@ -857,22 +857,18 @@ async fn activity_metrics() {
             let normal_act_pass = ctx.start_activity(
                 PassFailActivities::pass_fail_act,
                 "pass".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
             );
             let normal_act_fail = ctx.start_activity(
                 PassFailActivities::pass_fail_act,
                 "fail".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(1)),
-                    retry_policy: Some(RetryPolicy {
+                ActivityOptions::builder()
+                    .start_to_close_timeout(Duration::from_secs(1))
+                    .retry_policy(RetryPolicy {
                         maximum_attempts: 1,
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                },
+                    })
+                    .build(),
             );
             let _ = join!(normal_act_pass, normal_act_fail);
             let local_act_pass = ctx.start_local_activity(

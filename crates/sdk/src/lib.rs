@@ -1375,11 +1375,15 @@ mod tests {
     #[allow(unused, clippy::diverging_sub_expression)]
     fn test_activity_via_workflow_context() {
         let wf_ctx: WorkflowContext<MyWorkflow> = unimplemented!();
-        wf_ctx.start_activity(MyActivities::my_activity, (), ActivityOptions::default());
+        wf_ctx.start_activity(
+            MyActivities::my_activity,
+            (),
+            ActivityOptions::builder().build(),
+        );
         wf_ctx.start_activity(
             MyActivities::takes_self,
             "Hi".to_owned(),
-            ActivityOptions::default(),
+            ActivityOptions::builder().build(),
         );
     }
 
