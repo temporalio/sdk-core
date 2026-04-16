@@ -441,6 +441,7 @@ pub(crate) struct WorkerTelemetry {
 }
 
 impl WorkerTelemetry {
+    #[allow(unused)]
     pub(crate) fn from_meter(meter: TemporalMeter) -> Self {
         Self {
             temporal_metric_meter: Some(meter),
