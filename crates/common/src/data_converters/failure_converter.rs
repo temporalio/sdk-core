@@ -105,6 +105,18 @@ impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
     }
 }
 
+/// Decode hint for child-workflow signal failures.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildWorkflowSignalDecodeHint;
+
+impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
+    type Output = ChildWorkflowSignalError;
+
+    fn adapt(self, normalized: IncomingError) -> Self::Output {
+        ChildWorkflowSignalError::Failed(Box::new(normalized.into_failure()))
+    }
+}
+
 enum ClassifiedFailure<'a> {
     Application(&'a ApplicationFailure),
     ActivityExecution(&'a ActivityExecutionError),
@@ -585,6 +597,32 @@ mod tests {
 
         let ChildWorkflowExecutionError::Cancelled(decoded_failure) = decoded else {
             panic!("expected cancelled child-workflow execution error");
+        };
+        assert_eq!(decoded_failure.as_ref(), &failure);
+    }
+
+    #[test]
+    fn child_workflow_signal_decode_hint_preserves_failure_proto() {
+        let failure = Failure {
+            message: "child workflow signal failed".to_owned(),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ChildWorkflowSignalDecodeHint,
+            )
+            .unwrap();
+
+        let ChildWorkflowSignalError::Failed(decoded_failure) = decoded else {
+            panic!("expected failed child-workflow signal error");
         };
         assert_eq!(decoded_failure.as_ref(), &failure);
     }

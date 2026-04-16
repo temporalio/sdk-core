@@ -35,9 +35,10 @@ use std::{
 use temporalio_common::{
     ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
-        ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint, DataConverter,
-        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
-        SerializationContextData, TemporalDeserializable,
+        ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint,
+        ChildWorkflowSignalDecodeHint, DataConverter, GenericPayloadConverter,
+        PayloadConversionError, PayloadConverter, SerializationContext, SerializationContextData,
+        TemporalDeserializable,
     },
     error::{ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError},
     protos::{
@@ -1830,7 +1831,10 @@ enum SignalChildFut<F> {
     Errored {
         error: Option<ChildWorkflowSignalError>,
     },
-    Running(F),
+    Running {
+        inner: F,
+        data_converter: DataConverter,
+    },
     Terminated,
 }
 
@@ -1854,12 +1858,17 @@ where
             SignalChildFut::Errored { error } => {
                 Poll::Ready(Err(error.take().expect("polled after completion")))
             }
-            SignalChildFut::Running(inner) => match Pin::new(inner).poll(cx) {
+            SignalChildFut::Running {
+                inner,
+                data_converter,
+            } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(Ok(_)) => Poll::Ready(Ok(())),
-                Poll::Ready(Err(failure)) => {
-                    Poll::Ready(Err(ChildWorkflowSignalError::Failed(Box::new(failure))))
-                }
+                Poll::Ready(Err(failure)) => Poll::Ready(Err(data_converter.to_error(
+                    &SerializationContextData::Workflow,
+                    failure,
+                    ChildWorkflowSignalDecodeHint,
+                )?)),
             },
             SignalChildFut::Terminated => panic!("polled after termination"),
         };
@@ -1884,7 +1893,7 @@ where
     F: CancellableFuture<SignalExternalWfResult> + Unpin,
 {
     fn cancel(&self) {
-        if let SignalChildFut::Running(inner) = self {
+        if let SignalChildFut::Running { inner, .. } = self {
             inner.cancel()
         }
     }
@@ -1935,7 +1944,10 @@ where
         };
         let signal = Signal::new(S::name(&signal), payloads);
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
-        SignalChildFut::Running(self.common.base_ctx.clone().send_signal_wf(target, signal))
+        SignalChildFut::Running {
+            inner: self.common.base_ctx.clone().send_signal_wf(target, signal),
+            data_converter: self.common.data_converter.clone(),
+        }
     }
 }
 
