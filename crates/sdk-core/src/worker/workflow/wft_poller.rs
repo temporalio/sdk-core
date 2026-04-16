@@ -86,7 +86,11 @@ pub(crate) fn make_wft_poller(
         wf_task_poll_buffer,
         sticky_queue_poller,
     ));
-    new_wft_poller(wf_task_poll_buffer, metrics.clone())
+    new_wft_poller(
+        wf_task_poll_buffer,
+        metrics.clone(),
+        shutdown_token.child_token(),
+    )
 }
 
 /// Info that needs to be shared across the sticky and non-sticky wft pollers to prioritize sticky
@@ -195,6 +199,7 @@ impl WFTPollerShared {
 fn new_wft_poller(
     poller: BoxedWFPoller,
     metrics: MetricsContext,
+    shutdown_token: CancellationToken,
 ) -> impl Stream<
     Item = Result<
         (
@@ -204,44 +209,51 @@ fn new_wft_poller(
         tonic::Status,
     >,
 > {
-    stream::unfold((poller, metrics), |(poller, metrics)| async move {
-        loop {
-            return match poller.poll().await {
-                Some(Ok((wft, permit))) => {
-                    if wft == PollWorkflowTaskQueueResponse::default() {
-                        // We get the default proto in the event that the long poll times out.
-                        debug!("Poll wft timeout");
-                        metrics.wf_tq_poll_empty();
-                        continue;
-                    }
-                    if let Some(dur) = wft.sched_to_start() {
-                        metrics.wf_task_sched_to_start_latency(dur);
-                    }
-                    let work = match validate_wft(wft) {
-                        Ok(w) => w,
-                        Err(e) => {
-                            error!(error=?e, "Server returned an unparseable workflow task");
+    stream::unfold(
+        (poller, metrics, shutdown_token),
+        |(poller, metrics, shutdown_token)| async move {
+            loop {
+                return match poller.poll().await {
+                    Some(Ok((wft, permit))) => {
+                        if wft == PollWorkflowTaskQueueResponse::default() {
+                            if shutdown_token.is_cancelled() {
+                                poller.shutdown_box().await;
+                                return None;
+                            }
+                            // We get the default proto in the event that the long poll times out.
+                            debug!("Poll wft timeout");
+                            metrics.wf_tq_poll_empty();
                             continue;
                         }
-                    };
-                    metrics.wf_tq_poll_ok();
-                    Some((Ok((work, permit)), (poller, metrics)))
-                }
-                Some(Err(e)) => {
-                    warn!(error=?e, "Error while polling for workflow tasks");
-                    Some((Err(e), (poller, metrics)))
-                }
-                // If poller returns None, it's dead, thus we also return None to terminate this
-                // stream.
-                None => {
-                    // Make sure we call the actual shutdown function here to propagate any panics
-                    // inside the polling tasks as errors.
-                    poller.shutdown_box().await;
-                    None
-                }
-            };
-        }
-    })
+                        if let Some(dur) = wft.sched_to_start() {
+                            metrics.wf_task_sched_to_start_latency(dur);
+                        }
+                        let work = match validate_wft(wft) {
+                            Ok(w) => w,
+                            Err(e) => {
+                                error!(error=?e, "Server returned an unparseable workflow task");
+                                continue;
+                            }
+                        };
+                        metrics.wf_tq_poll_ok();
+                        Some((Ok((work, permit)), (poller, metrics, shutdown_token)))
+                    }
+                    Some(Err(e)) => {
+                        warn!(error=?e, "Error while polling for workflow tasks");
+                        Some((Err(e), (poller, metrics, shutdown_token)))
+                    }
+                    // If poller returns None, it's dead, thus we also return None to terminate
+                    // this stream.
+                    None => {
+                        // Make sure we call the actual shutdown function here to propagate any
+                        // panics inside the polling tasks as errors.
+                        poller.shutdown_box().await;
+                        None
+                    }
+                };
+            }
+        },
+    )
 }
 
 #[allow(clippy::result_large_err)]
@@ -279,9 +291,56 @@ mod tests {
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
+            CancellationToken::new(),
         );
         pin_mut!(stream);
         assert_matches!(stream.next().await, None);
+    }
+
+    /// empty responses after shutdown are retried indefinitely in
+    /// new_wft_poller, causing the WFT stream to spin. This is what caused the workflow_load
+    /// heavy test to hang on CI when the server has enableCancelWorkerPollsOnShutdown.
+    #[tokio::test]
+    async fn empty_response_after_shutdown_terminates_wft_stream() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let poll_count = Arc::new(AtomicUsize::new(0));
+        let poll_count_clone = poll_count.clone();
+
+        let mut mock_poller = mock_poller();
+        mock_poller.expect_poll().returning(move || {
+            poll_count_clone.fetch_add(1, Ordering::SeqCst);
+            Some(Ok(PollWorkflowTaskQueueResponse::default()))
+        });
+        mock_poller.expect_shutdown().returning(|| ());
+
+        let sem = Arc::new(fixed_size_permit_dealer::<WorkflowSlotKind>(10));
+        let shutdown_token = CancellationToken::new();
+
+        let stream = new_wft_poller(
+            Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
+            MetricsContext::no_op(),
+            shutdown_token.clone(),
+        );
+        pin_mut!(stream);
+
+        shutdown_token.cancel();
+
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next()).await;
+        assert!(
+            result.is_ok(),
+            "WFT stream should terminate promptly after shutdown, not spin on retries"
+        );
+        assert!(
+            result.unwrap().is_none(),
+            "WFT stream should return None on empty response after shutdown"
+        );
+
+        let total = poll_count.load(Ordering::SeqCst);
+        assert!(
+            total < 5,
+            "Expected WFT stream to terminate quickly, but poller was called {total} times"
+        );
     }
 
     #[tokio::test]
@@ -295,6 +354,7 @@ mod tests {
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
+            CancellationToken::new(),
         );
         pin_mut!(stream);
         assert_matches!(stream.next().await, Some(Err(_)));
