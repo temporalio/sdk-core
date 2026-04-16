@@ -375,7 +375,7 @@ async fn http_proxy() {
     opts.set_skip_get_system_info(true);
 
     // Connect client with no proxy and make call and confirm reached
-    opts.target = format!("http://127.0.0.1:{}", server.addr.port())
+    opts.target = format!("http://[::1]:{}", server.addr.port())
         .parse()
         .unwrap();
     let connection = Connection::connect(opts.clone()).await.unwrap();
