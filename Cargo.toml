@@ -14,8 +14,8 @@ license = "MIT"
 license-file = "LICENSE.txt"
 
 [workspace.dependencies]
-bon = { version = "3", features = ["implied-bounds"] }
-derive_more = { version = "2.0", features = [
+bon = { version = "3", default-features = false, features = ["alloc", "implied-bounds"] }
+derive_more = { version = "2.0", default-features = false, features = [
     "constructor",
     "display",
     "from",
@@ -24,10 +24,10 @@ derive_more = { version = "2.0", features = [
     "try_into",
 ] }
 thiserror = "2"
-tonic = "0.14"
+tonic = { version = "0.14", default-features = false }
 tonic-prost = "0.14"
 tonic-prost-build = "0.14"
-opentelemetry = { version = "0.31", features = ["metrics"] }
+opentelemetry = { version = "0.31", default-features = false, features = ["metrics"] }
 prost = "0.14"
 prost-types = { version = "0.7", package = "prost-wkt-types" }
 pbjson = "0.9"

@@ -22,7 +22,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 backoff = "0.4"
 base64 = "0.22"
-bon = "3"
+bon = { version = "3", default-features = false, features = ["alloc"] }
 derive_more = { workspace = true }
 dyn-clone = "1.0"
 bytes = "1.10"
@@ -35,12 +35,18 @@ hyper-util = "0.1.16"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 parking_lot = "0.12"
 thiserror = { workspace = true }
-tokio = { version = "1.47", features = ["net", "time"] }
-tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
+tokio = { version = "1.47", default-features = false, features = [
+  "io-util",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
+tonic = { workspace = true, default-features = false, features = ["tls-ring", "tls-native-roots", "channel"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 url = "2.5"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", default-features = false, features = ["v4"] }
 rand = "0.10"
 
 [dependencies.temporalio-common]
@@ -54,6 +60,14 @@ prost = "0.14"
 prost-types = { workspace = true }
 rstest = "0.26"
 tempfile = "3"
+tokio = { version = "1.47", default-features = false, features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
 
 [lints]
 workspace = true

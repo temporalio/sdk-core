@@ -25,17 +25,18 @@ parking_lot = { version = "0.12" }
 prost-types = { workspace = true }
 serde = "1.0"
 thiserror = "2"
-tokio = { version = "1.47", features = [
+tokio = { version = "1.47", default-features = false, features = [
   "rt",
   "rt-multi-thread",
   "parking_lot",
   "time",
   "fs",
+  "macros",
 ] }
 tokio-util = { version = "0.7" }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", default-features = false }
 tracing = "0.1"
-uuid = { version = "1.18", features = ["v4"] }
+uuid = { version = "1.18", default-features = false, features = ["v4"] }
 
 [dependencies.temporalio-sdk-core]
 path = "../sdk-core"
