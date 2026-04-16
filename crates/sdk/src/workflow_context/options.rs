@@ -1,22 +1,26 @@
 use std::{collections::HashMap, time::Duration};
 
 use temporalio_client::Priority;
-use temporalio_common::protos::{
-    coresdk::{
-        AsJsonPayloadExt,
-        child_workflow::ChildWorkflowCancellationType,
-        common::VersioningIntent,
-        nexus::NexusOperationCancellationType,
-        workflow_commands::{
-            ActivityCancellationType, ContinueAsNewWorkflowExecution, ScheduleActivity,
-            ScheduleLocalActivity, ScheduleNexusOperation, StartChildWorkflowExecution,
-            WorkflowCommand,
-        },
+use temporalio_common::{
+    data_converters::{
+        GenericPayloadConverter, PayloadConverter, SerializationContext, SerializationContextData,
     },
-    temporal::api::{
-        common::v1::{Payload, RetryPolicy, SearchAttributes},
-        enums::v1::{ParentClosePolicy, WorkflowIdReusePolicy},
-        sdk::v1::UserMetadata,
+    protos::{
+        coresdk::{
+            child_workflow::ChildWorkflowCancellationType,
+            common::VersioningIntent,
+            nexus::NexusOperationCancellationType,
+            workflow_commands::{
+                ActivityCancellationType, ContinueAsNewWorkflowExecution, ScheduleActivity,
+                ScheduleLocalActivity, ScheduleNexusOperation, StartChildWorkflowExecution,
+                WorkflowCommand,
+            },
+        },
+        temporal::api::{
+            common::v1::{Payload, RetryPolicy, SearchAttributes},
+            enums::v1::{ParentClosePolicy, WorkflowIdReusePolicy},
+            sdk::v1::UserMetadata,
+        },
     },
 };
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
@@ -81,6 +85,11 @@ impl ActivityOptions {
         arguments: Vec<Payload>,
         seq: u32,
     ) -> WorkflowCommand {
+        let payload_converter = PayloadConverter::default();
+        let context = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &payload_converter,
+        };
         WorkflowCommand {
             variant: Some(
                 ScheduleActivity {
@@ -113,7 +122,8 @@ impl ActivityOptions {
             user_metadata: self
                 .summary
                 .map(|s| {
-                    s.as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &s)
                         .expect("String-to-JSON payload serialization is infallible")
                 })
                 .map(|summary| UserMetadata {
@@ -171,6 +181,11 @@ impl LocalActivityOptions {
         arguments: Vec<Payload>,
         seq: u32,
     ) -> WorkflowCommand {
+        let payload_converter = PayloadConverter::default();
+        let context = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &payload_converter,
+        };
         // Allow tests to avoid extra verbosity when they don't care about timeouts
         // TODO: Builderize LA options
         self.schedule_to_close_timeout
@@ -209,8 +224,8 @@ impl LocalActivityOptions {
             user_metadata: self
                 .summary
                 .map(|summary| {
-                    summary
-                        .as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &summary)
                         .expect("String-to-JSON payload serialization is infallible")
                 })
                 .map(|summary| UserMetadata {
@@ -261,14 +276,21 @@ impl ChildWorkflowOptions {
         input: Vec<Payload>,
         seq: u32,
     ) -> WorkflowCommand {
+        let payload_converter = PayloadConverter::default();
+        let context = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &payload_converter,
+        };
         let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
             Some(UserMetadata {
                 summary: self.static_summary.map(|s| {
-                    s.as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &s)
                         .expect("String-to-JSON payload serialization is infallible")
                 }),
                 details: self.static_details.map(|s| {
-                    s.as_json_payload()
+                    payload_converter
+                        .to_payload(&context, &s)
                         .expect("String-to-JSON payload serialization is infallible")
                 }),
             })
