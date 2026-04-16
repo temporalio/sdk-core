@@ -421,6 +421,11 @@ impl BaseWorkflowContext {
         let seq = self.inner.seq_nums.borrow_mut().next_timer_seq();
         let (cmd, unblocker) =
             CancellableWFCommandFut::new(CancellableID::Timer(seq), self.clone());
+        let payload_converter = PayloadConverter::default();
+        let context = SerializationContext {
+            data: &SerializationContextData::Workflow,
+            converter: &payload_converter,
+        };
         self.send(
             CommandCreateRequest {
                 cmd: WorkflowCommand {
@@ -436,7 +441,11 @@ impl BaseWorkflowContext {
                         .into(),
                     ),
                     user_metadata: Some(UserMetadata {
-                        summary: opts.summary.map(|x| x.as_bytes().into()),
+                        summary: opts.summary.map(|summary| {
+                            payload_converter
+                                .to_payload(&context, &summary)
+                                .expect("String-to-JSON payload serialization is infallible")
+                        }),
                         details: None,
                     }),
                 },

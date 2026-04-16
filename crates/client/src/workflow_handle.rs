@@ -12,7 +12,10 @@ use std::{fmt::Debug, marker::PhantomData};
 pub use temporalio_common::UntypedWorkflow;
 use temporalio_common::{
     HasWorkflowDefinition, QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
-    data_converters::{DataConverter, PayloadConversionError, RawValue, SerializationContextData},
+    data_converters::{
+        DataConverter, GenericPayloadConverter, PayloadConversionError, PayloadConverter, RawValue,
+        SerializationContext, SerializationContextData,
+    },
     payload_visitor::decode_payloads,
     protos::{
         coresdk::FromPayloadsExt,
@@ -48,21 +51,25 @@ struct DecodedUserMetadata {
     details: Option<String>,
 }
 
-async fn decode_user_metadata(
-    data_converter: &DataConverter,
+fn decode_user_metadata(
     context: &SerializationContextData,
     user_metadata: Option<UserMetadata>,
 ) -> Result<DecodedUserMetadata, PayloadConversionError> {
+    let payload_converter = PayloadConverter::default();
+    let context = SerializationContext {
+        data: context,
+        converter: &payload_converter,
+    };
     let (summary, details) = user_metadata
         .map(|metadata| (metadata.summary, metadata.details))
         .unwrap_or_default();
     Ok(DecodedUserMetadata {
         summary: match summary {
-            Some(payload) => Some(data_converter.from_payload(context, payload).await?),
+            Some(payload) => Some(payload_converter.from_payload(&context, payload)?),
             None => None,
         },
         details: match details {
-            Some(payload) => Some(data_converter.from_payload(context, payload).await?),
+            Some(payload) => Some(payload_converter.from_payload(&context, payload)?),
             None => None,
         },
     })
@@ -119,12 +126,8 @@ impl WorkflowExecutionDescription {
             &SerializationContextData::Workflow,
         )
         .await;
-        let decoded_metadata = decode_user_metadata(
-            data_converter,
-            &SerializationContextData::Workflow,
-            raw_user_metadata,
-        )
-        .await?;
+        let decoded_metadata =
+            decode_user_metadata(&SerializationContextData::Workflow, raw_user_metadata)?;
         let history_length_raw = raw_description
             .workflow_execution_info
             .as_ref()
