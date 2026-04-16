@@ -71,6 +71,40 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
     }
 }
 
+/// Decode hint for child-workflow execution results.
+#[derive(Debug, Clone, Copy)]
+pub enum ChildWorkflowExecutionDecodeHint {
+    /// The workflow-side resolution was failed.
+    Failed,
+    /// The workflow-side resolution was cancelled.
+    Cancelled,
+}
+
+impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
+    type Output = ChildWorkflowExecutionError;
+
+    fn adapt(self, normalized: IncomingError) -> Self::Output {
+        match normalized {
+            IncomingError::ChildWorkflowExecution(child) => match self {
+                ChildWorkflowExecutionDecodeHint::Failed => {
+                    ChildWorkflowExecutionError::Failed(Box::new(child.into_failure()))
+                }
+                ChildWorkflowExecutionDecodeHint::Cancelled => {
+                    ChildWorkflowExecutionError::Cancelled(Box::new(child.into_failure()))
+                }
+            },
+            other => match self {
+                ChildWorkflowExecutionDecodeHint::Failed => {
+                    ChildWorkflowExecutionError::Failed(Box::new(other.into_failure()))
+                }
+                ChildWorkflowExecutionDecodeHint::Cancelled => {
+                    ChildWorkflowExecutionError::Cancelled(Box::new(other.into_failure()))
+                }
+            },
+        }
+    }
+}
+
 enum ClassifiedFailure<'a> {
     Application(&'a ApplicationFailure),
     ActivityExecution(&'a ActivityExecutionError),
@@ -274,7 +308,10 @@ mod tests {
     use crate::protos::temporal::api::{
         common::v1::Payload,
         enums::v1::ApplicationErrorCategory,
-        failure::v1::{ActivityFailureInfo, TimeoutFailureInfo, failure::FailureInfo},
+        failure::v1::{
+            ActivityFailureInfo, ChildWorkflowExecutionFailureInfo, TimeoutFailureInfo,
+            failure::FailureInfo,
+        },
     };
     #[derive(Debug, thiserror::Error)]
     #[error("plain boom")]
@@ -492,5 +529,63 @@ mod tests {
                 .as_ref()
                 .is_some_and(|cause| cause.is_timeout().is_some())
         );
+    }
+
+    #[test]
+    fn child_workflow_decode_hint_preserves_child_failure_proto() {
+        let failure = Failure {
+            message: "child workflow failed".to_owned(),
+            failure_info: Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
+                ChildWorkflowExecutionFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ChildWorkflowExecutionDecodeHint::Failed,
+            )
+            .unwrap();
+
+        let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
+            panic!("expected failed child-workflow execution error");
+        };
+        assert_eq!(decoded_failure.as_ref(), &failure);
+    }
+
+    #[test]
+    fn child_workflow_cancelled_decode_hint_preserves_child_failure_proto() {
+        let failure = Failure {
+            message: "child workflow cancelled".to_owned(),
+            failure_info: Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
+                ChildWorkflowExecutionFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ChildWorkflowExecutionDecodeHint::Cancelled,
+            )
+            .unwrap();
+
+        let ChildWorkflowExecutionError::Cancelled(decoded_failure) = decoded else {
+            panic!("expected cancelled child-workflow execution error");
+        };
+        assert_eq!(decoded_failure.as_ref(), &failure);
     }
 }

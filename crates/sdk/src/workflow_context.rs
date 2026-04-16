@@ -35,9 +35,9 @@ use std::{
 use temporalio_common::{
     ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
-        ActivityExecutionDecodeHint, DataConverter, GenericPayloadConverter,
-        PayloadConversionError, PayloadConverter, SerializationContext, SerializationContextData,
-        TemporalDeserializable,
+        ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint, DataConverter,
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData, TemporalDeserializable,
     },
     error::{ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError},
     protos::{
@@ -507,6 +507,7 @@ impl BaseWorkflowContext {
             child_seq,
             result_future: result_cmd,
             base_ctx: self.clone(),
+            data_converter: self.inner.data_converter.clone(),
             payload_converter: self.inner.payload_converter.clone(),
         };
 
@@ -1582,6 +1583,7 @@ pub(crate) struct ChildWfCommon {
     child_seq: u32,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
     base_ctx: BaseWorkflowContext,
+    data_converter: DataConverter,
     payload_converter: PayloadConverter,
 }
 
@@ -1611,7 +1613,7 @@ pub struct StartedChildWorkflow<WD: WorkflowDefinition> {
 enum ChildWorkflowFut<F, Output> {
     Running {
         inner: F,
-        payload_converter: PayloadConverter,
+        data_converter: DataConverter,
         _phantom: PhantomData<Output>,
     },
     Terminated,
@@ -1631,7 +1633,7 @@ where
         let poll = match this {
             ChildWorkflowFut::Running {
                 inner,
-                payload_converter,
+                data_converter,
                 ..
             } => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,
@@ -1648,22 +1650,24 @@ where
                             let payloads = success.result.into_iter().collect();
                             let ctx = SerializationContext {
                                 data: &SerializationContextData::Workflow,
-                                converter: payload_converter,
+                                converter: data_converter.payload_converter(),
                             };
-                            payload_converter
+                            data_converter
+                                .payload_converter()
                                 .from_payloads::<Output>(&ctx, payloads)
                                 .map_err(ChildWorkflowExecutionError::Serialization)
                         }
-                        child_workflow_result::Status::Failed(f) => {
-                            Err(ChildWorkflowExecutionError::Failed(Box::new(
-                                f.failure.unwrap_or_default(),
-                            )))
-                        }
-                        child_workflow_result::Status::Cancelled(c) => {
-                            Err(ChildWorkflowExecutionError::Cancelled(Box::new(
+                        child_workflow_result::Status::Failed(f) => Err(data_converter.to_error(
+                            &SerializationContextData::Workflow,
+                            f.failure.unwrap_or_default(),
+                            ChildWorkflowExecutionDecodeHint::Failed,
+                        )?),
+                        child_workflow_result::Status::Cancelled(c) => Err(data_converter
+                            .to_error(
+                                &SerializationContextData::Workflow,
                                 c.failure.unwrap_or_default(),
-                            )))
-                        }
+                                ChildWorkflowExecutionDecodeHint::Cancelled,
+                            )?),
                     }
                 }),
             },
@@ -1765,9 +1769,11 @@ where
                         })
                     }
                     ChildWorkflowStartStatus::Cancelled(c) => {
-                        Err(ChildWorkflowExecutionError::Cancelled(Box::new(
+                        Err(pending.common.data_converter.to_error(
+                            &SerializationContextData::Workflow,
                             c.failure.unwrap_or_default(),
-                        )))
+                            ChildWorkflowExecutionDecodeHint::Cancelled,
+                        )?)
                     }
                 }),
             },
@@ -1895,7 +1901,7 @@ where
     ) -> impl CancellableFutureWithReason<Result<WD::Output, ChildWorkflowExecutionError>> {
         ChildWorkflowFut::Running {
             inner: self.common.result_future,
-            payload_converter: self.common.payload_converter,
+            data_converter: self.common.data_converter,
             _phantom: PhantomData,
         }
     }
