@@ -3,7 +3,7 @@ use std::time::Duration;
 use temporalio_common::protos::coresdk::AsJsonPayloadExt;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -48,10 +48,11 @@ impl HeartbeatingWorkflow {
             .start_activity(
                 HeartbeatingActivities::long_running_activity,
                 total_steps,
-                ActivityOptions::builder()
-                    .start_to_close_timeout(Duration::from_secs(30))
-                    .heartbeat_timeout(Duration::from_secs(5))
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(30),
+                ))
+                .heartbeat_timeout(Duration::from_secs(5))
+                .build(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;

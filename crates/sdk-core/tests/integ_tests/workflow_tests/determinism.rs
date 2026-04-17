@@ -26,8 +26,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WorkflowContext, WorkflowResult,
-    workflows,
+    ActivityCloseTimeouts, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions,
+    WorkflowContext, WorkflowResult, workflows,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -56,7 +56,7 @@ impl TimerWfNondeterministic {
                 ctx.start_activity(
                     StdActivities::default,
                     (),
-                    ActivityOptions::builder().build(),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -302,16 +302,22 @@ impl ActivityIdOrTypeChangeWf {
             ctx.start_activity(
                 StdActivities::default,
                 (),
-                ActivityOptions::builder()
-                    .activity_id("I'm bad and wrong!".to_string())
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(5),
+                ))
+                .activity_id("I'm bad and wrong!".to_string())
+                .build(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         } else {
-            ctx.start_activity(StdActivities::no_op, (), ActivityOptions::builder().build())
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.start_activity(
+                StdActivities::no_op,
+                (),
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         Ok(())
     }

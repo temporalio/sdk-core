@@ -26,7 +26,9 @@ use temporalio_common::{
     },
 };
 use temporalio_macros::{workflow, workflow_methods};
-use temporalio_sdk::{ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult};
+use temporalio_sdk::{
+    ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, WorkflowContext, WorkflowResult,
+};
 use temporalio_sdk_core::test_help::{WorkerTestHelpers, drain_pollers_and_shutdown};
 use tokio::time::sleep;
 
@@ -42,14 +44,15 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
             .start_activity(
                 StdActivities::delay,
                 Duration::from_secs(4),
-                ActivityOptions::builder()
-                    .start_to_close_timeout(Duration::from_secs(10))
-                    .heartbeat_timeout(Duration::from_secs(2))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    })
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(10),
+                ))
+                .heartbeat_timeout(Duration::from_secs(2))
+                .retry_policy(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                })
+                .build(),
             )
             .await;
         let err = res.unwrap_err();
