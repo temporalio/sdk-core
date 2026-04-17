@@ -168,6 +168,26 @@ pub(crate) struct WorkflowFuture {
 }
 
 impl WorkflowFuture {
+    fn workflow_message_to_failure(&self, message: String) -> Failure {
+        self.data_converter.to_failure(
+            &SerializationContextData::Workflow,
+            OutgoingError::Workflow(anyhow!(message).into()),
+        )
+    }
+
+    fn workflow_error_to_failure(&self, error: crate::workflows::WorkflowError) -> Failure {
+        let outgoing = match error {
+            crate::workflows::WorkflowError::PayloadConversion(err) => {
+                OutgoingWorkflowError::from(anyhow::Error::new(err))
+            }
+            crate::workflows::WorkflowError::Execution(err) => err.into(),
+        };
+        self.data_converter.to_failure(
+            &SerializationContextData::Workflow,
+            OutgoingError::Workflow(outgoing),
+        )
+    }
+
     fn unblock(&mut self, event: UnblockEvent) -> Result<(), Error> {
         let cmd_id = match event {
             UnblockEvent::Timer(seq, _) => CommandID::Timer(seq),
@@ -312,14 +332,12 @@ impl WorkflowFuture {
                             response: Some(payload),
                         }),
                         // TODO [rust-sdk-branch]: Return list of known queries in error
-                        None => query_result::Variant::Failed(Failure {
-                            message: format!("No query handler for '{}'", query_type),
-                            ..Default::default()
-                        }),
-                        Some(Err(e)) => query_result::Variant::Failed(Failure {
-                            message: e.to_string(),
-                            ..Default::default()
-                        }),
+                        None => query_result::Variant::Failed(self.workflow_message_to_failure(
+                            format!("No query handler for '{}'", query_type),
+                        )),
+                        Some(Err(e)) => {
+                            query_result::Variant::Failed(self.workflow_error_to_failure(e))
+                        }
                     };
 
                     outgoing_cmds.push(
@@ -414,7 +432,9 @@ impl WorkflowFuture {
                             outgoing_cmds.push(
                                 update_response(
                                     protocol_instance_id.clone(),
-                                    update_response::Response::Rejected(anyhow!(e).into()),
+                                    update_response::Response::Rejected(
+                                        self.workflow_error_to_failure(e),
+                                    ),
                                 )
                                 .into(),
                             );
@@ -614,7 +634,9 @@ impl WorkflowFuture {
                                     instance_id,
                                     match v {
                                         Ok(v) => update_response::Response::Completed(v),
-                                        Err(e) => update_response::Response::Rejected(e.into()),
+                                        Err(e) => update_response::Response::Rejected(
+                                            self.workflow_error_to_failure(e),
+                                        ),
                                     },
                                 )
                                 .into(),

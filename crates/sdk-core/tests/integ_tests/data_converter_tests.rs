@@ -9,8 +9,9 @@ use std::{
     time::Duration,
 };
 use temporalio_client::{
-    Client, ClientOptions, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
-    errors::WorkflowGetResultError,
+    Client, ClientOptions, UntypedWorkflow, WorkflowDescribeOptions, WorkflowExecuteUpdateOptions,
+    WorkflowQueryOptions, WorkflowSignalOptions, WorkflowStartOptions,
+    errors::{WorkflowGetResultError, WorkflowUpdateError},
 };
 use temporalio_common::{
     data_converters::{
@@ -29,7 +30,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
+    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -99,6 +101,9 @@ impl TestActivities {
 const FAILURE_CONVERTER_ERROR_MESSAGE: &str = "intentional failure converter error";
 const WORKFLOW_FAILURE_MESSAGE: &str = "workflow converter fallback failure";
 const ACTIVITY_PANIC_MESSAGE: &str = "activity converter fallback panic";
+const QUERY_FAILURE_MESSAGE: &str = "query converter fallback failure";
+const UPDATE_VALIDATOR_FAILURE_MESSAGE: &str = "update validator converter fallback failure";
+const UPDATE_HANDLER_FAILURE_MESSAGE: &str = "update handler converter fallback failure";
 
 #[derive(Debug)]
 struct FailingFailureConverter;
@@ -235,6 +240,54 @@ impl ActivityPanicFallbackWorkflow {
     }
 }
 
+#[workflow]
+#[derive(Default)]
+struct QueryUpdateFailureFallbackWorkflow {
+    finish: bool,
+}
+
+#[workflow_methods]
+impl QueryUpdateFailureFallbackWorkflow {
+    #[run]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        ctx.wait_condition(|s| s.finish).await;
+        Ok(())
+    }
+
+    #[signal]
+    fn finish(&mut self, _ctx: &mut SyncWorkflowContext<Self>) {
+        self.finish = true;
+    }
+
+    #[query]
+    fn fail_query(
+        &self,
+        _ctx: &WorkflowContextView,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err(QUERY_FAILURE_MESSAGE.into())
+    }
+
+    #[update_validator(fail_validated_update)]
+    fn validate_fail_validated_update(
+        &self,
+        _ctx: &WorkflowContextView,
+        _input: &(),
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err(UPDATE_VALIDATOR_FAILURE_MESSAGE.into())
+    }
+
+    #[update]
+    fn fail_validated_update(&mut self, _ctx: &mut SyncWorkflowContext<Self>, _input: ()) {}
+
+    #[update]
+    async fn fail_update(
+        _ctx: &mut WorkflowContext<Self>,
+        _input: (),
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err(UPDATE_HANDLER_FAILURE_MESSAGE.into())
+    }
+}
+
 #[tokio::test]
 async fn custom_failure_converter_fallback_applied_to_workflow_failures() {
     let wf_name = WorkflowFailureFallbackWorkflow::name();
@@ -314,6 +367,159 @@ async fn custom_failure_converter_fallback_applied_to_activity_panic_failures() 
         activity_failure.failure_info,
         Some(FailureInfo::ApplicationFailureInfo(_))
     ));
+}
+
+#[tokio::test]
+async fn custom_failure_converter_fallback_applied_to_query_failures() {
+    let wf_name = QueryUpdateFailureFallbackWorkflow::name();
+    let mut starter = starter_with_failing_failure_converter(wf_name).await;
+    starter
+        .sdk_config
+        .register_workflow::<QueryUpdateFailureFallbackWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            QueryUpdateFailureFallbackWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+
+    let query_and_finish = async {
+        let err = handle
+            .query(
+                QueryUpdateFailureFallbackWorkflow::fail_query,
+                (),
+                WorkflowQueryOptions::default(),
+            )
+            .await
+            .expect_err("query should fail");
+        assert!(err.to_string().contains(&format!(
+            "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: {QUERY_FAILURE_MESSAGE}"
+        )));
+        handle
+            .signal(
+                QueryUpdateFailureFallbackWorkflow::finish,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(query_and_finish, worker.run_until_done());
+    worker_res.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
+}
+
+#[tokio::test]
+async fn custom_failure_converter_fallback_applied_to_update_validation_failures() {
+    let wf_name = QueryUpdateFailureFallbackWorkflow::name();
+    let mut starter = starter_with_failing_failure_converter(wf_name).await;
+    starter
+        .sdk_config
+        .register_workflow::<QueryUpdateFailureFallbackWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            QueryUpdateFailureFallbackWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, format!("{wf_name}_validator")).build(),
+        )
+        .await
+        .unwrap();
+
+    let update_and_finish = async {
+        let err = handle
+            .execute_update(
+                QueryUpdateFailureFallbackWorkflow::fail_validated_update,
+                (),
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await
+            .expect_err("update should be rejected");
+        let WorkflowUpdateError::Failed(failure) = err else {
+            panic!("expected failed update error");
+        };
+        assert_eq!(
+            failure.message,
+            format!(
+                "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: {UPDATE_VALIDATOR_FAILURE_MESSAGE}"
+            )
+        );
+        handle
+            .signal(
+                QueryUpdateFailureFallbackWorkflow::finish,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(update_and_finish, worker.run_until_done());
+    worker_res.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
+}
+
+#[tokio::test]
+async fn custom_failure_converter_fallback_applied_to_update_handler_failures() {
+    let wf_name = QueryUpdateFailureFallbackWorkflow::name();
+    let mut starter = starter_with_failing_failure_converter(wf_name).await;
+    starter
+        .sdk_config
+        .register_workflow::<QueryUpdateFailureFallbackWorkflow>();
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            QueryUpdateFailureFallbackWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, format!("{wf_name}_handler")).build(),
+        )
+        .await
+        .unwrap();
+
+    let update_and_finish = async {
+        let err = handle
+            .execute_update(
+                QueryUpdateFailureFallbackWorkflow::fail_update,
+                (),
+                WorkflowExecuteUpdateOptions::default(),
+            )
+            .await
+            .expect_err("update should fail");
+        let WorkflowUpdateError::Failed(failure) = err else {
+            panic!("expected failed update error");
+        };
+        assert_eq!(
+            failure.message,
+            format!(
+                "Failed converting error to failure: Encoding error: {FAILURE_CONVERTER_ERROR_MESSAGE}, original error message: {UPDATE_HANDLER_FAILURE_MESSAGE}"
+            )
+        );
+        handle
+            .signal(
+                QueryUpdateFailureFallbackWorkflow::finish,
+                (),
+                WorkflowSignalOptions::default(),
+            )
+            .await
+            .unwrap();
+    };
+
+    let (_, worker_res) = tokio::join!(update_and_finish, worker.run_until_done());
+    worker_res.unwrap();
+    handle.get_result(Default::default()).await.unwrap();
 }
 
 #[tokio::test]
