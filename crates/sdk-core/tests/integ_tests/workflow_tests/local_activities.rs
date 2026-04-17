@@ -48,9 +48,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, CancellableFuture,
-    LocalActivityOptions, WorkflowContext, WorkflowContextView, WorkflowResult,
-    WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    WorkflowContext, WorkflowContextView, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
@@ -1025,11 +1024,9 @@ async fn la_resolve_same_time_as_other_cancel() {
             let mut normal_act = ctx.start_activity(
                 DelayWithCancellation::delay,
                 Duration::from_secs(9),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(9000),
-                ))
-                .cancellation_type(ActivityCancellationType::TryCancel)
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(9000))
+                    .cancellation_type(ActivityCancellationType::TryCancel)
+                    .build(),
             );
             // Make new task
             ctx.timer(Duration::from_millis(1)).await;

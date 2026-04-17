@@ -26,8 +26,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityCloseTimeouts, ActivityOptions, ChildWorkflowOptions, LocalActivityOptions,
-    WorkflowContext, WorkflowResult, workflows,
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WorkflowContext, WorkflowResult,
+    workflows,
 };
 use temporalio_sdk_core::{
     replay::DEFAULT_WORKFLOW_TYPE,
@@ -302,11 +302,9 @@ impl ActivityIdOrTypeChangeWf {
             ctx.start_activity(
                 StdActivities::default,
                 (),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(5),
-                ))
-                .activity_id("I'm bad and wrong!".to_string())
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("I'm bad and wrong!".to_string())
+                    .build(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;

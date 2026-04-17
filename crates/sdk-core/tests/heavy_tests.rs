@@ -60,7 +60,7 @@ impl ActivityLoadWf {
             .start_activity(
                 StdActivities::echo,
                 input_str.clone(),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::Both {
+                ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
                     start_to_close: Duration::from_secs(8),
                     schedule_to_close: Duration::from_secs(8),
                 })
@@ -129,11 +129,9 @@ impl ChunkyActivityWf {
             .start_activity(
                 ChunkyActivities::chunky_echo,
                 input_str.clone(),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(30),
-                ))
-                .activity_id("act-1".to_string())
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(30))
+                    .activity_id("act-1".to_string())
+                    .build(),
             )
             .await?;
         assert_eq!(res, input_str);
