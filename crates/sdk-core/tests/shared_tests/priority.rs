@@ -8,7 +8,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityCloseTimeouts, ActivityOptions, ChildWorkflowOptions, WorkflowContext, WorkflowResult,
+    ActivityOptions, ChildWorkflowOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -74,16 +74,14 @@ pub(crate) async fn priority_values_sent_to_server() {
             let activity = ctx.start_activity(
                 PriorityActivities::echo,
                 "hello".to_string(),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(5),
-                ))
-                .priority(Priority {
-                    priority_key: Some(5),
-                    fairness_key: Some("fair-act".to_string()),
-                    fairness_weight: Some(1.1),
-                })
-                .do_not_eagerly_execute(true)
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .priority(Priority {
+                        priority_key: Some(5),
+                        fairness_key: Some("fair-act".to_string()),
+                        fairness_weight: Some(1.1),
+                    })
+                    .do_not_eagerly_execute(true)
+                    .build(),
             );
             let _ = started.result().await;
             let _ = activity.await;

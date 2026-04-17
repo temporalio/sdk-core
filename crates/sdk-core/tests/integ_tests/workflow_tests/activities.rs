@@ -46,8 +46,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityCloseTimeouts, ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
-    WorkflowTermination,
+    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult, WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -958,11 +957,9 @@ impl OneActivityAbandonCancelledBeforeStarted {
         let act_fut = ctx.start_activity(
             StdActivities::delay,
             Duration::from_secs(2),
-            ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                Duration::from_secs(5),
-            ))
-            .cancellation_type(ActivityCancellationType::Abandon)
-            .build(),
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .cancellation_type(ActivityCancellationType::Abandon)
+                .build(),
         );
         act_fut.cancel();
         let _ = act_fut.await;
@@ -1004,11 +1001,9 @@ impl OneActivityAbandonCancelledAfterComplete {
         let act_fut = ctx.start_activity(
             StdActivities::delay,
             Duration::from_secs(2),
-            ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                Duration::from_secs(5),
-            ))
-            .cancellation_type(ActivityCancellationType::Abandon)
-            .build(),
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .cancellation_type(ActivityCancellationType::Abandon)
+                .build(),
         );
         ctx.timer(Duration::from_secs(1)).await;
         act_fut.cancel();
@@ -1089,15 +1084,13 @@ async fn graceful_shutdown() {
                 ctx.start_activity(
                     SleeperActivities::sleeper,
                     "hi".to_string(),
-                    ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                        Duration::from_secs(5),
-                    ))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    })
-                    .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
-                    .build(),
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .retry_policy(RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        })
+                        .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
+                        .build(),
                 )
             });
             temporalio_sdk::workflows::join_all(act_futs).await;
@@ -1183,14 +1176,12 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                 .start_activity(
                     CancellableEchoActivities::cancellable_echo,
                     "hi!".to_string(),
-                    ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                        Duration::from_secs(1),
-                    ))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    })
-                    .build(),
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(1))
+                        .retry_policy(RetryPolicy {
+                            maximum_attempts: 1,
+                            ..Default::default()
+                        })
+                        .build(),
                 )
                 .await;
             assert!(res.is_err_and(|e| e.is_timeout()));
@@ -1249,14 +1240,12 @@ async fn long_activity_timeout_repro() {
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
-                        ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                            Duration::from_secs(1),
-                        ))
-                        .retry_policy(RetryPolicy {
-                            maximum_attempts: 1,
-                            ..Default::default()
-                        })
-                        .build(),
+                        ActivityOptions::with_start_to_close_timeout(Duration::from_secs(1))
+                            .retry_policy(RetryPolicy {
+                                maximum_attempts: 1,
+                                ..Default::default()
+                            })
+                            .build(),
                     )
                     .await;
                 assert!(res.is_ok());
@@ -1317,11 +1306,9 @@ async fn pass_activity_summary_to_metadata() {
             ctx.start_activity(
                 StdActivities::default,
                 (),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(5),
-                ))
-                .summary("activity summary".to_string())
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .summary("activity summary".to_string())
+                    .build(),
             )
             .await
             .map_err(|e| anyhow!("{e}"))?;
@@ -1381,11 +1368,9 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
             let act_fut = ctx.start_activity(
                 StdActivities::default,
                 (),
-                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                    Duration::from_secs(5),
-                ))
-                .cancellation_type(ActivityCancellationType::Abandon)
-                .build(),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .cancellation_type(ActivityCancellationType::Abandon)
+                    .build(),
             );
             ctx.timer(Duration::from_secs(1)).await;
             act_fut.cancel();

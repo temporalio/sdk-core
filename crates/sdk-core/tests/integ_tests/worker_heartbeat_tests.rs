@@ -35,7 +35,7 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityCloseTimeouts, ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -896,16 +896,14 @@ async fn worker_heartbeat_failure_metrics() {
                 .start_activity(
                     FailingActivities::failing_act,
                     "boom".to_string(),
-                    ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-                        Duration::from_secs(5),
-                    ))
-                    .retry_policy(RetryPolicy {
-                        initial_interval: Some(prost_dur!(from_millis(10))),
-                        backoff_coefficient: 1.0,
-                        maximum_attempts: 4,
-                        ..Default::default()
-                    })
-                    .build(),
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .retry_policy(RetryPolicy {
+                            initial_interval: Some(prost_dur!(from_millis(10))),
+                            backoff_coefficient: 1.0,
+                            maximum_attempts: 4,
+                            ..Default::default()
+                        })
+                        .build(),
                 )
                 .await;
 
