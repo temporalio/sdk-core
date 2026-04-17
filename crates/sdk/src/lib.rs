@@ -623,7 +623,7 @@ impl Worker {
                             if let Err(e) = result
                                 && !matches!(e, WorkflowTermination::Evicted)
                             {
-                                return Err(e.into());
+                                return Err(anyhow::anyhow!("{e}"));
                             }
                             debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
@@ -957,35 +957,34 @@ impl ActivityHalf {
                     let output = AssertUnwindSafe(act_fut).catch_unwind().await;
                     let activity_context = SerializationContextData::Activity;
                     let result = match output {
-                        Err(e) => ActivityExecutionResult::fail(convert_failure_with_fallback(
-                            &data_converter,
-                            OutgoingError::Activity(OutgoingActivityError::Application(
-                                ApplicationFailure::non_retryable(anyhow!(
-                                    "Activity function panicked: {}",
-                                    panic_formatter(e)
-                                ))
-                                .into(),
-                            )),
-                            activity_context,
-                        )),
+                        Err(e) => ActivityExecutionResult::fail(
+                            data_converter.to_failure(
+                                &activity_context,
+                                OutgoingError::Activity(OutgoingActivityError::Application(
+                                    ApplicationFailure::non_retryable(anyhow!(
+                                        "Activity function panicked: {}",
+                                        panic_formatter(e)
+                                    ))
+                                    .into(),
+                                )),
+                            ),
+                        ),
                         Ok(Ok(p)) => ActivityExecutionResult::ok(p),
                         Ok(Err(err)) => match err {
                             ActivityError::Application(app) => {
-                                ActivityExecutionResult::fail(convert_failure_with_fallback(
-                                    &data_converter,
+                                ActivityExecutionResult::fail(data_converter.to_failure(
+                                    &activity_context,
                                     OutgoingError::Activity(OutgoingActivityError::Application(
                                         app,
                                     )),
-                                    activity_context,
                                 ))
                             }
                             ActivityError::Cancelled { details } => {
-                                ActivityExecutionResult::cancel(convert_failure_with_fallback(
-                                    &data_converter,
+                                ActivityExecutionResult::cancel(data_converter.to_failure(
+                                    &activity_context,
                                     OutgoingError::Activity(OutgoingActivityError::Cancelled {
                                         details,
                                     }),
-                                    activity_context,
                                 ))
                             }
                             ActivityError::WillCompleteAsync => {
@@ -1254,7 +1253,7 @@ pub enum WorkflowTermination {
 
     /// The workflow failed with an error.
     #[error("Workflow failed: {0}")]
-    Failed(#[source] anyhow::Error),
+    Failed(#[source] OutgoingWorkflowError),
 }
 
 impl WorkflowTermination {
@@ -1265,7 +1264,7 @@ impl WorkflowTermination {
 
     /// Construct a [WorkflowTermination::Failed] variant from any error.
     pub fn failed(err: impl Into<anyhow::Error>) -> Self {
-        Self::Failed(err.into())
+        Self::Failed(err.into().into())
     }
 
     /// Construct a [WorkflowTermination::Failed] variant from an application failure.
@@ -1276,7 +1275,7 @@ impl WorkflowTermination {
 
 impl From<anyhow::Error> for WorkflowTermination {
     fn from(err: anyhow::Error) -> Self {
-        Self::Failed(err)
+        Self::Failed(err.into())
     }
 }
 
@@ -1334,29 +1333,6 @@ trait PrintablePanicType: Display {
     type NextType: PrintablePanicType;
 }
 
-pub(crate) fn convert_failure_with_fallback(
-    data_converter: &DataConverter,
-    error: OutgoingError,
-    context: SerializationContextData,
-) -> Failure {
-    let original_error = match &error {
-        OutgoingError::Activity(OutgoingActivityError::Application(app)) => app.to_string(),
-        OutgoingError::Activity(OutgoingActivityError::Cancelled { .. }) => {
-            "Activity cancelled".to_string()
-        }
-        OutgoingError::Workflow(OutgoingWorkflowError::Failed(err)) => err.to_string(),
-    };
-    data_converter
-        .to_failure(&context, error)
-        .unwrap_or_else(|converter_error| {
-            Failure::application_failure(
-                format!(
-                    "Failed converting error to failure: {converter_error}, original error message: {original_error}"
-                ),
-                false,
-            )
-        })
-}
 impl PrintablePanicType for &str {
     type NextType = String;
 }

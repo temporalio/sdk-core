@@ -135,9 +135,18 @@ impl DataConverter {
         &self,
         context: &SerializationContextData,
         error: crate::error::OutgoingError,
-    ) -> Result<crate::protos::temporal::api::failure::v1::Failure, PayloadConversionError> {
+    ) -> crate::protos::temporal::api::failure::v1::Failure {
+        let original_error = error.to_string();
         self.failure_converter
             .to_failure(error, &self.payload_converter, context)
+            .unwrap_or_else(|converter_error| {
+                crate::protos::temporal::api::failure::v1::Failure::application_failure(
+                    format!(
+                        "Failed converting error to failure: {converter_error}, original error message: {original_error}"
+                    ),
+                    false,
+                )
+            })
     }
 
     /// Returns the codec component of this data converter.

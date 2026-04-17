@@ -160,20 +160,24 @@ impl From<ApplicationFailure> for Failure {
 }
 
 /// A typed outbound error surface used before encoding to a Temporal failure proto.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OutgoingError {
     /// An error produced while completing an activity.
-    Activity(OutgoingActivityError),
+    #[error(transparent)]
+    Activity(#[from] OutgoingActivityError),
     /// An error produced while failing a workflow execution.
-    Workflow(OutgoingWorkflowError),
+    #[error(transparent)]
+    Workflow(#[from] OutgoingWorkflowError),
 }
 
 /// A typed outbound activity error.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OutgoingActivityError {
     /// An activity application failure.
-    Application(Box<ApplicationFailure>),
+    #[error(transparent)]
+    Application(#[from] Box<ApplicationFailure>),
     /// An activity cancellation with optional details.
+    #[error("Activity cancelled")]
     Cancelled {
         /// Optional cancellation details payload.
         details: Option<Payload>,
@@ -181,10 +185,50 @@ pub enum OutgoingActivityError {
 }
 
 /// A typed outbound workflow failure.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum OutgoingWorkflowError {
-    /// A workflow failure represented as an erased Rust error.
-    Failed(Box<dyn std::error::Error>),
+    /// A workflow application failure.
+    #[error(transparent)]
+    Application(#[from] Box<ApplicationFailure>),
+    /// A workflow failure sourced from an activity execution.
+    #[error(transparent)]
+    ActivityExecution(#[from] Box<ActivityExecutionError>),
+    /// A workflow failure sourced from a child-workflow execution.
+    #[error(transparent)]
+    ChildWorkflowExecution(#[from] Box<ChildWorkflowExecutionError>),
+    /// A workflow failure sourced from child-workflow signaling.
+    #[error(transparent)]
+    ChildWorkflowSignal(#[from] Box<ChildWorkflowSignalError>),
+}
+
+impl From<anyhow::Error> for OutgoingWorkflowError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Application(Box::new(ApplicationFailure::new(value)))
+    }
+}
+
+impl From<ApplicationFailure> for OutgoingWorkflowError {
+    fn from(value: ApplicationFailure) -> Self {
+        Self::Application(Box::new(value))
+    }
+}
+
+impl From<ActivityExecutionError> for OutgoingWorkflowError {
+    fn from(value: ActivityExecutionError) -> Self {
+        Self::ActivityExecution(Box::new(value))
+    }
+}
+
+impl From<ChildWorkflowExecutionError> for OutgoingWorkflowError {
+    fn from(value: ChildWorkflowExecutionError) -> Self {
+        Self::ChildWorkflowExecution(Box::new(value))
+    }
+}
+
+impl From<ChildWorkflowSignalError> for OutgoingWorkflowError {
+    fn from(value: ChildWorkflowSignalError) -> Self {
+        Self::ChildWorkflowSignal(Box::new(value))
+    }
 }
 
 /// A normalized incoming Temporal failure decoded from a protobuf [`Failure`].
@@ -403,5 +447,15 @@ mod tests {
         assert_eq!(info.details, Some(payloads));
         assert_eq!(info.category(), ApplicationErrorCategory::Benign);
         assert_eq!(info.next_retry_delay.unwrap().seconds, 3);
+    }
+
+    #[test]
+    fn anyhow_workflow_errors_default_to_application_outgoing_errors() {
+        let outgoing: OutgoingWorkflowError = anyhow::anyhow!("workflow boom").into();
+
+        let OutgoingWorkflowError::Application(app) = outgoing else {
+            panic!("plain workflow errors should default to application failures");
+        };
+        assert_eq!(app.to_string(), "workflow boom");
     }
 }

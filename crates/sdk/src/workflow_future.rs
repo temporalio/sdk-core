@@ -1,7 +1,6 @@
 use crate::{
     BaseWorkflowContext, CancellableID, OutgoingError, OutgoingWorkflowError, RustWfCmd,
-    TimerResult, UnblockEvent, WorkflowResult, WorkflowTermination, convert_failure_with_fallback,
-    panic_formatter,
+    TimerResult, UnblockEvent, WorkflowResult, WorkflowTermination, panic_formatter,
     workflow_executor::{SdkWakeGuard, WakeTracker},
     workflows::{DispatchData, DynWorkflowExecution, WorkflowExecutionFactory},
 };
@@ -659,12 +658,13 @@ impl WorkflowFuture {
                     self.outgoing_completions
                         .send(WorkflowActivationCompletion::fail(
                             run_id,
-                            convert_failure_with_fallback(
-                                &self.data_converter,
-                                OutgoingError::Workflow(OutgoingWorkflowError::Failed(Box::new(
-                                    crate::ApplicationFailure::non_retryable(anyhow!("{errmsg}")),
-                                ))),
-                                SerializationContextData::Workflow,
+                            self.data_converter.to_failure(
+                                &SerializationContextData::Workflow,
+                                OutgoingError::Workflow(OutgoingWorkflowError::Application(
+                                    Box::new(crate::ApplicationFailure::non_retryable(anyhow!(
+                                        "{errmsg}"
+                                    ))),
+                                )),
                             ),
                             None,
                         ))
@@ -800,12 +800,9 @@ impl WorkflowFuture {
                     }
                     WorkflowTermination::Failed(e) => {
                         workflow_command::Variant::FailWorkflowExecution(FailWorkflowExecution {
-                            failure: Some(convert_failure_with_fallback(
-                                &self.data_converter,
-                                OutgoingError::Workflow(OutgoingWorkflowError::Failed(
-                                    e.into_boxed_dyn_error(),
-                                )),
-                                SerializationContextData::Workflow,
+                            failure: Some(self.data_converter.to_failure(
+                                &SerializationContextData::Workflow,
+                                OutgoingError::Workflow(e),
                             )),
                         })
                     }
