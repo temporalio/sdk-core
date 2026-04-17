@@ -36,7 +36,7 @@ use temporalio_common::{
 use temporalio_common::worker::WorkerTaskTypes;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::test_help::{CoreInternalFlags, MockPollCfg, ResponseType};
@@ -410,9 +410,11 @@ async fn v1(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions::builder()
-                .activity_id("no_change".to_owned())
-                .build(),
+            ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                Duration::from_secs(5),
+            ))
+            .activity_id("no_change".to_owned())
+            .build(),
         )
         .await;
 }
@@ -423,9 +425,11 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions::builder()
-                    .activity_id("had_change".to_owned())
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(5),
+                ))
+                .activity_id("had_change".to_owned())
+                .build(),
             )
             .await;
         true
@@ -434,9 +438,11 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions::builder()
-                    .activity_id("no_change".to_owned())
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(5),
+                ))
+                .activity_id("no_change".to_owned())
+                .build(),
             )
             .await;
         false
@@ -449,9 +455,11 @@ async fn v3(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions::builder()
-                .activity_id("had_change".to_owned())
-                .build(),
+            ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                Duration::from_secs(5),
+            ))
+            .activity_id("had_change".to_owned())
+            .build(),
         )
         .await;
 }
@@ -461,9 +469,11 @@ async fn v4(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions::builder()
-                .activity_id("had_change".to_owned())
-                .build(),
+            ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                Duration::from_secs(5),
+            ))
+            .activity_id("had_change".to_owned())
+            .build(),
         )
         .await;
 }
@@ -677,7 +687,11 @@ impl SameChangeMultipleSpotsWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::builder().build())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;
@@ -685,7 +699,11 @@ impl SameChangeMultipleSpotsWf {
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::builder().build())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;

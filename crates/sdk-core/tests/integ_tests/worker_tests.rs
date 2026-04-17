@@ -414,12 +414,20 @@ async fn activity_tasks_from_completion_reserve_slots() {
     impl ActivityTasksCompletionWf {
         #[run(name = DEFAULT_WORKFLOW_TYPE)]
         async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-            ctx.start_activity(FakeAct::act1, (), ActivityOptions::builder().build())
-                .await
-                .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
-            ctx.start_activity(FakeAct::act2, (), ActivityOptions::builder().build())
-                .await
-                .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            ctx.start_activity(
+                FakeAct::act1,
+                (),
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+            )
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
+            ctx.start_activity(
+                FakeAct::act2,
+                (),
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+            )
+            .await
+            .map_err(|e| WorkflowTermination::from(anyhow::Error::from(e)))?;
             ctx.state(|wf| wf.complete_token.cancel());
             Ok(())
         }

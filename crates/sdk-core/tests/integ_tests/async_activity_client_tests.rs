@@ -11,7 +11,8 @@ use temporalio_common::protos::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityExecutionError, ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityExecutionError, ActivityOptions, CancellableFuture,
+    WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use tokio::sync::mpsc;
@@ -110,14 +111,15 @@ async fn async_activity_completions(
             let activity_future = ctx.start_activity(
                 AsyncActivities::complete_async_activity,
                 expected_outcome,
-                ActivityOptions::builder()
-                    .start_to_close_timeout(Duration::from_secs(30))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    })
-                    .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(30),
+                ))
+                .retry_policy(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                })
+                .cancellation_type(ActivityCancellationType::WaitCancellationCompleted)
+                .build(),
             );
 
             // For cancellation, wait a bit to let the activity start, then request cancel

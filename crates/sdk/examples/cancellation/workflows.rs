@@ -2,7 +2,7 @@
 use std::time::Duration;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -31,10 +31,11 @@ impl CancellationActivities {
 }
 
 fn activity_opts() -> ActivityOptions {
-    ActivityOptions::builder()
-        .start_to_close_timeout(Duration::from_secs(300))
-        .heartbeat_timeout(Duration::from_secs(5))
-        .build()
+    ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(Duration::from_secs(
+        300,
+    )))
+    .heartbeat_timeout(Duration::from_secs(5))
+    .build()
 }
 
 #[workflow]

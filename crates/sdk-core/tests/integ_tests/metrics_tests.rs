@@ -65,8 +65,8 @@ use temporalio_common::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, LocalActivityOptions, NexusOperationOptions,
-    WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    NexusOperationOptions, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -862,13 +862,14 @@ async fn activity_metrics() {
             let normal_act_fail = ctx.start_activity(
                 PassFailActivities::pass_fail_act,
                 "fail".to_string(),
-                ActivityOptions::builder()
-                    .start_to_close_timeout(Duration::from_secs(1))
-                    .retry_policy(RetryPolicy {
-                        maximum_attempts: 1,
-                        ..Default::default()
-                    })
-                    .build(),
+                ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
+                    Duration::from_secs(1),
+                ))
+                .retry_policy(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                })
+                .build(),
             );
             let _ = join!(normal_act_pass, normal_act_fail);
             let local_act_pass = ctx.start_local_activity(
