@@ -22,12 +22,12 @@ use crate::{
     },
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
-use dashmap::DashMap;
 use futures_util::{
     Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
 };
 use std::{
+    collections::HashMap,
     convert::TryInto,
     future,
     sync::{
@@ -59,7 +59,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
-type OutstandingActMap = Arc<DashMap<TaskToken, RemoteInFlightActInfo>>;
+type OutstandingActMap = Arc<parking_lot::Mutex<HashMap<TaskToken, RemoteInFlightActInfo>>>;
 
 #[derive(Debug)]
 struct PendingActivityCancel {
@@ -191,7 +191,7 @@ impl WorkerActivityTasks {
         local_timeout_buffer: Duration,
     ) -> Self {
         let shutdown_initiated_token = CancellationToken::new();
-        let outstanding_activity_tasks = Arc::new(DashMap::new());
+        let outstanding_activity_tasks = Arc::new(parking_lot::Mutex::new(HashMap::new()));
         let server_poller_stream =
             new_activity_task_poller(poller, metrics.clone(), shutdown_initiated_token.clone());
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
@@ -320,7 +320,11 @@ impl WorkerActivityTasks {
         status: aer::Status,
         client: &dyn WorkerClient,
     ) {
-        if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
+        let act_info = {
+            let mut outstanding_activity_tasks = self.outstanding_activity_tasks.lock();
+            outstanding_activity_tasks.remove(&task_token)
+        };
+        if let Some(act_info) = act_info {
             let act_metrics = self.metrics.with_new_attrs([
                 activity_type(act_info.base.activity_type),
                 workflow_type(act_info.base.workflow_type),
@@ -433,12 +437,14 @@ impl WorkerActivityTasks {
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
         // TODO: Propagate these back as cancels. Silent fails is too nonobvious
-        let at_info = self
-            .outstanding_activity_tasks
-            .get(&TaskToken(details.task_token.clone()))
-            .ok_or(ActivityHeartbeatError::UnknownActivity)?;
-        let heartbeat_timeout: Duration = at_info
-            .heartbeat_timeout
+        let (heartbeat_timeout, timeout_resetter) = {
+            let outstanding_activity_tasks = self.outstanding_activity_tasks.lock();
+            let at_info = outstanding_activity_tasks
+                .get(&TaskToken(details.task_token.clone()))
+                .ok_or(ActivityHeartbeatError::UnknownActivity)?;
+            (at_info.heartbeat_timeout, at_info.timeout_resetter.clone())
+        };
+        let heartbeat_timeout: Duration = heartbeat_timeout
             // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
             .unwrap_or_default()
             .try_into()
@@ -457,7 +463,7 @@ impl WorkerActivityTasks {
         let throttle_interval =
             std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
         self.heartbeat_manager
-            .record(details, throttle_interval, at_info.timeout_resetter.clone())
+            .record(details, throttle_interval, timeout_resetter)
     }
 
     /// Returns a handle that the workflows management side can use to interact with this manager
@@ -509,31 +515,32 @@ where
                         // an outstanding activity task. This is fine because it means that we
                         // no longer need to cancel this activity, so we'll just ignore such
                         // orphaned cancellations.
-                        if let Some(mut details) =
-                            self.outstanding_tasks.get_mut(&next_pc.task_token)
                         {
-                            if details.issued_cancel_to_lang.is_some() {
-                                // Don't double-issue cancellations
-                                None
-                            } else {
-                                details.issued_cancel_to_lang = Some(next_pc.reason);
-                                if next_pc.reason == ActivityCancelReason::NotFound
-                                    || next_pc.details.is_not_found
-                                {
-                                    details.known_not_found = true;
+                            let mut outstanding_tasks = self.outstanding_tasks.lock();
+                            if let Some(details) = outstanding_tasks.get_mut(&next_pc.task_token) {
+                                if details.issued_cancel_to_lang.is_some() {
+                                    // Don't double-issue cancellations
+                                    None
+                                } else {
+                                    details.issued_cancel_to_lang = Some(next_pc.reason);
+                                    if next_pc.reason == ActivityCancelReason::NotFound
+                                        || next_pc.details.is_not_found
+                                    {
+                                        details.known_not_found = true;
+                                    }
+                                    Some(Ok(ActivityTask::cancel_from_ids(
+                                        next_pc.task_token.0,
+                                        next_pc.reason,
+                                        next_pc.details,
+                                    )))
                                 }
-                                Some(Ok(ActivityTask::cancel_from_ids(
-                                    next_pc.task_token.0,
-                                    next_pc.reason,
-                                    next_pc.details,
-                                )))
+                            } else {
+                                debug!(task_token = %next_pc.task_token,
+                                       "Unknown activity task when issuing cancel");
+                                // If we can't find the activity here, it's already been completed,
+                                // in which case issuing a cancel again is pointless.
+                                None
                             }
-                        } else {
-                            debug!(task_token = %next_pc.task_token,
-                                   "Unknown activity task when issuing cancel");
-                            // If we can't find the activity here, it's already been completed,
-                            // in which case issuing a cancel again is pointless.
-                            None
                         }
                     }
                     ActivityTaskSource::PendingStart(res) => {
@@ -560,14 +567,16 @@ where
                             };
 
                             let tt: TaskToken = task.resp.task_token.clone().into();
-                            let outstanding_entry = self.outstanding_tasks.entry(tt.clone());
-                            let mut outstanding_info =
-                                outstanding_entry.insert(RemoteInFlightActInfo::new(
+                            self.outstanding_tasks.lock().insert(
+                                tt.clone(),
+                                RemoteInFlightActInfo::new(
                                     &task.resp,
                                     task.permit.into_used(ActivitySlotInfo {
                                         activity_type: activity_type_name.to_string(),
                                     }),
-                                ));
+                                ),
+                            );
+
                             // If we have already waited the grace period and issued cancels,
                             // this will have been set true, indicating anything that happened
                             // to be buffered/in-flight/etc should get an immediate cancel. This
@@ -575,7 +584,7 @@ where
                             // do work on polls that got received during shutdown.
                             if should_issue_immediate_cancel.load(Ordering::Acquire) {
                                 let _ = cancels_tx.send(PendingActivityCancel::new(
-                                    tt,
+                                    tt.clone(),
                                     ActivityCancelReason::WorkerShutdown,
                                     ActivityTask::primary_reason_to_cancellation_details(
                                         ActivityCancelReason::WorkerShutdown,
@@ -602,13 +611,14 @@ where
                                 if let Some((timeout_type, timeout_at)) = timeout_at {
                                     let sleep_time = timeout_at + local_timeout_buffer;
                                     let cancel_tx = cancels_tx.clone();
+                                    let task_token = tt.clone();
                                     let resetter = if timeout_type == HEARTBEAT_TYPE {
                                         Some(Arc::new(Notify::new()))
                                     } else {
                                         None
                                     };
                                     let resetter_clone = resetter.clone();
-                                    outstanding_info.local_timeouts_task =
+                                    let local_timeouts_task =
                                         Some(tokio::task::spawn(async move {
                                             if let Some(rs) = resetter_clone {
                                                 loop {
@@ -621,12 +631,12 @@ where
                                                 tokio::time::sleep(sleep_time).await;
                                             }
                                             debug!(
-                                                task_token=%tt,
+                                                task_token=%task_token,
                                                 "Timing out activity due to elapsed local \
                                                  {timeout_type} timer"
                                             );
                                             let _ = cancel_tx.send(PendingActivityCancel::new(
-                                                tt,
+                                                task_token,
                                                 ActivityCancelReason::TimedOut,
                                                 ActivityCancellationDetails {
                                                     is_not_found: true,
@@ -635,7 +645,12 @@ where
                                                 },
                                             ));
                                         }));
-                                    outstanding_info.timeout_resetter = resetter;
+                                    if let Some(outstanding_info) =
+                                        self.outstanding_tasks.lock().get_mut(&tt)
+                                    {
+                                        outstanding_info.local_timeouts_task = local_timeouts_task;
+                                        outstanding_info.timeout_resetter = resetter;
+                                    }
                                 }
                             }
 
@@ -653,9 +668,14 @@ where
                         self.shutdown_initiated_token.cancelled().await;
                         tokio::time::sleep(gp).await;
                         should_issue_immediate_cancel_clone.store(true, Ordering::Release);
-                        for mapref in outstanding_tasks_clone.iter() {
+                        for task_token in outstanding_tasks_clone
+                            .lock()
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                        {
                             let _ = self.cancels_tx.send(PendingActivityCancel::new(
-                                mapref.key().clone(),
+                                task_token,
                                 ActivityCancelReason::WorkerShutdown,
                                 ActivityTask::primary_reason_to_cancellation_details(
                                     ActivityCancelReason::WorkerShutdown,
@@ -667,7 +687,10 @@ where
                 join!(
                     async {
                         self.start_tasks_stream_complete.cancelled().await;
-                        while !outstanding_tasks_clone.is_empty() {
+                        while {
+                            let outstanding_tasks = outstanding_tasks_clone.lock();
+                            !outstanding_tasks.is_empty()
+                        } {
                             self.complete_notify.notified().await
                         }
                         // If we were waiting for the grace period but everything already finished,

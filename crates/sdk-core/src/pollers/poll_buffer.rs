@@ -10,7 +10,6 @@ use crate::{
 use backoff::{SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use crossbeam_utils::atomic::AtomicCell;
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
-use governor::{Quota, RateLimiter};
 use std::{
     cmp,
     fmt::Debug,
@@ -19,7 +18,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporalio_client::{
     ERROR_RETURNED_DUE_TO_SHORT_CIRCUIT, request_extensions::NoRetryOnMatching,
@@ -45,6 +44,32 @@ use tracing::Instrument;
 
 type PollReceiver<T, SK> =
     Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>;
+
+struct PollRateLimiter {
+    interval: Duration,
+    next_allowed_at: Mutex<Instant>,
+}
+
+impl PollRateLimiter {
+    fn new(polls_per_second: f64) -> Self {
+        Self {
+            interval: Duration::from_secs_f64(polls_per_second.recip()),
+            next_allowed_at: Mutex::new(Instant::now()),
+        }
+    }
+
+    async fn wait(&self) {
+        let scheduled_at = {
+            let mut next_allowed_at = self.next_allowed_at.lock().await;
+            let now = Instant::now();
+            let scheduled_at = (*next_allowed_at).max(now);
+            *next_allowed_at = scheduled_at + self.interval;
+            scheduled_at
+        };
+        tokio::time::sleep_until(scheduled_at.into()).await;
+    }
+}
+
 pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
     buffered_polls: PollReceiver<T, SK>,
     shutdown: CancellationToken,
@@ -161,14 +186,11 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
     ) -> Self {
         let pre_permit_delay = options
             .max_worker_acts_per_second
-            .and_then(|ps| {
-                Quota::with_period(Duration::from_secs_f64(ps.recip()))
-                    .map(|q| Arc::new(RateLimiter::direct(q)))
-            })
+            .map(|ps| Arc::new(PollRateLimiter::new(ps)))
             .map(|rl| {
                 move || {
                     let rl = rl.clone();
-                    async move { rl.until_ready().await }.boxed()
+                    async move { rl.wait().await }.boxed()
                 }
             });
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {

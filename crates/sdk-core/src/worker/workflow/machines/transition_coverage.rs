@@ -3,8 +3,8 @@
 //! in stable Rust. Don't do the things in here. They're bad. This is test only code, and should
 //! never ever be removed from behind `#[cfg(test)]` compilation.
 
-use dashmap::{DashMap, DashSet, mapref::entry::Entry};
 use std::{
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::{
         LazyLock, Mutex,
@@ -15,8 +15,8 @@ use std::{
 };
 
 // During test we want to know about which transitions we've covered in state machines
-static COVERED_TRANSITIONS: LazyLock<DashMap<String, DashSet<CoveredTransition>>> =
-    LazyLock::new(DashMap::new);
+static COVERED_TRANSITIONS: LazyLock<Mutex<HashMap<String, HashSet<CoveredTransition>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 static COVERAGE_SENDER: LazyLock<SyncSender<(String, CoveredTransition)>> =
     LazyLock::new(spawn_save_coverage_at_end);
 static THREAD_HANDLE: LazyLock<Mutex<Option<JoinHandle<()>>>> = LazyLock::new(|| Mutex::new(None));
@@ -49,18 +49,12 @@ fn spawn_save_coverage_at_end() -> SyncSender<(String, CoveredTransition)> {
         // last second that we are probably done running all the tests. This is to avoid
         // needing to instrument every single test.
         while let Ok((machine_name, ct)) = rx.recv_timeout(Duration::from_secs(1)) {
-            match COVERED_TRANSITIONS.entry(machine_name) {
-                Entry::Occupied(o) => {
-                    o.get().insert(ct);
-                }
-                Entry::Vacant(v) => {
-                    v.insert({
-                        let ds = DashSet::new();
-                        ds.insert(ct);
-                        ds
-                    });
-                }
-            }
+            COVERED_TRANSITIONS
+                .lock()
+                .unwrap()
+                .entry(machine_name)
+                .or_default()
+                .insert(ct);
         }
     });
     *THREAD_HANDLE.lock().unwrap() = Some(handle);
@@ -124,8 +118,7 @@ mod machine_coverage_report {
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
-        for item in COVERED_TRANSITIONS.iter() {
-            let (machine, coverage) = item.pair();
+        for (machine, coverage) in COVERED_TRANSITIONS.lock().unwrap().iter() {
             match machine.as_ref() {
                 m @ "ActivityMachine" => cover_transitions(m, &mut activity, coverage),
                 m @ "TimerMachine" => cover_transitions(m, &mut timer, coverage),
@@ -153,7 +146,7 @@ mod machine_coverage_report {
         }
     }
 
-    fn cover_transitions(machine: &str, viz: &mut String, cov: &DashSet<CoveredTransition>) {
+    fn cover_transitions(machine: &str, viz: &mut String, cov: &HashSet<CoveredTransition>) {
         for trans in cov.iter() {
             let find_line = format!(
                 "{} --> {}: {}",
