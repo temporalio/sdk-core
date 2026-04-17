@@ -37,7 +37,7 @@ pub(crate) trait IntoWorkflowCommand {
 pub struct ActivityOptions {
     /// Timeouts for activity completion.
     ///
-    /// See [`ActivityCloseTimeouts`] for the meaning of each timeout mode.
+    /// See [`ActivityCloseTimeouts`] for the meaning of each timeout variant.
     #[builder(start_fn)]
     pub close_timeout: ActivityCloseTimeouts,
     /// Identifier to use for tracking the activity in Workflow history.
@@ -75,12 +75,12 @@ pub struct ActivityOptions {
 }
 
 impl ActivityOptions {
-    /// Returns a builder with a [`ActivityCloseTimeouts::StartToClose`] set.
+    /// Returns a builder with `close_timeout` set to [`ActivityCloseTimeouts::StartToClose`].
     pub fn with_start_to_close_timeout(duration: Duration) -> ActivityOptionsBuilder {
         Self::with_close_timeout(ActivityCloseTimeouts::StartToClose(duration))
     }
 
-    /// Returns a builder with a [`ActivityCloseTimeouts::ScheduleToClose`] set.
+    /// Returns a builder with `close_timeout` set to [`ActivityCloseTimeouts::ScheduleToClose`].
     pub fn with_schedule_to_close_timeout(duration: Duration) -> ActivityOptionsBuilder {
         Self::with_close_timeout(ActivityCloseTimeouts::ScheduleToClose(duration))
     }
