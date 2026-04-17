@@ -250,6 +250,10 @@ pub enum IncomingError {
     Activity(IncomingActivityError),
     /// A decoded child-workflow failure wrapper.
     ChildWorkflowExecution(IncomingChildWorkflowExecutionError),
+    /// A decoded nexus operation failure wrapper.
+    NexusOperationExecution(IncomingNexusOperationExecutionError),
+    /// A decoded nexus handler failure wrapper.
+    NexusHandler(IncomingNexusHandlerError),
 }
 
 impl IncomingError {
@@ -266,6 +270,8 @@ impl IncomingError {
             IncomingError::ResetWorkflow(err) => err.failure(),
             IncomingError::Activity(err) => err.failure(),
             IncomingError::ChildWorkflowExecution(err) => err.failure(),
+            IncomingError::NexusOperationExecution(err) => err.failure(),
+            IncomingError::NexusHandler(err) => err.failure(),
         }
     }
 
@@ -280,6 +286,8 @@ impl IncomingError {
             IncomingError::ResetWorkflow(err) => err.cause(),
             IncomingError::Activity(err) => err.cause(),
             IncomingError::ChildWorkflowExecution(err) => err.cause(),
+            IncomingError::NexusOperationExecution(err) => err.cause(),
+            IncomingError::NexusHandler(err) => err.cause(),
         }
     }
 
@@ -294,6 +302,8 @@ impl IncomingError {
             IncomingError::ResetWorkflow(err) => err.into_failure(),
             IncomingError::Activity(err) => err.into_failure(),
             IncomingError::ChildWorkflowExecution(err) => err.into_failure(),
+            IncomingError::NexusOperationExecution(err) => err.into_failure(),
+            IncomingError::NexusHandler(err) => err.into_failure(),
         }
     }
 }
@@ -346,6 +356,14 @@ incoming_failure_wrapper!(
 incoming_failure_wrapper!(
     IncomingChildWorkflowExecutionError,
     "A normalized child-workflow execution failure wrapper."
+);
+incoming_failure_wrapper!(
+    IncomingNexusOperationExecutionError,
+    "A normalized nexus operation failure wrapper."
+);
+incoming_failure_wrapper!(
+    IncomingNexusHandlerError,
+    "A normalized nexus handler failure wrapper."
 );
 
 /// Error type for activity execution outcomes.

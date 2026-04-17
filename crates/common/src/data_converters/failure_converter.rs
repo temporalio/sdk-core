@@ -3,8 +3,9 @@ use crate::{
     error::{
         ActivityExecutionError, ApplicationFailure, CancelledError, ChildWorkflowExecutionError,
         ChildWorkflowSignalError, IncomingActivityError, IncomingChildWorkflowExecutionError,
-        IncomingError, OutgoingActivityError, OutgoingError, OutgoingWorkflowError,
-        ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
+        IncomingError, IncomingNexusHandlerError, IncomingNexusOperationExecutionError,
+        OutgoingActivityError, OutgoingError, OutgoingWorkflowError, ResetWorkflowError,
+        ServerError, TerminatedError, TimeoutError,
     },
     protos::temporal::api::failure::v1::{
         ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo,
@@ -322,7 +323,14 @@ fn decode_failure(failure: Failure) -> IncomingError {
                 failure, cause,
             ))
         }
-        Some(_) => IncomingError::Application(ApplicationFailure::from_failure(failure, cause)),
+        Some(FailureInfo::NexusOperationExecutionFailureInfo(_)) => {
+            IncomingError::NexusOperationExecution(IncomingNexusOperationExecutionError::new(
+                failure, cause,
+            ))
+        }
+        Some(FailureInfo::NexusHandlerFailureInfo(_)) => {
+            IncomingError::NexusHandler(IncomingNexusHandlerError::new(failure, cause))
+        }
     }
 }
 
@@ -333,10 +341,49 @@ mod tests {
         common::v1::Payload,
         enums::v1::ApplicationErrorCategory,
         failure::v1::{
-            ActivityFailureInfo, ChildWorkflowExecutionFailureInfo, TimeoutFailureInfo,
-            failure::FailureInfo,
+            ActivityFailureInfo, ChildWorkflowExecutionFailureInfo, NexusHandlerFailureInfo,
+            NexusOperationFailureInfo, ResetWorkflowFailureInfo, ServerFailureInfo,
+            TerminatedFailureInfo, TimeoutFailureInfo, failure::FailureInfo,
         },
     };
+    use rstest::rstest;
+
+    #[derive(Debug, Clone, Copy)]
+    enum IncomingKind {
+        Application,
+        Timeout,
+        Cancelled,
+        Terminated,
+        Server,
+        ResetWorkflow,
+        Activity,
+        ChildWorkflowExecution,
+        NexusOperationExecution,
+        NexusHandler,
+    }
+
+    fn assert_incoming_kind(decoded: &IncomingError, expected: IncomingKind) {
+        match expected {
+            IncomingKind::Application => assert!(matches!(decoded, IncomingError::Application(_))),
+            IncomingKind::Timeout => assert!(matches!(decoded, IncomingError::Timeout(_))),
+            IncomingKind::Cancelled => assert!(matches!(decoded, IncomingError::Cancelled(_))),
+            IncomingKind::Terminated => assert!(matches!(decoded, IncomingError::Terminated(_))),
+            IncomingKind::Server => assert!(matches!(decoded, IncomingError::Server(_))),
+            IncomingKind::ResetWorkflow => {
+                assert!(matches!(decoded, IncomingError::ResetWorkflow(_)))
+            }
+            IncomingKind::Activity => assert!(matches!(decoded, IncomingError::Activity(_))),
+            IncomingKind::ChildWorkflowExecution => {
+                assert!(matches!(decoded, IncomingError::ChildWorkflowExecution(_)))
+            }
+            IncomingKind::NexusOperationExecution => {
+                assert!(matches!(decoded, IncomingError::NexusOperationExecution(_)))
+            }
+            IncomingKind::NexusHandler => {
+                assert!(matches!(decoded, IncomingError::NexusHandler(_)))
+            }
+        }
+    }
 
     fn convert(err: OutgoingWorkflowError) -> Failure {
         DefaultFailureConverter
@@ -478,6 +525,71 @@ mod tests {
         };
         assert_eq!(app.failure(), Some(&failure));
         assert!(matches!(app.cause(), Some(IncomingError::Timeout(_))));
+    }
+
+    #[rstest]
+    #[case(
+        FailureInfo::ApplicationFailureInfo(ApplicationFailureInfo::default()),
+        IncomingKind::Application
+    )]
+    #[case(
+        FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo::default()),
+        IncomingKind::Timeout
+    )]
+    #[case(
+        FailureInfo::CanceledFailureInfo(CanceledFailureInfo::default()),
+        IncomingKind::Cancelled
+    )]
+    #[case(
+        FailureInfo::TerminatedFailureInfo(TerminatedFailureInfo::default()),
+        IncomingKind::Terminated
+    )]
+    #[case(
+        FailureInfo::ServerFailureInfo(ServerFailureInfo::default()),
+        IncomingKind::Server
+    )]
+    #[case(
+        FailureInfo::ResetWorkflowFailureInfo(ResetWorkflowFailureInfo::default()),
+        IncomingKind::ResetWorkflow
+    )]
+    #[case(
+        FailureInfo::ActivityFailureInfo(ActivityFailureInfo::default()),
+        IncomingKind::Activity
+    )]
+    #[case(
+        FailureInfo::ChildWorkflowExecutionFailureInfo(
+            ChildWorkflowExecutionFailureInfo::default()
+        ),
+        IncomingKind::ChildWorkflowExecution
+    )]
+    #[case(
+        FailureInfo::NexusOperationExecutionFailureInfo(NexusOperationFailureInfo::default()),
+        IncomingKind::NexusOperationExecution
+    )]
+    #[case(
+        FailureInfo::NexusHandlerFailureInfo(NexusHandlerFailureInfo::default()),
+        IncomingKind::NexusHandler
+    )]
+    fn failure_info_decodes_to_expected_incoming_error(
+        #[case] failure_info: FailureInfo,
+        #[case] expected: IncomingKind,
+    ) {
+        let failure = Failure {
+            message: "boom".to_owned(),
+            failure_info: Some(failure_info),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        assert_incoming_kind(&decoded, expected);
+        assert_eq!(decoded.failure(), &failure);
     }
 
     #[test]
