@@ -31,7 +31,7 @@ pub(crate) trait IntoWorkflowCommand {
 }
 
 /// Options for scheduling an activity
-#[derive(Debug, bon::Builder)]
+#[derive(Debug, bon::Builder, Clone)]
 #[non_exhaustive]
 #[builder(start_fn = with_close_timeout, on(String, into), state_mod(vis = "pub"))]
 pub struct ActivityOptions {
@@ -75,14 +75,28 @@ pub struct ActivityOptions {
 }
 
 impl ActivityOptions {
+    /// Returns a builder with a [`ActivityCloseTimeouts::StartToClose`] set.
+    pub fn with_start_to_close_timeout(duration: Duration) -> ActivityOptionsBuilder {
+        Self::with_close_timeout(ActivityCloseTimeouts::StartToClose(duration))
+    }
+
+    /// Returns a builder with a [`ActivityCloseTimeouts::ScheduleToClose`] set.
+    pub fn with_schedule_to_close_timeout(duration: Duration) -> ActivityOptionsBuilder {
+        Self::with_close_timeout(ActivityCloseTimeouts::ScheduleToClose(duration))
+    }
+
     /// Creates activity options with only `start_to_close_timeout` set.
+    ///
+    /// If you need additional fields set, use [`Self::with_start_to_close_timeout`].
     pub fn start_to_close_timeout(duration: Duration) -> Self {
-        Self::with_close_timeout(ActivityCloseTimeouts::StartToClose(duration)).build()
+        Self::with_start_to_close_timeout(duration).build()
     }
 
     /// Creates activity options with only `schedule_to_close_timeout` set.
+    ///
+    /// If you need additional fields set, use [`Self::with_schedule_to_close_timeout`].
     pub fn schedule_to_close_timeout(duration: Duration) -> Self {
-        Self::with_close_timeout(ActivityCloseTimeouts::ScheduleToClose(duration)).build()
+        Self::with_schedule_to_close_timeout(duration).build()
     }
 
     pub(crate) fn into_command(
@@ -569,53 +583,29 @@ mod tests {
     use temporalio_common::protos::coresdk::workflow_commands::workflow_command::Variant;
 
     #[test]
-    fn activity_options_builder_defaults_match_start_to_close_constructor() {
-        let built = ActivityOptions::with_close_timeout(ActivityCloseTimeouts::StartToClose(
-            Duration::from_secs(5),
-        ))
-        .build();
-        let constructed = ActivityOptions::start_to_close_timeout(Duration::from_secs(5));
-
-        assert_eq!(built.close_timeout, constructed.close_timeout);
-        assert_eq!(built.activity_id, constructed.activity_id);
-        assert_eq!(built.task_queue, constructed.task_queue);
-        assert_eq!(
-            built.schedule_to_start_timeout,
-            constructed.schedule_to_start_timeout
-        );
-        assert_eq!(built.heartbeat_timeout, constructed.heartbeat_timeout);
-        assert_eq!(built.cancellation_type, constructed.cancellation_type);
-        assert_eq!(built.retry_policy, constructed.retry_policy);
-        assert_eq!(built.summary, constructed.summary);
-        assert_eq!(built.priority, constructed.priority);
-        assert_eq!(
-            built.do_not_eagerly_execute,
-            constructed.do_not_eagerly_execute
-        );
-    }
-
-    #[test]
-    fn activity_options_start_to_close_timeout_constructor_sets_only_that_timeout() {
-        let opts = ActivityOptions::start_to_close_timeout(Duration::from_secs(5));
+    fn activity_options_with_start_to_close_timeout_wrapper_supports_builder_chaining() {
+        let opts = ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+            .heartbeat_timeout(Duration::from_secs(2))
+            .build();
 
         assert_eq!(
             opts.close_timeout,
             ActivityCloseTimeouts::StartToClose(Duration::from_secs(5))
         );
-        assert_eq!(opts.schedule_to_start_timeout, None);
-        assert_eq!(opts.heartbeat_timeout, None);
+        assert_eq!(opts.heartbeat_timeout, Some(Duration::from_secs(2)));
     }
 
     #[test]
-    fn activity_options_schedule_to_close_timeout_constructor_sets_only_that_timeout() {
-        let opts = ActivityOptions::schedule_to_close_timeout(Duration::from_secs(5));
+    fn activity_options_with_schedule_to_close_timeout_wrapper_supports_builder_chaining() {
+        let opts = ActivityOptions::with_schedule_to_close_timeout(Duration::from_secs(5))
+            .heartbeat_timeout(Duration::from_secs(2))
+            .build();
 
         assert_eq!(
             opts.close_timeout,
             ActivityCloseTimeouts::ScheduleToClose(Duration::from_secs(5))
         );
-        assert_eq!(opts.schedule_to_start_timeout, None);
-        assert_eq!(opts.heartbeat_timeout, None);
+        assert_eq!(opts.heartbeat_timeout, Some(Duration::from_secs(2)));
     }
 
     #[test]
