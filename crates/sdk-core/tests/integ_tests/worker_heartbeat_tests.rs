@@ -203,10 +203,7 @@ async fn docker_worker_heartbeat_basic(#[values("otel", "prom", "no_metrics")] b
                 .start_activity(
                     NotifyActivities::pass_fail_act,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
             Ok(())
@@ -356,10 +353,7 @@ async fn docker_worker_heartbeat_tuner() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())
@@ -661,10 +655,7 @@ async fn worker_heartbeat_sticky_cache_miss() {
                 .start_activity(
                     StickyCacheActivities::sticky_cache_history_act,
                     wf_marker.clone(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
 
@@ -905,16 +896,14 @@ async fn worker_heartbeat_failure_metrics() {
                 .start_activity(
                     FailingActivities::failing_act,
                     "boom".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        retry_policy: Some(RetryPolicy {
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .retry_policy(RetryPolicy {
                             initial_interval: Some(prost_dur!(from_millis(10))),
                             backoff_coefficient: 1.0,
                             maximum_attempts: 4,
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
+                        })
+                        .build(),
                 )
                 .await;
 
@@ -1048,10 +1037,7 @@ async fn worker_heartbeat_no_runtime_heartbeat() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())
@@ -1121,10 +1107,7 @@ async fn worker_heartbeat_skip_client_worker_set_check() {
                 .start_activity(
                     StdActivities::echo,
                     "pass".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(1)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(1)),
                 )
                 .await;
             Ok(())

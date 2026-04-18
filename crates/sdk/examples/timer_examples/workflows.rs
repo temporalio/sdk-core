@@ -35,10 +35,7 @@ impl TimerWorkflow {
             result = ctx.start_activity(
                 TimerActivities::slow_activity,
                 100u64,
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(30)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(30)),
             ) => {
                 result.map_err(|e| anyhow::anyhow!("{e}"))?;
                 "activity"

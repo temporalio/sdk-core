@@ -60,10 +60,7 @@ impl PollerLoadSpikyWf {
                 .start_activity(
                     JitteryEchoActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
         }
@@ -110,10 +107,7 @@ impl PollerLoadSpikeThenSustainedWf {
                 .start_activity(
                     JitteryEchoActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
         }

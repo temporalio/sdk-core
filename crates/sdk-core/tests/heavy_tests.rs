@@ -39,7 +39,7 @@ use temporalio_common::{
     worker::WorkerTaskTypes,
 };
 use temporalio_sdk::{
-    ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    ActivityCloseTimeouts, ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
     workflows,
 };
@@ -60,16 +60,16 @@ impl ActivityLoadWf {
             .start_activity(
                 StdActivities::echo,
                 input_str.clone(),
-                ActivityOptions {
-                    activity_id: Some("act-1".to_string()),
-                    task_queue: Some(tq),
-                    schedule_to_start_timeout: Some(Duration::from_secs(8)),
-                    start_to_close_timeout: Some(Duration::from_secs(8)),
-                    schedule_to_close_timeout: Some(Duration::from_secs(8)),
-                    heartbeat_timeout: Some(Duration::from_secs(8)),
-                    cancellation_type: ActivityCancellationType::TryCancel,
-                    ..Default::default()
-                },
+                ActivityOptions::with_close_timeouts(ActivityCloseTimeouts::Both {
+                    start_to_close: Duration::from_secs(8),
+                    schedule_to_close: Duration::from_secs(8),
+                })
+                .activity_id("act-1".to_string())
+                .task_queue(tq)
+                .schedule_to_start_timeout(Duration::from_secs(8))
+                .heartbeat_timeout(Duration::from_secs(8))
+                .cancellation_type(ActivityCancellationType::TryCancel)
+                .build(),
             )
             .await?;
         assert_eq!(res, input_str);
@@ -129,11 +129,9 @@ impl ChunkyActivityWf {
             .start_activity(
                 ChunkyActivities::chunky_echo,
                 input_str.clone(),
-                ActivityOptions {
-                    activity_id: Some("act-1".to_string()),
-                    start_to_close_timeout: Some(Duration::from_secs(30)),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(30))
+                    .activity_id("act-1".to_string())
+                    .build(),
             )
             .await?;
         assert_eq!(res, input_str);
@@ -222,10 +220,7 @@ impl WorkflowLoadWf {
                 .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
             ctx.timer(Duration::from_secs(1)).await;
@@ -439,10 +434,7 @@ impl PollerLoadWf {
                 .start_activity(
                     JitteryActivities::jittery_echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
         }

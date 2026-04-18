@@ -31,11 +31,9 @@ impl CancellationActivities {
 }
 
 fn activity_opts() -> ActivityOptions {
-    ActivityOptions {
-        start_to_close_timeout: Some(Duration::from_secs(300)),
-        heartbeat_timeout: Some(Duration::from_secs(5)),
-        ..Default::default()
-    }
+    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(300))
+        .heartbeat_timeout(Duration::from_secs(5))
+        .build()
 }
 
 #[workflow]
@@ -64,10 +62,7 @@ impl CancellationWorkflow {
                     .start_activity(
                         CancellationActivities::cleanup,
                         (),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(10)),
-                            ..Default::default()
-                        },
+                        ActivityOptions::start_to_close_timeout(Duration::from_secs(10)),
                     )
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?;

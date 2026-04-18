@@ -265,10 +265,7 @@ impl OnlyOneWorkflowSlotAndTwoPollers {
                 .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
                 )
                 .await;
         }

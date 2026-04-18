@@ -42,15 +42,13 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
             .start_activity(
                 StdActivities::delay,
                 Duration::from_secs(4),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(10)),
-                    heartbeat_timeout: Some(Duration::from_secs(2)),
-                    retry_policy: Some(RetryPolicy {
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(10))
+                    .heartbeat_timeout(Duration::from_secs(2))
+                    .retry_policy(RetryPolicy {
                         maximum_attempts: 1,
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                },
+                    })
+                    .build(),
             )
             .await;
         let err = res.unwrap_err();

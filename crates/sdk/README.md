@@ -68,10 +68,7 @@ impl GreetingWorkflow {
         let greeting = ctx.start_activity(
             MyActivities::greet,
             name,
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(10)),
-                ..Default::default()
-            }
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(10))
         )?.await?;
 
         Ok(greeting)
