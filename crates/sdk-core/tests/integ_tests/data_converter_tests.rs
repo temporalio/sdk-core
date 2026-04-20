@@ -105,10 +105,7 @@ impl DataConverterTestWorkflow {
             .start_activity(
                 TestActivities::process_tracked,
                 input,
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -132,10 +129,7 @@ impl DescribeDataConverterWorkflow {
             .start_activity(
                 TestActivities::process_tracked,
                 input,
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;

@@ -1,8 +1,8 @@
 mod options;
 
 pub use options::{
-    ActivityOptions, ChildWorkflowOptions, ContinueAsNewOptions, LocalActivityOptions,
-    NexusOperationOptions, Signal, SignalData, TimerOptions,
+    ActivityCloseTimeouts, ActivityOptions, ChildWorkflowOptions, ContinueAsNewOptions,
+    LocalActivityOptions, NexusOperationOptions, Signal, SignalData, TimerOptions,
 };
 pub use temporalio_common::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause;
 

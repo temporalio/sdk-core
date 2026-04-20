@@ -1119,10 +1119,7 @@ async fn worker_restarted_in_middle_of_update() {
             ctx.start_activity(
                 BlockingActivities::blocks,
                 "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
             )
             .await?;
             Ok(())
@@ -1223,10 +1220,7 @@ async fn update_after_empty_wft() {
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
+                        ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                     )
                     .await;
                 ACT_STARTED.store(false, Ordering::Release);
@@ -1251,10 +1245,7 @@ async fn update_after_empty_wft() {
                 .start_activity(
                     StdActivities::echo,
                     "hi!".to_string(),
-                    ActivityOptions {
-                        start_to_close_timeout: Some(Duration::from_secs(2)),
-                        ..Default::default()
-                    },
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                 )
                 .await;
         }
@@ -1324,10 +1315,7 @@ async fn update_lost_on_activity_mismatch() {
                     .start_activity(
                         StdActivities::echo,
                         "hi!".to_string(),
-                        ActivityOptions {
-                            start_to_close_timeout: Some(Duration::from_secs(2)),
-                            ..Default::default()
-                        },
+                        ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
                     )
                     .await;
                 ctx.state_mut(|s| s.can_run -= 1);
