@@ -445,7 +445,35 @@ impl TimeoutError {
 
 impl_incoming_failure_wrapper!(TimeoutError);
 
-incoming_failure_wrapper!(CancelledError, "A normalized cancellation failure.");
+/// A normalized cancellation failure.
+#[derive(Debug)]
+pub struct CancelledError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+    details: Option<Payloads>,
+}
+
+impl CancelledError {
+    /// Creates a new normalized cancellation error wrapper.
+    pub fn new(
+        failure: Failure,
+        failure_info: crate::protos::temporal::api::failure::v1::CanceledFailureInfo,
+        cause: Option<IncomingError>,
+    ) -> Self {
+        Self {
+            failure,
+            cause: cause.map(Box::new),
+            details: failure_info.details,
+        }
+    }
+
+    /// Returns the cancellation details carried by the failure, if any.
+    pub fn details(&self) -> Option<&Payloads> {
+        self.details.as_ref()
+    }
+}
+
+impl_incoming_failure_wrapper!(CancelledError);
 incoming_failure_wrapper!(TerminatedError, "A normalized terminated failure.");
 incoming_failure_wrapper!(ServerError, "A normalized server failure.");
 incoming_failure_wrapper!(ResetWorkflowError, "A normalized reset-workflow failure.");

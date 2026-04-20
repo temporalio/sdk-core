@@ -58,7 +58,11 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
             IncomingError::Activity(activity) => {
                 if self.cancelled {
                     let (failure, cause) = activity.into_parts();
-                    ActivityExecutionError::Cancelled(CancelledError::new(failure, cause))
+                    ActivityExecutionError::Cancelled(CancelledError::new(
+                        failure,
+                        CanceledFailureInfo::default(),
+                        cause,
+                    ))
                 } else {
                     ActivityExecutionError::Failed(activity)
                 }
@@ -303,8 +307,8 @@ fn decode_failure(failure: Failure) -> IncomingError {
         Some(FailureInfo::TimeoutFailureInfo(failure_info)) => {
             IncomingError::Timeout(TimeoutError::new(failure, failure_info, cause))
         }
-        Some(FailureInfo::CanceledFailureInfo(_)) => {
-            IncomingError::Cancelled(CancelledError::new(failure, cause))
+        Some(FailureInfo::CanceledFailureInfo(failure_info)) => {
+            IncomingError::Cancelled(CancelledError::new(failure, failure_info, cause))
         }
         Some(FailureInfo::TerminatedFailureInfo(_)) => {
             IncomingError::Terminated(TerminatedError::new(failure, cause))
@@ -726,6 +730,37 @@ mod tests {
         );
         assert_eq!(timeout.last_heartbeat_details(), Some(&heartbeat_details));
         assert_eq!(timeout.failure(), &failure);
+    }
+
+    #[test]
+    fn cancelled_error_exposes_details() {
+        let details = crate::protos::temporal::api::common::v1::Payloads {
+            payloads: vec![Payload {
+                data: b"cancel".to_vec(),
+                ..Default::default()
+            }],
+        };
+        let failure = Failure {
+            message: "cancelled".to_owned(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                details: Some(details.clone()),
+            })),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Cancelled(cancelled) = decoded else {
+            panic!("expected cancelled error");
+        };
+        assert_eq!(cancelled.details(), Some(&details));
+        assert_eq!(cancelled.failure(), &failure);
     }
 
     #[test]

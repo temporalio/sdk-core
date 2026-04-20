@@ -547,11 +547,11 @@ async fn cancel_after_act_starts(
             // This extra timer is here to ensure the presence of another WF task doesn't mess up
             // resolving the LA with cancel on replay
             ctx.timer(Duration::from_secs(1)).await;
-            let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
+            let err = la.await.unwrap_err();
+            let ActivityExecutionError::Cancelled(cancel_err) = err else {
+                panic!("expected cancellation failure, got {err:?}");
+            };
+            assert!(cancel_err.details().is_none());
             Ok(())
         }
     }
@@ -3296,21 +3296,11 @@ async fn cancel_after_act_starts_canned(
             ctx.timer(Duration::from_secs(1)).await;
             la.cancel();
             ctx.timer(Duration::from_secs(1)).await;
-            let resolution = la.await;
-            assert!(matches!(
-                resolution,
-                Err(ActivityExecutionError::Cancelled(_))
-            ));
-            if let Err(ActivityExecutionError::Cancelled(rfail)) = resolution {
-                assert_matches!(
-                    rfail.failure().failure_info,
-                    Some(FailureInfo::ActivityFailureInfo(_))
-                );
-                assert_matches!(
-                    rfail.cause().unwrap().failure().failure_info,
-                    Some(FailureInfo::CanceledFailureInfo(_))
-                );
-            }
+            let err = la.await.unwrap_err();
+            let ActivityExecutionError::Cancelled(cancel_err) = err else {
+                panic!("expected cancelled error, got {err:?}");
+            };
+            assert!(cancel_err.details().is_none());
             Ok(())
         }
     }
