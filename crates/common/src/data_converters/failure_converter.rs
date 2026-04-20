@@ -3,9 +3,9 @@ use crate::{
     error::{
         ActivityExecutionError, ActivityFailureError, ApplicationFailure, CancelledError,
         ChildWorkflowExecutionError, ChildWorkflowFailureError, ChildWorkflowSignalError,
-        IncomingError, IncomingNexusHandlerError, IncomingNexusOperationExecutionError,
-        OutgoingActivityError, OutgoingError, OutgoingWorkflowError, ResetWorkflowError,
-        ServerError, TerminatedError, TimeoutError,
+        ChildWorkflowSignalFailureError, IncomingError, IncomingNexusHandlerError,
+        IncomingNexusOperationExecutionError, OutgoingActivityError, OutgoingError,
+        OutgoingWorkflowError, ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
     },
     protos::temporal::api::failure::v1::{
         ApplicationFailureInfo, CanceledFailureInfo, ChildWorkflowExecutionFailureInfo, Failure,
@@ -130,7 +130,11 @@ impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
     type Output = ChildWorkflowSignalError;
 
     fn adapt(self, normalized: IncomingError) -> Self::Output {
-        ChildWorkflowSignalError::Failed(Box::new(normalized.into_failure()))
+        let failure = normalized.failure().clone();
+        let cause = failure.cause.clone().map(|cause| decode_failure(*cause));
+        ChildWorkflowSignalError::Failed(ChildWorkflowSignalFailureError::new(
+            failure, normalized, cause,
+        ))
     }
 }
 
@@ -261,7 +265,7 @@ fn encode_child_workflow_execution_failure(err: &ChildWorkflowExecutionError) ->
 
 fn encode_child_workflow_signal_failure(err: &ChildWorkflowSignalError) -> Failure {
     match err {
-        ChildWorkflowSignalError::Failed(failure) => failure.as_ref().clone(),
+        ChildWorkflowSignalError::Failed(failure) => failure.failure().clone(),
         ChildWorkflowSignalError::Serialization(err) => encode_generic_application_failure(err),
     }
 }
@@ -904,6 +908,13 @@ mod tests {
     fn child_workflow_signal_decode_hint_preserves_failure_proto() {
         let failure = Failure {
             message: "child workflow signal failed".to_owned(),
+            cause: Some(Box::new(Failure {
+                message: "timed out".to_owned(),
+                failure_info: Some(FailureInfo::TimeoutFailureInfo(
+                    TimeoutFailureInfo::default(),
+                )),
+                ..Default::default()
+            })),
             ..Default::default()
         };
         let data_converter = crate::data_converters::DataConverter::new(
@@ -923,7 +934,16 @@ mod tests {
         let ChildWorkflowSignalError::Failed(decoded_failure) = decoded else {
             panic!("expected failed child-workflow signal error");
         };
-        assert_eq!(decoded_failure.as_ref(), &failure);
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert!(matches!(
+            decoded_failure.error(),
+            IncomingError::Application(_)
+        ));
+        assert!(matches!(
+            decoded_failure.cause(),
+            Some(IncomingError::Timeout(_))
+        ));
+        assert!(std::error::Error::source(&decoded_failure).is_some());
     }
 
     #[test]

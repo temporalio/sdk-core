@@ -661,12 +661,64 @@ impl ChildWorkflowExecutionError {
 #[derive(Debug, thiserror::Error)]
 pub enum ChildWorkflowSignalError {
     /// The signal delivery failed.
-    #[error("Child workflow signal failed: {}", .0.message)]
-    Failed(Box<Failure>),
+    #[error("Child workflow signal failed: {}", .0.failure().message)]
+    Failed(#[source] ChildWorkflowSignalFailureError),
     /// Failed to serialize the signal input payload.
     #[error("Signal payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
 }
+
+impl ChildWorkflowSignalError {
+    /// Returns the retained top-level child-workflow signal failure proto, if one exists.
+    pub fn failure(&self) -> Option<&Failure> {
+        match self {
+            ChildWorkflowSignalError::Failed(err) => Some(err.failure()),
+            ChildWorkflowSignalError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the normalized cause of the child-workflow signal failure, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        match self {
+            ChildWorkflowSignalError::Failed(err) => err.cause(),
+            ChildWorkflowSignalError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the underlying failure reason for wrapper-shaped signal failures.
+    pub fn reason(&self) -> Option<&IncomingError> {
+        match self {
+            ChildWorkflowSignalError::Failed(err) => Some(err.error()),
+            ChildWorkflowSignalError::Serialization(_) => None,
+        }
+    }
+}
+
+/// A normalized child-workflow signal failure wrapper.
+#[derive(Debug)]
+pub struct ChildWorkflowSignalFailureError {
+    failure: Failure,
+    error: Box<IncomingError>,
+    cause: Option<Box<IncomingError>>,
+}
+
+impl ChildWorkflowSignalFailureError {
+    /// Creates a child-workflow signal failure wrapper.
+    pub fn new(failure: Failure, error: IncomingError, cause: Option<IncomingError>) -> Self {
+        Self {
+            failure,
+            error: Box::new(error),
+            cause: cause.map(Box::new),
+        }
+    }
+
+    /// Returns the direct decoded incoming error represented by the top-level proto failure.
+    pub fn error(&self) -> &IncomingError {
+        &self.error
+    }
+}
+
+impl_incoming_failure_wrapper!(ChildWorkflowSignalFailureError);
 
 #[cfg(test)]
 mod tests {
