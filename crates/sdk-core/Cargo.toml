@@ -62,6 +62,7 @@ opentelemetry-otlp = { version = "0.31", default-features = false, features = [
   "tls-roots",
   "http-proto",
   "grpc-tonic",
+  "reqwest-blocking-client",
   "reqwest-rustls",
 ], optional = true }
 parking_lot = { version = "0.12" }
