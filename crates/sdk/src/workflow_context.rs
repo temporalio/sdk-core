@@ -42,7 +42,7 @@ use temporalio_common::{
     },
     error::{
         ActivityExecutionError, ActivityFailureError, ChildWorkflowExecutionError,
-        ChildWorkflowSignalError,
+        ChildWorkflowFailureError, ChildWorkflowSignalError,
     },
     protos::{
         coresdk::{
@@ -707,7 +707,7 @@ impl<W> SyncWorkflowContext<W> {
         };
         let arguments = pc
             .to_payloads(&ctx, input)
-            .map_err(WorkflowTermination::failed)?;
+            .map_err(|err| WorkflowTermination::from(anyhow::Error::new(err)))?;
         let workflow_type = self.workflow_initial_info().workflow_type.clone();
         let proto = opts.into_proto(workflow_type, arguments);
         Err(WorkflowTermination::continue_as_new(proto))
@@ -1661,10 +1661,14 @@ where
                 Poll::Ready(result) => Poll::Ready({
                     use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
                     let status = result.status.ok_or_else(|| {
-                        ChildWorkflowExecutionError::Failed(Box::new(Failure {
-                            message: "Child workflow completed without a status".to_string(),
-                            ..Default::default()
-                        }))
+                        ChildWorkflowExecutionError::Failed(ChildWorkflowFailureError::new(
+                            Failure {
+                                message: "Child workflow completed without a status".to_string(),
+                                ..Default::default()
+                            },
+                            temporalio_common::protos::temporal::api::failure::v1::ChildWorkflowExecutionFailureInfo::default(),
+                            None,
+                        ))
                     })?;
                     match status {
                         child_workflow_result::Status::Completed(success) => {
@@ -1742,7 +1746,7 @@ where
 enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Option<ChildWorkflowExecutionError>,
+        error: Option<Box<ChildWorkflowExecutionError>>,
         _phantom: PhantomData<WD>,
     },
     Running(F),
@@ -1752,7 +1756,7 @@ enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
 impl<F, WD: WorkflowDefinition> ChildWorkflowStartFut<F, WD> {
     fn eager(err: ChildWorkflowExecutionError) -> Self {
         Self::Errored {
-            error: Some(err),
+            error: Some(Box::new(err)),
             _phantom: PhantomData,
         }
     }
@@ -1771,7 +1775,7 @@ where
         let this = self.get_mut();
         let poll = match this {
             ChildWorkflowStartFut::Errored { error, .. } => {
-                Poll::Ready(Err(error.take().expect("polled after completion")))
+                Poll::Ready(Err(*error.take().expect("polled after completion")))
             }
             ChildWorkflowStartFut::Running(inner) => match Pin::new(inner).poll(cx) {
                 Poll::Pending => Poll::Pending,

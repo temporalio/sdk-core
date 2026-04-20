@@ -3,7 +3,6 @@ use std::time::Duration;
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityExecutionError, ActivityOptions, ApplicationFailure, WorkflowContext, WorkflowResult,
-    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -31,7 +30,7 @@ impl SagaWorkflow {
             Ok(()) => Ok(compensations.into_iter().map(|(_, id)| id).collect()),
             Err(e) => {
                 Self::run_compensations(ctx, &compensations).await;
-                Err(WorkflowTermination::failed(e))
+                Err(e.into())
             }
         }
     }

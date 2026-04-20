@@ -1262,11 +1262,6 @@ impl WorkflowTermination {
         Self::ContinueAsNew(Box::new(can))
     }
 
-    /// Construct a [WorkflowTermination::Failed] variant from any error.
-    pub fn failed(err: impl Into<anyhow::Error>) -> Self {
-        Self::Failed(err.into().into())
-    }
-
     /// Construct a [WorkflowTermination::Failed] variant from an application failure.
     pub fn failed_application(err: ApplicationFailure) -> Self {
         Self::Failed(err.into())
@@ -1281,19 +1276,19 @@ impl From<anyhow::Error> for WorkflowTermination {
 
 impl From<ActivityExecutionError> for WorkflowTermination {
     fn from(value: ActivityExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowExecutionError> for WorkflowTermination {
     fn from(value: ChildWorkflowExecutionError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 
 impl From<ChildWorkflowSignalError> for WorkflowTermination {
     fn from(value: ChildWorkflowSignalError) -> Self {
-        Self::failed(value)
+        Self::Failed(value.into())
     }
 }
 

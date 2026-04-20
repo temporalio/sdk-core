@@ -252,7 +252,7 @@ pub enum IncomingError {
     /// A decoded activity failure wrapper.
     Activity(ActivityFailureError),
     /// A decoded child-workflow failure wrapper.
-    ChildWorkflowExecution(IncomingChildWorkflowExecutionError),
+    ChildWorkflowExecution(ChildWorkflowFailureError),
     /// A decoded nexus operation failure wrapper.
     NexusOperationExecution(IncomingNexusOperationExecutionError),
     /// A decoded nexus handler failure wrapper.
@@ -481,10 +481,73 @@ incoming_failure_wrapper!(
     ActivityFailureError,
     "A normalized activity failure wrapper."
 );
-incoming_failure_wrapper!(
-    IncomingChildWorkflowExecutionError,
-    "A normalized child-workflow execution failure wrapper."
-);
+/// A normalized child-workflow execution failure wrapper.
+#[derive(Debug)]
+pub struct ChildWorkflowFailureError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+    namespace: String,
+    workflow_execution: Option<crate::protos::temporal::api::common::v1::WorkflowExecution>,
+    workflow_type: Option<crate::protos::temporal::api::common::v1::WorkflowType>,
+    initiated_event_id: i64,
+    started_event_id: i64,
+    retry_state: crate::protos::temporal::api::enums::v1::RetryState,
+}
+
+impl ChildWorkflowFailureError {
+    /// Creates a new normalized child-workflow execution failure wrapper.
+    pub fn new(
+        failure: Failure,
+        failure_info: crate::protos::temporal::api::failure::v1::ChildWorkflowExecutionFailureInfo,
+        cause: Option<IncomingError>,
+    ) -> Self {
+        let retry_state = failure_info.retry_state();
+        Self {
+            failure,
+            cause: cause.map(Box::new),
+            namespace: failure_info.namespace,
+            workflow_execution: failure_info.workflow_execution,
+            workflow_type: failure_info.workflow_type,
+            initiated_event_id: failure_info.initiated_event_id,
+            started_event_id: failure_info.started_event_id,
+            retry_state,
+        }
+    }
+
+    /// Returns the namespace of the child workflow.
+    pub fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Returns the child workflow execution, if present.
+    pub fn workflow_execution(
+        &self,
+    ) -> Option<&crate::protos::temporal::api::common::v1::WorkflowExecution> {
+        self.workflow_execution.as_ref()
+    }
+
+    /// Returns the child workflow type, if present.
+    pub fn workflow_type(&self) -> Option<&crate::protos::temporal::api::common::v1::WorkflowType> {
+        self.workflow_type.as_ref()
+    }
+
+    /// Returns the initiated event id.
+    pub fn initiated_event_id(&self) -> i64 {
+        self.initiated_event_id
+    }
+
+    /// Returns the started event id.
+    pub fn started_event_id(&self) -> i64 {
+        self.started_event_id
+    }
+
+    /// Returns the retry state reported by core.
+    pub fn retry_state(&self) -> crate::protos::temporal::api::enums::v1::RetryState {
+        self.retry_state
+    }
+}
+
+impl_incoming_failure_wrapper!(ChildWorkflowFailureError);
 incoming_failure_wrapper!(
     IncomingNexusOperationExecutionError,
     "A normalized nexus operation failure wrapper."
@@ -495,14 +558,17 @@ incoming_failure_wrapper!(
 );
 
 /// Error type for activity execution outcomes.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ActivityExecutionError {
     /// The activity failed with the given failure details.
-    Failed(ActivityFailureError),
+    #[error("Activity failed: {}", .0.failure().message)]
+    Failed(#[source] ActivityFailureError),
     /// The activity was cancelled.
-    Cancelled(CancelledError),
+    #[error("Activity cancelled: {}", .0.failure().message)]
+    Cancelled(#[source] CancelledError),
     /// Failed to serialize input or deserialize result payload.
-    Serialization(PayloadConversionError),
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
 }
 
 impl ActivityExecutionError {
@@ -533,47 +599,15 @@ impl ActivityExecutionError {
     }
 }
 
-impl std::fmt::Display for ActivityExecutionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ActivityExecutionError::Failed(err) => {
-                write!(f, "Activity failed: {}", err.failure.message)
-            }
-            ActivityExecutionError::Cancelled(err) => {
-                write!(f, "Activity cancelled: {}", err.failure().message)
-            }
-            ActivityExecutionError::Serialization(err) => {
-                write!(f, "Payload conversion failed: {}", err)
-            }
-        }
-    }
-}
-
-impl std::error::Error for ActivityExecutionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            ActivityExecutionError::Failed(err) => Some(err),
-            ActivityExecutionError::Cancelled(err) => Some(err),
-            ActivityExecutionError::Serialization(err) => Some(err),
-        }
-    }
-}
-
-impl From<PayloadConversionError> for ActivityExecutionError {
-    fn from(value: PayloadConversionError) -> Self {
-        Self::Serialization(value)
-    }
-}
-
 /// Error returned when a child workflow execution fails.
 #[derive(Debug, thiserror::Error)]
 pub enum ChildWorkflowExecutionError {
     /// The child workflow failed.
-    #[error("Child workflow failed: {}", .0.message)]
-    Failed(Box<Failure>),
+    #[error("Child workflow failed: {}", .0.failure().message)]
+    Failed(#[source] ChildWorkflowFailureError),
     /// The child workflow was cancelled.
-    #[error("Child workflow cancelled: {}", .0.message)]
-    Cancelled(Box<Failure>),
+    #[error("Child workflow cancelled: {}", .0.failure().message)]
+    Cancelled(#[source] CancelledError),
     /// The child workflow failed to start (e.g., workflow ID already exists).
     #[error(
         "Child workflow start failed: workflow_id={workflow_id}, workflow_type={workflow_type}, cause={cause:?}"
@@ -589,6 +623,38 @@ pub enum ChildWorkflowExecutionError {
     /// Failed to serialize input or deserialize the child workflow result payload.
     #[error("Payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
+}
+
+impl ChildWorkflowExecutionError {
+    /// Returns the retained top-level child-workflow failure proto, if one exists.
+    pub fn failure(&self) -> Option<&Failure> {
+        match self {
+            ChildWorkflowExecutionError::Failed(err) => Some(err.failure()),
+            ChildWorkflowExecutionError::Cancelled(err) => Some(err.failure()),
+            ChildWorkflowExecutionError::StartFailed { .. }
+            | ChildWorkflowExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the normalized cause of the top-level child-workflow failure, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        match self {
+            ChildWorkflowExecutionError::Failed(err) => err.cause(),
+            ChildWorkflowExecutionError::Cancelled(err) => err.cause(),
+            ChildWorkflowExecutionError::StartFailed { .. }
+            | ChildWorkflowExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the underlying failure reason for wrapper-shaped child-workflow failures.
+    pub fn reason(&self) -> Option<&IncomingError> {
+        match self {
+            ChildWorkflowExecutionError::Failed(err) => err.cause(),
+            ChildWorkflowExecutionError::Cancelled(_) => None,
+            ChildWorkflowExecutionError::StartFailed { .. }
+            | ChildWorkflowExecutionError::Serialization(_) => None,
+        }
+    }
 }
 
 /// Error returned when signaling a child workflow fails.

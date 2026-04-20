@@ -2,13 +2,14 @@ use super::{PayloadConversionError, PayloadConverter, SerializationContextData};
 use crate::{
     error::{
         ActivityExecutionError, ActivityFailureError, ApplicationFailure, CancelledError,
-        ChildWorkflowExecutionError, ChildWorkflowSignalError, IncomingChildWorkflowExecutionError,
+        ChildWorkflowExecutionError, ChildWorkflowFailureError, ChildWorkflowSignalError,
         IncomingError, IncomingNexusHandlerError, IncomingNexusOperationExecutionError,
         OutgoingActivityError, OutgoingError, OutgoingWorkflowError, ResetWorkflowError,
         ServerError, TerminatedError, TimeoutError,
     },
     protos::temporal::api::failure::v1::{
-        ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo,
+        ApplicationFailureInfo, CanceledFailureInfo, ChildWorkflowExecutionFailureInfo, Failure,
+        failure::FailureInfo,
     },
 };
 
@@ -93,23 +94,30 @@ impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
     type Output = ChildWorkflowExecutionError;
 
     fn adapt(self, normalized: IncomingError) -> Self::Output {
-        match normalized {
-            IncomingError::ChildWorkflowExecution(child) => match self {
-                ChildWorkflowExecutionDecodeHint::Failed => {
-                    ChildWorkflowExecutionError::Failed(Box::new(child.into_failure()))
-                }
-                ChildWorkflowExecutionDecodeHint::Cancelled => {
-                    ChildWorkflowExecutionError::Cancelled(Box::new(child.into_failure()))
-                }
-            },
-            other => match self {
-                ChildWorkflowExecutionDecodeHint::Failed => {
-                    ChildWorkflowExecutionError::Failed(Box::new(other.into_failure()))
-                }
-                ChildWorkflowExecutionDecodeHint::Cancelled => {
-                    ChildWorkflowExecutionError::Cancelled(Box::new(other.into_failure()))
-                }
-            },
+        match (self, normalized) {
+            (
+                ChildWorkflowExecutionDecodeHint::Failed,
+                IncomingError::ChildWorkflowExecution(child),
+            ) => ChildWorkflowExecutionError::Failed(child),
+            (
+                ChildWorkflowExecutionDecodeHint::Cancelled,
+                IncomingError::ChildWorkflowExecution(child),
+            ) => {
+                let (failure, cause) = child.into_parts();
+                ChildWorkflowExecutionError::Cancelled(CancelledError::new(
+                    failure,
+                    CanceledFailureInfo::default(),
+                    cause,
+                ))
+            }
+            (ChildWorkflowExecutionDecodeHint::Cancelled, IncomingError::Cancelled(cancelled)) => {
+                ChildWorkflowExecutionError::Cancelled(cancelled)
+            }
+            (_, other) => ChildWorkflowExecutionError::Failed(ChildWorkflowFailureError::new(
+                other.into_failure(),
+                ChildWorkflowExecutionFailureInfo::default(),
+                None,
+            )),
         }
     }
 }
@@ -244,8 +252,8 @@ fn encode_activity_execution_failure(err: &ActivityExecutionError) -> Failure {
 
 fn encode_child_workflow_execution_failure(err: &ChildWorkflowExecutionError) -> Failure {
     match err {
-        ChildWorkflowExecutionError::Failed(failure)
-        | ChildWorkflowExecutionError::Cancelled(failure) => failure.as_ref().clone(),
+        ChildWorkflowExecutionError::Failed(failure) => failure.failure().clone(),
+        ChildWorkflowExecutionError::Cancelled(failure) => failure.failure().clone(),
         ChildWorkflowExecutionError::StartFailed { .. }
         | ChildWorkflowExecutionError::Serialization(_) => encode_generic_application_failure(err),
     }
@@ -322,9 +330,11 @@ fn decode_failure(failure: Failure) -> IncomingError {
         Some(FailureInfo::ActivityFailureInfo(_)) => {
             IncomingError::Activity(ActivityFailureError::new(failure, cause))
         }
-        Some(FailureInfo::ChildWorkflowExecutionFailureInfo(_)) => {
-            IncomingError::ChildWorkflowExecution(IncomingChildWorkflowExecutionError::new(
-                failure, cause,
+        Some(FailureInfo::ChildWorkflowExecutionFailureInfo(failure_info)) => {
+            IncomingError::ChildWorkflowExecution(ChildWorkflowFailureError::new(
+                failure,
+                failure_info,
+                cause,
             ))
         }
         Some(FailureInfo::NexusOperationExecutionFailureInfo(_)) => {
@@ -768,7 +778,22 @@ mod tests {
         let failure = Failure {
             message: "child workflow failed".to_owned(),
             failure_info: Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
-                ChildWorkflowExecutionFailureInfo::default(),
+                ChildWorkflowExecutionFailureInfo {
+                    namespace: "default".to_owned(),
+                    workflow_execution: Some(
+                        crate::protos::temporal::api::common::v1::WorkflowExecution {
+                            workflow_id: "child-id".to_owned(),
+                            run_id: "run-id".to_owned(),
+                        },
+                    ),
+                    workflow_type: Some(crate::protos::temporal::api::common::v1::WorkflowType {
+                        name: "child-type".to_owned(),
+                    }),
+                    initiated_event_id: 11,
+                    started_event_id: 22,
+                    retry_state: crate::protos::temporal::api::enums::v1::RetryState::Timeout
+                        .into(),
+                },
             )),
             ..Default::default()
         };
@@ -789,7 +814,30 @@ mod tests {
         let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
             panic!("expected failed child-workflow execution error");
         };
-        assert_eq!(decoded_failure.as_ref(), &failure);
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert_eq!(decoded_failure.namespace(), "default");
+        assert_eq!(
+            decoded_failure
+                .workflow_execution()
+                .map(|wf| wf.workflow_id.as_str()),
+            Some("child-id")
+        );
+        assert_eq!(
+            decoded_failure
+                .workflow_execution()
+                .map(|wf| wf.run_id.as_str()),
+            Some("run-id")
+        );
+        assert_eq!(
+            decoded_failure.workflow_type().map(|wf| wf.name.as_str()),
+            Some("child-type")
+        );
+        assert_eq!(decoded_failure.initiated_event_id(), 11);
+        assert_eq!(decoded_failure.started_event_id(), 22);
+        assert_eq!(
+            decoded_failure.retry_state(),
+            crate::protos::temporal::api::enums::v1::RetryState::Timeout
+        );
     }
 
     #[test]
@@ -818,7 +866,38 @@ mod tests {
         let ChildWorkflowExecutionError::Cancelled(decoded_failure) = decoded else {
             panic!("expected cancelled child-workflow execution error");
         };
-        assert_eq!(decoded_failure.as_ref(), &failure);
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert!(decoded_failure.cause().is_none());
+    }
+
+    #[test]
+    fn child_workflow_cancelled_decode_hint_falls_back_to_failed_for_non_cancelled_proto() {
+        let failure = Failure {
+            message: "timed out".to_owned(),
+            failure_info: Some(FailureInfo::TimeoutFailureInfo(
+                TimeoutFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ChildWorkflowExecutionDecodeHint::Cancelled,
+            )
+            .unwrap();
+
+        let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
+            panic!("expected failed child-workflow execution error");
+        };
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert!(decoded_failure.cause().is_none());
     }
 
     #[test]

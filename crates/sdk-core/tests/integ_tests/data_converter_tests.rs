@@ -31,7 +31,6 @@ use temporalio_common::{
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
     ActivityOptions, SyncWorkflowContext, WorkflowContext, WorkflowContextView, WorkflowResult,
-    WorkflowTermination,
     activities::{ActivityContext, ActivityError},
 };
 
@@ -201,9 +200,7 @@ struct WorkflowFailureFallbackWorkflow;
 impl WorkflowFailureFallbackWorkflow {
     #[run]
     async fn run(_ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
-        Err(WorkflowTermination::failed(anyhow::anyhow!(
-            WORKFLOW_FAILURE_MESSAGE
-        )))
+        Err(anyhow::anyhow!(WORKFLOW_FAILURE_MESSAGE).into())
     }
 }
 

@@ -499,9 +499,10 @@ impl Future for WorkflowFuture {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
-                        return Poll::Ready(Err(WorkflowTermination::failed(anyhow!(
+                        return Poll::Ready(Err(anyhow!(
                             "Workflow future's activation channel was lost!"
-                        ))));
+                        )
+                        .into()));
                     }
                 },
                 Poll::Pending => return Poll::Pending,
