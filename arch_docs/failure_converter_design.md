@@ -21,25 +21,53 @@ It starts from the current state of `olszewski/failure_converter_v3`, where:
 
 - shared error types already live in `temporalio_common::error`
 - `ApplicationFailure` already exists as a first-class shared type
-- `DefaultFailureConverter` already owns outbound encoding behavior in
+- `DefaultFailureConverter` owns outbound encoding behavior in
   `crates/common/src/data_converters/failure_converter.rs`
-- `DefaultFailureConverter::to_error(...)` is still unimplemented
+- inbound decode now normalizes into `IncomingError`
+- ordinary decode/encode call sites now go through `DataConverter::to_error(..., hint)` and
+  `DataConverter::to_failure(...)`
+
+## Current Implementation Status
+
+The core converter boundary described in this document is now largely implemented.
+
+What has landed:
+
+- `FailureConverter::to_error(...) -> IncomingError`
+- `DataConverter::to_error(..., hint)` for SDK-owned adaptation
+- `DataConverter::to_failure(...)` as the ordinary encode entry point
+- typed outbound encoding through `OutgoingError`
+- richer inbound public error surfaces for:
+  - `ActivityExecutionError`
+  - `ChildWorkflowExecutionError`
+  - `ChildWorkflowSignalError`
+- retained proto + normalized-cause preservation on decoded error wrappers
+- `WorkflowTermination` conversions that preserve typed SDK errors instead of erasing them through
+  `anyhow`
+
+What is still incomplete:
+
+- broader integration coverage for the newer richer error shapes, especially child-workflow signal
+  remote failure
+- any additional public-field exposure on other incoming wrapper types beyond the first-cut
+  activity/child-workflow work
+- final doc cleanup once the richer error pass is fully finished
 
 ## Naming Convention In This Document
 
 This document uses `Error` as the suffix for Rust-side error types and reserves `Failure` for the
 Temporal protobuf transport object.
 
-That means the design language here intentionally differs from some current branch code. For
-example:
+That means some of the design language here intentionally differs from current branch code. The
+main intentional difference that remains is:
 
-- current branch code may still use `ApplicationFailure`
-- this document uses `ApplicationError` as the target name
+- current code still uses `ApplicationFailure`
+- this document uses `ApplicationError` as the target conceptual name
 
 Likewise:
 
-- `NormalizedFailure` becomes `IncomingError`
-- `OutboundFailure` becomes `OutgoingError`
+- older plan terms like `NormalizedFailure` become `IncomingError`
+- older plan terms like `OutboundFailure` become `OutgoingError`
 
 This naming is preferred because it makes the Rust-side / proto-side boundary much easier to reason
 about during implementation.
@@ -206,17 +234,19 @@ This is preferable for the 1.0 design to a permanent `Box<dyn Error>` boundary b
 - reduces erased-chain guessing inside the converter
 - aligns outbound seams with the same normalization boundary decode is moving toward
 
-### FailureBacked
+### Consistent wrapper access
 
-Decoded failure types should expose raw proto access consistently.
-
-Conceptually:
+Decoded failure types should expose raw proto access consistently through concrete methods such as:
 
 ```rust
-pub trait FailureBacked {
+impl SomeDecodedError {
     fn failure(&self) -> &Failure;
+    fn cause(&self) -> Option<&IncomingError>;
 }
 ```
+
+An explicit shared public trait is not required unless the SDK later grows a real generic consumer
+for these wrapper types.
 
 ## Execution-Critical Clarifications
 

@@ -9,8 +9,8 @@ It should be read alongside [`failure_converter_design.md`](./failure_converter_
 
 The current public workflow-side error types still expose too much proto shape directly.
 
-For example, `ActivityExecutionError::is_timeout()` is a sign that callers are being asked to
-recover semantic meaning from a generic failure wrapper after decode.
+For example, the older `ActivityExecutionError::is_timeout()` shape was a sign that callers were
+being asked to recover semantic meaning from a generic failure wrapper after decode.
 
 The goal of this note is to define a conservative first pass where:
 
@@ -22,6 +22,26 @@ The goal of this note is to define a conservative first pass where:
 This note is intentionally limited to the public inbound error surface. It does not propose a new
 converter architecture; it builds on the converter design already captured in
 [`failure_converter_design.md`](./failure_converter_design.md).
+
+## Current Implementation Status
+
+The first richer public error pass is partially implemented.
+
+What has landed:
+
+- `ActivityExecutionError` is now wrapper-shaped and exposes `reason()`
+- `ChildWorkflowExecutionError` is now wrapper-shaped and exposes retained
+  `ChildWorkflowExecutionFailureInfo` fields through `ChildWorkflowFailureError`
+- `ChildWorkflowSignalError` now uses a structured `ChildWorkflowSignalFailureError`
+- `TimeoutError` exposes the first two `TimeoutFailureInfo` fields directly
+- `CancelledError` exposes cancellation details directly
+
+What is still left for this richer-error pass:
+
+- broader integration coverage for the new child-workflow signal `Failed(...)` path
+- deciding whether additional incoming wrappers should expose more of their underlying proto fields
+- deciding which remaining wrappers are worth making richer before the first pass is considered
+  complete
 
 ## Design Principles
 
@@ -147,14 +167,7 @@ Until such a use case exists, consistent concrete methods are a simpler and more
 
 ### Remote activity execution
 
-Current state:
-
-- `ActivityExecutionError::Failed(Box<Failure>)`
-- `ActivityExecutionError::Cancelled(Box<Failure>)`
-- `ActivityExecutionError::Serialization(PayloadConversionError)`
-- helper `is_timeout()` inspects the wrapped proto
-
-Proposed first pass:
+Implemented first pass:
 
 ```rust
 pub enum ActivityExecutionError {
@@ -197,14 +210,7 @@ This document does not propose a separate local-activity wrapper type.
 
 ### Child workflow execution
 
-Current state:
-
-- `ChildWorkflowExecutionError::Failed(Box<Failure>)`
-- `ChildWorkflowExecutionError::Cancelled(Box<Failure>)`
-- `StartFailed { ... }`
-- `Serialization(PayloadConversionError)`
-
-Proposed first pass:
+Implemented first pass:
 
 ```rust
 pub enum ChildWorkflowExecutionError {
@@ -245,12 +251,7 @@ nested failure reason.
 
 ### Child workflow signal
 
-Current state:
-
-- `ChildWorkflowSignalError::Failed(Box<Failure>)`
-- `Serialization(PayloadConversionError)`
-
-Proposed first pass:
+Implemented first pass:
 
 ```rust
 pub enum ChildWorkflowSignalError {
@@ -260,12 +261,20 @@ pub enum ChildWorkflowSignalError {
 
 pub struct ChildWorkflowSignalFailureError {
     failure: Failure,
+    error: Box<IncomingError>,
     cause: Option<Box<IncomingError>>,
 }
 ```
 
-This is less urgent than activity or child-workflow execution, but it follows the same general
-shape.
+Unlike the other wrapper types, child-workflow signal failure benefits from preserving two distinct
+decoded views:
+
+- `error()`: the direct decoded `IncomingError` for the top-level proto `failure`
+- `cause()`: the decoded nested error that corresponds specifically to `failure.cause`
+
+This is useful because signal failure does not have a dedicated top-level signal-specific proto
+variant. In practice, the direct top-level decoded error and the nested cause are often both
+interesting and should not be collapsed together.
 
 ## Decode Mapping Principle
 
@@ -523,3 +532,127 @@ This order is recommended because:
 - activity timeout is the clearest current ergonomics gap
 - child-workflow execution already has meaningful semantic distinctions such as `StartFailed`
 - signal failure is a smaller follow-up once the pattern is proven
+
+## Next Richer Candidates
+
+With activity, child-workflow execution, and child-workflow signal now on the richer path, the next
+questions are less about architecture and more about where additional field exposure would provide
+real ergonomic value.
+
+The most plausible next candidates are:
+
+- `ActivityFailureError`
+  because activity wrapper protos still carry scheduling/started/retry fields that are only
+  available through raw proto inspection
+- `ServerError`
+  if callers need structured access to server-side non-retryable state
+- Nexus-related incoming wrappers
+  once there is enough actual call-site pressure to justify public accessor design
+
+The conservative rule should remain:
+
+- only add richer public field access where tests or real call sites are currently forced back down
+  into raw proto inspection
+- prefer explicit, narrow accessors over full mirroring of the underlying failure-info proto
+
+## ActivityFailureError Next Step
+
+`ActivityFailureError` is the clearest remaining richer-wrapper candidate.
+
+Today it is still a thin retained-proto wrapper:
+
+```rust
+pub struct ActivityFailureError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+}
+```
+
+That is enough for the current `ActivityExecutionError` shape, but it still leaves activity-specific
+metadata available only through raw `failure().failure_info` inspection.
+
+The current test pressure points are:
+
+- activity integration tests that still assert exact `ActivityFailureInfo` fields on the returned
+  failure proto
+- local-activity timeout tests that still need to confirm the wrapper remains
+  `ActivityFailureInfo`-shaped even after timeout reason inspection moved to `TimeoutError`
+
+### Proposed first-pass richer shape
+
+The next concrete step should be to make `ActivityFailureError` an explicit struct like
+`ChildWorkflowFailureError`:
+
+```rust
+pub struct ActivityFailureError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+    activity_id: String,
+    activity_type: Option<ActivityType>,
+    scheduled_event_id: i64,
+    started_event_id: i64,
+    identity: String,
+    retry_state: RetryState,
+}
+```
+
+with accessors:
+
+- `activity_id() -> &str`
+- `activity_type() -> Option<&ActivityType>`
+- `scheduled_event_id() -> i64`
+- `started_event_id() -> i64`
+- `identity() -> &str`
+- `retry_state() -> RetryState`
+
+This should be treated as the direct analogue of the child-workflow wrapper enrichment that has
+already landed.
+
+### Why these fields first
+
+These are the fields already forcing tests and callers back down into raw proto inspection:
+
+- `activity_id`
+- `activity_type`
+- `scheduled_event_id`
+- `started_event_id`
+- `identity`
+- `retry_state`
+
+They also have a straightforward interpretation and do not require inventing new SDK semantics.
+
+This is preferable to a full accessor surface because:
+
+- these fields are already observably useful
+- they describe the wrapper operation itself, not the nested failure reason
+- they let `ActivityFailureError` cover most of the remaining activity wrapper inspection needs
+  without becoming a mirror of the entire proto
+
+### Decode/encode expectations
+
+This enrichment should not change the activity wrapper mapping rules.
+
+Expected behavior remains:
+
+- activity decode hint still adapts by resolution status
+- `ActivityExecutionError::Failed(ActivityFailureError)` remains the failed remote-activity shape
+- `ActivityExecutionError::Cancelled(CancelledError)` remains the cancelled resolution shape
+- timeout/application/cancelled reasons for failed remote activities remain visible through
+  `ActivityFailureError::cause()` / `ActivityExecutionError::reason()`
+
+On encode:
+
+- `ActivityExecutionError::Failed(ActivityFailureError)` should still encode by returning the
+  retained proto
+- these richer fields are decode ergonomics, not a new encode classification boundary
+
+### Recommended verification
+
+The first-pass verification for this step should include:
+
+- unit tests for `ActivityFailureError::new(...)` populating all first-pass fields
+- unit tests showing `cause()` / `source()` behavior is unchanged
+- integration assertions migrated from raw `failure().failure_info` inspection to
+  `ActivityFailureError` accessors where possible
+- at least one integration test that still verifies retained proto access remains available for
+  any fields not yet surfaced directly
