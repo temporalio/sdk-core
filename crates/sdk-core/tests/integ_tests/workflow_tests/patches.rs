@@ -413,10 +413,9 @@ async fn v1(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("no_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("no_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -427,10 +426,9 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions {
-                    activity_id: Some("had_change".to_owned()),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("had_change".to_owned())
+                    .build(),
             )
             .await;
         true
@@ -439,10 +437,9 @@ async fn v2(ctx: &mut WorkflowContext<PatchWf>) -> bool {
             .start_activity(
                 FakeAct::nameless,
                 (),
-                ActivityOptions {
-                    activity_id: Some("no_change".to_owned()),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("no_change".to_owned())
+                    .build(),
             )
             .await;
         false
@@ -455,10 +452,9 @@ async fn v3(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("had_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("had_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -468,10 +464,9 @@ async fn v4(ctx: &mut WorkflowContext<PatchWf>) {
         .start_activity(
             FakeAct::nameless,
             (),
-            ActivityOptions {
-                activity_id: Some("had_change".to_owned()),
-                ..Default::default()
-            },
+            ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                .activity_id("had_change".to_owned())
+                .build(),
         )
         .await;
 }
@@ -685,7 +680,11 @@ impl SameChangeMultipleSpotsWf {
     async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;
@@ -693,7 +692,11 @@ impl SameChangeMultipleSpotsWf {
         ctx.timer(ONE_SECOND).await;
         if ctx.patched(MY_PATCH_ID) {
             let _ = ctx
-                .start_activity(FakeAct::nameless, (), ActivityOptions::default())
+                .start_activity(
+                    FakeAct::nameless,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
                 .await;
         } else {
             ctx.timer(ONE_SECOND).await;

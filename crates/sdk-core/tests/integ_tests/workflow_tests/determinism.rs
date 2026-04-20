@@ -53,9 +53,13 @@ impl TimerWfNondeterministic {
                 }
             }
             2 => {
-                ctx.start_activity(StdActivities::default, (), ActivityOptions::default())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                ctx.start_activity(
+                    StdActivities::default,
+                    (),
+                    ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+                )
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             }
             _ => panic!("Ran too many times"),
         }
@@ -104,10 +108,7 @@ impl TaskFailReplayWf {
             .start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(2)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(2)),
             )
             .await;
         if !ctx.state(|wf| wf.did_fail.load(Ordering::Relaxed)) {
@@ -301,17 +302,20 @@ impl ActivityIdOrTypeChangeWf {
             ctx.start_activity(
                 StdActivities::default,
                 (),
-                ActivityOptions {
-                    activity_id: Some("I'm bad and wrong!".to_string()),
-                    ..Default::default()
-                },
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .activity_id("I'm bad and wrong!".to_string())
+                    .build(),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         } else {
-            ctx.start_activity(StdActivities::no_op, (), ActivityOptions::default())
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            ctx.start_activity(
+                StdActivities::no_op,
+                (),
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         Ok(())
     }

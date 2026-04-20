@@ -20,10 +20,7 @@ impl PollingActivities {
 }
 
 fn activity_opts() -> ActivityOptions {
-    ActivityOptions {
-        start_to_close_timeout: Some(Duration::from_secs(10)),
-        ..Default::default()
-    }
+    ActivityOptions::start_to_close_timeout(Duration::from_secs(10))
 }
 
 #[workflow]

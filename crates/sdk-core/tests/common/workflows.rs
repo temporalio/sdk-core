@@ -32,10 +32,7 @@ impl LaProblemWorkflow {
         ctx.start_activity(
             StdActivities::delay,
             Duration::from_secs(15),
-            ActivityOptions {
-                start_to_close_timeout: Some(Duration::from_secs(20)),
-                ..Default::default()
-            },
+            ActivityOptions::start_to_close_timeout(Duration::from_secs(20)),
         )
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;

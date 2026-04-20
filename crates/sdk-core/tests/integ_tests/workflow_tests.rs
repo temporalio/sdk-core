@@ -504,10 +504,7 @@ impl SlowCompletesWf {
             ctx.start_activity(
                 StdActivities::echo,
                 "hi!".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -883,10 +880,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_owned(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -968,10 +962,7 @@ async fn history_out_of_order_on_restart() {
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -1004,10 +995,7 @@ async fn history_out_of_order_on_restart() {
             ctx.start_activity(
                 StdActivities::echo,
                 "hi".to_string(),
-                ActivityOptions {
-                    start_to_close_timeout: Some(Duration::from_secs(5)),
-                    ..Default::default()
-                },
+                ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
             )
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
