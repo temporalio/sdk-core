@@ -1536,6 +1536,7 @@ where
                                 message: "Activity completed without a status".to_string(),
                                 ..Default::default()
                             },
+                            temporalio_common::protos::temporal::api::failure::v1::ActivityFailureInfo::default(),
                             None,
                         ))
                     })?;

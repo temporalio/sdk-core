@@ -38,7 +38,7 @@ use temporalio_common::{
             command::v1::{RecordMarkerCommandAttributes, command},
             common::v1::RetryPolicy,
             enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
-            failure::v1::{Failure, failure::FailureInfo},
+            failure::v1::Failure,
             history::v1::history_event::Attributes::MarkerRecordedEventAttributes,
             query::v1::WorkflowQuery,
         },
@@ -2001,9 +2001,10 @@ async fn test_schedule_to_start_timeout() {
                     panic!("expected timeout cause, got {fail:?}");
                 };
                 assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToStart);
-                assert_matches!(
-                    fail.failure().failure_info,
-                    Some(FailureInfo::ActivityFailureInfo(_))
+                assert_eq!(
+                    fail.activity_type()
+                        .map(|activity_type| activity_type.name.as_str()),
+                    Some(StdActivities::echo.name())
                 );
                 assert_matches!(
                     fail.cause(),

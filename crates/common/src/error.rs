@@ -477,10 +477,72 @@ impl_incoming_failure_wrapper!(CancelledError);
 incoming_failure_wrapper!(TerminatedError, "A normalized terminated failure.");
 incoming_failure_wrapper!(ServerError, "A normalized server failure.");
 incoming_failure_wrapper!(ResetWorkflowError, "A normalized reset-workflow failure.");
-incoming_failure_wrapper!(
-    ActivityFailureError,
-    "A normalized activity failure wrapper."
-);
+
+/// A normalized activity failure wrapper.
+#[derive(Debug)]
+pub struct ActivityFailureError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+    activity_id: String,
+    activity_type: Option<crate::protos::temporal::api::common::v1::ActivityType>,
+    scheduled_event_id: i64,
+    started_event_id: i64,
+    identity: String,
+    retry_state: crate::protos::temporal::api::enums::v1::RetryState,
+}
+
+impl ActivityFailureError {
+    /// Creates a new normalized activity failure wrapper.
+    pub fn new(
+        failure: Failure,
+        failure_info: crate::protos::temporal::api::failure::v1::ActivityFailureInfo,
+        cause: Option<IncomingError>,
+    ) -> Self {
+        let retry_state = failure_info.retry_state();
+        Self {
+            failure,
+            cause: cause.map(Box::new),
+            activity_id: failure_info.activity_id,
+            activity_type: failure_info.activity_type,
+            scheduled_event_id: failure_info.scheduled_event_id,
+            started_event_id: failure_info.started_event_id,
+            identity: failure_info.identity,
+            retry_state,
+        }
+    }
+
+    /// Returns the activity id reported by the failure.
+    pub fn activity_id(&self) -> &str {
+        &self.activity_id
+    }
+
+    /// Returns the activity type, if present.
+    pub fn activity_type(&self) -> Option<&crate::protos::temporal::api::common::v1::ActivityType> {
+        self.activity_type.as_ref()
+    }
+
+    /// Returns the scheduled event id.
+    pub fn scheduled_event_id(&self) -> i64 {
+        self.scheduled_event_id
+    }
+
+    /// Returns the started event id.
+    pub fn started_event_id(&self) -> i64 {
+        self.started_event_id
+    }
+
+    /// Returns the worker identity captured on the failure.
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    /// Returns the retry state reported by core.
+    pub fn retry_state(&self) -> crate::protos::temporal::api::enums::v1::RetryState {
+        self.retry_state
+    }
+}
+
+impl_incoming_failure_wrapper!(ActivityFailureError);
 /// A normalized child-workflow execution failure wrapper.
 #[derive(Debug)]
 pub struct ChildWorkflowFailureError {
@@ -662,7 +724,7 @@ impl ChildWorkflowExecutionError {
 pub enum ChildWorkflowSignalError {
     /// The signal delivery failed.
     #[error("Child workflow signal failed: {}", .0.failure().message)]
-    Failed(#[source] ChildWorkflowSignalFailureError),
+    Failed(#[source] Box<ChildWorkflowSignalFailureError>),
     /// Failed to serialize the signal input payload.
     #[error("Signal payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),

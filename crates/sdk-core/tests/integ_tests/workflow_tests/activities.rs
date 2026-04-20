@@ -16,16 +16,34 @@ use temporalio_client::{
     ActivityIdentifier, UntypedWorkflow, WorkflowDescribeOptions, WorkflowStartOptions,
     WorkflowTerminateOptions,
 };
-use temporalio_common::protos::{
-    coresdk::{
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
-        IntoPayloadsExt,
-        activity_result::{
-            self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
+
+use temporalio_common::{
+    error::{ApplicationFailure, IncomingError},
+    prost_dur,
+    protos::{
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories,
+        coresdk::{
+            ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+            IntoPayloadsExt,
+            activity_result::{
+                self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
+            },
+            activity_task::activity_task as act_task,
+            workflow_activation::{
+                FireTimer, ResolveActivity, WorkflowActivationJob, workflow_activation_job,
+            },
+            workflow_commands::{
+                ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
+            },
+            workflow_completion::WorkflowActivationCompletion,
         },
-        activity_task::activity_task as act_task,
-        workflow_activation::{
-            FireTimer, ResolveActivity, WorkflowActivationJob, workflow_activation_job,
+        temporal::api::{
+            common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
+            enums::v1::{
+                ApplicationErrorCategory, CommandType, EventType, RetryState, TimeoutType,
+            },
+            failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
+            sdk::v1::UserMetadata,
         },
         workflow_commands::{
             ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
@@ -41,7 +59,7 @@ use temporalio_common::protos::{
 };
 use temporalio_macros::{activities, workflow, workflow_methods};
 use temporalio_sdk::{
-    ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ActivityExecutionError, ActivityOptions, CancellableFuture, WorkflowContext, WorkflowResult,
     activities::{ActivityContext, ActivityError},
 };
 use temporalio_sdk_core::{
@@ -341,6 +359,183 @@ async fn activity_non_retryable_failure_with_error() {
         }
     );
     core.complete_execution(&task.run_id).await;
+}
+
+#[tokio::test]
+async fn workflow_observes_non_retryable_activity() {
+    let mut starter = CoreWfStarter::new("workflow-observes-non-retryable-activity-failure");
+    starter
+        .sdk_config
+        .register_activities(NonRetryableActivityErrorActivities);
+    let mut worker = starter.worker().await;
+
+    #[workflow]
+    #[derive(Default)]
+    struct NonRetryableActivityFailureWorkflow;
+
+    #[workflow_methods]
+    impl NonRetryableActivityFailureWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let err = ctx
+                .start_activity(
+                    NonRetryableActivityErrorActivities::fail_non_retryable,
+                    (),
+                    ActivityOptions {
+                        activity_id: Some("non-retryable-act".to_owned()),
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        retry_policy: Some(RetryPolicy {
+                            maximum_attempts: 3,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap_err();
+
+            let ActivityExecutionError::Failed(fail_err) = err else {
+                panic!("expected activity failure, got {err:?}");
+            };
+            assert_eq!(fail_err.activity_id(), "non-retryable-act");
+            assert_eq!(
+                fail_err
+                    .activity_type()
+                    .map(|activity_type| activity_type.name.as_str()),
+                Some(NonRetryableActivityErrorActivities::fail_non_retryable.name())
+            );
+            assert_eq!(fail_err.retry_state(), RetryState::NonRetryableFailure);
+
+            let Some(IncomingError::Application(app_err)) = fail_err.cause() else {
+                panic!("expected application failure cause, got {fail_err:?}");
+            };
+            assert!(app_err.is_non_retryable());
+            assert_eq!(app_err.to_string(), "non-retryable activity failure");
+            assert!(app_err.failure().is_some());
+            Ok(())
+        }
+    }
+
+    struct NonRetryableActivityErrorActivities;
+
+    #[activities]
+    impl NonRetryableActivityErrorActivities {
+        #[activity]
+        async fn fail_non_retryable(_ctx: ActivityContext) -> Result<(), ActivityError> {
+            Err(ActivityError::application(
+                ApplicationFailure::non_retryable(anyhow!("non-retryable activity failure")),
+            ))
+        }
+    }
+
+    worker.register_workflow::<NonRetryableActivityFailureWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            NonRetryableActivityFailureWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn workflow_observes_non_retryable_activity_failure_builder() {
+    let mut starter =
+        CoreWfStarter::new("workflow-observes-non-retryable-activity-failure-builder");
+    starter
+        .sdk_config
+        .register_activities(NonRetryableActivityBuilderActivities);
+    let mut worker = starter.worker().await;
+
+    #[workflow]
+    #[derive(Default)]
+    struct NonRetryableActivityFailureBuilderWorkflow;
+
+    #[workflow_methods]
+    impl NonRetryableActivityFailureBuilderWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+            let err = ctx
+                .start_activity(
+                    NonRetryableActivityBuilderActivities::fail_non_retryable_with_builder,
+                    (),
+                    ActivityOptions {
+                        activity_id: Some("non-retryable-builder-act".to_owned()),
+                        start_to_close_timeout: Some(Duration::from_secs(5)),
+                        retry_policy: Some(RetryPolicy {
+                            maximum_attempts: 3,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap_err();
+
+            let ActivityExecutionError::Failed(fail_err) = err else {
+                panic!("expected activity failure, got {err:?}");
+            };
+            assert_eq!(fail_err.activity_id(), "non-retryable-builder-act");
+            assert_eq!(
+                fail_err
+                    .activity_type()
+                    .map(|activity_type| activity_type.name.as_str()),
+                Some(NonRetryableActivityBuilderActivities::fail_non_retryable_with_builder.name())
+            );
+            assert_eq!(fail_err.retry_state(), RetryState::NonRetryableFailure);
+
+            let Some(IncomingError::Application(app_err)) = fail_err.cause() else {
+                panic!("expected application failure cause, got {fail_err:?}");
+            };
+            assert_eq!(
+                app_err.type_name(),
+                Some("workflow-observed-non-retryable-builder")
+            );
+            assert!(app_err.is_non_retryable());
+            assert_eq!(app_err.category(), ApplicationErrorCategory::Benign);
+            assert_eq!(
+                app_err.to_string(),
+                "non-retryable activity failure with builder"
+            );
+            assert!(app_err.failure().is_some());
+            Ok(())
+        }
+    }
+
+    struct NonRetryableActivityBuilderActivities;
+
+    #[activities]
+    impl NonRetryableActivityBuilderActivities {
+        #[activity]
+        async fn fail_non_retryable_with_builder(
+            _ctx: ActivityContext,
+        ) -> Result<(), ActivityError> {
+            Err(ActivityError::application(
+                ApplicationFailure::builder(anyhow!("non-retryable activity failure with builder"))
+                    .type_name("workflow-observed-non-retryable-builder".to_owned())
+                    .non_retryable(true)
+                    .category(ApplicationErrorCategory::Benign)
+                    .build(),
+            ))
+        }
+    }
+
+    worker.register_workflow::<NonRetryableActivityFailureBuilderWorkflow>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            NonRetryableActivityFailureBuilderWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }
 
 #[tokio::test]
@@ -1180,10 +1375,22 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                         .build(),
                 )
                 .await;
-            assert!(matches!(
-                res.unwrap_err(),
-                temporalio_sdk::ActivityExecutionError::Failed(_)
-            ));
+            let err = res.unwrap_err();
+            let ActivityExecutionError::Failed(fail_err) = err else {
+                panic!("expected activity failure, got {err:?}");
+            };
+            assert_eq!(fail_err.retry_state(), RetryState::MaximumAttemptsReached);
+            let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = fail_err.cause()
+            else {
+                panic!("expected timeout cause, got {fail_err:?}");
+            };
+            assert_eq!(timeout.timeout_type(), TimeoutType::StartToClose);
+            assert_eq!(
+                fail_err
+                    .activity_type()
+                    .map(|activity_type| activity_type.name.as_str()),
+                Some(CancellableEchoActivities::cancellable_echo.name())
+            );
             Ok(())
         }
     }
@@ -1251,7 +1458,7 @@ async fn long_activity_timeout_repro() {
                 ctx.timer(Duration::from_secs(60 * 3)).await;
                 iter += 1;
                 if iter > 5000 {
-                    return Err(WorkflowTermination::continue_as_new(Default::default()));
+                    ctx.continue_as_new(&(), Default::default())?;
                 }
             }
         }
@@ -1309,8 +1516,7 @@ async fn pass_activity_summary_to_metadata() {
                     .summary("activity summary".to_string())
                     .build(),
             )
-            .await
-            .map_err(|e| anyhow!("{e}"))?;
+            .await?;
             Ok(())
         }
     }
@@ -1374,7 +1580,16 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
             ctx.timer(Duration::from_secs(1)).await;
             act_fut.cancel();
             ctx.timer(Duration::from_secs(3)).await;
-            let _ = act_fut.await;
+            let err = act_fut.await.unwrap_err();
+            let ActivityExecutionError::Cancelled(cancel_err) = err else {
+                panic!("expected cancelled error, got {err:?}");
+            };
+            assert!(cancel_err.details().is_none());
+            assert!(
+                cancel_err.cause().is_none(),
+                "expected cancel to be end of cause chain, but found another: {:?}",
+                cancel_err.cause()
+            );
             Ok(())
         }
     }
@@ -1406,7 +1621,12 @@ impl ImmediateActivityCancelationWorkflow {
             ActivityOptions::start_to_close_timeout(Duration::from_secs(5)),
         );
         cancel_activity_future.cancel();
-        let _ = cancel_activity_future.await;
+        let err = cancel_activity_future.await.unwrap_err();
+        let ActivityExecutionError::Cancelled(cancel_err) = err else {
+            panic!("expected cancelled error, got {err:?}");
+        };
+        assert!(cancel_err.details().is_none());
+        assert!(cancel_err.cause().is_none());
         Ok(())
     }
 }

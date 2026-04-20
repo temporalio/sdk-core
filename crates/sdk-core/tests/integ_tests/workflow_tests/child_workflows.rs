@@ -496,6 +496,61 @@ async fn cancel_child_workflow() {
 
 #[workflow]
 #[derive(Default)]
+struct RuntimeParentCancelsChildWf;
+
+#[workflow_methods]
+impl RuntimeParentCancelsChildWf {
+    #[run(name = "runtime_parent_cancels_child")]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let started = ctx
+            .child_workflow(
+                GrandchildCancelled::run,
+                (),
+                ChildWorkflowOptions {
+                    workflow_id: format!("{}-runtime-cancelled-child", ctx.task_queue()),
+                    cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("child should start");
+        started.cancel("child cancel".to_string());
+        let err = started
+            .result()
+            .await
+            .expect_err("child should be cancelled");
+        let ChildWorkflowExecutionError::Cancelled(cancelled) = err else {
+            panic!("child should be cancelled");
+        };
+        assert!(cancelled.details().is_none());
+        assert!(cancelled.cause().is_none());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_workflow_runtime_shape() {
+    let mut starter = CoreWfStarter::new("cancel-child-workflow-runtime-shape");
+    starter.sdk_config.task_types = WorkerTaskTypes::workflow_only();
+    let mut worker = starter.worker().await;
+
+    worker.register_workflow::<RuntimeParentCancelsChildWf>();
+    worker.register_workflow::<GrandchildCancelled>();
+
+    let task_queue = starter.get_task_queue().to_owned();
+    worker
+        .submit_workflow(
+            RuntimeParentCancelsChildWf::run,
+            (),
+            WorkflowStartOptions::new(task_queue.clone(), task_queue).build(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
 struct GrandchildCancelled;
 
 #[workflow_methods]

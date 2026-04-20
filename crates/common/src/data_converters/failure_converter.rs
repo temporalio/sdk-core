@@ -8,8 +8,8 @@ use crate::{
         OutgoingWorkflowError, ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
     },
     protos::temporal::api::failure::v1::{
-        ApplicationFailureInfo, CanceledFailureInfo, ChildWorkflowExecutionFailureInfo, Failure,
-        failure::FailureInfo,
+        ActivityFailureInfo, ApplicationFailureInfo, CanceledFailureInfo,
+        ChildWorkflowExecutionFailureInfo, Failure, failure::FailureInfo,
     },
 };
 
@@ -58,12 +58,17 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
         match normalized {
             IncomingError::Activity(activity) => {
                 if self.cancelled {
-                    let (failure, cause) = activity.into_parts();
-                    ActivityExecutionError::Cancelled(CancelledError::new(
-                        failure,
-                        CanceledFailureInfo::default(),
-                        cause,
-                    ))
+                    // We collapse to the inner cancellation error so callers do not see a cancel
+                    // caused by another cancel.
+                    if matches!(activity.cause(), Some(IncomingError::Cancelled(_))) {
+                        let (_, cause) = activity.into_parts();
+                        let Some(IncomingError::Cancelled(cancelled)) = cause else {
+                            unreachable!("checked above");
+                        };
+                        ActivityExecutionError::Cancelled(cancelled)
+                    } else {
+                        ActivityExecutionError::Failed(activity)
+                    }
                 } else {
                     ActivityExecutionError::Failed(activity)
                 }
@@ -73,7 +78,11 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
                     ActivityExecutionError::Cancelled(cancelled)
                 }
                 other => {
-                    let activity = ActivityFailureError::new(other.into_failure(), None);
+                    let activity = ActivityFailureError::new(
+                        other.into_failure(),
+                        ActivityFailureInfo::default(),
+                        None,
+                    );
                     ActivityExecutionError::Failed(activity)
                 }
             },
@@ -103,12 +112,15 @@ impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
                 ChildWorkflowExecutionDecodeHint::Cancelled,
                 IncomingError::ChildWorkflowExecution(child),
             ) => {
-                let (failure, cause) = child.into_parts();
-                ChildWorkflowExecutionError::Cancelled(CancelledError::new(
-                    failure,
-                    CanceledFailureInfo::default(),
-                    cause,
-                ))
+                if matches!(child.cause(), Some(IncomingError::Cancelled(_))) {
+                    let (_, cause) = child.into_parts();
+                    let Some(IncomingError::Cancelled(cancelled)) = cause else {
+                        unreachable!("checked above");
+                    };
+                    ChildWorkflowExecutionError::Cancelled(cancelled)
+                } else {
+                    ChildWorkflowExecutionError::Failed(child)
+                }
             }
             (ChildWorkflowExecutionDecodeHint::Cancelled, IncomingError::Cancelled(cancelled)) => {
                 ChildWorkflowExecutionError::Cancelled(cancelled)
@@ -132,9 +144,9 @@ impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
     fn adapt(self, normalized: IncomingError) -> Self::Output {
         let failure = normalized.failure().clone();
         let cause = failure.cause.clone().map(|cause| decode_failure(*cause));
-        ChildWorkflowSignalError::Failed(ChildWorkflowSignalFailureError::new(
+        ChildWorkflowSignalError::Failed(Box::new(ChildWorkflowSignalFailureError::new(
             failure, normalized, cause,
-        ))
+        )))
     }
 }
 
@@ -331,8 +343,8 @@ fn decode_failure(failure: Failure) -> IncomingError {
         Some(FailureInfo::ResetWorkflowFailureInfo(_)) => {
             IncomingError::ResetWorkflow(ResetWorkflowError::new(failure, cause))
         }
-        Some(FailureInfo::ActivityFailureInfo(_)) => {
-            IncomingError::Activity(ActivityFailureError::new(failure, cause))
+        Some(FailureInfo::ActivityFailureInfo(failure_info)) => {
+            IncomingError::Activity(ActivityFailureError::new(failure, failure_info, cause))
         }
         Some(FailureInfo::ChildWorkflowExecutionFailureInfo(failure_info)) => {
             IncomingError::ChildWorkflowExecution(ChildWorkflowFailureError::new(
@@ -458,7 +470,11 @@ mod tests {
             ..Default::default()
         };
         let app = ApplicationFailure::new(anyhow::Error::new(ActivityExecutionError::Failed(
-            ActivityFailureError::new(activity_failure.clone(), None),
+            ActivityFailureError::new(
+                activity_failure.clone(),
+                ActivityFailureInfo::default(),
+                None,
+            ),
         )));
         let converted = convert(OutgoingWorkflowError::Application(Box::new(app)));
         assert!(matches!(
@@ -621,9 +637,16 @@ mod tests {
                 )),
                 ..Default::default()
             })),
-            failure_info: Some(FailureInfo::ActivityFailureInfo(
-                ActivityFailureInfo::default(),
-            )),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+                activity_id: "act-1".to_owned(),
+                activity_type: Some(crate::protos::temporal::api::common::v1::ActivityType {
+                    name: "test-activity".to_owned(),
+                }),
+                scheduled_event_id: 5,
+                started_event_id: 6,
+                identity: "worker-1".to_owned(),
+                retry_state: crate::protos::temporal::api::enums::v1::RetryState::Timeout.into(),
+            })),
             ..Default::default()
         };
         let data_converter = crate::data_converters::DataConverter::new(
@@ -644,6 +667,18 @@ mod tests {
             panic!("expected failed activity execution error");
         };
         assert_eq!(decoded_failure.failure(), &failure);
+        assert_eq!(decoded_failure.activity_id(), "act-1");
+        assert_eq!(
+            decoded_failure.activity_type().map(|ty| ty.name.as_str()),
+            Some("test-activity")
+        );
+        assert_eq!(decoded_failure.scheduled_event_id(), 5);
+        assert_eq!(decoded_failure.started_event_id(), 6);
+        assert_eq!(decoded_failure.identity(), "worker-1");
+        assert_eq!(
+            decoded_failure.retry_state(),
+            crate::protos::temporal::api::enums::v1::RetryState::Timeout
+        );
         assert!(matches!(
             decoded_failure.cause(),
             Some(IncomingError::Timeout(_))
@@ -706,6 +741,44 @@ mod tests {
             panic!("expected failed activity execution error");
         };
         assert_eq!(decoded_failure.failure(), &failure);
+        assert!(decoded_failure.cause().is_none());
+    }
+
+    #[test]
+    fn activity_cancelled_decode_hint_collapses_activity_wrapper_to_inner_cancelled_reason() {
+        let cancelled_cause = Failure {
+            message: "activity cancelled".to_owned(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                CanceledFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let failure = Failure {
+            message: "activity task cancelled".to_owned(),
+            cause: Some(Box::new(cancelled_cause.clone())),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(
+                ActivityFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure,
+                ActivityExecutionDecodeHint { cancelled: true },
+            )
+            .unwrap();
+
+        let ActivityExecutionError::Cancelled(decoded_failure) = decoded else {
+            panic!("expected cancelled activity execution error");
+        };
+        assert_eq!(decoded_failure.failure(), &cancelled_cause);
         assert!(decoded_failure.cause().is_none());
     }
 
@@ -846,8 +919,16 @@ mod tests {
 
     #[test]
     fn child_workflow_cancelled_decode_hint_preserves_child_failure_proto() {
+        let cancelled_cause = Failure {
+            message: "child workflow cancelled".to_owned(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                CanceledFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
         let failure = Failure {
             message: "child workflow cancelled".to_owned(),
+            cause: Some(Box::new(cancelled_cause.clone())),
             failure_info: Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
                 ChildWorkflowExecutionFailureInfo::default(),
             )),
@@ -870,7 +951,7 @@ mod tests {
         let ChildWorkflowExecutionError::Cancelled(decoded_failure) = decoded else {
             panic!("expected cancelled child-workflow execution error");
         };
-        assert_eq!(decoded_failure.failure(), &failure);
+        assert_eq!(decoded_failure.failure(), &cancelled_cause);
         assert!(decoded_failure.cause().is_none());
     }
 
