@@ -99,6 +99,28 @@ impl SomeDecodedError {
 }
 ```
 
+Wrapper-like public enums whose top-level shape represents the operation rather than the underlying
+reason should also expose a convenience reason accessor:
+
+```rust
+impl SomeOperationError {
+    fn reason(&self) -> Option<&IncomingError>;
+}
+```
+
+For the first pass, `reason()` should be understood as a convenience wrapper over the preserved
+normalized cause chain:
+
+- `ActivityExecutionError::Failed(...)` returns the nested reason from the wrapped
+  `ActivityFailureError`
+- `ChildWorkflowExecutionError::Failed(...)` returns the nested reason from the wrapped
+  `ChildWorkflowFailureError`
+- top-level `Cancelled(...)` or `StartFailed { .. }` cases may return `None`, because their meaning
+  is already expressed by the top-level variant
+
+This keeps the public shape cross-SDK-aligned while still avoiding clumsy repeated `cause()`
+inspection in normal Rust code.
+
 This convention is intended for decoded error wrapper structs such as:
 
 - `ApplicationFailure`
@@ -123,7 +145,7 @@ Until such a use case exists, consistent concrete methods are a simpler and more
 
 ## Proposed First-Pass Shapes
 
-### Activity execution
+### Remote activity execution
 
 Current state:
 
@@ -137,7 +159,6 @@ Proposed first pass:
 ```rust
 pub enum ActivityExecutionError {
     Failed(ActivityFailureError),
-    TimedOut(TimeoutError),
     Cancelled(CancelledError),
     Serialization(PayloadConversionError),
 }
@@ -151,12 +172,28 @@ pub struct ActivityFailureError {
 Intended behavior:
 
 - cancelled activity resolution maps directly to `ActivityExecutionError::Cancelled(...)`
-- failed activity resolution whose normalized cause is timeout maps to
-  `ActivityExecutionError::TimedOut(...)`
-- other failed activity resolution maps to `ActivityExecutionError::Failed(...)`
+- failed activity resolution maps to `ActivityExecutionError::Failed(...)`
+- the actual reason for the failed activity remains in `ActivityFailureError::cause()`, e.g.:
+  - `IncomingError::Application(...)`
+  - `IncomingError::Timeout(...)`
+  - `IncomingError::Cancelled(...)`
 
-This would allow the SDK to remove `ActivityExecutionError::is_timeout()`, because timeout would no
-longer be encoded as a hidden property of the generic failed case.
+This keeps Rust aligned with the cross-SDK rule that remote activity waits first identify that the
+failed thing was an activity, while `cause()` identifies whether the reason was application
+failure, timeout, or cancellation. To keep that shape ergonomic, `ActivityExecutionError` should
+also expose `reason()` as a convenience accessor for the nested failure reason.
+
+### Local activity execution
+
+Local activities are different because there is no remote wrapper layer to preserve.
+
+The first-pass richer local-activity rule should therefore remain:
+
+- application failure -> `ApplicationFailure`
+- timeout -> `TimeoutError`
+- cancellation -> `CancelledError`
+
+This document does not propose a separate local-activity wrapper type.
 
 ### Child workflow execution
 
@@ -173,8 +210,6 @@ Proposed first pass:
 pub enum ChildWorkflowExecutionError {
     Failed(ChildWorkflowFailureError),
     Cancelled(CancelledError),
-    TimedOut(TimeoutError),
-    Terminated(TerminatedError),
     StartFailed {
         workflow_id: String,
         workflow_type: String,
@@ -195,9 +230,18 @@ other child-workflow outcomes more explicit.
 Intended behavior:
 
 - cancelled child workflow resolution maps to `Cancelled(...)`
-- failed child workflow resolution with timeout cause maps to `TimedOut(...)`
-- failed child workflow resolution with terminated cause maps to `Terminated(...)`
-- other failed child workflow resolution maps to `Failed(...)`
+- failed child workflow resolution maps to `Failed(...)`
+- the actual reason for the failed child workflow remains in `ChildWorkflowFailureError::cause()`,
+  e.g.:
+  - `IncomingError::Application(...)`
+  - `IncomingError::Timeout(...)`
+  - `IncomingError::Cancelled(...)`
+  - `IncomingError::Terminated(...)`
+
+This keeps Rust aligned with the cross-SDK rule that the child-workflow wrapper identifies what
+operation failed, while the nested cause identifies why it failed. To keep that shape ergonomic,
+`ChildWorkflowExecutionError` should also expose `reason()` as a convenience accessor for the
+nested failure reason.
 
 ### Child workflow signal
 
@@ -228,16 +272,20 @@ shape.
 The intended mapping rule is:
 
 - call-site context still determines the outer error family
-- normalized cause determines semantic refinement within that family
+- normalized cause determines the nested reason within that family
 
 For example, activity decode should behave as:
 
 1. resolve status says cancelled:
    return `ActivityExecutionError::Cancelled(...)`
-2. resolve status says failed and normalized cause is timeout:
-   return `ActivityExecutionError::TimedOut(...)`
-3. resolve status says failed and normalized cause is not timeout:
+2. resolve status says failed:
    return `ActivityExecutionError::Failed(...)`
+
+In that failed case, the nested reason remains visible through `cause()` / `source()`.
+
+For caller ergonomics, wrapper-like public enums should expose that same nested reason through a
+`reason()` convenience accessor, so ordinary code does not need to walk the full cause chain just
+to answer common questions such as "was this timeout-shaped?".
 
 This means:
 
@@ -261,24 +309,24 @@ Expected first-pass mapping:
 
 - cancelled resolution + any normalized value
   -> `ActivityExecutionError::Cancelled(...)`
-- failed resolution + normalized activity wrapper whose cause is `IncomingError::Timeout(...)`
-  -> `ActivityExecutionError::TimedOut(...)`
 - failed resolution + normalized activity wrapper whose cause is anything else
   -> `ActivityExecutionError::Failed(...)`
 - failed resolution + normalized value that is not `IncomingError::Activity(...)`
   -> `ActivityExecutionError::Failed(...)` using retained proto fallback
 
-This mapping is the concrete rule that removes the need for `ActivityExecutionError::is_timeout()`.
+This mapping removes the need for `ActivityExecutionError::is_timeout()` without inventing a
+timeout-specific top-level wrapper variant for remote activities.
 
 More specifically, a failed activity resolution whose normalized cause is
-`IncomingError::Cancelled(...)` should still remain `ActivityExecutionError::Failed(...)` in the
-first pass.
+`IncomingError::Timeout(...)`, `IncomingError::Cancelled(...)`, or `IncomingError::Application(...)`
+should all remain `ActivityExecutionError::Failed(...)` in the first pass.
 
 The intended rule is:
 
 - resolution status determines the top-level public variant
-- nested cancelled cause remains visible through `cause()` / `source()`
-- nested cancelled cause does not by itself promote a failed resolution into `Cancelled(...)`
+- failed remote activity resolutions remain wrapper-shaped
+- nested cause remains visible through `cause()` / `source()`
+- nested cause does not by itself promote a failed resolution into a different top-level variant
 
 ### Child workflow execution adaptation
 
@@ -291,12 +339,6 @@ Expected first-pass mapping:
 
 - cancelled resolution + any normalized value
   -> `ChildWorkflowExecutionError::Cancelled(...)`
-- failed resolution + normalized child-workflow wrapper whose cause is
-  `IncomingError::Timeout(...)`
-  -> `ChildWorkflowExecutionError::TimedOut(...)`
-- failed resolution + normalized child-workflow wrapper whose cause is
-  `IncomingError::Terminated(...)`
-  -> `ChildWorkflowExecutionError::Terminated(...)`
 - failed resolution + normalized child-workflow wrapper whose cause is anything else
   -> `ChildWorkflowExecutionError::Failed(...)`
 - failed resolution + normalized value that is not `IncomingError::ChildWorkflowExecution(...)`
@@ -311,7 +353,8 @@ the first pass.
 The intended rule is:
 
 - resolution status determines the top-level public variant
-- nested cancelled cause remains visible through `cause()` / `source()`
+- failed child-workflow resolutions remain wrapper-shaped
+- nested cause remains visible through `cause()` / `source()`
 - nested cancelled cause does not by itself promote a failed resolution into `Cancelled(...)`
 
 This keeps the richer Rust shape aligned with the cross-SDK behavior where a top-level
@@ -352,6 +395,8 @@ Expected first-pass rule:
   should likewise expose their normalized cause through `source()` where applicable
 - enum types such as `ActivityExecutionError` and `ChildWorkflowExecutionError` should delegate
   `source()` to the contained richer wrapper or serialization error as appropriate
+- those same enums should expose `reason()` as the convenient structured accessor for the nested
+  `IncomingError` reason when the top-level variant is wrapper-shaped
 
 `IncomingError` itself should implement `std::error::Error`.
 
@@ -383,10 +428,12 @@ Those assertions should be updated to assert against the richer public variants 
 
 For example:
 
-- activity timeout tests should assert `ActivityExecutionError::TimedOut(...)`
+- remote activity timeout tests should assert `ActivityExecutionError::Failed(...)` with
+  `reason()`/`source()` exposing `TimeoutError`
 - activity cancellation tests should assert `ActivityExecutionError::Cancelled(...)`
 - generic activity failure tests should assert `ActivityExecutionError::Failed(...)`
-- child workflow timeout / terminated tests should assert the corresponding semantic variants
+- child workflow timeout / terminated tests should assert `ChildWorkflowExecutionError::Failed(...)`
+  with the corresponding nested `reason()`
 
 The important point is that integration tests should stop re-deriving semantics from the retained
 proto where the richer public type now exposes those semantics directly.
@@ -446,7 +493,7 @@ call sites will need straightforward migration.
 Expected compatibility changes:
 
 - `ActivityExecutionError::is_timeout()` should be removed or deprecated once timeout becomes a
-  first-class public variant
+  first-class nested `cause()`/`source()` inspection path rather than a raw-proto helper
 - existing pattern matches on raw `Box<Failure>` enum payloads will need to move to semantic
   variant matches first, with `failure()` only used when retained proto inspection is still needed
 - integration assertions that currently inspect `failure_info` directly for common semantic cases
@@ -458,7 +505,8 @@ The intended migration style is:
 
 1. first match on the richer semantic variant
 2. then inspect `failure()` only for fields that are not yet modeled directly
-3. use `cause()` / `source()` for ordinary Rust error-chain traversal rather than re-parsing raw
+3. use `reason()` for ordinary failure-reason inspection on wrapper-like public enums
+4. use `cause()` / `source()` for ordinary Rust error-chain traversal rather than re-parsing raw
    nested proto causes whenever possible
 
 ## Recommended Implementation Order

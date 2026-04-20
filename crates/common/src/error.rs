@@ -6,7 +6,7 @@ use crate::{
         coresdk::child_workflow::StartChildWorkflowExecutionFailedCause,
         temporal::api::{
             common::v1::{Payload, Payloads},
-            enums::v1::ApplicationErrorCategory,
+            enums::v1::{ApplicationErrorCategory, TimeoutType},
             failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
         },
     },
@@ -120,7 +120,10 @@ impl std::fmt::Display for ApplicationFailure {
 
 impl std::error::Error for ApplicationFailure {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
+        self.cause
+            .as_deref()
+            .map(|cause| cause as &(dyn std::error::Error + 'static))
+            .or_else(|| Some(self.source.as_ref()))
     }
 }
 
@@ -247,7 +250,7 @@ pub enum IncomingError {
     /// A decoded reset-workflow failure.
     ResetWorkflow(ResetWorkflowError),
     /// A decoded activity failure wrapper.
-    Activity(IncomingActivityError),
+    Activity(ActivityFailureError),
     /// A decoded child-workflow failure wrapper.
     ChildWorkflowExecution(IncomingChildWorkflowExecutionError),
     /// A decoded nexus operation failure wrapper.
@@ -308,6 +311,80 @@ impl IncomingError {
     }
 }
 
+impl std::fmt::Display for IncomingError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IncomingError::Application(err) => err.fmt(f),
+            IncomingError::Timeout(err) => err.fmt(f),
+            IncomingError::Cancelled(err) => err.fmt(f),
+            IncomingError::Terminated(err) => err.fmt(f),
+            IncomingError::Server(err) => err.fmt(f),
+            IncomingError::ResetWorkflow(err) => err.fmt(f),
+            IncomingError::Activity(err) => err.fmt(f),
+            IncomingError::ChildWorkflowExecution(err) => err.fmt(f),
+            IncomingError::NexusOperationExecution(err) => err.fmt(f),
+            IncomingError::NexusHandler(err) => err.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for IncomingError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            IncomingError::Application(err) => Some(err),
+            IncomingError::Timeout(err) => Some(err),
+            IncomingError::Cancelled(err) => Some(err),
+            IncomingError::Terminated(err) => Some(err),
+            IncomingError::Server(err) => Some(err),
+            IncomingError::ResetWorkflow(err) => Some(err),
+            IncomingError::Activity(err) => Some(err),
+            IncomingError::ChildWorkflowExecution(err) => Some(err),
+            IncomingError::NexusOperationExecution(err) => Some(err),
+            IncomingError::NexusHandler(err) => Some(err),
+        }
+    }
+}
+
+macro_rules! impl_incoming_failure_wrapper {
+    ($name:ident) => {
+        impl $name {
+            /// Returns the original failure proto.
+            pub fn failure(&self) -> &Failure {
+                &self.failure
+            }
+
+            /// Returns the normalized cause, if any.
+            pub fn cause(&self) -> Option<&IncomingError> {
+                self.cause.as_deref()
+            }
+
+            /// Consumes this wrapper and returns the retained proto failure.
+            pub fn into_failure(self) -> Failure {
+                self.failure
+            }
+
+            /// Consumes this wrapper and returns the retained proto failure and normalized cause.
+            pub fn into_parts(self) -> (Failure, Option<IncomingError>) {
+                (self.failure, self.cause.map(|cause| *cause))
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.failure.fmt(f)
+            }
+        }
+
+        impl std::error::Error for $name {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                self.cause
+                    .as_deref()
+                    .map(|cause| cause as &(dyn std::error::Error + 'static))
+            }
+        }
+    };
+}
+
 macro_rules! incoming_failure_wrapper {
     ($name:ident, $doc:literal) => {
         #[doc = $doc]
@@ -325,32 +402,55 @@ macro_rules! incoming_failure_wrapper {
                     cause: cause.map(Box::new),
                 }
             }
-
-            /// Returns the original failure proto.
-            pub fn failure(&self) -> &Failure {
-                &self.failure
-            }
-
-            /// Returns the normalized cause, if any.
-            pub fn cause(&self) -> Option<&IncomingError> {
-                self.cause.as_deref()
-            }
-
-            /// Consumes this wrapper and returns the retained proto failure.
-            pub fn into_failure(self) -> Failure {
-                self.failure
-            }
         }
+
+        impl_incoming_failure_wrapper!($name);
     };
 }
 
-incoming_failure_wrapper!(TimeoutError, "A normalized timeout failure.");
+/// A normalized timeout failure.
+#[derive(Debug)]
+pub struct TimeoutError {
+    failure: Failure,
+    cause: Option<Box<IncomingError>>,
+    timeout_type: TimeoutType,
+    last_heartbeat_details: Option<Payloads>,
+}
+
+impl TimeoutError {
+    /// Creates a new normalized timeout error wrapper.
+    pub fn new(
+        failure: Failure,
+        failure_info: crate::protos::temporal::api::failure::v1::TimeoutFailureInfo,
+        cause: Option<IncomingError>,
+    ) -> Self {
+        Self {
+            failure,
+            cause: cause.map(Box::new),
+            timeout_type: failure_info.timeout_type(),
+            last_heartbeat_details: failure_info.last_heartbeat_details,
+        }
+    }
+
+    /// Returns the timeout kind described by the failure.
+    pub fn timeout_type(&self) -> TimeoutType {
+        self.timeout_type
+    }
+
+    /// Returns the last heartbeat details carried by the timeout, if any.
+    pub fn last_heartbeat_details(&self) -> Option<&Payloads> {
+        self.last_heartbeat_details.as_ref()
+    }
+}
+
+impl_incoming_failure_wrapper!(TimeoutError);
+
 incoming_failure_wrapper!(CancelledError, "A normalized cancellation failure.");
 incoming_failure_wrapper!(TerminatedError, "A normalized terminated failure.");
 incoming_failure_wrapper!(ServerError, "A normalized server failure.");
 incoming_failure_wrapper!(ResetWorkflowError, "A normalized reset-workflow failure.");
 incoming_failure_wrapper!(
-    IncomingActivityError,
+    ActivityFailureError,
     "A normalized activity failure wrapper."
 );
 incoming_failure_wrapper!(
@@ -367,26 +467,73 @@ incoming_failure_wrapper!(
 );
 
 /// Error type for activity execution outcomes.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug)]
 pub enum ActivityExecutionError {
     /// The activity failed with the given failure details.
-    #[error("Activity failed: {}", .0.message)]
-    Failed(Box<Failure>),
+    Failed(ActivityFailureError),
     /// The activity was cancelled.
-    #[error("Activity cancelled: {}", .0.message)]
-    Cancelled(Box<Failure>),
+    Cancelled(CancelledError),
     /// Failed to serialize input or deserialize result payload.
-    #[error("Payload conversion failed: {0}")]
-    Serialization(#[from] PayloadConversionError),
+    Serialization(PayloadConversionError),
 }
 
 impl ActivityExecutionError {
-    /// Returns true if this error represents a timeout.
-    pub fn is_timeout(&self) -> bool {
+    /// Returns the retained top-level activity failure proto, if one exists.
+    pub fn failure(&self) -> Option<&Failure> {
         match self {
-            ActivityExecutionError::Failed(f) => f.is_timeout().is_some(),
-            _ => false,
+            ActivityExecutionError::Failed(err) => Some(err.failure()),
+            ActivityExecutionError::Cancelled(err) => Some(err.failure()),
+            ActivityExecutionError::Serialization(_) => None,
         }
+    }
+
+    /// Returns the normalized cause of the top-level activity failure, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        match self {
+            ActivityExecutionError::Failed(err) => err.cause(),
+            ActivityExecutionError::Cancelled(err) => err.cause(),
+            ActivityExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the underlying failure reason for wrapper-shaped activity failures.
+    pub fn reason(&self) -> Option<&IncomingError> {
+        match self {
+            ActivityExecutionError::Failed(err) => err.cause(),
+            ActivityExecutionError::Cancelled(_) | ActivityExecutionError::Serialization(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for ActivityExecutionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActivityExecutionError::Failed(err) => {
+                write!(f, "Activity failed: {}", err.failure.message)
+            }
+            ActivityExecutionError::Cancelled(err) => {
+                write!(f, "Activity cancelled: {}", err.failure().message)
+            }
+            ActivityExecutionError::Serialization(err) => {
+                write!(f, "Payload conversion failed: {}", err)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ActivityExecutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ActivityExecutionError::Failed(err) => Some(err),
+            ActivityExecutionError::Cancelled(err) => Some(err),
+            ActivityExecutionError::Serialization(err) => Some(err),
+        }
+    }
+}
+
+impl From<PayloadConversionError> for ActivityExecutionError {
+    fn from(value: PayloadConversionError) -> Self {
+        Self::Serialization(value)
     }
 }
 

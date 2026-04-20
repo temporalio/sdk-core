@@ -49,11 +49,14 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
             )
             .await;
         let err = res.unwrap_err();
-        if let ActivityExecutionError::Failed(f) = &err {
-            assert_eq!(f.is_timeout(), Some(TimeoutType::Heartbeat));
-        } else {
+        let ActivityExecutionError::Failed(failure) = &err else {
             panic!("expected Failed, got {err:?}");
-        }
+        };
+        let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = failure.cause()
+        else {
+            panic!("expected timeout cause, got {failure:?}");
+        };
+        assert_eq!(timeout.timeout_type(), TimeoutType::Heartbeat);
         Ok(())
     }
 }

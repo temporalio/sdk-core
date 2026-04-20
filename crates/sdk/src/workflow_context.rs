@@ -40,7 +40,10 @@ use temporalio_common::{
         PayloadConversionError, PayloadConverter, SerializationContext, SerializationContextData,
         TemporalDeserializable,
     },
-    error::{ActivityExecutionError, ChildWorkflowExecutionError, ChildWorkflowSignalError},
+    error::{
+        ActivityExecutionError, ActivityFailureError, ChildWorkflowExecutionError,
+        ChildWorkflowSignalError,
+    },
     protos::{
         coresdk::{
             activity_result::{ActivityResolution, activity_resolution},
@@ -1462,7 +1465,7 @@ impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
 enum ActivityFut<F, Output> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Option<ActivityExecutionError>,
+        error: Box<Option<ActivityExecutionError>>,
         _phantom: PhantomData<Output>,
     },
     /// Running activity that will deserialize output on completion.
@@ -1477,7 +1480,7 @@ enum ActivityFut<F, Output> {
 impl<F, Output> ActivityFut<F, Output> {
     fn eager(err: ActivityExecutionError) -> Self {
         Self::Errored {
-            error: Some(err),
+            error: Box::new(Some(err)),
             _phantom: PhantomData,
         }
     }
@@ -1514,10 +1517,13 @@ where
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(resolution) => Poll::Ready({
                     let status = resolution.status.ok_or_else(|| {
-                        ActivityExecutionError::Failed(Box::new(Failure {
-                            message: "Activity completed without a status".to_string(),
-                            ..Default::default()
-                        }))
+                        ActivityExecutionError::Failed(ActivityFailureError::new(
+                            Failure {
+                                message: "Activity completed without a status".to_string(),
+                                ..Default::default()
+                            },
+                            None,
+                        ))
                     })?;
 
                     match status {
