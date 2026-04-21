@@ -1,3 +1,14 @@
+//! Failure conversion sits at the normalized boundary between Rust-side error surfaces and
+//! Temporal's proto [`Failure`] transport object.
+//!
+//! - [`FailureConverter`] owns translation between proto [`Failure`] and the SDK's shared
+//!   normalized error model.
+//! - encode-side call sites adapt caller-facing errors into [`OutgoingError`] before reaching this
+//!   module.
+//! - decode-side call sites first normalize proto failures into [`IncomingError`], then
+//!   [`FailureDecodeHint`] implementations adapt that normalized value into the caller-facing error
+//!   type they expect.
+
 use super::{PayloadConversionError, PayloadConverter, SerializationContextData};
 use crate::{
     error::{
