@@ -281,8 +281,9 @@ fn encode_child_workflow_execution_failure(err: &ChildWorkflowExecutionError) ->
 fn encode_child_workflow_start_failure(err: &ChildWorkflowStartError) -> Failure {
     match err {
         ChildWorkflowStartError::Cancelled(failure) => failure.failure().clone(),
-        ChildWorkflowStartError::StartFailed { .. }
-        | ChildWorkflowStartError::Serialization(_) => encode_generic_application_failure(err),
+        ChildWorkflowStartError::StartFailed { .. } | ChildWorkflowStartError::Serialization(_) => {
+            encode_generic_application_failure(err)
+        }
     }
 }
 
@@ -404,6 +405,12 @@ mod tests {
         NexusHandler,
     }
 
+    #[derive(Debug, Clone, Copy)]
+    enum ActivityExecutionKind {
+        Failed,
+        Cancelled,
+    }
+
     fn assert_incoming_kind(decoded: &IncomingError, expected: IncomingKind) {
         match expected {
             IncomingKind::Application => assert!(matches!(decoded, IncomingError::Application(_))),
@@ -435,6 +442,34 @@ mod tests {
                 &SerializationContextData::Workflow,
             )
             .unwrap()
+    }
+
+    fn data_converter() -> crate::data_converters::DataConverter {
+        crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        )
+    }
+
+    fn cancelled_failure(message: &str) -> Failure {
+        Failure {
+            message: message.to_owned(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                CanceledFailureInfo::default(),
+            )),
+            ..Default::default()
+        }
+    }
+
+    fn timeout_failure(message: &str) -> Failure {
+        Failure {
+            message: message.to_owned(),
+            failure_info: Some(FailureInfo::TimeoutFailureInfo(
+                TimeoutFailureInfo::default(),
+            )),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -698,101 +733,57 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn activity_cancelled_decode_hint_preserves_top_level_cancellation() {
-        let failure = Failure {
-            message: "activity cancelled".to_owned(),
-            failure_info: Some(FailureInfo::CanceledFailureInfo(
-                CanceledFailureInfo::default(),
-            )),
-            ..Default::default()
-        };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
-            .to_error(
-                &SerializationContextData::Workflow,
-                failure.clone(),
-                ActivityExecutionDecodeHint { cancelled: true },
-            )
-            .unwrap();
-
-        let ActivityExecutionError::Cancelled(decoded_failure) = decoded else {
-            panic!("expected cancelled activity execution error");
-        };
-        assert_eq!(decoded_failure.failure(), &failure);
-    }
-
-    #[test]
-    fn activity_cancelled_decode_hint_falls_back_to_failed_for_non_cancelled_proto() {
-        let failure = Failure {
-            message: "timed out".to_owned(),
-            failure_info: Some(FailureInfo::TimeoutFailureInfo(
-                TimeoutFailureInfo::default(),
-            )),
-            ..Default::default()
-        };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
-            .to_error(
-                &SerializationContextData::Workflow,
-                failure.clone(),
-                ActivityExecutionDecodeHint { cancelled: true },
-            )
-            .unwrap();
-
-        let ActivityExecutionError::Failed(decoded_failure) = decoded else {
-            panic!("expected failed activity execution error");
-        };
-        assert_eq!(decoded_failure.failure(), &failure);
-        assert!(decoded_failure.cause().is_none());
-    }
-
-    #[test]
-    fn activity_cancelled_decode_hint_collapses_activity_wrapper_to_inner_cancelled_reason() {
-        let cancelled_cause = Failure {
-            message: "activity cancelled".to_owned(),
-            failure_info: Some(FailureInfo::CanceledFailureInfo(
-                CanceledFailureInfo::default(),
-            )),
-            ..Default::default()
-        };
-        let failure = Failure {
+    #[rstest]
+    #[case(
+        cancelled_failure("activity cancelled"),
+        ActivityExecutionKind::Cancelled,
+        None
+    )]
+    #[case(timeout_failure("timed out"), ActivityExecutionKind::Failed, None)]
+    #[case(
+        Failure {
             message: "activity task cancelled".to_owned(),
-            cause: Some(Box::new(cancelled_cause.clone())),
+            cause: Some(Box::new(cancelled_failure("activity cancelled"))),
             failure_info: Some(FailureInfo::ActivityFailureInfo(
                 ActivityFailureInfo::default(),
             )),
             ..Default::default()
-        };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
+        },
+        ActivityExecutionKind::Cancelled,
+        Some(cancelled_failure("activity cancelled"))
+    )]
+    fn activity_cancelled_decode_hint_adapts_expected_shape(
+        #[case] failure: Failure,
+        #[case] expected_kind: ActivityExecutionKind,
+        #[case] expected_failure: Option<Failure>,
+    ) {
+        let decoded = data_converter()
             .to_error(
                 &SerializationContextData::Workflow,
-                failure,
+                failure.clone(),
                 ActivityExecutionDecodeHint { cancelled: true },
             )
             .unwrap();
 
-        let ActivityExecutionError::Cancelled(decoded_failure) = decoded else {
-            panic!("expected cancelled activity execution error");
-        };
-        assert_eq!(decoded_failure.failure(), &cancelled_cause);
-        assert!(decoded_failure.cause().is_none());
+        match expected_kind {
+            ActivityExecutionKind::Failed => {
+                let ActivityExecutionError::Failed(decoded_failure) = decoded else {
+                    panic!("expected failed activity execution error");
+                };
+                assert_eq!(decoded_failure.failure(), &failure);
+                assert!(decoded_failure.cause().is_none());
+            }
+            ActivityExecutionKind::Cancelled => {
+                let ActivityExecutionError::Cancelled(decoded_failure) = decoded else {
+                    panic!("expected cancelled activity execution error");
+                };
+                assert_eq!(
+                    decoded_failure.failure(),
+                    expected_failure.as_ref().unwrap_or(&failure)
+                );
+                assert!(decoded_failure.cause().is_none());
+            }
+        }
     }
 
     #[test]
@@ -887,13 +878,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
+        let decoded = data_converter()
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
@@ -930,30 +915,24 @@ mod tests {
         );
     }
 
-    #[test]
-    fn child_workflow_execution_decode_hint_preserves_child_failure_proto_for_cancelled_result() {
-        let cancelled_cause = Failure {
+    #[rstest]
+    #[case(
+        Failure {
             message: "child workflow cancelled".to_owned(),
-            failure_info: Some(FailureInfo::CanceledFailureInfo(
-                CanceledFailureInfo::default(),
-            )),
-            ..Default::default()
-        };
-        let failure = Failure {
-            message: "child workflow cancelled".to_owned(),
-            cause: Some(Box::new(cancelled_cause.clone())),
+            cause: Some(Box::new(cancelled_failure("child workflow cancelled"))),
             failure_info: Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
                 ChildWorkflowExecutionFailureInfo::default(),
             )),
             ..Default::default()
-        };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
+        },
+        Some(IncomingKind::Cancelled)
+    )]
+    #[case(timeout_failure("timed out"), None)]
+    fn child_workflow_execution_decode_hint_adapts_expected_cause(
+        #[case] failure: Failure,
+        #[case] expected_cause: Option<IncomingKind>,
+    ) {
+        let decoded = data_converter()
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
@@ -965,40 +944,15 @@ mod tests {
             panic!("expected failed child-workflow execution error");
         };
         assert_eq!(decoded_failure.failure(), &failure);
-        assert!(matches!(
-            decoded_failure.cause(),
-            Some(IncomingError::Cancelled(_))
-        ));
-    }
-
-    #[test]
-    fn child_workflow_execution_decode_hint_falls_back_to_failed_for_non_child_proto() {
-        let failure = Failure {
-            message: "timed out".to_owned(),
-            failure_info: Some(FailureInfo::TimeoutFailureInfo(
-                TimeoutFailureInfo::default(),
-            )),
-            ..Default::default()
-        };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
-            .to_error(
-                &SerializationContextData::Workflow,
-                failure.clone(),
-                ChildWorkflowExecutionDecodeHint,
-            )
-            .unwrap();
-
-        let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
-            panic!("expected failed child-workflow execution error");
-        };
-        assert_eq!(decoded_failure.failure(), &failure);
-        assert!(decoded_failure.cause().is_none());
+        match expected_cause {
+            Some(expected) => {
+                let cause = decoded_failure
+                    .cause()
+                    .expect("expected child failure cause");
+                assert_incoming_kind(cause, expected);
+            }
+            None => assert!(decoded_failure.cause().is_none()),
+        }
     }
 
     #[test]
@@ -1010,13 +964,7 @@ mod tests {
             )),
             ..Default::default()
         };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
+        let decoded = data_converter()
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
@@ -1044,13 +992,7 @@ mod tests {
             })),
             ..Default::default()
         };
-        let data_converter = crate::data_converters::DataConverter::new(
-            PayloadConverter::default(),
-            DefaultFailureConverter,
-            crate::data_converters::DefaultPayloadCodec,
-        );
-
-        let decoded = data_converter
+        let decoded = data_converter()
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
