@@ -1,4 +1,5 @@
 use crate::{
+    internal_flags::CoreInternalFlags,
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
@@ -24,11 +25,6 @@ use temporalio_common::protos::temporal::api::{
     },
 };
 use tracing::Instrument;
-
-static ENABLE_AD_1: bool = true;
-static ENABLE_AD_2: bool = true;
-static ENABLE_AD_3: bool = true;
-static ENABLE_AD_4: bool = true;
 
 static EMPTY_FETCH_ERR: LazyLock<tonic::Status> =
     LazyLock::new(|| tonic::Status::unknown("Fetched empty history page"));
@@ -56,6 +52,10 @@ pub(crate) struct HistoryUpdate {
     /// heuristic will avoid merging the last WFT in history into a preceding
     /// heartbeat chain, because the update needs its own activation.
     has_pending_speculative_updates: bool,
+    /// True if any WFTCompleted event in this update carries the
+    /// `ImprovedHeartbeatHeuristic` flag, indicating the new chunking algorithm
+    /// should be used instead of the legacy heuristic.
+    has_improved_heartbeat_heuristic: bool,
 }
 
 impl Debug for HistoryUpdate {
@@ -138,7 +138,6 @@ impl HistoryPaginator {
         wft: ValidPollWFTQResponse,
         client: Arc<dyn WorkerClient>,
     ) -> Result<(Self, PreparedWFT), tonic::Status> {
-        eprintln!("DEBUG: shadow chunking active (from_poll)");
         let empty_hist = wft.history.events.is_empty();
         let npt = if empty_hist {
             NextPageToken::FetchFromStart
@@ -464,6 +463,7 @@ impl HistoryUpdate {
             has_last_wft: false,
             wft_count: 0,
             has_pending_speculative_updates: false,
+            has_improved_heartbeat_heuristic: false,
         }
     }
 
@@ -504,244 +504,33 @@ impl HistoryUpdate {
         <I as IntoIterator>::IntoIter: Send + 'static,
     {
         let all_events: Vec<_> = events.into_iter().collect();
+        let has_improved_heartbeat_heuristic =
+            events_have_improved_heartbeat_heuristic(&all_events);
 
-        let old_t = Self::from_events_partition_tuple_old(
-            all_events.as_slice(),
-            wft_started_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        );
-        let new_t = Self::from_events_partition_tuple_new(
-            all_events.as_slice(),
-            wft_started_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        );
-
-        // Differences on element 0 (early_incomplete) is not significant by itself
-        // from an upstream caller's perspective, so ignore it for divergence comparison.
-        if (old_t.1..=old_t.3) != (new_t.1..=new_t.3) {
-            let n = all_events.len();
-
-            let matches_accepted_2 = ENABLE_AD_2
-                && !has_last_wft
-                && new_t == (true, 0, 0, n)
-                && !old_t.0
-                && old_t.2 == n
-                && old_t.3 == 0
-                && all_events
-                    .last()
-                    .is_some_and(|e| e.event_type() == EventType::WorkflowTaskStarted);
-
-            // Accepted divergence 3: legacy `Complete` spans through a terminal `WorkflowExecution*`
-            // in cases where new stops at `WorkflowTaskStarted` and leaves completion + terminal
-            // as `Incomplete` (see `Divergences.md`).
-            let matches_accepted_3 = ENABLE_AD_3
-                && !old_t.0
-                && !new_t.0
-                && ({
-                    // Paginated slice: adjacent `WFTStarted` -> terminal (original AD3 tuple shape).
-                    old_t.1 == new_t.1
-                        && old_t.2 == new_t.2.saturating_add(1)
-                        && old_t.3.saturating_add(1) == new_t.3
-                        && !has_last_wft
-                        && all_events.windows(2).any(|w| {
-                            w[0].event_type() == EventType::WorkflowTaskStarted
-                                && w[1].is_final_wf_execution_event()
-                        })
-                } || {
-                    // Full buffer: `WFTStarted` -> `WFTCompleted` -> terminal execution; legacy
-                    // emits an extra chained `Complete` through the terminal (`OLD = NEW + 1` on
-                    // `wft_count`).
-                    has_last_wft
-                        && old_t.1 == new_t.1.saturating_add(1)
-                        && old_t.2 == new_t.2
-                        && old_t.3 == new_t.3
-                        && shadow_history_has_wft_completed_before_terminal_execution(&all_events)
-                });
-
-            // Accepted divergence 4: `has_last_wft` + history ending in open `WorkflowTaskStarted` —
-            // new chunking emits one more chained `Complete` than legacy (NEW wft_count = OLD + 1);
-            // `kept` / `remaining` still match. See `Divergences.md`.
-            let matches_accepted_4 = ENABLE_AD_4
-                && has_last_wft
-                && !old_t.0
-                && !new_t.0
-                && new_t.1 == old_t.1.saturating_add(1)
-                && old_t.2 == new_t.2
-                && old_t.3 == new_t.3
-                && all_events
-                    .last()
-                    .is_some_and(|e| e.event_type() == EventType::WorkflowTaskStarted);
-
-            if !matches_accepted_2 && !matches_accepted_3 && !matches_accepted_4 {
-                let old_chunks = shadow_collect_from_events_chunks_old(
-                    all_events.as_slice(),
-                    wft_started_id,
-                    has_last_wft,
-                    has_pending_speculative_updates,
-                );
-                let new_chunks = shadow_collect_from_events_chunks_new(
-                    all_events.as_slice(),
-                    wft_started_id,
-                    has_last_wft,
-                    has_pending_speculative_updates,
-                );
-                eprintln!("=== WFT SHADOW DIVERGENCE (HistoryUpdate::from_events) ===");
-                eprintln!(
-                    "  Note: previous_wft_started_id is NEW-authoritative; OLD lines are legacy find_end under the same watermark."
-                );
-                eprintln!(
-                    "  previous_wft_started_id={previous_wft_started_id}, wft_started_id={wft_started_id}, \
-                 has_last_wft={has_last_wft}, has_pending_speculative_updates={has_pending_speculative_updates}"
-                );
-                eprint_shadow_events_with_watermark(&all_events, wft_started_id);
-                eprint_shadow_from_events_chunk_lines("OLD", &old_chunks);
-                eprint_shadow_from_events_chunk_lines("NEW", &new_chunks);
-                eprintln!(
-                    "  tuple OLD => (early_incomplete={}, wft_count={}, kept={}, remaining={})",
-                    old_t.0, old_t.1, old_t.2, old_t.3
-                );
-                eprintln!(
-                    "  tuple NEW => (early_incomplete={}, wft_count={}, kept={}, remaining={})",
-                    new_t.0, new_t.1, new_t.2, new_t.3
-                );
-                eprintln!("=== END WFT SHADOW (from_events) ===");
-            }
-        }
-
-        Self::from_events_apply_new(
+        Self::from_events_apply(
             all_events,
             previous_wft_started_id,
             wft_started_id,
             has_last_wft,
             has_pending_speculative_updates,
+            has_improved_heartbeat_heuristic,
         )
     }
 
-    /// Shadow-only: `(early_incomplete, wft_count, kept_event_count, remaining_event_count)` using
-    /// legacy chunking. See [`Self::from_events_partition_tuple_new`].
-    ///
-    /// This uses the **same chained** `find_end → suffix` loop as [`Self::from_events_apply_new`]
-    /// (and the legacy equivalent), not a separate metric — when it disagrees with
-    /// [`Self::peek_next_wft_sequence`], that is expected: peek applies **one** `find_end` call and
-    /// uses [`NextWFTSeqEndIndex::end_index_in_slice`], while `wft_count` counts how many
-    /// `Complete` boundaries appear before the chain hits `Incomplete`.
-    fn from_events_partition_tuple_old(
-        all: &[HistoryEvent],
-        previous_wft_started_id: i64,
-        has_last_wft: bool,
-        has_pending_speculative_updates: bool,
-    ) -> (bool, usize, usize, usize) {
-        let mut last_end = find_end_index_of_next_wft_seq_old(
-            all,
-            previous_wft_started_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        );
-        if matches!(last_end, NextWFTSeqEndIndexOld::Incomplete(_)) {
-            return if has_last_wft {
-                (true, 1, all.len(), 0)
-            } else {
-                (true, 0, 0, all.len())
-            };
-        }
-        let mut wft_count = 0;
-        while let NextWFTSeqEndIndexOld::Complete(next_end_ix) = last_end {
-            wft_count += 1;
-            let next_end_eid = all[next_end_ix].event_id;
-            let next_end = find_end_index_of_next_wft_seq_old(
-                &all[next_end_ix..],
-                next_end_eid,
-                has_last_wft,
-                has_pending_speculative_updates,
-            )
-            .add_base(next_end_ix);
-            if matches!(next_end, NextWFTSeqEndIndexOld::Incomplete(_)) {
-                break;
-            }
-            last_end = next_end;
-        }
-        let split_at = match last_end {
-            NextWFTSeqEndIndexOld::Complete(ix) => ix,
-            NextWFTSeqEndIndexOld::Incomplete(_) => unreachable!(),
-        };
-        let remaining_event_count = if all.is_empty() || has_last_wft {
-            0
-        } else {
-            all.len() - (split_at + 1)
-        };
-        let kept = all.len() - remaining_event_count;
-        (false, wft_count, kept, remaining_event_count)
-    }
-
-    /// Shadow-only: same tuple as [`Self::from_events_partition_tuple_old`], using new chunking.
-    ///
-    /// Intentional OLD/NEW tuple differences are documented in `Divergences.md` (accepted
-    /// divergences 1–4). In particular, accepted divergence 4 covers extra `wft_count` on the
-    /// new side when `has_last_wft` and history ends in an open `WorkflowTaskStarted`.
-    fn from_events_partition_tuple_new(
-        all: &[HistoryEvent],
-        previous_wft_started_id: i64,
-        has_last_wft: bool,
-        has_pending_speculative_updates: bool,
-    ) -> (bool, usize, usize, usize) {
-        let mut last_end = find_end_index_of_next_wft_seq_new(
-            all,
-            previous_wft_started_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        );
-        if matches!(
-            last_end,
-            NextWFTSeqEndIndex::NeedMore | NextWFTSeqEndIndex::Tail
-        ) {
-            return if has_last_wft {
-                (true, 1, all.len(), 0)
-            } else {
-                (true, 0, 0, all.len())
-            };
-        }
-        let mut wft_count = 0;
-        while let NextWFTSeqEndIndex::Complete(next_end_ix) = last_end {
-            wft_count += 1;
-            let next_end_eid = all[next_end_ix].event_id;
-            let next_end = find_end_index_of_next_wft_seq_new(
-                &all[next_end_ix..],
-                next_end_eid,
-                has_last_wft,
-                has_pending_speculative_updates,
-            )
-            .add(next_end_ix);
-            if matches!(
-                next_end,
-                NextWFTSeqEndIndex::NeedMore | NextWFTSeqEndIndex::Tail
-            ) {
-                break;
-            }
-            last_end = next_end;
-        }
-        let remaining_event_count = if all.is_empty() || has_last_wft {
-            0
-        } else {
-            all.len() - (last_end.end_index_in_slice(all.len()) + 1)
-        };
-        let kept = all.len() - remaining_event_count;
-        (false, wft_count, kept, remaining_event_count)
-    }
-
-    fn from_events_apply_new(
+    fn from_events_apply(
         mut all_events: Vec<HistoryEvent>,
         previous_wft_started_id: i64,
         wft_started_id: i64,
         has_last_wft: bool,
         has_pending_speculative_updates: bool,
+        has_improved_heartbeat_heuristic: bool,
     ) -> (Self, Vec<HistoryEvent>) {
-        let mut last_end = find_end_index_of_next_wft_seq_new(
+        let mut last_end = find_end_index_of_next_wft_seq(
             all_events.as_slice(),
             previous_wft_started_id,
             has_last_wft,
             has_pending_speculative_updates,
+            has_improved_heartbeat_heuristic,
         );
 
         if matches!(
@@ -757,6 +546,7 @@ impl HistoryUpdate {
                         has_last_wft,
                         wft_count: 1,
                         has_pending_speculative_updates,
+                        has_improved_heartbeat_heuristic,
                     },
                     vec![],
                 )
@@ -769,6 +559,7 @@ impl HistoryUpdate {
                         has_last_wft,
                         wft_count: 0,
                         has_pending_speculative_updates,
+                        has_improved_heartbeat_heuristic,
                     },
                     all_events,
                 )
@@ -779,11 +570,12 @@ impl HistoryUpdate {
         while let NextWFTSeqEndIndex::Complete(next_end_ix) = last_end {
             wft_count += 1;
             let next_end_eid = all_events[next_end_ix].event_id;
-            let next_end = find_end_index_of_next_wft_seq_new(
+            let next_end = find_end_index_of_next_wft_seq(
                 &all_events[next_end_ix..],
                 next_end_eid,
                 has_last_wft,
                 has_pending_speculative_updates,
+                has_improved_heartbeat_heuristic,
             )
             .add(next_end_ix);
             if matches!(
@@ -809,6 +601,7 @@ impl HistoryUpdate {
                 has_last_wft,
                 wft_count,
                 has_pending_speculative_updates,
+                has_improved_heartbeat_heuristic,
             },
             remaining_events,
         )
@@ -829,6 +622,8 @@ impl HistoryUpdate {
         <I as IntoIterator>::IntoIter: Send + 'static,
     {
         let events: Vec<_> = events.into_iter().collect();
+        let has_improved_heartbeat_heuristic =
+            events_have_improved_heartbeat_heuristic(&events);
         Self {
             events,
             previous_wft_started_id,
@@ -836,6 +631,7 @@ impl HistoryUpdate {
             has_last_wft,
             wft_count: 0,
             has_pending_speculative_updates,
+            has_improved_heartbeat_heuristic,
         }
     }
 
@@ -854,119 +650,15 @@ impl HistoryUpdate {
             self.events.drain(0..ix_first_relevant);
         }
 
-        let old_seq = self.take_next_wft_sequence_old(from_wft_started_id);
-        let new_seq = self.take_next_wft_sequence_new(from_wft_started_id);
-
-        let old_t = take_next_wft_shadow_tuple(&old_seq);
-        let new_t = take_next_wft_shadow_tuple(&new_seq);
-        if old_t != new_t {
-            let matches_accepted_1 = match (&old_seq, &new_seq) {
-                (NextWFT::WFT(old_ev, _), NextWFT::WFT(new_ev, _)) => {
-                    old_ev.len() == new_ev.len() + 1
-                        && old_ev.starts_with(new_ev.as_slice())
-                        && matches!(
-                            new_ev.last().map(|e| e.event_type()),
-                            Some(EventType::WorkflowTaskStarted)
-                        )
-                        && matches!(
-                            old_ev.get(new_ev.len()).map(|e| e.event_type()),
-                            Some(EventType::WorkflowTaskCompleted)
-                        )
-                }
-                _ => false,
-            };
-
-            let matches_accepted_2 = ENABLE_AD_2
-                && !self.has_last_wft
-                && matches!(&new_seq, NextWFT::NeedFetch)
-                && match (&old_seq, self.events.last()) {
-                    (NextWFT::WFT(old_ev, _), Some(buf_last)) => old_ev.last().is_some_and(|e| {
-                        e.event_type() == EventType::WorkflowTaskStarted && e == buf_last
-                    }),
-                    _ => false,
-                };
-
-            let matches_accepted_3 =
-                ENABLE_AD_3 && shadow_matches_accepted_divergence_3(&old_seq, &new_seq);
-
-            // Downstream effect of AD_1: old algorithm consumed WFTCompleted as part
-            // of the previous chunk, so this call sees empty buffer → ReplayOver.
-            // New algorithm stopped at WFTStarted, leaving WFTCompleted as tail →
-            // returns it as a 1-event WFT with is_final=true.
-            let matches_accepted_1_tail = ENABLE_AD_1
-                && matches!(&old_seq, NextWFT::ReplayOver)
-                && matches!(
-                    &new_seq,
-                    NextWFT::WFT(ev, true)
-                        if !ev.is_empty()
-                            && ev[0].event_type() == EventType::WorkflowTaskCompleted
-                );
-
-            if !matches_accepted_1
-                && !matches_accepted_1_tail
-                && !matches_accepted_2
-                && !matches_accepted_3
-            {
-                eprintln!("=== WFT SHADOW DIVERGENCE (take_next_wft_sequence) ===");
-                eprintln!(
-                    "  from_wft_started_id={from_wft_started_id}, has_last_wft={}, \
-                 has_pending_speculative_updates={}",
-                    self.has_last_wft, self.has_pending_speculative_updates
-                );
-                eprint_shadow_next_wft_summary("OLD", &old_seq);
-                eprint_shadow_next_wft_summary("NEW", &new_seq);
-                eprint_shadow_history_lines("buffer", &self.events);
-                eprintln!("=== END WFT SHADOW (take_next_wft_sequence) ===");
-            }
-        }
-
-        match &new_seq {
-            NextWFT::WFT(taken, _) if !taken.is_empty() => {
-                self.events.drain(0..taken.len());
-            }
-            _ => {}
-        }
-
-        new_seq
-    }
-
-    fn take_next_wft_sequence_old(&mut self, from_wft_started_id: i64) -> NextWFT {
-        let old_chunk = find_end_index_of_next_wft_seq_old(
+        let chunk = find_end_index_of_next_wft_seq(
             &self.events,
             from_wft_started_id,
             self.has_last_wft,
             self.has_pending_speculative_updates,
+            self.has_improved_heartbeat_heuristic,
         );
 
-        match old_chunk {
-            NextWFTSeqEndIndexOld::Incomplete(_) => {
-                let siz = self.events.len().saturating_sub(1);
-                if self.has_last_wft {
-                    if siz == 0 {
-                        NextWFT::ReplayOver
-                    } else {
-                        self.build_next_wft_no_drain(siz)
-                    }
-                } else {
-                    // Chunking chose Incomplete (uncertain boundary); fetch more before draining.
-                    NextWFT::NeedFetch
-                }
-            }
-            NextWFTSeqEndIndexOld::Complete(next_wft_ix) => {
-                self.build_next_wft_no_drain(next_wft_ix)
-            }
-        }
-    }
-
-    fn take_next_wft_sequence_new(&mut self, from_wft_started_id: i64) -> NextWFT {
-        let new_chunk = find_end_index_of_next_wft_seq_new(
-            &self.events,
-            from_wft_started_id,
-            self.has_last_wft,
-            self.has_pending_speculative_updates,
-        );
-
-        match new_chunk {
+        match chunk {
             NextWFTSeqEndIndex::NeedMore => NextWFT::NeedFetch,
             NextWFTSeqEndIndex::Tail => {
                 if !self.has_last_wft {
@@ -979,26 +671,18 @@ impl HistoryUpdate {
                     // Remaining events are trailing matter (e.g. terminal events, WFTCompleted
                     // + commands after the last WFTStarted). Include them all so the caller
                     // can process them (e.g. to set have_seen_terminal_event).
-                    self.build_next_wft_no_drain(self.events.len() - 1)
+                    self.build_next_wft(self.events.len() - 1)
                 }
             }
-            NextWFTSeqEndIndex::Complete(next_wft_ix) => self.build_next_wft_no_drain(next_wft_ix),
+            NextWFTSeqEndIndex::Complete(next_wft_ix) => self.build_next_wft(next_wft_ix),
         }
     }
 
-    // Do not remove this function.
-    // We'll restore it once we remove the new/old divergence checks.
-    //
-    // fn build_next_wft(&mut self, drain_this_much: usize) -> NextWFT {
-    //     NextWFT::WFT(
-    //         self.events.drain(0..=drain_this_much).collect(),
-    //         self.events.is_empty() && self.has_last_wft,
-    //     )
-    // }
-
-    fn build_next_wft_no_drain(&mut self, drain_this_much: usize) -> NextWFT {
-        let is_final = (drain_this_much + 1 == self.events.len()) && self.has_last_wft;
-        NextWFT::WFT(self.events[0..=drain_this_much].to_vec(), is_final)
+    fn build_next_wft(&mut self, drain_this_much: usize) -> NextWFT {
+        NextWFT::WFT(
+            self.events.drain(0..=drain_this_much).collect(),
+            self.events.is_empty() && self.has_last_wft,
+        )
     }
 
     /// Lets the caller peek ahead at the next WFT sequence that will be returned by
@@ -1006,41 +690,6 @@ impl HistoryUpdate {
     /// not been called first. May also return an empty iterator or incomplete sequence if we are at
     /// the end of history.
     pub(crate) fn peek_next_wft_sequence(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
-        let old = self.peek_next_wft_sequence_old(from_wft_started_id);
-        let new = self.peek_next_wft_sequence_new(from_wft_started_id);
-
-        if old != new {
-            let matches_accepted_1 = ENABLE_AD_1
-                && old.len() == new.len() + 1
-                && old.starts_with(new)
-                && matches!(
-                    new.last().map(|e| e.event_type()),
-                    Some(EventType::WorkflowTaskStarted)
-                )
-                && matches!(
-                    old.get(new.len()).map(|e| e.event_type()),
-                    Some(EventType::WorkflowTaskCompleted)
-                );
-
-            let matches_accepted_3 = ENABLE_AD_3 && shadow_peek_slices_match_ad3(old, new);
-
-            if !matches_accepted_1 && !matches_accepted_3 {
-                eprintln!("=== WFT CHUNKING DIVERGENCE in peek_next_wft_sequence ===");
-                eprintln!(
-                    "  from_wft_started_id={from_wft_started_id}, has_last_wft={}, \
-                 has_pending_speculative_updates={}",
-                    self.has_last_wft, self.has_pending_speculative_updates
-                );
-                eprint_shadow_history_lines("peek OLD slice", old);
-                eprint_shadow_history_lines("peek NEW slice", new);
-                eprint_shadow_history_lines("full buffer", &self.events);
-            }
-        }
-
-        new
-    }
-
-    fn peek_next_wft_sequence_old(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
         let ix_first_relevant =
             starting_index_after_skipping(&self.events, from_wft_started_id).unwrap_or_default();
 
@@ -1049,31 +698,12 @@ impl HistoryUpdate {
             return relevant_events;
         }
 
-        let ix_end = find_end_index_of_next_wft_seq_old(
+        let ix_end = find_end_index_of_next_wft_seq(
             relevant_events,
             from_wft_started_id,
             self.has_last_wft,
             self.has_pending_speculative_updates,
-        )
-        .end_index_in_slice(relevant_events.len());
-
-        &relevant_events[0..=ix_end]
-    }
-
-    fn peek_next_wft_sequence_new(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
-        let ix_first_relevant =
-            starting_index_after_skipping(&self.events, from_wft_started_id).unwrap_or_default();
-
-        let relevant_events = &self.events[ix_first_relevant..];
-        if relevant_events.is_empty() {
-            return relevant_events;
-        }
-
-        let ix_end = find_end_index_of_next_wft_seq_new(
-            relevant_events,
-            from_wft_started_id,
-            self.has_last_wft,
-            self.has_pending_speculative_updates,
+            self.has_improved_heartbeat_heuristic,
         )
         .end_index_in_slice(relevant_events.len());
 
@@ -1083,63 +713,15 @@ impl HistoryUpdate {
     /// Returns true if this update has the next needed WFT sequence, false if events will need to
     /// be fetched in order to create a complete update with the entire next WFT sequence.
     pub(crate) fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
-        let new = self.can_take_next_wft_sequence_new(from_wft_started_id);
-        let old = self.can_take_next_wft_sequence_old(from_wft_started_id);
-
-        if new.0 != old.0 {
-            let has_last_wft = self.has_last_wft;
-            let has_pending_speculative_updates = self.has_pending_speculative_updates;
-
-            eprintln!("=== START DIVERGENCE IN can_take_next_wft_sequence ===");
-            eprintln!(
-                "  from_event_id={from_wft_started_id}, has_last_wft={has_last_wft}, has_pending_speculative_updates={has_pending_speculative_updates}"
-            );
-            eprintln!("  OLD => {old:?}");
-            eprintln!("  NEW => {new:?}");
-            eprintln!("  events ({} total):", self.events.len());
-            for (ix, e) in self.events.iter().enumerate() {
-                eprintln!("    [{ix}] eid={} {:?}", e.event_id, e.event_type());
-            }
-            eprintln!("=== END DIVERGENCE IN can_take_next_wft_sequence ===");
-        }
-
-        new.0
-    }
-
-    fn can_take_next_wft_sequence_old(
-        &self,
-        from_wft_started_id: i64,
-    ) -> (bool, NextWFTSeqEndIndexOld) {
-        let next_wft_ix = find_end_index_of_next_wft_seq_old(
+        let next_wft_ix = find_end_index_of_next_wft_seq(
             &self.events,
             from_wft_started_id,
             self.has_last_wft,
             self.has_pending_speculative_updates,
+            self.has_improved_heartbeat_heuristic,
         );
-        if let NextWFTSeqEndIndexOld::Incomplete(_) = next_wft_ix
-            && !self.has_last_wft
-        {
-            return (false, next_wft_ix);
-        }
-        (true, next_wft_ix)
-    }
-
-    fn can_take_next_wft_sequence_new(
-        &self,
-        from_wft_started_id: i64,
-    ) -> (bool, NextWFTSeqEndIndex) {
-        let next_wft_ix = find_end_index_of_next_wft_seq_new(
-            &self.events,
-            from_wft_started_id,
-            self.has_last_wft,
-            self.has_pending_speculative_updates,
-        );
-        if matches!(next_wft_ix, NextWFTSeqEndIndex::NeedMore)
-            || (matches!(next_wft_ix, NextWFTSeqEndIndex::Tail) && !self.has_last_wft)
-        {
-            return (false, next_wft_ix);
-        }
-        (true, next_wft_ix)
+        !matches!(next_wft_ix, NextWFTSeqEndIndex::NeedMore)
+            && !(matches!(next_wft_ix, NextWFTSeqEndIndex::Tail) && !self.has_last_wft)
     }
 
     /// Returns the next WFT completed event attributes, if any, starting at (inclusive) the
@@ -1168,155 +750,135 @@ fn starting_index_after_skipping(
         .map(|(ix, _)| ix)
 }
 
-/// True if some `WorkflowTaskCompleted` is followed later by a terminal `WorkflowExecution*`
-/// event (accepted divergence 3, `from_events` shadow).
-fn shadow_history_has_wft_completed_before_terminal_execution(events: &[HistoryEvent]) -> bool {
-    events.iter().enumerate().any(|(i, e)| {
-        e.event_type() == EventType::WorkflowTaskCompleted
-            && events
-                .get(i + 1..)
-                .is_some_and(|tail| tail.iter().any(|e2| e2.is_final_wf_execution_event()))
+/// Returns true if any WFTCompleted event in the given events carries the
+/// `ImprovedHeartbeatHeuristic` flag.
+fn events_have_improved_heartbeat_heuristic(events: &[HistoryEvent]) -> bool {
+    let flag_value = CoreInternalFlags::ImprovedHeartbeatHeuristic as u32;
+    events.iter().any(|e| {
+        if let Some(Attributes::WorkflowTaskCompletedEventAttributes(ref attr)) = e.attributes
+            && let Some(ref metadata) = attr.sdk_metadata
+        {
+            metadata.core_used_flags.contains(&flag_value)
+        } else {
+            false
+        }
     })
 }
 
-/// Accepted divergence 3 for legacy vs new **slices** (e.g. [`HistoryUpdate::peek_next_wft_sequence`],
-/// [`NextWFT::WFT`] sequences in `take_next_wft_sequence`): legacy includes a terminal
-/// `WorkflowExecution*` past `WorkflowTaskStarted` where new stops at `WorkflowTaskStarted`, or
-/// legacy includes `WFTCompleted` + terminal after that `WorkflowTaskStarted`.
-fn shadow_peek_slices_match_ad3(old: &[HistoryEvent], new: &[HistoryEvent]) -> bool {
-    if old.len() == new.len() + 1
-        && old.starts_with(new)
-        && matches!(
-            new.last().map(|e| e.event_type()),
-            Some(EventType::WorkflowTaskStarted)
+/// Dispatches to the legacy or improved chunking algorithm based on the
+/// `has_improved_heartbeat_heuristic` flag.
+fn find_end_index_of_next_wft_seq(
+    events: &[HistoryEvent],
+    from_event_id: i64,
+    has_last_wft: bool,
+    has_pending_speculative_updates: bool,
+    has_improved_heartbeat_heuristic: bool,
+) -> NextWFTSeqEndIndex {
+    if has_improved_heartbeat_heuristic {
+        find_end_index_of_next_wft_seq_improved(
+            events,
+            from_event_id,
+            has_last_wft,
+            has_pending_speculative_updates,
         )
-        && old.last().is_some_and(|e| e.is_final_wf_execution_event())
-    {
-        return true;
-    }
-    old.len() >= new.len().saturating_add(2)
-        && old.starts_with(new)
-        && matches!(
-            new.last().map(|e| e.event_type()),
-            Some(EventType::WorkflowTaskStarted)
-        )
-        && old.last().is_some_and(|e| e.is_final_wf_execution_event())
-        && old.get(new.len()..).is_some_and(|suffix| {
-            suffix
-                .iter()
-                .any(|e| e.event_type() == EventType::WorkflowTaskCompleted)
-        })
-}
-
-/// Accepted divergence 3: legacy `Complete` spanned through a terminal `WorkflowExecution*`
-/// where new chunking completes at `WorkflowTaskStarted` and leaves `WFTCompleted` + terminal as
-/// a subsequent `Incomplete` boundary (see `Divergences.md`).
-///
-/// Covers: (a) terminal immediately after `WorkflowTaskStarted`; (b) `WorkflowTaskStarted` ->
-/// `WorkflowTaskCompleted` -> terminal execution. Follow-on: when the buffer is only that
-/// terminal event, legacy still yields a one-event `WFT`; new reports `Incomplete` for the lone
-/// terminal and then `ReplayOver` (or `NeedFetch` when `!has_last_wft`).
-fn shadow_matches_accepted_divergence_3(old_seq: &NextWFT, new_seq: &NextWFT) -> bool {
-    match (old_seq, new_seq) {
-        (NextWFT::WFT(old_ev, _), NextWFT::WFT(new_ev, _)) => {
-            shadow_peek_slices_match_ad3(old_ev.as_slice(), new_ev.as_slice())
-        }
-        (NextWFT::WFT(old_ev, _), NextWFT::ReplayOver | NextWFT::NeedFetch)
-            if old_ev.len() == 1 && old_ev[0].is_final_wf_execution_event() =>
-        {
-            true
-        }
-        _ => false,
+    } else {
+        find_end_index_of_next_wft_seq_legacy(events, from_event_id, has_last_wft)
     }
 }
 
-/// Shadow-only fingerprint for [`NextWFT`]: `(kind, event_count, first_eid, last_eid, is_final)`.
-/// `kind` is 0 = ReplayOver, 1 = NeedFetch, 2 = WFT.
-fn take_next_wft_shadow_tuple(w: &NextWFT) -> (u8, usize, i64, i64, bool) {
-    match w {
-        NextWFT::ReplayOver => (0, 0, 0, 0, false),
-        NextWFT::NeedFetch => (1, 0, 0, 0, false),
-        NextWFT::WFT(ev, is_final) => {
-            if let (Some(first), Some(last)) = (ev.first(), ev.last()) {
-                (2, ev.len(), first.event_id, last.event_id, *is_final)
-            } else {
-                (2, 0, 0, 0, *is_final)
+/// Legacy chunking algorithm. Used for workflows that were started before the
+/// `ImprovedHeartbeatHeuristic` flag was introduced.
+fn find_end_index_of_next_wft_seq_legacy(
+    events: &[HistoryEvent],
+    from_event_id: i64,
+    has_last_wft: bool,
+) -> NextWFTSeqEndIndex {
+    if events.is_empty() {
+        return NextWFTSeqEndIndex::NeedMore;
+    }
+    let mut last_index = 0;
+    let mut saw_command_or_started = false;
+    let mut saw_command = false;
+    let mut wft_started_event_id_to_index = vec![];
+    for (ix, e) in events.iter().enumerate() {
+        last_index = ix;
+
+        if e.event_id <= from_event_id {
+            continue;
+        }
+
+        if e.is_command_event() {
+            saw_command = true;
+            saw_command_or_started = true;
+        }
+        if e.event_type() == EventType::WorkflowExecutionStarted {
+            saw_command_or_started = true;
+        }
+        if e.is_final_wf_execution_event() {
+            return NextWFTSeqEndIndex::Complete(last_index);
+        }
+
+        if e.event_type() == EventType::WorkflowTaskStarted {
+            wft_started_event_id_to_index.push((e.event_id, ix));
+            if let Some(next_event) = events.get(ix + 1) {
+                let next_event_type = next_event.event_type();
+                if matches!(
+                    next_event_type,
+                    EventType::WorkflowTaskFailed
+                        | EventType::WorkflowTaskTimedOut
+                        | EventType::WorkflowExecutionTimedOut
+                        | EventType::WorkflowExecutionTerminated
+                        | EventType::WorkflowExecutionCanceled
+                ) {
+                    wft_started_event_id_to_index.pop();
+                    continue;
+                } else if next_event_type == EventType::WorkflowTaskCompleted {
+                    if let Some(next_next_event) = events.get(ix + 2) {
+                        if !saw_command
+                            && next_next_event.event_type() == EventType::WorkflowTaskScheduled
+                        {
+                            continue;
+                        } else {
+                            if let Some(
+                                Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
+                                    ref attr,
+                                ),
+                            ) = next_next_event.attributes
+                            {
+                                if let Some(ret_ix) = wft_started_event_id_to_index
+                                    .iter()
+                                    .rev()
+                                    .find_map(|(eid, ix)| {
+                                        if *eid < attr.accepted_request_sequencing_event_id {
+                                            return Some(*ix);
+                                        }
+                                        None
+                                    })
+                                {
+                                    return NextWFTSeqEndIndex::Complete(ret_ix);
+                                }
+                            }
+                            return NextWFTSeqEndIndex::Complete(ix);
+                        }
+                    } else if !has_last_wft && !saw_command_or_started {
+                        continue;
+                    }
+                }
+            } else if !has_last_wft && !saw_command_or_started {
+                continue;
+            }
+            if saw_command_or_started {
+                return NextWFTSeqEndIndex::Complete(ix);
             }
         }
     }
-}
 
-fn shadow_tuple_kind_name(kind: u8) -> &'static str {
-    match kind {
-        0 => "ReplayOver",
-        1 => "NeedFetch",
-        2 => "WFT",
-        _ => "?",
-    }
-}
-
-fn eprint_shadow_history_lines(label: &str, events: &[HistoryEvent]) {
-    eprintln!("  {label} ({} events):", events.len());
-    for (ix, e) in events.iter().enumerate() {
-        let extra =
-            if let Some(Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref attr)) =
-                e.attributes
-            {
-                format!(" (seq_eid={})", attr.accepted_request_sequencing_event_id)
-            } else {
-                String::new()
-            };
-        eprintln!(
-            "    [{ix}] eid={} {:?} {}",
-            e.event_id,
-            e.event_type(),
-            extra
-        );
-    }
-}
-
-fn eprint_shadow_next_wft_summary(label: &str, w: &NextWFT) {
-    let t = take_next_wft_shadow_tuple(w);
-    eprintln!(
-        "  {label}: tuple (kind={} {}), n={}, first_eid={}, last_eid={}, is_final={}",
-        t.0,
-        shadow_tuple_kind_name(t.0),
-        t.1,
-        t.2,
-        t.3,
-        t.4
-    );
-    if let NextWFT::WFT(ev, _) = w {
-        if ev.is_empty() {
-            eprintln!("  {label}: WFT event list empty");
-        } else {
-            eprint_shadow_history_lines(&format!("{label} (taken seq)"), ev);
-        }
-    }
-}
-
-/// Reference return type for [`find_end_index_of_next_wft_seq_old`] (shadow / validation only).
-#[derive(Debug, Copy, Clone)]
-enum NextWFTSeqEndIndexOld {
-    Complete(usize),
-    Incomplete(usize),
-}
-
-impl NextWFTSeqEndIndexOld {
-    /// Last event index within a slice of length `slice_len` that this result refers to.
-    fn end_index_in_slice(self, _slice_len: usize) -> usize {
-        match self {
-            NextWFTSeqEndIndexOld::Complete(ix) => ix,
-            NextWFTSeqEndIndexOld::Incomplete(ix) => ix,
-        }
-    }
-
-    /// Re-base a chunking result from a suffix slice onto absolute indices in the full buffer.
-    fn add_base(self, base: usize) -> Self {
-        match self {
-            NextWFTSeqEndIndexOld::Complete(ix) => NextWFTSeqEndIndexOld::Complete(ix + base),
-            NextWFTSeqEndIndexOld::Incomplete(ix) => NextWFTSeqEndIndexOld::Incomplete(ix + base),
-        }
+    // Legacy: Incomplete maps to NeedMore when !has_last_wft; the caller handles
+    // has_last_wft by treating all remaining events as a single WFT.
+    if has_last_wft {
+        NextWFTSeqEndIndex::Tail
+    } else {
+        NextWFTSeqEndIndex::NeedMore
     }
 }
 
@@ -1354,123 +916,6 @@ impl NextWFTSeqEndIndex {
     }
 }
 
-/// Discovers the index of the last event in next WFT sequence within the passed-in slice
-/// For more on workflow task chunking, see arch_docs/workflow_task_chunking.md
-fn find_end_index_of_next_wft_seq_old(
-    events: &[HistoryEvent],
-    from_event_id: i64,
-    has_last_wft: bool,
-    _has_pending_speculative_updates: bool,
-) -> NextWFTSeqEndIndexOld {
-    if events.is_empty() {
-        return NextWFTSeqEndIndexOld::Incomplete(0);
-    }
-    let mut last_index = 0;
-    let mut saw_command_or_started = false;
-    let mut saw_command = false;
-    let mut wft_started_event_id_to_index = vec![];
-    for (ix, e) in events.iter().enumerate() {
-        last_index = ix;
-
-        // It's possible to have gotten a new history update without eviction (ex: unhandled
-        // command on completion), where we may need to skip events we already handled.
-        if e.event_id <= from_event_id {
-            continue;
-        }
-
-        if e.is_command_event() {
-            saw_command = true;
-            saw_command_or_started = true;
-        }
-        if e.event_type() == EventType::WorkflowExecutionStarted {
-            saw_command_or_started = true;
-        }
-        if e.is_final_wf_execution_event() {
-            return NextWFTSeqEndIndexOld::Complete(last_index);
-        }
-
-        if e.event_type() == EventType::WorkflowTaskStarted {
-            wft_started_event_id_to_index.push((e.event_id, ix));
-            if let Some(next_event) = events.get(ix + 1) {
-                let next_event_type = next_event.event_type();
-                // If the next event is WFT timeout or fail, or abrupt WF execution end, that
-                // doesn't conclude a WFT sequence.
-                if matches!(
-                    next_event_type,
-                    EventType::WorkflowTaskFailed
-                        | EventType::WorkflowTaskTimedOut
-                        | EventType::WorkflowExecutionTimedOut
-                        | EventType::WorkflowExecutionTerminated
-                        | EventType::WorkflowExecutionCanceled
-                ) {
-                    // Since we're skipping this WFT, we don't want to include it in the vec used
-                    // for update accepted sequencing lookups.
-                    wft_started_event_id_to_index.pop();
-                    continue;
-                } else if next_event_type == EventType::WorkflowTaskCompleted {
-                    if let Some(next_next_event) = events.get(ix + 2) {
-                        if !saw_command
-                            && next_next_event.event_type() == EventType::WorkflowTaskScheduled
-                        {
-                            // If we've never seen an interesting event and the next two events are
-                            // a completion followed immediately again by scheduled, then this is a
-                            // WFT heartbeat and also doesn't conclude the sequence.
-                            continue;
-                        } else {
-                            // If we see an update accepted command after WFT completed, we want to
-                            // conclude the WFT sequence where that update should have been
-                            // processed. We don't need to check for any other command types,
-                            // because the only thing that can run before an update validator is a
-                            // signal handler - but if a signal handler ran then there would have
-                            // been a previous signal event, and we would've already concluded the
-                            // previous WFT sequence.
-                            if let Some(
-                                Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
-                                    ref attr,
-                                ),
-                            ) = next_next_event.attributes
-                            {
-                                // Find index of closest unskipped WFT started before sequencing id.
-                                // The fact that the WFT wasn't skipped is important. If it was, we
-                                // need to avoid stopping at that point even though that's where the
-                                // update was sequenced. If we did, we'll fail to actually include
-                                // the update accepted event and therefore fail to generate the
-                                // request to run the update handler on replay.
-                                if let Some(ret_ix) = wft_started_event_id_to_index
-                                    .iter()
-                                    .rev()
-                                    .find_map(|(eid, ix)| {
-                                        if *eid < attr.accepted_request_sequencing_event_id {
-                                            return Some(*ix);
-                                        }
-                                        None
-                                    })
-                                {
-                                    return NextWFTSeqEndIndexOld::Complete(ret_ix);
-                                }
-                            }
-                            return NextWFTSeqEndIndexOld::Complete(ix);
-                        }
-                    } else if !has_last_wft && !saw_command_or_started {
-                        // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need
-                        // to fetch more.
-                        continue;
-                    }
-                }
-            } else if !has_last_wft && !saw_command_or_started {
-                // Don't have enough events to look ahead of the WorkflowTaskStarted. Need to fetch
-                // more.
-                continue;
-            }
-            if saw_command_or_started {
-                return NextWFTSeqEndIndexOld::Complete(ix);
-            }
-        }
-    }
-
-    NextWFTSeqEndIndexOld::Incomplete(last_index)
-}
-
 /// Return the event _index_ (not ID!) of the last event of the logical workflow task starting
 /// at event ID `from_event_id`. The virtual WFT is guaranteed to be "complete", meaning that all
 /// events required to process that virtual WFT are contained in the provided slice.
@@ -1501,7 +946,7 @@ fn find_end_index_of_next_wft_seq_old(
 ///
 /// In both cases, the ignored wft is swallowed by the _preceding_ workflow task,
 /// resulting in a single virtual workflow task.
-fn find_end_index_of_next_wft_seq_new(
+fn find_end_index_of_next_wft_seq_improved(
     events: &[HistoryEvent],
     from_event_id: i64,
     has_last_wft: bool,
@@ -1782,180 +1227,6 @@ fn find_end_index_of_next_wft_seq_new(
     // Fell off the main loop without finding a WFTStarted. Any events consumed by the
     // preamble (WFTCompleted + commands) or remaining inbound events are trailing matter.
     NextWFTSeqEndIndex::Tail
-}
-
-/// Shadow-only: one virtual WFT span in event-id space (inclusive), or an incomplete tail.
-#[derive(Debug, Clone)]
-enum ShadowWftChunkLine {
-    Complete { lo: i64, hi: i64 },
-    Incomplete { lo: i64, hi: i64 },
-}
-
-fn shadow_eid_range_for_complete_chunk(
-    all: &[HistoryEvent],
-    from_event_id: i64,
-    end_ix: usize,
-) -> (i64, i64) {
-    let start_ix = starting_index_after_skipping(all, from_event_id).unwrap_or(all.len());
-    let end_ix = end_ix.min(all.len().saturating_sub(1));
-    let lo = all.get(start_ix).map(|e| e.event_id).unwrap_or(0);
-    let hi = all.get(end_ix).map(|e| e.event_id).unwrap_or(lo);
-    (lo, hi)
-}
-
-/// Events in the buffer after `split_ix` that are past the WFTStarted at `split_ix` but do not yet
-/// form a complete virtual WFT (inclusive event-id range).
-fn shadow_incomplete_tail_after_split(all: &[HistoryEvent], split_ix: usize) -> Option<(i64, i64)> {
-    let suffix = all.get(split_ix..)?;
-    let from_id = all.get(split_ix)?.event_id;
-    let rel = starting_index_after_skipping(suffix, from_id).unwrap_or(suffix.len());
-    if rel >= suffix.len() {
-        return None;
-    }
-    let lo = suffix.get(rel)?.event_id;
-    let hi = all.last()?.event_id;
-    Some((lo, hi))
-}
-
-fn shadow_incomplete_tail_from_buffer_start(
-    all: &[HistoryEvent],
-    previous_wft_started_id: i64,
-) -> Option<(i64, i64)> {
-    let start_ix = starting_index_after_skipping(all, previous_wft_started_id).unwrap_or(all.len());
-    if start_ix >= all.len() {
-        return None;
-    }
-    let lo = all[start_ix].event_id;
-    let hi = all.last()?.event_id;
-    Some((lo, hi))
-}
-
-fn shadow_collect_from_events_chunks_old(
-    all: &[HistoryEvent],
-    previous_wft_started_id: i64,
-    has_last_wft: bool,
-    has_pending_speculative_updates: bool,
-) -> Vec<ShadowWftChunkLine> {
-    let mut out = Vec::new();
-    let mut last_end = find_end_index_of_next_wft_seq_old(
-        all,
-        previous_wft_started_id,
-        has_last_wft,
-        has_pending_speculative_updates,
-    );
-    if matches!(last_end, NextWFTSeqEndIndexOld::Incomplete(_)) {
-        if let Some((lo, hi)) =
-            shadow_incomplete_tail_from_buffer_start(all, previous_wft_started_id)
-        {
-            out.push(ShadowWftChunkLine::Incomplete { lo, hi });
-        }
-        return out;
-    }
-    let mut from_id = previous_wft_started_id;
-    while let NextWFTSeqEndIndexOld::Complete(end_ix) = last_end {
-        let (lo, hi) = shadow_eid_range_for_complete_chunk(all, from_id, end_ix);
-        out.push(ShadowWftChunkLine::Complete { lo, hi });
-        let next_end = find_end_index_of_next_wft_seq_old(
-            &all[end_ix..],
-            all[end_ix].event_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        )
-        .add_base(end_ix);
-        from_id = all[end_ix].event_id;
-        if matches!(next_end, NextWFTSeqEndIndexOld::Incomplete(_)) {
-            if let Some((lo, hi)) = shadow_incomplete_tail_after_split(all, end_ix) {
-                out.push(ShadowWftChunkLine::Incomplete { lo, hi });
-            }
-            break;
-        }
-        last_end = next_end;
-    }
-    out
-}
-
-fn shadow_collect_from_events_chunks_new(
-    all: &[HistoryEvent],
-    previous_wft_started_id: i64,
-    has_last_wft: bool,
-    has_pending_speculative_updates: bool,
-) -> Vec<ShadowWftChunkLine> {
-    let mut out = Vec::new();
-    let mut last_end = find_end_index_of_next_wft_seq_new(
-        all,
-        previous_wft_started_id,
-        has_last_wft,
-        has_pending_speculative_updates,
-    );
-    if matches!(
-        last_end,
-        NextWFTSeqEndIndex::NeedMore | NextWFTSeqEndIndex::Tail
-    ) {
-        if let Some((lo, hi)) =
-            shadow_incomplete_tail_from_buffer_start(all, previous_wft_started_id)
-        {
-            out.push(ShadowWftChunkLine::Incomplete { lo, hi });
-        }
-        return out;
-    }
-    let mut from_id = previous_wft_started_id;
-    while let NextWFTSeqEndIndex::Complete(end_ix) = last_end {
-        let (lo, hi) = shadow_eid_range_for_complete_chunk(all, from_id, end_ix);
-        out.push(ShadowWftChunkLine::Complete { lo, hi });
-        let next_end = find_end_index_of_next_wft_seq_new(
-            &all[end_ix..],
-            all[end_ix].event_id,
-            has_last_wft,
-            has_pending_speculative_updates,
-        )
-        .add(end_ix);
-        from_id = all[end_ix].event_id;
-        if matches!(
-            next_end,
-            NextWFTSeqEndIndex::NeedMore | NextWFTSeqEndIndex::Tail
-        ) {
-            if let Some((lo, hi)) = shadow_incomplete_tail_after_split(all, end_ix) {
-                out.push(ShadowWftChunkLine::Incomplete { lo, hi });
-            }
-            break;
-        }
-        last_end = next_end;
-    }
-    out
-}
-
-fn eprint_shadow_events_with_watermark(all: &[HistoryEvent], previous_wft_started_id: i64) {
-    eprintln!("  EVENTS ({} events):", all.len());
-    let last_prefix_ix = all
-        .iter()
-        .enumerate()
-        .filter(|(_, e)| e.event_id <= previous_wft_started_id)
-        .map(|(ix, _)| ix)
-        .last();
-    for (ix, e) in all.iter().enumerate() {
-        eprintln!("    [{ix}] eid={} {:?}", e.event_id, e.event_type());
-        if Some(ix) == last_prefix_ix {
-            eprintln!("    ------------------------");
-        }
-    }
-}
-
-fn eprint_shadow_from_events_chunk_lines(label: &str, chunks: &[ShadowWftChunkLine]) {
-    eprintln!("  {label} chunks:");
-    if chunks.is_empty() {
-        eprintln!("    (none)");
-        return;
-    }
-    for c in chunks {
-        match c {
-            ShadowWftChunkLine::Complete { lo, hi } => {
-                eprintln!("    Complete => eid=[{lo}..{hi}]");
-            }
-            ShadowWftChunkLine::Incomplete { lo, hi } => {
-                eprintln!("    Incomplete => eid=[{lo}..{hi}]");
-            }
-        }
-    }
 }
 
 #[cfg(test)]

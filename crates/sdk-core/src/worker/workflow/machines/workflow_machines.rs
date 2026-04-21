@@ -92,6 +92,9 @@ pub(crate) struct WorkflowMachines {
     protocol_msgs: Vec<IncomingProtocolMessage>,
     /// EventId of the last handled WorkflowTaskStarted event
     current_started_event_id: i64,
+    /// True if this is the first WFT for a new workflow (no WFTCompleted in history).
+    /// Used to gate first-WFT-only internal flags.
+    is_first_wft: bool,
     /// The event id of the next workflow task started event that the machines need to process.
     /// Eventually, this number should reach the started id in the latest history update, but
     /// we must incrementally apply the history while communicating with lang.
@@ -273,8 +276,12 @@ impl WorkflowMachines {
             basics.sdk_version.to_owned(),
         );
         // Peek ahead to determine used flags in the first WFT.
-        if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
+        let is_first_wft = if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
             observed_internal_flags.add_from_complete(attrs);
+            false
+        } else {
+            // No WFT Completed event yet — this is the first WFT of a new workflow.
+            true
         };
         Self {
             last_history_from_server: basics.history,
@@ -287,6 +294,7 @@ impl WorkflowMachines {
             metrics: basics.metrics,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
+            is_first_wft,
             next_started_event_id: 0,
             last_processed_event: 0,
             workflow_start_time: None,
@@ -424,7 +432,7 @@ impl WorkflowMachines {
         // already recorded.
         (*self.observed_internal_flags)
             .borrow_mut()
-            .write_all_known();
+            .write_all_cumulative_default_enabled(self.is_first_wft);
         self.commands.iter().filter_map(|c| {
             if !self.machine(c.machine).is_final_state() {
                 match &c.command {

@@ -11,6 +11,7 @@ mod activity_definition;
 pub mod data_converters;
 #[cfg(feature = "envconfig")]
 pub mod envconfig;
+pub mod internal_flags;
 #[doc(hidden)]
 pub mod fsm_trait;
 pub mod payload_visitor;

@@ -11,35 +11,10 @@ use temporalio_common::protos::temporal::api::{
     workflowservice::v1::get_system_info_response,
 };
 
-/// This enumeration contains internal flags that may result in incompatible history changes with
-/// older workflows, or other breaking changes.
-///
-/// When a flag has existed long enough that the version it was introduced in is no longer supported, it
-/// may be removed from the enum. *Importantly*, all variants must be given explicit values, such
-/// that removing older variants does not create any change in existing values. Removed flag
-/// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
+// The enum itself lives in the `common` crate so that test utilities
+// (e.g. TestHistoryBuilder) can reference flag values directly.
 #[allow(unreachable_pub)] // re-exported in test_help::integ_helpers
-#[repr(u32)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug, enum_iterator::Sequence)]
-pub enum CoreInternalFlags {
-    /// In this flag additional checks were added to a number of state machines to ensure that
-    /// the ID and type of activities, local activities, and child workflows match during replay.
-    IdAndTypeDeterminismChecks = 1,
-    /// Introduced automatically upserting search attributes for each patched call, and
-    /// nondeterminism checks for upserts.
-    UpsertSearchAttributeOnPatch = 2,
-    /// Prior to this flag, we truncated commands received from lang at the
-    /// first terminal (i.e. workflow-terminating) command. With this flag, we
-    /// reorder commands such that all non-terminal commands come first,
-    /// followed by the first terminal command, if any (it's possible that
-    /// multiple workflow coroutines generated a terminal command). This has the
-    /// consequence that all non-terminal commands are sent to the server, even
-    /// if in the sequence delivered by lang they came after a terminal command.
-    /// See <https://github.com/temporalio/features/issues/481>.
-    MoveTerminalCommands = 3,
-    /// We received a value higher than this code can understand.
-    TooHigh = u32::MAX,
-}
+pub use temporalio_common::internal_flags::CoreInternalFlags;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,15 +112,19 @@ impl InternalFlags {
         }
     }
 
-    /// Writes all known core flags to the set which should be recorded in the current WFT if not
-    /// already known. Must only be called if not replaying.
-    pub(crate) fn write_all_known(&mut self) {
+    /// Writes all core flags that should be enabled by default to the set which should be recorded
+    /// in the current WFT if not already known. Must only be called if not replaying.
+    pub(crate) fn write_all_cumulative_default_enabled(&mut self, is_first_wft: bool) {
         if let Self::Enabled {
             core_since_last_complete,
             ..
         } = self
         {
-            core_since_last_complete.extend(CoreInternalFlags::all_except_too_high());
+            if is_first_wft {
+                core_since_last_complete
+                    .extend(CoreInternalFlags::all_first_wft_only_default_enabled());
+            }
+            core_since_last_complete.extend(CoreInternalFlags::all_cumulative_default_enabled());
         }
     }
 
@@ -214,21 +193,6 @@ impl InternalFlags {
     }
 }
 
-impl CoreInternalFlags {
-    fn from_u32(v: u32) -> Self {
-        match v {
-            1 => Self::IdAndTypeDeterminismChecks,
-            2 => Self::UpsertSearchAttributeOnPatch,
-            3 => Self::MoveTerminalCommands,
-            _ => Self::TooHigh,
-        }
-    }
-
-    pub(crate) fn all_except_too_high() -> impl Iterator<Item = CoreInternalFlags> {
-        enum_iterator::all::<CoreInternalFlags>()
-            .filter(|f| !matches!(f, CoreInternalFlags::TooHigh))
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -262,15 +226,6 @@ mod tests {
         let gathered = f.gather_for_wft_complete();
         assert_matches!(gathered.core_used_flags.as_slice(), &[]);
         assert_matches!(gathered.lang_used_flags.as_slice(), &[]);
-    }
-
-    #[test]
-    fn all_have_u32_from_impl() {
-        let all_known = CoreInternalFlags::all_except_too_high();
-        for flag in all_known {
-            let as_u32 = flag as u32;
-            assert_eq!(CoreInternalFlags::from_u32(as_u32), flag);
-        }
     }
 
     #[test]

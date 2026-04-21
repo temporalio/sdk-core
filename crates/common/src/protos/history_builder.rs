@@ -48,6 +48,11 @@ pub struct TestHistoryBuilder {
     final_workflow_task_started_event_id: i64,
     previous_task_completed_id: i64,
     original_run_id: String,
+    /// When true, the builder auto-sets `ImprovedHeartbeatHeuristic` on the first WFTCompleted.
+    use_improved_heartbeat_heuristic: bool,
+    /// Tracks whether we've already emitted the first WFTCompleted
+    /// (to know when to set the cumulative `ImprovedHeartbeatHeuristic` flag).
+    has_seen_wft_completed: bool,
 }
 
 impl TestHistoryBuilder {
@@ -69,6 +74,8 @@ impl TestHistoryBuilder {
             original_run_id: extract_original_run_id_from_events(&events)
                 .expect("Run id must be discoverable")
                 .to_string(),
+            use_improved_heartbeat_heuristic: false,
+            has_seen_wft_completed: false,
             events,
         }
     }
@@ -87,6 +94,17 @@ impl TestHistoryBuilder {
         let attribs =
             default_attribs(event_type).expect("Couldn't make default attributes in test builder");
         self.add(attribs)
+    }
+
+    /// Enable the improved heartbeat heuristic flag for this builder. When enabled,
+    /// the first WFTCompleted event gets the cumulative `ImprovedHeartbeatHeuristic` flag.
+    pub fn set_use_improved_heartbeat_heuristic(&mut self) {
+        if self.has_seen_wft_completed {
+            panic!(
+                "Improved heartbeat heuristic can only be enabled before the first WFTCompleted"
+            );
+        }
+        self.use_improved_heartbeat_heuristic = true;
     }
 
     /// Adds the following events:
@@ -127,6 +145,13 @@ impl TestHistoryBuilder {
             ..Default::default()
         });
         self.previous_task_completed_id = id;
+        if self.use_improved_heartbeat_heuristic && !self.has_seen_wft_completed {
+            self.set_flags_on_wft_completed(
+                id,
+                &[crate::internal_flags::CoreInternalFlags::ImprovedHeartbeatHeuristic as u32],
+            );
+        }
+        self.has_seen_wft_completed = true;
     }
 
     /// Add a workflow task timed out event.
@@ -603,6 +628,18 @@ impl TestHistoryBuilder {
     /// Sets internal patches which should appear in the most recent complete event
     pub fn set_flags_last_wft(&mut self, core: &[u32], lang: &[u32]) {
         Self::set_flags(self.events.iter_mut().rev(), core, lang)
+    }
+
+    /// Sets core flags on the WFTCompleted event with the given event ID.
+    pub fn set_flags_on_wft_completed(&mut self, event_id: i64, core: &[u32]) {
+        if let Some(event) = self.events.iter_mut().find(|e| e.event_id == event_id) {
+            if let Some(Attributes::WorkflowTaskCompletedEventAttributes(ref mut a)) =
+                event.attributes
+            {
+                let sdk_dat = a.sdk_metadata.get_or_insert_with(Default::default);
+                sdk_dat.core_used_flags.extend_from_slice(core);
+            }
+        }
     }
 
     /// Get the event ID of the most recently added event
