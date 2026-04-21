@@ -199,6 +199,9 @@ pub enum OutgoingWorkflowError {
     /// A workflow failure sourced from a child-workflow execution.
     #[error(transparent)]
     ChildWorkflowExecution(#[from] Box<ChildWorkflowExecutionError>),
+    /// A workflow failure sourced from child-workflow start.
+    #[error(transparent)]
+    ChildWorkflowStart(#[from] Box<ChildWorkflowStartError>),
     /// A workflow failure sourced from child-workflow signaling.
     #[error(transparent)]
     ChildWorkflowSignal(#[from] Box<ChildWorkflowSignalError>),
@@ -225,6 +228,12 @@ impl From<ActivityExecutionError> for OutgoingWorkflowError {
 impl From<ChildWorkflowExecutionError> for OutgoingWorkflowError {
     fn from(value: ChildWorkflowExecutionError) -> Self {
         Self::ChildWorkflowExecution(Box::new(value))
+    }
+}
+
+impl From<ChildWorkflowStartError> for OutgoingWorkflowError {
+    fn from(value: ChildWorkflowStartError) -> Self {
+        Self::ChildWorkflowStart(Box::new(value))
     }
 }
 
@@ -661,15 +670,12 @@ impl ActivityExecutionError {
     }
 }
 
-/// Error returned when a child workflow execution fails.
+/// Error returned when starting a child workflow fails.
 #[derive(Debug, thiserror::Error)]
-pub enum ChildWorkflowExecutionError {
-    /// The child workflow failed.
-    #[error("Child workflow failed: {}", .0.failure().message)]
-    Failed(#[source] ChildWorkflowFailureError),
-    /// The child workflow was cancelled.
-    #[error("Child workflow cancelled: {}", .0.failure().message)]
-    Cancelled(#[source] CancelledError),
+pub enum ChildWorkflowStartError {
+    /// The child workflow start was cancelled before the normal execution wrapper path existed.
+    #[error("Child workflow start cancelled: {}", .0.failure().message)]
+    Cancelled(#[source] Box<CancelledError>),
     /// The child workflow failed to start (e.g., workflow ID already exists).
     #[error(
         "Child workflow start failed: workflow_id={workflow_id}, workflow_type={workflow_type}, cause={cause:?}"
@@ -682,6 +688,37 @@ pub enum ChildWorkflowExecutionError {
         /// The cause of the start failure.
         cause: StartChildWorkflowExecutionFailedCause,
     },
+    /// Failed to serialize child workflow input payloads.
+    #[error("Payload conversion failed: {0}")]
+    Serialization(#[from] PayloadConversionError),
+}
+
+impl ChildWorkflowStartError {
+    /// Returns the retained top-level failure proto, if one exists.
+    pub fn failure(&self) -> Option<&Failure> {
+        match self {
+            ChildWorkflowStartError::Cancelled(err) => Some(err.failure()),
+            ChildWorkflowStartError::StartFailed { .. }
+            | ChildWorkflowStartError::Serialization(_) => None,
+        }
+    }
+
+    /// Returns the normalized cause of the retained failure proto, if any.
+    pub fn cause(&self) -> Option<&IncomingError> {
+        match self {
+            ChildWorkflowStartError::Cancelled(err) => err.cause(),
+            ChildWorkflowStartError::StartFailed { .. }
+            | ChildWorkflowStartError::Serialization(_) => None,
+        }
+    }
+}
+
+/// Error returned when a child workflow execution fails.
+#[derive(Debug, thiserror::Error)]
+pub enum ChildWorkflowExecutionError {
+    /// The child workflow failed.
+    #[error("Child workflow failed: {}", .0.failure().message)]
+    Failed(#[source] Box<ChildWorkflowFailureError>),
     /// Failed to serialize input or deserialize the child workflow result payload.
     #[error("Payload conversion failed: {0}")]
     Serialization(#[from] PayloadConversionError),
@@ -692,9 +729,7 @@ impl ChildWorkflowExecutionError {
     pub fn failure(&self) -> Option<&Failure> {
         match self {
             ChildWorkflowExecutionError::Failed(err) => Some(err.failure()),
-            ChildWorkflowExecutionError::Cancelled(err) => Some(err.failure()),
-            ChildWorkflowExecutionError::StartFailed { .. }
-            | ChildWorkflowExecutionError::Serialization(_) => None,
+            ChildWorkflowExecutionError::Serialization(_) => None,
         }
     }
 
@@ -702,9 +737,7 @@ impl ChildWorkflowExecutionError {
     pub fn cause(&self) -> Option<&IncomingError> {
         match self {
             ChildWorkflowExecutionError::Failed(err) => err.cause(),
-            ChildWorkflowExecutionError::Cancelled(err) => err.cause(),
-            ChildWorkflowExecutionError::StartFailed { .. }
-            | ChildWorkflowExecutionError::Serialization(_) => None,
+            ChildWorkflowExecutionError::Serialization(_) => None,
         }
     }
 
@@ -712,9 +745,7 @@ impl ChildWorkflowExecutionError {
     pub fn reason(&self) -> Option<&IncomingError> {
         match self {
             ChildWorkflowExecutionError::Failed(err) => err.cause(),
-            ChildWorkflowExecutionError::Cancelled(_) => None,
-            ChildWorkflowExecutionError::StartFailed { .. }
-            | ChildWorkflowExecutionError::Serialization(_) => None,
+            ChildWorkflowExecutionError::Serialization(_) => None,
         }
     }
 }

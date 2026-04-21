@@ -34,7 +34,8 @@ use temporalio_common::{
 use temporalio_macros::{workflow, workflow_methods};
 use temporalio_sdk::{
     CancellableFuture, ChildWorkflowExecutionError, ChildWorkflowOptions, ChildWorkflowSignalError,
-    SyncWorkflowContext, WorkflowContext, WorkflowResult, WorkflowTermination,
+    ChildWorkflowStartError, SyncWorkflowContext, WorkflowContext, WorkflowResult,
+    WorkflowTermination,
 };
 use temporalio_sdk_core::{
     replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, canned_histories},
@@ -915,7 +916,7 @@ impl ParentWf {
             .await;
         if let Expectation::StartFailure = expectation {
             match start_res {
-                Err(ChildWorkflowExecutionError::StartFailed { .. }) => return Ok(()),
+                Err(ChildWorkflowStartError::StartFailed { .. }) => return Ok(()),
                 _ => return Err(anyhow!("Expected start failure").into()),
             }
         }
@@ -1037,7 +1038,7 @@ impl CancelBeforeSendWf {
         );
         start.cancel();
         match start.await {
-            Err(ChildWorkflowExecutionError::Cancelled(_)) => Ok(()),
+            Err(ChildWorkflowStartError::Cancelled(_)) => Ok(()),
             _ => Err(anyhow!("Unexpected start status").into()),
         }
     }
@@ -1372,7 +1373,7 @@ impl ChildStartSerializationFailParent {
                 },
             )
             .await;
-        assert_matches!(result, Err(ChildWorkflowExecutionError::Serialization(_)));
+        assert_matches!(result, Err(ChildWorkflowStartError::Serialization(_)));
         Ok(())
     }
 }

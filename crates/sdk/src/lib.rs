@@ -99,7 +99,8 @@ use workflow_future::WorkflowFunction;
 
 pub use error::{
     ActivityExecutionError, ApplicationFailure, ChildWorkflowExecutionError,
-    ChildWorkflowSignalError, OutgoingActivityError, OutgoingError, OutgoingWorkflowError,
+    ChildWorkflowSignalError, ChildWorkflowStartError, OutgoingActivityError, OutgoingError,
+    OutgoingWorkflowError,
 };
 pub use temporalio_client::Namespace;
 pub use workflow_context::{
@@ -1282,6 +1283,12 @@ impl From<ActivityExecutionError> for WorkflowTermination {
 
 impl From<ChildWorkflowExecutionError> for WorkflowTermination {
     fn from(value: ChildWorkflowExecutionError) -> Self {
+        Self::Failed(value.into())
+    }
+}
+
+impl From<ChildWorkflowStartError> for WorkflowTermination {
+    fn from(value: ChildWorkflowStartError) -> Self {
         Self::Failed(value.into())
     }
 }

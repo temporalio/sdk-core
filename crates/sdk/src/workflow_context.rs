@@ -36,13 +36,13 @@ use temporalio_common::{
     ActivityDefinition, SignalDefinition, WorkflowDefinition,
     data_converters::{
         ActivityExecutionDecodeHint, ChildWorkflowExecutionDecodeHint,
-        ChildWorkflowSignalDecodeHint, DataConverter, GenericPayloadConverter,
-        PayloadConversionError, PayloadConverter, SerializationContext, SerializationContextData,
-        TemporalDeserializable,
+        ChildWorkflowSignalDecodeHint, ChildWorkflowStartDecodeHint, DataConverter,
+        GenericPayloadConverter, PayloadConversionError, PayloadConverter, SerializationContext,
+        SerializationContextData, TemporalDeserializable,
     },
     error::{
         ActivityExecutionError, ActivityFailureError, ChildWorkflowExecutionError,
-        ChildWorkflowFailureError, ChildWorkflowSignalError,
+        ChildWorkflowFailureError, ChildWorkflowSignalError, ChildWorkflowStartError,
     },
     protos::{
         coresdk::{
@@ -473,7 +473,7 @@ impl BaseWorkflowContext {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
@@ -751,7 +751,7 @@ impl<W> SyncWorkflowContext<W> {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
@@ -1029,7 +1029,7 @@ impl<W> WorkflowContext<W> {
         workflow: WD,
         input: impl Into<WD::Input>,
         opts: ChildWorkflowOptions,
-    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+    ) -> impl CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     where
         WD::Output: TemporalDeserializable,
     {
@@ -1662,14 +1662,14 @@ where
                 Poll::Ready(result) => Poll::Ready({
                     use temporalio_common::protos::coresdk::child_workflow::child_workflow_result;
                     let status = result.status.ok_or_else(|| {
-                        ChildWorkflowExecutionError::Failed(ChildWorkflowFailureError::new(
+                        ChildWorkflowExecutionError::Failed(Box::new(ChildWorkflowFailureError::new(
                             Failure {
                                 message: "Child workflow completed without a status".to_string(),
                                 ..Default::default()
                             },
                             temporalio_common::protos::temporal::api::failure::v1::ChildWorkflowExecutionFailureInfo::default(),
                             None,
-                        ))
+                        )))
                     })?;
                     match status {
                         child_workflow_result::Status::Completed(success) => {
@@ -1686,13 +1686,13 @@ where
                         child_workflow_result::Status::Failed(f) => Err(data_converter.to_error(
                             &SerializationContextData::Workflow,
                             f.failure.unwrap_or_default(),
-                            ChildWorkflowExecutionDecodeHint::Failed,
+                            ChildWorkflowExecutionDecodeHint,
                         )?),
                         child_workflow_result::Status::Cancelled(c) => Err(data_converter
                             .to_error(
                                 &SerializationContextData::Workflow,
                                 c.failure.unwrap_or_default(),
-                                ChildWorkflowExecutionDecodeHint::Cancelled,
+                                ChildWorkflowExecutionDecodeHint,
                             )?),
                     }
                 }),
@@ -1747,7 +1747,7 @@ where
 enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Option<Box<ChildWorkflowExecutionError>>,
+        error: Option<Box<ChildWorkflowStartError>>,
         _phantom: PhantomData<WD>,
     },
     Running(F),
@@ -1755,7 +1755,7 @@ enum ChildWorkflowStartFut<F, WD: WorkflowDefinition> {
 }
 
 impl<F, WD: WorkflowDefinition> ChildWorkflowStartFut<F, WD> {
-    fn eager(err: ChildWorkflowExecutionError) -> Self {
+    fn eager(err: ChildWorkflowStartError) -> Self {
         Self::Errored {
             error: Some(Box::new(err)),
             _phantom: PhantomData,
@@ -1770,7 +1770,7 @@ where
     F: Future<Output = PendingChildWorkflow<WD>> + Unpin,
     WD: WorkflowDefinition,
 {
-    type Output = Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>;
+    type Output = Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -1787,7 +1787,7 @@ where
                         _phantom: PhantomData,
                     }),
                     ChildWorkflowStartStatus::Failed(f) => {
-                        Err(ChildWorkflowExecutionError::StartFailed {
+                        Err(ChildWorkflowStartError::StartFailed {
                             workflow_id: f.workflow_id,
                             workflow_type: f.workflow_type,
                             cause: StartChildWorkflowExecutionFailedCause::try_from(f.cause)
@@ -1798,7 +1798,7 @@ where
                         Err(pending.common.data_converter.to_error(
                             &SerializationContextData::Workflow,
                             c.failure.unwrap_or_default(),
-                            ChildWorkflowExecutionDecodeHint::Cancelled,
+                            ChildWorkflowStartDecodeHint,
                         )?)
                     }
                 }),
@@ -1822,7 +1822,7 @@ where
     }
 }
 
-impl<F, WD> CancellableFuture<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+impl<F, WD> CancellableFuture<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     for ChildWorkflowStartFut<F, WD>
 where
     F: CancellableFutureWithReason<PendingChildWorkflow<WD>> + Unpin,
@@ -1835,8 +1835,7 @@ where
     }
 }
 
-impl<F, WD>
-    CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowExecutionError>>
+impl<F, WD> CancellableFutureWithReason<Result<StartedChildWorkflow<WD>, ChildWorkflowStartError>>
     for ChildWorkflowStartFut<F, WD>
 where
     F: CancellableFutureWithReason<PendingChildWorkflow<WD>> + Unpin,

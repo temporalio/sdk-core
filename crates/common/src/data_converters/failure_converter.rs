@@ -3,9 +3,10 @@ use crate::{
     error::{
         ActivityExecutionError, ActivityFailureError, ApplicationFailure, CancelledError,
         ChildWorkflowExecutionError, ChildWorkflowFailureError, ChildWorkflowSignalError,
-        ChildWorkflowSignalFailureError, IncomingError, IncomingNexusHandlerError,
-        IncomingNexusOperationExecutionError, OutgoingActivityError, OutgoingError,
-        OutgoingWorkflowError, ResetWorkflowError, ServerError, TerminatedError, TimeoutError,
+        ChildWorkflowSignalFailureError, ChildWorkflowStartError, IncomingError,
+        IncomingNexusHandlerError, IncomingNexusOperationExecutionError, OutgoingActivityError,
+        OutgoingError, OutgoingWorkflowError, ResetWorkflowError, ServerError, TerminatedError,
+        TimeoutError,
     },
     protos::temporal::api::failure::v1::{
         ActivityFailureInfo, ApplicationFailureInfo, CanceledFailureInfo,
@@ -90,36 +91,44 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
     }
 }
 
+/// Decode hint for child-workflow start results.
+#[derive(Debug, Clone, Copy)]
+pub struct ChildWorkflowStartDecodeHint;
+
+impl FailureDecodeHint for ChildWorkflowStartDecodeHint {
+    type Output = ChildWorkflowStartError;
+
+    fn adapt(self, normalized: IncomingError) -> Self::Output {
+        match normalized {
+            IncomingError::Cancelled(cancelled) => {
+                ChildWorkflowStartError::Cancelled(Box::new(cancelled))
+            }
+            other => ChildWorkflowStartError::Cancelled(Box::new(CancelledError::new(
+                other.into_failure(),
+                CanceledFailureInfo::default(),
+                None,
+            ))),
+        }
+    }
+}
+
 /// Decode hint for child-workflow execution results.
 #[derive(Debug, Clone, Copy)]
-pub enum ChildWorkflowExecutionDecodeHint {
-    /// The workflow-side resolution was failed.
-    Failed,
-    /// The workflow-side resolution was cancelled.
-    Cancelled,
-}
+pub struct ChildWorkflowExecutionDecodeHint;
 
 impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
     type Output = ChildWorkflowExecutionError;
 
     fn adapt(self, normalized: IncomingError) -> Self::Output {
-        match (self, normalized) {
-            (
-                ChildWorkflowExecutionDecodeHint::Failed,
-                IncomingError::ChildWorkflowExecution(child),
-            ) => ChildWorkflowExecutionError::Failed(child),
-            (
-                ChildWorkflowExecutionDecodeHint::Cancelled,
-                IncomingError::ChildWorkflowExecution(child),
-            ) => ChildWorkflowExecutionError::Failed(child),
-            (ChildWorkflowExecutionDecodeHint::Cancelled, IncomingError::Cancelled(cancelled)) => {
-                ChildWorkflowExecutionError::Cancelled(cancelled)
+        match normalized {
+            IncomingError::ChildWorkflowExecution(child) => {
+                ChildWorkflowExecutionError::Failed(Box::new(child))
             }
-            (_, other) => ChildWorkflowExecutionError::Failed(ChildWorkflowFailureError::new(
+            other => ChildWorkflowExecutionError::Failed(Box::new(ChildWorkflowFailureError::new(
                 other.into_failure(),
                 ChildWorkflowExecutionFailureInfo::default(),
                 None,
-            )),
+            ))),
         }
     }
 }
@@ -144,6 +153,7 @@ enum ClassifiedFailure<'a> {
     Application(&'a ApplicationFailure),
     ActivityExecution(&'a ActivityExecutionError),
     ChildWorkflowExecution(&'a ChildWorkflowExecutionError),
+    ChildWorkflowStart(&'a ChildWorkflowStartError),
     ChildWorkflowSignal(&'a ChildWorkflowSignalError),
     Generic(&'a (dyn std::error::Error + 'static)),
 }
@@ -165,6 +175,9 @@ impl FailureConverter for DefaultFailureConverter {
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowExecution(child)) => {
                 encode_child_workflow_execution_failure(&child)
+            }
+            OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowStart(child)) => {
+                encode_child_workflow_start_failure(&child)
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowSignal(signal)) => {
                 encode_child_workflow_signal_failure(&signal)
@@ -201,6 +214,8 @@ fn classify_known_error<'a>(
         Some(ClassifiedFailure::ActivityExecution(activity))
     } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
         Some(ClassifiedFailure::ChildWorkflowExecution(child))
+    } else if let Some(child) = err.downcast_ref::<ChildWorkflowStartError>() {
+        Some(ClassifiedFailure::ChildWorkflowStart(child))
     } else {
         err.downcast_ref::<ChildWorkflowSignalError>()
             .map(ClassifiedFailure::ChildWorkflowSignal)
@@ -259,9 +274,15 @@ fn encode_activity_execution_failure(err: &ActivityExecutionError) -> Failure {
 fn encode_child_workflow_execution_failure(err: &ChildWorkflowExecutionError) -> Failure {
     match err {
         ChildWorkflowExecutionError::Failed(failure) => failure.failure().clone(),
-        ChildWorkflowExecutionError::Cancelled(failure) => failure.failure().clone(),
-        ChildWorkflowExecutionError::StartFailed { .. }
-        | ChildWorkflowExecutionError::Serialization(_) => encode_generic_application_failure(err),
+        ChildWorkflowExecutionError::Serialization(_) => encode_generic_application_failure(err),
+    }
+}
+
+fn encode_child_workflow_start_failure(err: &ChildWorkflowStartError) -> Failure {
+    match err {
+        ChildWorkflowStartError::Cancelled(failure) => failure.failure().clone(),
+        ChildWorkflowStartError::StartFailed { .. }
+        | ChildWorkflowStartError::Serialization(_) => encode_generic_application_failure(err),
     }
 }
 
@@ -294,6 +315,7 @@ fn encode_nested_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
         ClassifiedFailure::ChildWorkflowExecution(child) => {
             encode_child_workflow_execution_failure(child)
         }
+        ClassifiedFailure::ChildWorkflowStart(child) => encode_child_workflow_start_failure(child),
         ClassifiedFailure::ChildWorkflowSignal(signal) => {
             encode_child_workflow_signal_failure(signal)
         }
@@ -476,12 +498,13 @@ mod tests {
 
     #[test]
     fn start_failed_child_workflow_errors_fall_back_to_application_failures() {
-        let failure = convert(OutgoingWorkflowError::ChildWorkflowExecution(Box::new(
-            ChildWorkflowExecutionError::StartFailed {
-            workflow_id: "wf-id".to_owned(),
-            workflow_type: "wf-type".to_owned(),
-            cause: crate::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists,
-        })));
+        let failure = convert(OutgoingWorkflowError::ChildWorkflowStart(Box::new(
+            ChildWorkflowStartError::StartFailed {
+                workflow_id: "wf-id".to_owned(),
+                workflow_type: "wf-type".to_owned(),
+                cause: crate::protos::coresdk::child_workflow::StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists,
+            },
+        )));
         assert!(matches!(
             failure.failure_info,
             Some(FailureInfo::ApplicationFailureInfo(_))
@@ -874,7 +897,7 @@ mod tests {
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
-                ChildWorkflowExecutionDecodeHint::Failed,
+                ChildWorkflowExecutionDecodeHint,
             )
             .unwrap();
 
@@ -908,7 +931,7 @@ mod tests {
     }
 
     #[test]
-    fn child_workflow_cancelled_decode_hint_preserves_child_failure_proto() {
+    fn child_workflow_execution_decode_hint_preserves_child_failure_proto_for_cancelled_result() {
         let cancelled_cause = Failure {
             message: "child workflow cancelled".to_owned(),
             failure_info: Some(FailureInfo::CanceledFailureInfo(
@@ -934,7 +957,7 @@ mod tests {
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
-                ChildWorkflowExecutionDecodeHint::Cancelled,
+                ChildWorkflowExecutionDecodeHint,
             )
             .unwrap();
 
@@ -949,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn child_workflow_cancelled_decode_hint_falls_back_to_failed_for_non_cancelled_proto() {
+    fn child_workflow_execution_decode_hint_falls_back_to_failed_for_non_child_proto() {
         let failure = Failure {
             message: "timed out".to_owned(),
             failure_info: Some(FailureInfo::TimeoutFailureInfo(
@@ -967,12 +990,42 @@ mod tests {
             .to_error(
                 &SerializationContextData::Workflow,
                 failure.clone(),
-                ChildWorkflowExecutionDecodeHint::Cancelled,
+                ChildWorkflowExecutionDecodeHint,
             )
             .unwrap();
 
         let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
             panic!("expected failed child-workflow execution error");
+        };
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert!(decoded_failure.cause().is_none());
+    }
+
+    #[test]
+    fn child_workflow_start_decode_hint_preserves_top_level_cancellation() {
+        let failure = Failure {
+            message: "child start cancelled".to_owned(),
+            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                CanceledFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let data_converter = crate::data_converters::DataConverter::new(
+            PayloadConverter::default(),
+            DefaultFailureConverter,
+            crate::data_converters::DefaultPayloadCodec,
+        );
+
+        let decoded = data_converter
+            .to_error(
+                &SerializationContextData::Workflow,
+                failure.clone(),
+                ChildWorkflowStartDecodeHint,
+            )
+            .unwrap();
+
+        let ChildWorkflowStartError::Cancelled(decoded_failure) = decoded else {
+            panic!("expected cancelled child-workflow start error");
         };
         assert_eq!(decoded_failure.failure(), &failure);
         assert!(decoded_failure.cause().is_none());
