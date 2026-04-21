@@ -1080,6 +1080,8 @@ pub(crate) fn integ_dev_server_config(
             "frontend.ListWorkersEnabled=true".to_owned(),
             "--dynamic-config-value".to_owned(),
             "frontend.enableCancelWorkerPollsOnShutdown=true".to_owned(),
+            "--dynamic-config-value".to_owned(),
+            "matching.rps=12000".to_owned(),
             "--search-attribute".to_string(),
             format!("{SEARCH_ATTR_TXT}=Text"),
             "--search-attribute".to_string(),
