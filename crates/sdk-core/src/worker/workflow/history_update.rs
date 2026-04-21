@@ -1272,6 +1272,18 @@ mod tests {
         }
     }
 
+    /// Retroactively sets the `ImprovedHeartbeatHeuristic` flag on the first
+    /// WFTCompleted event in an already-constructed builder (for canned histories).
+    fn maybe_set_improved(t: &mut TestHistoryBuilder, improved: bool) {
+        if improved {
+            use temporalio_common::internal_flags::CoreInternalFlags;
+            t.set_flags_first_wft(
+                &[CoreInternalFlags::ImprovedHeartbeatHeuristic as u32],
+                &[],
+            );
+        }
+    }
+
     impl NextWFT {
         fn unwrap_events(self) -> Vec<HistoryEvent> {
             match self {
@@ -1304,9 +1316,11 @@ mod tests {
         (seq_take.len(), is_complete)
     }
 
+    #[rstest::rstest]
     #[test]
-    fn consumes_standard_wft_sequence() {
-        let timer_hist = canned_histories::single_timer("t");
+    fn consumes_standard_wft_sequence(#[values(false, true)] improved: bool) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let mut update = timer_hist.as_history_update();
         let seq_1 = next_check_peek(&mut update, 0);
         assert_eq!(seq_1.len(), 3);
@@ -1318,9 +1332,12 @@ mod tests {
         assert_eq!(seq_2.last().unwrap().event_id, 8);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn skips_wft_failed() {
-        let failed_hist = canned_histories::workflow_fails_with_reset_after_timer("t", "runid");
+    fn skips_wft_failed(#[values(false, true)] improved: bool) {
+        let mut failed_hist =
+            canned_histories::workflow_fails_with_reset_after_timer("t", "runid");
+        maybe_set_improved(&mut failed_hist, improved);
         let mut update = failed_hist.as_history_update();
         let seq_1 = next_check_peek(&mut update, 0);
         assert_eq!(seq_1.len(), 3);
@@ -1330,9 +1347,11 @@ mod tests {
         assert_eq!(seq_2.last().unwrap().event_id, 11);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn skips_wft_timeout() {
-        let failed_hist = canned_histories::wft_timeout_repro();
+    fn skips_wft_timeout(#[values(false, true)] improved: bool) {
+        let mut failed_hist = canned_histories::wft_timeout_repro();
+        maybe_set_improved(&mut failed_hist, improved);
         let mut update = failed_hist.as_history_update();
         let seq_1 = next_check_peek(&mut update, 0);
         assert_eq!(seq_1.len(), 3);
@@ -1342,9 +1361,11 @@ mod tests {
         assert_eq!(seq_2.last().unwrap().event_id, 14);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn skips_events_before_desired_wft() {
-        let timer_hist = canned_histories::single_timer("t");
+    fn skips_events_before_desired_wft(#[values(false, true)] improved: bool) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let mut update = timer_hist.as_history_update();
         // We haven't processed the first 3 events, but we should still only get the second sequence
         let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
@@ -1352,31 +1373,37 @@ mod tests {
         assert_eq!(seq_2.last().unwrap().event_id, 8);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn history_ends_abruptly() {
+    fn history_ends_abruptly(#[values(false, true)] improved: bool) {
         let mut timer_hist = canned_histories::single_timer("t");
         timer_hist.add_workflow_execution_terminated();
+        maybe_set_improved(&mut timer_hist, improved);
         let mut update = timer_hist.as_history_update();
         let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
-        // Accepted divergence 3: terminal event is no longer part of the WFTStarted vWFT.
-        assert_eq!(seq_2.len(), 5);
-        assert_eq!(seq_2.last().unwrap().event_id, 8);
-        // The terminal event is returned as trailing matter so callers can process it
-        // (e.g. to set have_seen_terminal_event).
-        let seq_3 = update.take_next_wft_sequence(8).unwrap_events();
-        assert_eq!(seq_3.len(), 1);
-        assert!(seq_3[0].is_final_wf_execution_event());
-        // Now replay is truly over.
-        let seq_4 = update.take_next_wft_sequence(8);
-        assert_matches!(seq_4, NextWFT::ReplayOver);
+        if improved {
+            // New algorithm: terminal event is not part of the WFTStarted vWFT.
+            assert_eq!(seq_2.len(), 5);
+            assert_eq!(seq_2.last().unwrap().event_id, 8);
+            let seq_3 = update.take_next_wft_sequence(8).unwrap_events();
+            assert_eq!(seq_3.len(), 1);
+            assert!(seq_3[0].is_final_wf_execution_event());
+            assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
+        } else {
+            // Legacy algorithm: terminal event included in the WFTStarted vWFT.
+            assert_eq!(seq_2.len(), 6);
+            assert_eq!(seq_2.last().unwrap().event_id, 9);
+            assert!(seq_2.last().unwrap().is_final_wf_execution_event());
+        }
     }
 
     /// Verifies that non-command terminal events (`WorkflowExecutionTerminated`,
     /// `WorkflowExecutionTimedOut`) following a `WorkflowTaskStarted` are returned as
     /// trailing tail events rather than being silently dropped. This is critical because
     /// callers need to process them to set `have_seen_terminal_event`.
+    #[rstest::rstest]
     #[test]
-    fn terminal_events_not_dropped_after_wft_started() {
+    fn terminal_events_not_dropped_after_wft_started(#[values(false, true)] improved: bool) {
         // Test both non-command terminal event types that can follow WFTStarted.
         for add_terminal in [
             TestHistoryBuilder::add_workflow_execution_terminated as fn(&mut TestHistoryBuilder),
@@ -1388,56 +1415,51 @@ mod tests {
             t.add_by_type(EventType::TimerStarted); // TimerStarted(5)
             t.add_workflow_task_scheduled_and_started(); // Sched(6), Started(7)
             add_terminal(&mut t); // terminal(8)
+            maybe_set_improved(&mut t, improved);
 
             let mut update = t.as_history_update();
-            // First vWFT: events 1-3
             let seq_1 = update.take_next_wft_sequence(0).unwrap_events();
             assert_eq!(seq_1.last().unwrap().event_id, 3);
 
-            // Second vWFT ends at WFTStarted(7); terminal is NOT included.
-            let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
-            assert_eq!(seq_2.last().unwrap().event_id, 7);
-            assert_eq!(
-                seq_2.last().unwrap().event_type(),
-                EventType::WorkflowTaskStarted
-            );
-
-            // Terminal event must be returned as tail, not dropped.
-            let seq_3 = update.take_next_wft_sequence(7).unwrap_events();
-            assert_eq!(seq_3.len(), 1, "terminal event must not be dropped");
-            assert!(
-                seq_3[0].is_final_wf_execution_event(),
-                "tail event must be the terminal event, got {:?}",
-                seq_3[0].event_type()
-            );
-
-            // Now replay is over.
-            assert_matches!(update.take_next_wft_sequence(7), NextWFT::ReplayOver);
+            if improved {
+                let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
+                assert_eq!(seq_2.last().unwrap().event_id, 7);
+                assert_eq!(
+                    seq_2.last().unwrap().event_type(),
+                    EventType::WorkflowTaskStarted
+                );
+                let seq_3 = update.take_next_wft_sequence(7).unwrap_events();
+                assert_eq!(seq_3.len(), 1);
+                assert!(seq_3[0].is_final_wf_execution_event());
+                assert_matches!(update.take_next_wft_sequence(7), NextWFT::ReplayOver);
+            } else {
+                let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
+                assert_eq!(seq_2.last().unwrap().event_id, 8);
+                assert!(seq_2.last().unwrap().is_final_wf_execution_event());
+            }
         }
     }
 
+    #[rstest::rstest]
     #[test]
-    fn heartbeats_skipped() {
+    fn heartbeats_skipped(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        t.add_full_wf_task(); // wft started 6
+        t.add_full_wf_task();
         t.add_by_type(EventType::TimerStarted);
-        t.add_full_wf_task(); // wft started 10
         t.add_full_wf_task();
         t.add_full_wf_task();
-        t.add_full_wf_task(); // wft started 19
+        t.add_full_wf_task();
+        t.add_full_wf_task();
         t.add_by_type(EventType::TimerStarted);
-        t.add_full_wf_task(); // wft started 23
+        t.add_full_wf_task();
         t.add_we_signaled("whee", vec![]);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
+        maybe_set_improved(&mut t, improved);
 
         let mut update = t.as_history_update();
-        // First vWFT: WFExStarted through WFTStarted(6). The two initial empty WFTs
-        // (started at 3 and 6) are folded as heartbeats because no commands appear between
-        // them. Both old and new chunking agree on this (heartbeat check uses `saw_command`,
-        // not `saw_command_or_started`).
         let seq = next_check_peek(&mut update, 0);
         assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 6);
@@ -1452,18 +1474,19 @@ mod tests {
         assert_eq!(seq.len(), 2);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn heartbeat_marker_end() {
+    fn heartbeat_marker_end(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_full_wf_task();
         t.add_local_activity_result_marker(1, "1", "done".into());
         t.add_workflow_execution_completed();
+        maybe_set_improved(&mut t, improved);
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 3);
-        // completed, sched, started
         assert_eq!(seq.len(), 3);
         let seq = next_check_peek(&mut update, 6);
         assert_eq!(seq.len(), 3);
@@ -1515,9 +1538,12 @@ mod tests {
 
     #[rstest::rstest]
     #[tokio::test]
-    async fn paginator_extracts_updates(#[values(10, 11, 12, 13, 14)] chunk_size: usize) {
+    async fn paginator_extracts_updates(
+        #[values(10, 11, 12, 13, 14)] chunk_size: usize,
+        #[values(false, true)] improved: bool,
+    ) {
         let wft_count = 100;
-        let hist = canned_histories::long_sequential_timers(wft_count);
+        let mut hist = canned_histories::long_sequential_timers(wft_count);
         let expected_final_eid = hist
             .get_full_history_info()
             .unwrap()
@@ -1525,6 +1551,7 @@ mod tests {
             .last()
             .unwrap()
             .event_id;
+        maybe_set_improved(&mut hist, improved);
 
         let mut paginator = paginator_setup(hist, chunk_size);
         let mut update = paginator.extract_next_update().await.unwrap();
@@ -1554,13 +1581,13 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn paginator_streams() {
+    async fn paginator_streams(#[values(false, true)] improved: bool) {
         let wft_count = 10;
-        let paginator = StreamingHistoryPaginator::new(paginator_setup(
-            canned_histories::long_sequential_timers(wft_count),
-            10,
-        ));
+        let mut hist = canned_histories::long_sequential_timers(wft_count);
+        maybe_set_improved(&mut hist, improved);
+        let paginator = StreamingHistoryPaginator::new(paginator_setup(hist, 10));
         let everything: Vec<_> = paginator.try_collect().await.unwrap();
         assert_eq!(everything.len(), (wft_count + 1) * 5);
         everything.iter().fold(1, |event_id, e| {
@@ -1591,8 +1618,10 @@ mod tests {
     async fn needs_fetch_if_ending_in_middle_of_wft_seq(
         // These values test points truncation could've occurred in the middle of the heartbeat
         #[values(18, 19, 20, 21)] truncate_at: usize,
+        #[values(false, true)] improved: bool,
     ) {
-        let t = three_wfts_then_heartbeats();
+        let mut t = three_wfts_then_heartbeats();
+        maybe_set_improved(&mut t, improved);
         let mut ends_in_middle_of_seq = t.as_history_update().events;
         ends_in_middle_of_seq.truncate(truncate_at);
         // The update should contain the first three complete WFTs, ending on the 11th event which
@@ -1623,8 +1652,10 @@ mod tests {
     #[tokio::test]
     async fn paginator_works_with_wft_over_multiple_pages(
         #[values(10, 11, 12, 13, 14)] chunk_size: usize,
+        #[values(false, true)] improved: bool,
     ) {
-        let t = three_wfts_then_heartbeats();
+        let mut t = three_wfts_then_heartbeats();
+        maybe_set_improved(&mut t, improved);
         let mut paginator = paginator_setup(t, chunk_size);
         let mut update = paginator.extract_next_update().await.unwrap();
         let mut last_id = 0;
@@ -1643,9 +1674,11 @@ mod tests {
         assert_eq!(last_id, 160);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn task_just_before_heartbeat_chain_is_taken() {
-        let t = three_wfts_then_heartbeats();
+    async fn task_just_before_heartbeat_chain_is_taken(#[values(false, true)] improved: bool) {
+        let mut t = three_wfts_then_heartbeats();
+        maybe_set_improved(&mut t, improved);
         let mut update = t.as_history_update();
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
@@ -1663,9 +1696,11 @@ mod tests {
         );
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn handles_cache_misses() {
-        let timer_hist = canned_histories::single_timer("t");
+    async fn handles_cache_misses(#[values(false, true)] improved: bool) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
         let wft_started_id = partial_task.workflow_task_started_event_id();
@@ -1701,8 +1736,9 @@ mod tests {
         assert_eq!(seq.last().unwrap().event_id, 8);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn la_marker_chunking() {
+    fn la_marker_chunking(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -1717,6 +1753,7 @@ mod tests {
         t.add_workflow_task_scheduled_and_started();
         t.add_workflow_task_timed_out();
         t.add_workflow_task_scheduled_and_started();
+        maybe_set_improved(&mut t, improved);
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
@@ -1727,9 +1764,11 @@ mod tests {
         assert_eq!(seq.len(), 13);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn handles_blank_fetch_response() {
-        let timer_hist = canned_histories::single_timer("t");
+    async fn handles_blank_fetch_response(#[values(false, true)] improved: bool) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
         let wft_started_id = partial_task.workflow_task_started_event_id();
@@ -1753,9 +1792,11 @@ mod tests {
         assert_matches!(err.code(), tonic::Code::Unknown);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn handles_empty_page_with_next_token() {
-        let timer_hist = canned_histories::single_timer("t");
+    async fn handles_empty_page_with_next_token(#[values(false, true)] improved: bool) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
         let wft_started_id = partial_task.workflow_task_started_event_id();
@@ -1800,9 +1841,13 @@ mod tests {
     // TODO: Test we dont re-feed pointless updates if fetching returns <= events we already
     //   processed
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn handles_fetching_page_with_complete_wft_and_page_token_to_empty_page() {
-        let timer_hist = canned_histories::single_timer("t");
+    async fn handles_fetching_page_with_complete_wft_and_page_token_to_empty_page(
+        #[values(false, true)] improved: bool,
+    ) {
+        let mut timer_hist = canned_histories::single_timer("t");
+        maybe_set_improved(&mut timer_hist, improved);
         let workflow_task = timer_hist.get_full_history_info().unwrap();
         let prev_started_wft_id = workflow_task.previous_started_event_id();
         let wft_started_id = workflow_task.workflow_task_started_event_id();
@@ -1846,8 +1891,11 @@ mod tests {
         assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn extreme_pagination_doesnt_drop_wft_events_paginator() {
+    async fn extreme_pagination_doesnt_drop_wft_events_paginator(
+        #[values(false, true)] improved: bool,
+    ) {
         // 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
         // 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
         // 3: EVENT_TYPE_WORKFLOW_TASK_STARTED // <- previous_started_event_id
@@ -1883,6 +1931,7 @@ mod tests {
         t.add_we_signaled("hi", vec![]);
         t.add_we_signaled("hi", vec![]);
         t.add_workflow_task_scheduled_and_started();
+        maybe_set_improved(&mut t, improved);
 
         let mut mock_client = mock_worker_client();
 
@@ -1954,8 +2003,9 @@ mod tests {
         assert_eq!(seq.last().unwrap().event_id, 15);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn finding_end_index_with_started_as_last_event() {
+    async fn finding_end_index_with_started_as_last_event(#[values(false, true)] improved: bool) {
         let wf_id = "fakeid";
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1963,6 +2013,7 @@ mod tests {
 
         t.add_we_signaled("hi", vec![]);
         t.add_workflow_task_scheduled_and_started();
+        maybe_set_improved(&mut t, improved);
         // We need to see more after this - it's not sufficient to end on a started event when
         // we know there might be more
 
@@ -2010,8 +2061,9 @@ mod tests {
         assert_eq!(seq.last().unwrap().event_id, 7);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn just_signal_is_complete_wft() {
+    async fn just_signal_is_complete_wft(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -2020,6 +2072,7 @@ mod tests {
         t.add_we_signaled("whatever", vec![]);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
+        maybe_set_improved(&mut t, improved);
 
         let workflow_task = t.get_full_history_info().unwrap();
         let prev_started_wft_id = workflow_task.previous_started_event_id();
@@ -2046,8 +2099,9 @@ mod tests {
         assert_eq!(seq.len(), 2);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn heartbeats_then_signal() {
+    async fn heartbeats_then_signal(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -2058,6 +2112,7 @@ mod tests {
         t.add_full_wf_task();
         t.add_we_signaled("whatever", vec![]);
         t.add_workflow_task_scheduled_and_started();
+        maybe_set_improved(&mut t, improved);
 
         let full_resp: GetWorkflowExecutionHistoryResponse =
             t.get_full_history_info().unwrap().into();
@@ -2087,8 +2142,11 @@ mod tests {
         assert_eq!(seq.len(), 4);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn cache_miss_with_only_one_wft_available_orders_properly() {
+    async fn cache_miss_with_only_one_wft_available_orders_properly(
+        #[values(false, true)] improved: bool,
+    ) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -2096,6 +2154,7 @@ mod tests {
         t.add_full_wf_task();
         t.add_by_type(EventType::TimerStarted);
         t.add_workflow_task_scheduled_and_started();
+        maybe_set_improved(&mut t, improved);
 
         let incremental_task =
             hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::OneTask(3)).resp;
@@ -2140,8 +2199,9 @@ mod tests {
         assert_eq!(seq.last().unwrap().event_id, 11);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn wft_fail_on_first_task_with_update() {
+    async fn wft_fail_on_first_task_with_update(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task_scheduled_and_started();
@@ -2155,6 +2215,7 @@ mod tests {
         t.add_update_completed(accept_id);
         t.add_timer_fired(timer_id, "1".to_string());
         t.add_full_wf_task();
+        maybe_set_improved(&mut t, improved);
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
@@ -2166,8 +2227,9 @@ mod tests {
         assert_eq!(seq.len(), 7);
     }
 
+    #[rstest::rstest]
     #[test]
-    fn update_accepted_after_empty_wft() {
+    fn update_accepted_after_empty_wft(#[values(false, true)] improved: bool) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -2177,6 +2239,7 @@ mod tests {
         t.add_update_completed(accept_id);
         t.add_timer_fired(timer_id, "1".to_string());
         t.add_full_wf_task();
+        maybe_set_improved(&mut t, improved);
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
@@ -2450,8 +2513,11 @@ mod tests {
     ///   Event 16: WFTStarted    ─┤ WFT4
     ///   Event 17: WFTCompleted  ─┘
     ///   Event 18: WorkflowExecutionCompleted
-    fn build_empty_wft_then_update_history() -> TestHistoryBuilder {
+    fn build_empty_wft_then_update_history(improved: bool) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();
+        if improved {
+            t.set_use_improved_heartbeat_heuristic();
+        }
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task(); // WFT1: events 2-4 (empty)
         t.add_full_wf_task(); // WFT2: events 5-7 (empty)
@@ -2471,9 +2537,10 @@ mod tests {
     /// the UpdateAccepted event breaks the sequence.
     ///
     /// IN THIS TEST, WE ALWAYS HAVE has_last_wft = true.
+    #[rstest::rstest]
     #[test]
-    fn empty_wft_then_update_heuristic_has_last_wft() {
-        let t = build_empty_wft_then_update_history();
+    fn empty_wft_then_update_heuristic_has_last_wft(#[values(false, true)] improved: bool) {
+        let t = build_empty_wft_then_update_history(improved);
         let all_events = t.get_full_history_info().unwrap().into_events();
 
         // 3. Up to WFT1 Started — single WFT visible.
@@ -2629,9 +2696,10 @@ mod tests {
     /// the UpdateAccepted event breaks the sequence.
     ///
     /// IN THIS TEST, WE ALWAYS HAVE has_last_wft = false.
+    #[rstest::rstest]
     #[test]
-    fn empty_wft_then_update_heuristic_no_last_wft() {
-        let t = build_empty_wft_then_update_history();
+    fn empty_wft_then_update_heuristic_no_last_wft(#[values(false, true)] improved: bool) {
+        let t = build_empty_wft_then_update_history(improved);
         let all_events = t.get_full_history_info().unwrap().into_events();
 
         // 3. Up to WFT1 Started.
@@ -2886,8 +2954,11 @@ mod tests {
         }
     }
 
-    fn build_heartbeat_then_commands_history() -> TestHistoryBuilder {
+    fn build_heartbeat_then_commands_history(improved: bool) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();
+        if improved {
+            t.set_use_improved_heartbeat_heuristic();
+        }
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_full_wf_task(); // WFT2: has commands
@@ -2899,9 +2970,10 @@ mod tests {
 
     /// Heartbeat detected via heuristic: empty WFT followed by WFT with commands
     /// is collapsed into one sequence.
+    #[rstest::rstest]
     #[test]
-    fn heartbeat_heuristic_collapses() {
-        let t = build_heartbeat_then_commands_history();
+    fn heartbeat_heuristic_collapses(#[values(false, true)] improved: bool) {
+        let t = build_heartbeat_then_commands_history(improved);
 
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 0);
@@ -2926,10 +2998,12 @@ mod tests {
     /// activation for the pending update.
     #[test]
     fn heartbeat_not_collapsed_when_speculative_updates_pending() {
+        let improved = true;
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task(); // WFT1: events 2-4
         t.add_workflow_task_scheduled_and_started(); // WFT2: events 5-6
+        maybe_set_improved(&mut t, improved);
         let all_events = t.get_full_history_info().unwrap().into_events();
 
         // Without speculative updates: heartbeat collapsed as usual.
@@ -2974,11 +3048,13 @@ mod tests {
     ///   Event 8-9:  WFT3 (WFTScheduled + WFTStarted, current task with update)
     #[test]
     fn multiple_heartbeats_only_last_uncollapsed_for_speculative_updates() {
+        let improved = true;
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task(); // WFT1: events 2-4
         t.add_full_wf_task(); // WFT2: events 5-7
         t.add_workflow_task_scheduled_and_started(); // WFT3: events 8-9
+        maybe_set_improved(&mut t, improved);
         let all_events = t.get_full_history_info().unwrap().into_events();
 
         // With speculative updates: WFT1+WFT2 collapsed, WFT3 separate.
