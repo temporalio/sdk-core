@@ -3109,6 +3109,8 @@ async fn grpc_message_too_large_doesnt_spam_task_fails() {
             Ok(Default::default())
         }
     }));
+    mh.expect_fail_wft_matcher =
+        Box::new(|_, cause, _| *cause == WorkflowTaskFailedCause::GrpcMessageTooLarge);
 
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);

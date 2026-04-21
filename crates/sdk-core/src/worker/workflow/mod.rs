@@ -416,22 +416,7 @@ impl Workflows {
                         Err(e)
                             if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) && attempt < 2 =>
                         {
-                            let failure = Failure {
-                                failure: Some(
-                                    temporalio_common::protos::temporal::api::failure::v1::Failure {
-                                        message: "GRPC Message too large".to_string(),
-                                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                                            ApplicationFailureInfo {
-                                                r#type: "GrpcMessageTooLarge".to_string(),
-                                                non_retryable: true,
-                                                ..Default::default()
-                                            },
-                                        )),
-                                        ..Default::default()
-                                    },
-                                ),
-                                force_cause: 0,
-                            };
+                            let failure = make_grpc_message_too_large_failure();
                             let new_outcome = FailedActivationWFTReport::Report(
                                 task_token,
                                 WorkflowTaskFailedCause::GrpcMessageTooLarge,
@@ -860,22 +845,7 @@ impl Workflows {
             }
             Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
                 warn!(error=%e, "Query response too large, responding with failure");
-                let failure = Failure {
-                    failure: Some(
-                        temporalio_common::protos::temporal::api::failure::v1::Failure {
-                            message: "GRPC Message too large".to_string(),
-                            failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                                ApplicationFailureInfo {
-                                    r#type: "GrpcMessageTooLarge".to_string(),
-                                    non_retryable: true,
-                                    ..Default::default()
-                                },
-                            )),
-                            ..Default::default()
-                        },
-                    ),
-                    force_cause: 0,
-                };
+                let failure = make_grpc_message_too_large_failure();
                 if let Err(e2) = self
                     .client
                     .respond_legacy_query(tt, LegacyQueryResult::Failed(failure))
@@ -1737,6 +1707,25 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
     });
+}
+
+fn make_grpc_message_too_large_failure() -> Failure {
+    Failure {
+        failure: Some(
+            temporalio_common::protos::temporal::api::failure::v1::Failure {
+                message: "GRPC Message too large".to_string(),
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        r#type: "GrpcMessageTooLarge".to_string(),
+                        non_retryable: true,
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+        ),
+        force_cause: WorkflowTaskFailedCause::GrpcMessageTooLarge as i32,
+    }
 }
 
 #[cfg(test)]
