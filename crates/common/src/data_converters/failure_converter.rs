@@ -69,18 +69,14 @@ impl FailureDecodeHint for ActivityExecutionDecodeHint {
     fn adapt(self, normalized: IncomingError) -> Self::Output {
         match normalized {
             IncomingError::Activity(activity) => {
-                if self.cancelled {
+                if self.cancelled && matches!(activity.cause(), Some(IncomingError::Cancelled(_))) {
                     // We collapse to the inner cancellation error so callers do not see a cancel
                     // caused by another cancel.
-                    if matches!(activity.cause(), Some(IncomingError::Cancelled(_))) {
-                        let (_, cause) = activity.into_parts();
-                        let Some(IncomingError::Cancelled(cancelled)) = cause else {
-                            unreachable!("checked above");
-                        };
-                        ActivityExecutionError::Cancelled(cancelled)
-                    } else {
-                        ActivityExecutionError::Failed(activity)
-                    }
+                    let (_, cause) = activity.into_parts();
+                    let Some(IncomingError::Cancelled(cancelled)) = cause else {
+                        unreachable!("checked above");
+                    };
+                    ActivityExecutionError::Cancelled(cancelled)
                 } else {
                     ActivityExecutionError::Failed(activity)
                 }
