@@ -149,15 +149,6 @@ impl FailureDecodeHint for ChildWorkflowSignalDecodeHint {
     }
 }
 
-enum ClassifiedFailure<'a> {
-    Application(&'a ApplicationFailure),
-    ActivityExecution(&'a ActivityExecutionError),
-    ChildWorkflowExecution(&'a ChildWorkflowExecutionError),
-    ChildWorkflowStart(&'a ChildWorkflowStartError),
-    ChildWorkflowSignal(&'a ChildWorkflowSignalError),
-    Generic(&'a (dyn std::error::Error + 'static)),
-}
-
 impl FailureConverter for DefaultFailureConverter {
     fn to_failure(
         &self,
@@ -168,19 +159,19 @@ impl FailureConverter for DefaultFailureConverter {
         Ok(match error {
             OutgoingError::Activity(activity) => encode_outgoing_activity_error(activity),
             OutgoingError::Workflow(OutgoingWorkflowError::Application(app)) => {
-                encode_application_failure(&app)
+                app.encode_failure()
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ActivityExecution(activity)) => {
-                encode_activity_execution_failure(&activity)
+                activity.encode_failure()
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowExecution(child)) => {
-                encode_child_workflow_execution_failure(&child)
+                child.encode_failure()
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowStart(child)) => {
-                encode_child_workflow_start_failure(&child)
+                child.encode_failure()
             }
             OutgoingError::Workflow(OutgoingWorkflowError::ChildWorkflowSignal(signal)) => {
-                encode_child_workflow_signal_failure(&signal)
+                signal.encode_failure()
             }
         })
     }
@@ -195,108 +186,134 @@ impl FailureConverter for DefaultFailureConverter {
     }
 }
 
-fn classify_error<'a>(err: &'a (dyn std::error::Error + 'static)) -> ClassifiedFailure<'a> {
-    if let Some(classified) = classify_known_error(err) {
-        classified
-    } else if let Some(classified) = classify_source_chain(err) {
-        classified
+/// Trait for expressing that a type has a known conversion to a Failure proto
+trait EncodeFailure {
+    fn encode_failure(&self) -> Failure;
+}
+
+enum ClassifiedFailure<'a> {
+    Application(&'a ApplicationFailure),
+    ActivityExecution(&'a ActivityExecutionError),
+    ChildWorkflowExecution(&'a ChildWorkflowExecutionError),
+    ChildWorkflowStart(&'a ChildWorkflowStartError),
+    ChildWorkflowSignal(&'a ChildWorkflowSignalError),
+    Generic(&'a (dyn std::error::Error + 'static)),
+}
+
+impl<'a> ClassifiedFailure<'a> {
+    fn from_error(err: &'a (dyn std::error::Error + 'static)) -> Self {
+        Self::from_known_error(err).unwrap_or(Self::Generic(err))
+    }
+
+    fn from_known_error(err: &'a (dyn std::error::Error + 'static)) -> Option<Self> {
+        if let Some(app) = err.downcast_ref::<ApplicationFailure>() {
+            Some(Self::Application(app))
+        } else if let Some(activity) = err.downcast_ref::<ActivityExecutionError>() {
+            Some(Self::ActivityExecution(activity))
+        } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
+            Some(Self::ChildWorkflowExecution(child))
+        } else if let Some(child) = err.downcast_ref::<ChildWorkflowStartError>() {
+            Some(Self::ChildWorkflowStart(child))
+        } else {
+            err.downcast_ref::<ChildWorkflowSignalError>()
+                .map(Self::ChildWorkflowSignal)
+        }
+    }
+
+    fn encode(self) -> Failure {
+        match self {
+            Self::Application(app) => app.encode_failure(),
+            Self::ActivityExecution(activity) => activity.encode_failure(),
+            Self::ChildWorkflowExecution(child) => child.encode_failure(),
+            Self::ChildWorkflowStart(child) => child.encode_failure(),
+            Self::ChildWorkflowSignal(signal) => signal.encode_failure(),
+            Self::Generic(err) => encode_generic_application_failure(err),
+        }
+    }
+}
+
+impl EncodeFailure for ApplicationFailure {
+    fn encode_failure(&self) -> Failure {
+        let mut failure = Failure {
+            message: self.to_string(),
+            cause: encode_application_failure_cause(self.source_error().as_ref()),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo {
+                    r#type: self.type_name().unwrap_or_default().to_owned(),
+                    non_retryable: self.is_non_retryable(),
+                    details: self.details().cloned(),
+                    next_retry_delay: self.next_retry_delay().and_then(|d| d.try_into().ok()),
+                    category: self.category() as i32,
+                },
+            )),
+            ..Default::default()
+        };
+        if failure.message.is_empty() {
+            failure.message = "Application failure".to_owned();
+        }
+        failure
+    }
+}
+
+fn encode_application_failure_cause(
+    source: &(dyn std::error::Error + 'static),
+) -> Option<Box<Failure>> {
+    if matches!(
+        ClassifiedFailure::from_error(source),
+        ClassifiedFailure::Application(_) | ClassifiedFailure::Generic(_)
+    ) {
+        source.source().map(encode_error_as_failure).map(Box::new)
     } else {
-        ClassifiedFailure::Generic(err)
+        Some(Box::new(encode_error_as_failure(source)))
     }
 }
 
-fn classify_known_error<'a>(
-    err: &'a (dyn std::error::Error + 'static),
-) -> Option<ClassifiedFailure<'a>> {
-    if let Some(app) = err.downcast_ref::<ApplicationFailure>() {
-        Some(ClassifiedFailure::Application(app))
-    } else if let Some(activity) = err.downcast_ref::<ActivityExecutionError>() {
-        Some(ClassifiedFailure::ActivityExecution(activity))
-    } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
-        Some(ClassifiedFailure::ChildWorkflowExecution(child))
-    } else if let Some(child) = err.downcast_ref::<ChildWorkflowStartError>() {
-        Some(ClassifiedFailure::ChildWorkflowStart(child))
-    } else {
-        err.downcast_ref::<ChildWorkflowSignalError>()
-            .map(ClassifiedFailure::ChildWorkflowSignal)
-    }
+fn encode_error_as_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
+    ClassifiedFailure::from_error(err).encode()
 }
 
-fn classify_source_chain<'a>(
-    err: &'a (dyn std::error::Error + 'static),
-) -> Option<ClassifiedFailure<'a>> {
-    let mut current = err.source();
-    while let Some(cause) = current {
-        if let Some(classified) = classify_known_error(cause) {
-            return Some(classified);
-        }
-        current = cause.source();
-    }
-    None
-}
-
-fn encode_application_failure(app: &ApplicationFailure) -> Failure {
-    let source = app.source_error().as_ref();
-    let cause = match classify_error(source) {
-        ClassifiedFailure::Application(_) | ClassifiedFailure::Generic(_) => {
-            source.source().map(encode_nested_failure).map(Box::new)
-        }
-        _ => Some(Box::new(encode_nested_failure(source))),
-    };
-    let mut failure = Failure {
-        message: app.to_string(),
-        cause,
-        failure_info: Some(FailureInfo::ApplicationFailureInfo(
-            ApplicationFailureInfo {
-                r#type: app.type_name().unwrap_or_default().to_owned(),
-                non_retryable: app.is_non_retryable(),
-                details: app.details().cloned(),
-                next_retry_delay: app.next_retry_delay().and_then(|d| d.try_into().ok()),
-                category: app.category() as i32,
-            },
-        )),
-        ..Default::default()
-    };
-    if failure.message.is_empty() {
-        failure.message = "Application failure".to_owned();
-    }
-    failure
-}
-
-fn encode_activity_execution_failure(err: &ActivityExecutionError) -> Failure {
-    match err {
-        ActivityExecutionError::Failed(failure) => failure.failure().clone(),
-        ActivityExecutionError::Cancelled(failure) => failure.failure().clone(),
-        ActivityExecutionError::Serialization(err) => encode_generic_application_failure(err),
-    }
-}
-
-fn encode_child_workflow_execution_failure(err: &ChildWorkflowExecutionError) -> Failure {
-    match err {
-        ChildWorkflowExecutionError::Failed(failure) => failure.failure().clone(),
-        ChildWorkflowExecutionError::Serialization(_) => encode_generic_application_failure(err),
-    }
-}
-
-fn encode_child_workflow_start_failure(err: &ChildWorkflowStartError) -> Failure {
-    match err {
-        ChildWorkflowStartError::Cancelled(failure) => failure.failure().clone(),
-        ChildWorkflowStartError::StartFailed { .. } | ChildWorkflowStartError::Serialization(_) => {
-            encode_generic_application_failure(err)
+impl EncodeFailure for ActivityExecutionError {
+    fn encode_failure(&self) -> Failure {
+        match self {
+            Self::Failed(failure) => failure.failure().clone(),
+            Self::Cancelled(failure) => failure.failure().clone(),
+            Self::Serialization(err) => encode_generic_application_failure(err),
         }
     }
 }
 
-fn encode_child_workflow_signal_failure(err: &ChildWorkflowSignalError) -> Failure {
-    match err {
-        ChildWorkflowSignalError::Failed(failure) => failure.failure().clone(),
-        ChildWorkflowSignalError::Serialization(err) => encode_generic_application_failure(err),
+impl EncodeFailure for ChildWorkflowExecutionError {
+    fn encode_failure(&self) -> Failure {
+        match self {
+            Self::Failed(failure) => failure.failure().clone(),
+            Self::Serialization(_) => encode_generic_application_failure(self),
+        }
+    }
+}
+
+impl EncodeFailure for ChildWorkflowStartError {
+    fn encode_failure(&self) -> Failure {
+        match self {
+            Self::Cancelled(failure) => failure.failure().clone(),
+            Self::StartFailed { .. } | Self::Serialization(_) => {
+                encode_generic_application_failure(self)
+            }
+        }
+    }
+}
+
+impl EncodeFailure for ChildWorkflowSignalError {
+    fn encode_failure(&self) -> Failure {
+        match self {
+            Self::Failed(failure) => failure.failure().clone(),
+            Self::Serialization(err) => encode_generic_application_failure(err),
+        }
     }
 }
 
 fn encode_outgoing_activity_error(err: OutgoingActivityError) -> Failure {
     match err {
-        OutgoingActivityError::Application(app) => encode_application_failure(&app),
+        OutgoingActivityError::Application(app) => app.encode_failure(),
         OutgoingActivityError::Cancelled { details } => Failure {
             message: "Activity cancelled".to_string(),
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
@@ -307,27 +324,10 @@ fn encode_outgoing_activity_error(err: OutgoingActivityError) -> Failure {
     }
 }
 
-fn encode_nested_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
-    match classify_error(err) {
-        ClassifiedFailure::Application(app) => encode_application_failure(app),
-        ClassifiedFailure::ActivityExecution(activity) => {
-            encode_activity_execution_failure(activity)
-        }
-        ClassifiedFailure::ChildWorkflowExecution(child) => {
-            encode_child_workflow_execution_failure(child)
-        }
-        ClassifiedFailure::ChildWorkflowStart(child) => encode_child_workflow_start_failure(child),
-        ClassifiedFailure::ChildWorkflowSignal(signal) => {
-            encode_child_workflow_signal_failure(signal)
-        }
-        ClassifiedFailure::Generic(err) => encode_generic_application_failure(err),
-    }
-}
-
 fn encode_generic_application_failure(err: &(dyn std::error::Error + 'static)) -> Failure {
     Failure {
         message: err.to_string(),
-        cause: err.source().map(encode_nested_failure).map(Box::new),
+        cause: err.source().map(encode_error_as_failure).map(Box::new),
         failure_info: Some(FailureInfo::ApplicationFailureInfo(
             ApplicationFailureInfo::default(),
         )),
@@ -390,6 +390,7 @@ mod tests {
         },
     };
     use rstest::rstest;
+    use std::fmt;
 
     #[derive(Debug, Clone, Copy)]
     enum IncomingKind {
@@ -409,6 +410,35 @@ mod tests {
     enum ActivityExecutionKind {
         Failed,
         Cancelled,
+    }
+
+    #[derive(Debug)]
+    struct TestError {
+        message: &'static str,
+        source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    }
+
+    impl TestError {
+        fn new(
+            message: &'static str,
+            source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+        ) -> Self {
+            Self { message, source }
+        }
+    }
+
+    impl fmt::Display for TestError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "{}", self.message)
+        }
+    }
+
+    impl std::error::Error for TestError {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.source
+                .as_deref()
+                .map(|source| source as &(dyn std::error::Error + 'static))
+        }
     }
 
     fn assert_incoming_kind(decoded: &IncomingError, expected: IncomingKind) {
@@ -532,6 +562,83 @@ mod tests {
     }
 
     #[test]
+    fn application_failures_skip_generic_wrappers_around_known_causes() {
+        let activity_failure = Failure {
+            message: "activity failed".to_owned(),
+            failure_info: Some(FailureInfo::ActivityFailureInfo(
+                ActivityFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+        let app = ApplicationFailure::new(anyhow::Error::new(TestError::new(
+            "outer wrapper",
+            Some(Box::new(ActivityExecutionError::Failed(
+                ActivityFailureError::new(
+                    activity_failure.clone(),
+                    ActivityFailureInfo::default(),
+                    None,
+                ),
+            ))),
+        )));
+
+        let converted = convert(OutgoingWorkflowError::Application(Box::new(app)));
+
+        assert!(matches!(
+            converted.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        ));
+        assert_eq!(converted.message, "outer wrapper");
+        assert_eq!(converted.cause.unwrap().as_ref(), &activity_failure);
+    }
+
+    #[test]
+    fn application_failures_serialize_unknown_nested_causes_as_application_failures() {
+        let app = ApplicationFailure::new(anyhow::Error::new(TestError::new(
+            "outer wrapper",
+            Some(Box::new(TestError::new("generic inner cause", None))),
+        )));
+
+        let converted = convert(OutgoingWorkflowError::Application(Box::new(app)));
+
+        assert!(matches!(
+            converted.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        ));
+        assert_eq!(converted.message, "outer wrapper",);
+        let cause = converted
+            .cause
+            .clone()
+            .expect("expected nested generic cause");
+        assert_eq!(cause.message, "generic inner cause");
+        assert!(matches!(
+            cause.failure_info,
+            Some(FailureInfo::ApplicationFailureInfo(_))
+        ));
+        assert!(cause.cause.is_none());
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                converted.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Application(decoded_app) = decoded else {
+            panic!("expected application error");
+        };
+        assert_eq!(decoded_app.failure(), Some(&converted));
+        let Some(IncomingError::Application(wrapper)) = decoded_app.cause() else {
+            panic!("expected application cause");
+        };
+        assert_eq!(
+            wrapper.failure().map(|failure| failure.message.as_str()),
+            Some("generic inner cause")
+        );
+        assert!(wrapper.cause().is_none());
+    }
+
+    #[test]
     fn start_failed_child_workflow_errors_fall_back_to_application_failures() {
         let failure = convert(OutgoingWorkflowError::ChildWorkflowStart(Box::new(
             ChildWorkflowStartError::StartFailed {
@@ -607,6 +714,41 @@ mod tests {
         };
         assert_eq!(app.failure(), Some(&failure));
         assert!(matches!(app.cause(), Some(IncomingError::Timeout(_))));
+    }
+
+    #[test]
+    fn application_failures_decode_wrapped_known_causes_without_collapsing_wrapper() {
+        let failure = Failure {
+            message: "app boom".to_owned(),
+            cause: Some(Box::new(Failure {
+                message: "activity failed".to_owned(),
+                failure_info: Some(FailureInfo::ActivityFailureInfo(
+                    ActivityFailureInfo::default(),
+                )),
+                ..Default::default()
+            })),
+            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                ApplicationFailureInfo::default(),
+            )),
+            ..Default::default()
+        };
+
+        let decoded = DefaultFailureConverter
+            .to_error(
+                failure.clone(),
+                &PayloadConverter::default(),
+                &SerializationContextData::Workflow,
+            )
+            .unwrap();
+
+        let IncomingError::Application(app) = decoded else {
+            panic!("expected application error");
+        };
+        assert_eq!(app.failure(), Some(&failure));
+        let Some(IncomingError::Activity(activity)) = app.cause() else {
+            panic!("expected activity cause");
+        };
+        assert_eq!(activity.failure().message, "activity failed");
     }
 
     #[rstest]
