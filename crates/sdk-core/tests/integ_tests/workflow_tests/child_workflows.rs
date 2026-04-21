@@ -478,8 +478,11 @@ impl ParentCancelsChildWf {
             .result()
             .await
             .expect_err("child should be cancelled");
-        let ChildWorkflowExecutionError::Cancelled(cancelled) = err else {
-            panic!("child should be cancelled");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+            panic!("child failure should retain cancelled reason");
         };
         assert!(cancelled.details().is_none());
         Ok(())
@@ -519,8 +522,11 @@ impl RuntimeParentCancelsChildWf {
             .result()
             .await
             .expect_err("child should be cancelled");
-        let ChildWorkflowExecutionError::Cancelled(cancelled) = err else {
-            panic!("child should be cancelled");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+            panic!("child failure should retain cancelled reason");
         };
         assert!(cancelled.details().is_none());
         assert!(cancelled.cause().is_none());
@@ -1110,6 +1116,52 @@ async fn cancel_child_before_started_event() {
     ))
     .await
     .unwrap();
+}
+
+#[workflow]
+#[derive(Default)]
+struct CancelChildBeforeStartedCannedWf;
+
+#[workflow_methods]
+impl CancelChildBeforeStartedCannedWf {
+    #[run(name = DEFAULT_WORKFLOW_TYPE)]
+    async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<()> {
+        let start = ctx.child_workflow(
+            UntypedWorkflow::new("child"),
+            RawValue::new(vec![]),
+            ChildWorkflowOptions {
+                workflow_id: "child-id-1".to_string(),
+                cancel_type: ChildWorkflowCancellationType::WaitCancellationCompleted,
+                ..Default::default()
+            },
+        );
+        ctx.cancelled().await;
+        start.cancel();
+        let started = start
+            .await
+            .expect("child should still report a successful start");
+        let err = started
+            .result()
+            .await
+            .expect_err("child result should be cancelled");
+        let ChildWorkflowExecutionError::Failed(failure) = err else {
+            panic!("started child cancellation should stay wrapper-shaped");
+        };
+        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+            panic!("child failure should retain cancelled reason");
+        };
+        assert!(cancelled.details().is_none());
+        assert!(cancelled.cause().is_none());
+        Err(WorkflowTermination::Cancelled)
+    }
+}
+
+#[tokio::test]
+async fn cancel_child_before_started_event_exposes_cancelled_error() {
+    let t = canned_histories::cancel_child_workflow_before_started_event("child-id-1");
+    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+    worker.register_workflow::<CancelChildBeforeStartedCannedWf>();
+    worker.run().await.unwrap();
 }
 
 #[workflow]

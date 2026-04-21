@@ -111,17 +111,7 @@ impl FailureDecodeHint for ChildWorkflowExecutionDecodeHint {
             (
                 ChildWorkflowExecutionDecodeHint::Cancelled,
                 IncomingError::ChildWorkflowExecution(child),
-            ) => {
-                if matches!(child.cause(), Some(IncomingError::Cancelled(_))) {
-                    let (_, cause) = child.into_parts();
-                    let Some(IncomingError::Cancelled(cancelled)) = cause else {
-                        unreachable!("checked above");
-                    };
-                    ChildWorkflowExecutionError::Cancelled(cancelled)
-                } else {
-                    ChildWorkflowExecutionError::Failed(child)
-                }
-            }
+            ) => ChildWorkflowExecutionError::Failed(child),
             (ChildWorkflowExecutionDecodeHint::Cancelled, IncomingError::Cancelled(cancelled)) => {
                 ChildWorkflowExecutionError::Cancelled(cancelled)
             }
@@ -948,11 +938,14 @@ mod tests {
             )
             .unwrap();
 
-        let ChildWorkflowExecutionError::Cancelled(decoded_failure) = decoded else {
-            panic!("expected cancelled child-workflow execution error");
+        let ChildWorkflowExecutionError::Failed(decoded_failure) = decoded else {
+            panic!("expected failed child-workflow execution error");
         };
-        assert_eq!(decoded_failure.failure(), &cancelled_cause);
-        assert!(decoded_failure.cause().is_none());
+        assert_eq!(decoded_failure.failure(), &failure);
+        assert!(matches!(
+            decoded_failure.cause(),
+            Some(IncomingError::Cancelled(_))
+        ));
     }
 
     #[test]

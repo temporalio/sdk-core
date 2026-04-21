@@ -135,8 +135,9 @@ normalized cause chain:
   `ActivityFailureError`
 - `ChildWorkflowExecutionError::Failed(...)` returns the nested reason from the wrapped
   `ChildWorkflowFailureError`
-- top-level `Cancelled(...)` or `StartFailed { .. }` cases may return `None`, because their meaning
-  is already expressed by the top-level variant
+- start-time child-workflow errors such as `ChildWorkflowStartError::Cancelled(...)` or
+  `ChildWorkflowStartError::StartFailed { .. }` may return `None`, because their meaning is
+  already expressed by the top-level variant
 
 This keeps the public shape cross-SDK-aligned while still avoiding clumsy repeated `cause()`
 inspection in normal Rust code.
@@ -208,19 +209,41 @@ The first-pass richer local-activity rule should therefore remain:
 
 This document does not propose a separate local-activity wrapper type.
 
-### Child workflow execution
+### Child workflow start
 
-Implemented first pass:
+Proposed shape:
 
 ```rust
-pub enum ChildWorkflowExecutionError {
-    Failed(ChildWorkflowFailureError),
+pub enum ChildWorkflowStartError {
     Cancelled(CancelledError),
     StartFailed {
         workflow_id: String,
         workflow_type: String,
         cause: StartChildWorkflowExecutionFailedCause,
     },
+    Serialization(PayloadConversionError),
+}
+```
+
+This reflects that `ctx.child_workflow(...).await` is a distinct seam from
+`started.result().await`.
+
+Intended behavior:
+
+- true top-level cancellation before the child reaches the normal child-workflow failure-wrapper
+  path maps to `ChildWorkflowStartError::Cancelled(...)`
+- service- or SDK-level start failures map to `StartFailed { .. }`
+- eager serialization failures remain `Serialization(...)`
+
+This avoids overloading the result-time error enum with a narrow start-only cancellation case.
+
+### Child workflow execution
+
+Proposed shape:
+
+```rust
+pub enum ChildWorkflowExecutionError {
+    Failed(ChildWorkflowFailureError),
     Serialization(PayloadConversionError),
 }
 
@@ -230,13 +253,13 @@ pub struct ChildWorkflowFailureError {
 }
 ```
 
-This keeps `StartFailed` as-is because it is already a semantic SDK-level error shape, while making
-other child-workflow outcomes more explicit.
+This keeps result-time child-workflow errors wrapper-shaped and avoids overgeneralizing a
+top-level `Cancelled` variant across both the start and result seams.
 
 Intended behavior:
 
-- cancelled child workflow resolution maps to `Cancelled(...)`
 - failed child workflow resolution maps to `Failed(...)`
+- started child workflow cancellation also maps to `Failed(...)`
 - the actual reason for the failed child workflow remains in `ChildWorkflowFailureError::cause()`,
   e.g.:
   - `IncomingError::Application(...)`
@@ -248,6 +271,11 @@ This keeps Rust aligned with the cross-SDK rule that the child-workflow wrapper 
 operation failed, while the nested cause identifies why it failed. To keep that shape ergonomic,
 `ChildWorkflowExecutionError` should also expose `reason()` as a convenience accessor for the
 nested failure reason.
+
+The practical distinction is:
+
+- `ctx.child_workflow(...).await` reports start-time outcomes via `ChildWorkflowStartError`
+- `started.result().await` reports result-time outcomes via `ChildWorkflowExecutionError`
 
 ### Child workflow signal
 
@@ -337,6 +365,21 @@ The intended rule is:
 - nested cause remains visible through `cause()` / `source()`
 - nested cause does not by itself promote a failed resolution into a different top-level variant
 
+### Child workflow start adaptation
+
+Decode input:
+
+- workflow-side child-workflow start resolution status
+- normalized decoded value from `FailureConverter::to_error(...)`
+
+Expected first-pass mapping:
+
+- cancelled start resolution + top-level `IncomingError::Cancelled(...)`
+  -> `ChildWorkflowStartError::Cancelled(...)`
+- start-failed resolution remains `StartFailed { ... }` and does not participate in
+  `IncomingError` adaptation
+- eager payload issues remain `Serialization(...)`
+
 ### Child workflow execution adaptation
 
 Decode input:
@@ -346,14 +389,12 @@ Decode input:
 
 Expected first-pass mapping:
 
-- cancelled resolution + any normalized value
-  -> `ChildWorkflowExecutionError::Cancelled(...)`
 - failed resolution + normalized child-workflow wrapper whose cause is anything else
+  -> `ChildWorkflowExecutionError::Failed(...)`
+- cancelled resolution after the child has entered the normal child-workflow wrapper path
   -> `ChildWorkflowExecutionError::Failed(...)`
 - failed resolution + normalized value that is not `IncomingError::ChildWorkflowExecution(...)`
   -> `ChildWorkflowExecutionError::Failed(...)` using retained proto fallback
-- start-failed resolution remains `StartFailed { ... }` and does not participate in `IncomingError`
-  adaptation
 
 More specifically, a failed child-workflow resolution whose normalized cause is
 `IncomingError::Cancelled(...)` should still remain `ChildWorkflowExecutionError::Failed(...)` in
@@ -361,10 +402,11 @@ the first pass.
 
 The intended rule is:
 
-- resolution status determines the top-level public variant
+- start and result are separate public seams
 - failed child-workflow resolutions remain wrapper-shaped
 - nested cause remains visible through `cause()` / `source()`
-- nested cancelled cause does not by itself promote a failed resolution into `Cancelled(...)`
+- nested cancelled cause does not by itself promote a failed result resolution into a separate
+  top-level variant
 
 This keeps the richer Rust shape aligned with the cross-SDK behavior where a top-level
 child-workflow failure with a nested cancelled cause is still treated as a child-workflow failure,
@@ -441,6 +483,7 @@ For example:
   `reason()`/`source()` exposing `TimeoutError`
 - activity cancellation tests should assert `ActivityExecutionError::Cancelled(...)`
 - generic activity failure tests should assert `ActivityExecutionError::Failed(...)`
+- child-workflow start cancellation tests should assert `ChildWorkflowStartError::Cancelled(...)`
 - child workflow timeout / terminated tests should assert `ChildWorkflowExecutionError::Failed(...)`
   with the corresponding nested `reason()`
 
@@ -507,6 +550,9 @@ Expected compatibility changes:
   variant matches first, with `failure()` only used when retained proto inspection is still needed
 - integration assertions that currently inspect `failure_info` directly for common semantic cases
   should prefer the richer public variant shape instead
+- child-workflow assertions should be split by seam:
+  - `ctx.child_workflow(...).await` should assert `ChildWorkflowStartError`
+  - `started.result().await` should assert `ChildWorkflowExecutionError`
 - retained `failure()` access remains available, so tests that need exact proto inspection can
   still do so without losing coverage
 
@@ -517,6 +563,28 @@ The intended migration style is:
 3. use `reason()` for ordinary failure-reason inspection on wrapper-like public enums
 4. use `cause()` / `source()` for ordinary Rust error-chain traversal rather than re-parsing raw
    nested proto causes whenever possible
+
+## Decode Hints
+
+Splitting child-workflow start and result outcomes implies separate decode hint types.
+
+This is desirable, not accidental: the two seams now produce different output types, so a single
+hint type would either erase that distinction or reintroduce ambiguity.
+
+The intended direction is:
+
+```rust
+struct ChildWorkflowStartDecodeHint;
+struct ChildWorkflowExecutionDecodeHint;
+```
+
+or equivalent named types.
+
+The key point is that `DataConverter::to_error(..., hint)` should continue to reflect the seam
+being adapted:
+
+- start resolution uses a start-specific hint and returns `ChildWorkflowStartError`
+- result resolution uses an execution-specific hint and returns `ChildWorkflowExecutionError`
 
 ## Recommended Implementation Order
 
