@@ -8,7 +8,13 @@ use crate::{
     },
     grpc::WorkflowService,
 };
-use std::{fmt::Debug, marker::PhantomData};
+use futures_util::{ stream::Stream};
+use std::{
+    fmt::Debug,
+    marker::PhantomData,
+    pin::Pin,
+    task::{Context, Poll},
+};
 pub use temporalio_common::UntypedWorkflow;
 use temporalio_common::{
     HasWorkflowDefinition, QueryDefinition, SignalDefinition, UpdateDefinition, WorkflowDefinition,
@@ -300,6 +306,27 @@ impl WorkflowHistory {
     /// Consume the history and return the events.
     pub fn into_events(self) -> Vec<HistoryEvent> {
         self.events
+    }
+}
+
+/// A stream of history events from a workflow execution.
+/// Internally paginates through results from the server.
+pub struct WorkflowHistoryStream {
+    inner: Pin<Box<dyn Stream<Item = Result<HistoryEvent, WorkflowInteractionError>> + Send>>,
+}
+
+impl WorkflowHistoryStream {
+    fn new(
+        inner: Pin<Box<dyn Stream<Item = Result<HistoryEvent, WorkflowInteractionError>> + Send>>,
+    ) -> Self {
+        Self { inner }
+    }
+}
+
+impl Stream for WorkflowHistoryStream {
+    type Item = Result<HistoryEvent, WorkflowInteractionError>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
     }
 }
 
