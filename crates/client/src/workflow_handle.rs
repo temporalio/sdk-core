@@ -8,7 +8,7 @@ use crate::{
     },
     grpc::WorkflowService,
 };
-use futures_util::{ stream::Stream};
+use futures_util::stream::Stream;
 use std::{
     fmt::Debug,
     marker::PhantomData,
@@ -904,6 +904,18 @@ where
         self.fetch_history_for_run(&run_id, &opts).await
     }
 
+    /// Fetch workflow execution history as a lazy stream
+    pub fn fetch_history_stream(
+        &self,
+        opts: WorkflowFetchHistoryOptions,
+    ) -> WorkflowHistoryStream
+    where
+        CT: NamespacedClient,
+    {
+        let run_id = self.info.run_id.clone().unwrap_or_default();
+        self.fetch_history_stream_for_run(&run_id, &opts)
+    }
+
     /// Fetch history for a specific run_id, handling pagination.
     async fn fetch_history_for_run(
         &self,
@@ -948,6 +960,15 @@ where
         }
 
         Ok(WorkflowHistory::new(all_events))
+    }
+
+    /// Fetch history for a specific run_id, handling pagination as a lazy stream
+    fn fetch_history_stream_for_run(
+        &self,
+        run_id: &str,
+        opts: &WorkflowFetchHistoryOptions,
+    ) -> WorkflowHistoryStream {
+        todo!()
     }
 }
 
