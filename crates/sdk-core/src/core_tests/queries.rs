@@ -695,6 +695,7 @@ async fn legacy_query_too_large_responds_with_failure() {
                 assert!(
                     matches!(&result, LegacyQueryResult::Failed(f) if
                         f.failure.as_ref().unwrap().message == "GRPC Message too large"
+                        && f.force_cause() == WorkflowTaskFailedCause::GrpcMessageTooLarge
                     ),
                     "Expected query failure with message-too-large, got: {:?}",
                     matches!(&result, LegacyQueryResult::Failed(_)),
