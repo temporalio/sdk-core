@@ -120,7 +120,6 @@ impl WorkflowFunction {
                 command_status: Default::default(),
                 cancel_sender: cancel_tx,
                 data_converter,
-                payload_converter,
                 update_futures: Default::default(),
                 signal_futures: Default::default(),
                 wake_tracking,
@@ -153,8 +152,6 @@ pub(crate) struct WorkflowFuture {
     base_ctx: BaseWorkflowContext,
     /// Data converter for workflow failure conversion and payload serialization.
     data_converter: DataConverter,
-    /// Payload converter used directly by workflow command serialization paths.
-    payload_converter: PayloadConverter,
     /// Stores in-progress update futures
     update_futures: Vec<(
         String,
@@ -178,7 +175,7 @@ impl WorkflowFuture {
     fn workflow_error_to_failure(&self, error: crate::workflows::WorkflowError) -> Failure {
         let outgoing = match error {
             crate::workflows::WorkflowError::PayloadConversion(err) => {
-                OutgoingWorkflowError::from(anyhow::Error::new(err))
+                OutgoingWorkflowError::from(err)
             }
             crate::workflows::WorkflowError::Execution(err) => err.into(),
         };
@@ -288,7 +285,7 @@ impl WorkflowFuture {
                             payloads: q.arguments,
                         },
                         headers: q.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = if query_type == "__temporal_workflow_metadata" {
@@ -363,7 +360,7 @@ impl WorkflowFuture {
                             payloads: sig.input,
                         },
                         headers: sig.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let dispatch_result = match panic::catch_unwind(AssertUnwindSafe(|| {
@@ -395,7 +392,7 @@ impl WorkflowFuture {
                     let data = DispatchData {
                         payloads: Payloads { payloads: u.input },
                         headers: u.headers,
-                        converter: &self.payload_converter,
+                        converter: self.data_converter.payload_converter(),
                     };
 
                     let trait_val_result = if u.run_validator {

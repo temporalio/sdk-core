@@ -93,6 +93,18 @@ impl ApplicationFailure {
         self.cause.as_deref()
     }
 
+    /// If this [`ApplicationFailure`] was caused by a timeout, returns the associated
+    /// [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        self.cause().and_then(IncomingError::as_timeout)
+    }
+
+    /// If this [`ApplicationFailure`] was caused by a cancellation, returns the associated
+    /// [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        self.cause().and_then(IncomingError::as_cancelled)
+    }
+
     pub(crate) fn from_failure(failure: Failure, cause: Option<IncomingError>) -> Self {
         let app_info = failure
             .maybe_application_failure()
@@ -133,6 +145,12 @@ impl From<anyhow::Error> for ApplicationFailure {
     }
 }
 
+impl From<PayloadConversionError> for ApplicationFailure {
+    fn from(value: PayloadConversionError) -> Self {
+        Self::new(value)
+    }
+}
+
 impl From<ApplicationFailure> for Failure {
     fn from(value: ApplicationFailure) -> Self {
         if let Some(failure) = value.failure {
@@ -168,7 +186,7 @@ pub enum OutgoingError {
     /// An error produced while completing an activity.
     #[error(transparent)]
     Activity(#[from] OutgoingActivityError),
-    /// An error produced while failing a workflow execution.
+    /// An error produced from a workflow.
     #[error(transparent)]
     Workflow(#[from] OutgoingWorkflowError),
 }
@@ -210,6 +228,12 @@ pub enum OutgoingWorkflowError {
 impl From<anyhow::Error> for OutgoingWorkflowError {
     fn from(value: anyhow::Error) -> Self {
         Self::Application(Box::new(ApplicationFailure::new(value)))
+    }
+}
+
+impl From<PayloadConversionError> for OutgoingWorkflowError {
+    fn from(value: PayloadConversionError) -> Self {
+        Self::Application(Box::new(value.into()))
     }
 }
 
@@ -316,6 +340,22 @@ impl IncomingError {
             IncomingError::ChildWorkflowExecution(err) => err.into_failure(),
             IncomingError::NexusOperationExecution(err) => err.into_failure(),
             IncomingError::NexusHandler(err) => err.into_failure(),
+        }
+    }
+
+    /// If the [`IncomingError`] is a timeout, returns the associated [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        match self {
+            IncomingError::Timeout(err) => Some(err),
+            _ => None,
+        }
+    }
+
+    /// If the [`IncomingError`] is a cancellation, returns the associated [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        match self {
+            IncomingError::Cancelled(err) => Some(err),
+            _ => None,
         }
     }
 }
@@ -549,6 +589,18 @@ impl ActivityFailureError {
     pub fn retry_state(&self) -> crate::protos::temporal::api::enums::v1::RetryState {
         self.retry_state
     }
+
+    /// If this [`ActivityFailureError`] was caused by a timeout, returns the associated
+    /// [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        self.cause().and_then(IncomingError::as_timeout)
+    }
+
+    /// If this [`ActivityFailureError`] was caused by a cancellation, returns the associated
+    /// [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        self.cause().and_then(IncomingError::as_cancelled)
+    }
 }
 
 impl_incoming_failure_wrapper!(ActivityFailureError);
@@ -616,6 +668,18 @@ impl ChildWorkflowFailureError {
     pub fn retry_state(&self) -> crate::protos::temporal::api::enums::v1::RetryState {
         self.retry_state
     }
+
+    /// If this [`ChildWorkflowFailureError`] was caused by a timeout, returns the associated
+    /// [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        self.cause().and_then(IncomingError::as_timeout)
+    }
+
+    /// If this [`ChildWorkflowFailureError`] was caused by a cancellation, returns the associated
+    /// [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        self.cause().and_then(IncomingError::as_cancelled)
+    }
 }
 
 impl_incoming_failure_wrapper!(ChildWorkflowFailureError);
@@ -666,6 +730,25 @@ impl ActivityExecutionError {
         match self {
             ActivityExecutionError::Failed(err) => err.cause(),
             ActivityExecutionError::Cancelled(_) | ActivityExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// If this [`ActivityExecutionError`] was caused by a timeout, returns the associated
+    /// [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        match self {
+            ActivityExecutionError::Failed(err) => err.as_timeout(),
+            ActivityExecutionError::Serialization(_) | ActivityExecutionError::Cancelled(_) => None,
+        }
+    }
+
+    /// If this [`ActivityExecutionError`] was caused by a cancellation, returns the associated
+    /// [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        match self {
+            ActivityExecutionError::Failed(err) => err.as_cancelled(),
+            ActivityExecutionError::Cancelled(err) => Some(err),
+            ActivityExecutionError::Serialization(_) => None,
         }
     }
 }
@@ -745,6 +828,24 @@ impl ChildWorkflowExecutionError {
     pub fn reason(&self) -> Option<&IncomingError> {
         match self {
             ChildWorkflowExecutionError::Failed(err) => err.cause(),
+            ChildWorkflowExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// If this [`ChildWorkflowExecutionError`] was caused by a timeout, returns the associated
+    /// [`TimeoutError`].
+    pub fn as_timeout(&self) -> Option<&TimeoutError> {
+        match self {
+            ChildWorkflowExecutionError::Failed(err) => err.as_timeout(),
+            ChildWorkflowExecutionError::Serialization(_) => None,
+        }
+    }
+
+    /// If this [`ChildWorkflowExecutionError`] was caused by a cancellation, returns the associated
+    /// [`CancelledError`].
+    pub fn as_cancelled(&self) -> Option<&CancelledError> {
+        match self {
+            ChildWorkflowExecutionError::Failed(err) => err.as_cancelled(),
             ChildWorkflowExecutionError::Serialization(_) => None,
         }
     }
@@ -861,5 +962,16 @@ mod tests {
             panic!("plain workflow errors should default to application failures");
         };
         assert_eq!(app.to_string(), "workflow boom");
+    }
+
+    #[test]
+    fn payload_conversion_errors_default_to_application_outgoing_errors() {
+        let outgoing: OutgoingWorkflowError =
+            PayloadConversionError::EncodingError(anyhow::anyhow!("encode boom").into()).into();
+
+        let OutgoingWorkflowError::Application(app) = outgoing else {
+            panic!("payload conversion errors should default to application failures");
+        };
+        assert_eq!(app.to_string(), "Encoding error: encode boom");
     }
 }

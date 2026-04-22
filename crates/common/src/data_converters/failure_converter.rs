@@ -209,21 +209,18 @@ enum ClassifiedFailure<'a> {
 
 impl<'a> ClassifiedFailure<'a> {
     fn from_error(err: &'a (dyn std::error::Error + 'static)) -> Self {
-        Self::from_known_error(err).unwrap_or(Self::Generic(err))
-    }
-
-    fn from_known_error(err: &'a (dyn std::error::Error + 'static)) -> Option<Self> {
         if let Some(app) = err.downcast_ref::<ApplicationFailure>() {
-            Some(Self::Application(app))
+            Self::Application(app)
         } else if let Some(activity) = err.downcast_ref::<ActivityExecutionError>() {
-            Some(Self::ActivityExecution(activity))
+            Self::ActivityExecution(activity)
         } else if let Some(child) = err.downcast_ref::<ChildWorkflowExecutionError>() {
-            Some(Self::ChildWorkflowExecution(child))
+            Self::ChildWorkflowExecution(child)
         } else if let Some(child) = err.downcast_ref::<ChildWorkflowStartError>() {
-            Some(Self::ChildWorkflowStart(child))
+            Self::ChildWorkflowStart(child)
+        } else if let Some(child_signal) = err.downcast_ref::<ChildWorkflowSignalError>() {
+            Self::ChildWorkflowSignal(child_signal)
         } else {
-            err.downcast_ref::<ChildWorkflowSignalError>()
-                .map(Self::ChildWorkflowSignal)
+            Self::Generic(err)
         }
     }
 
@@ -241,7 +238,7 @@ impl<'a> ClassifiedFailure<'a> {
 
 impl EncodeFailure for ApplicationFailure {
     fn encode_failure(&self) -> Failure {
-        let mut failure = Failure {
+        Failure {
             message: self.to_string(),
             cause: encode_application_failure_cause(self.source_error().as_ref()),
             failure_info: Some(FailureInfo::ApplicationFailureInfo(
@@ -254,11 +251,7 @@ impl EncodeFailure for ApplicationFailure {
                 },
             )),
             ..Default::default()
-        };
-        if failure.message.is_empty() {
-            failure.message = "Application failure".to_owned();
         }
-        failure
     }
 }
 

@@ -641,17 +641,11 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 )
                 .await;
             let err = res.unwrap_err();
-            if let ActivityExecutionError::Failed(failure) = &err
-                && let Some(temporalio_common::error::IncomingError::Timeout(timeout)) =
-                    failure.cause()
-            {
-                assert_eq!(
-                    timeout.timeout_type(),
-                    TimeoutType::try_from(timeout_type).unwrap()
-                );
-            } else {
-                return Err(anyhow!("expected Failed, got {err:?}").into());
-            }
+            let timeout = err.as_timeout().unwrap();
+            assert_eq!(
+                timeout.timeout_type(),
+                TimeoutType::try_from(timeout_type).unwrap()
+            );
             Ok(())
         }
     }
@@ -725,8 +719,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
             let ActivityExecutionError::Failed(failure) = &err else {
                 panic!("expected Failed, got {err:?}");
             };
-            let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = failure.cause()
-            else {
+            let Some(timeout) = failure.as_timeout() else {
                 panic!("expected timeout cause, got {failure:?}");
             };
             assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToClose);
@@ -1996,8 +1989,7 @@ async fn test_schedule_to_start_timeout() {
                 .await;
             assert!(la_res.is_err());
             if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = fail.cause()
-                else {
+                let Some(timeout) = fail.as_timeout() else {
                     panic!("expected timeout cause, got {fail:?}");
                 };
                 assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToStart);
@@ -2005,10 +1997,6 @@ async fn test_schedule_to_start_timeout() {
                     fail.activity_type()
                         .map(|activity_type| activity_type.name.as_str()),
                     Some(StdActivities::echo.name())
-                );
-                assert_matches!(
-                    fail.cause(),
-                    Some(temporalio_common::error::IncomingError::Timeout(_))
                 );
             }
             Ok(())
@@ -2102,8 +2090,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             if is_sched_to_start {
                 assert!(la_res.is_ok());
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = fail.cause()
-                else {
+                let Some(timeout) = fail.as_timeout() else {
                     panic!("expected timeout cause, got {fail:?}");
                 };
                 assert_eq!(timeout.timeout_type(), TimeoutType::ScheduleToClose);
@@ -2176,8 +2163,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
             if la_completes {
                 assert!(la_res.is_ok(), "Result should be ok was {la_res:?}");
             } else if let Err(ActivityExecutionError::Failed(ref fail)) = la_res {
-                let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = fail.cause()
-                else {
+                let Some(timeout) = fail.as_timeout() else {
                     panic!("expected timeout cause, got {fail:?}");
                 };
                 assert_eq!(timeout.timeout_type(), TimeoutType::StartToClose);

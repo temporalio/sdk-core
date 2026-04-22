@@ -482,7 +482,7 @@ impl ParentCancelsChildWf {
         let ChildWorkflowExecutionError::Failed(failure) = err else {
             panic!("started child cancellation should stay wrapper-shaped");
         };
-        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+        let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
         assert!(cancelled.details().is_none());
@@ -526,7 +526,7 @@ impl RuntimeParentCancelsChildWf {
         let ChildWorkflowExecutionError::Failed(failure) = err else {
             panic!("started child cancellation should stay wrapper-shaped");
         };
-        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+        let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
         assert!(cancelled.details().is_none());
@@ -645,7 +645,7 @@ impl GrandchildCancellationWf {
                 .map(|wf| wf.name.as_str()),
             Some("grandchild_wf")
         );
-        let Some(IncomingError::Cancelled(cancelled)) = grandchild_failure.cause() else {
+        let Some(cancelled) = grandchild_failure.as_cancelled() else {
             panic!("grandchild failure should retain the cancelled reason");
         };
         assert!(cancelled.details().is_none());
@@ -1148,7 +1148,7 @@ impl CancelChildBeforeStartedCannedWf {
         let ChildWorkflowExecutionError::Failed(failure) = err else {
             panic!("started child cancellation should stay wrapper-shaped");
         };
-        let Some(IncomingError::Cancelled(cancelled)) = failure.cause() else {
+        let Some(cancelled) = failure.as_cancelled() else {
             panic!("child failure should retain cancelled reason");
         };
         assert!(cancelled.details().is_none());

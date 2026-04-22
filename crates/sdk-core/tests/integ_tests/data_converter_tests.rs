@@ -20,11 +20,13 @@ use temporalio_common::{
         SerializationContextData, TemporalDeserializable, TemporalSerializable,
     },
     error::{IncomingError, OutgoingError},
-    protos::coresdk::AsJsonPayloadExt,
-    protos::temporal::api::{
-        common::v1::{Payload, RetryPolicy},
-        failure::v1::failure::FailureInfo,
-        history::v1::history_event::Attributes,
+    protos::{
+        coresdk::AsJsonPayloadExt,
+        temporal::api::{
+            common::v1::{Payload, RetryPolicy},
+            failure::v1::failure::FailureInfo,
+            history::v1::history_event::Attributes,
+        },
     },
     worker::WorkerTaskTypes,
 };

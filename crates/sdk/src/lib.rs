@@ -962,7 +962,7 @@ impl ActivityHalf {
                             data_converter.to_failure(
                                 &activity_context,
                                 OutgoingError::Activity(OutgoingActivityError::Application(
-                                    ApplicationFailure::non_retryable(anyhow!(
+                                    ApplicationFailure::new(anyhow!(
                                         "Activity function panicked: {}",
                                         panic_formatter(e)
                                     ))
@@ -1271,6 +1271,12 @@ impl WorkflowTermination {
 
 impl From<anyhow::Error> for WorkflowTermination {
     fn from(err: anyhow::Error) -> Self {
+        Self::Failed(err.into())
+    }
+}
+
+impl From<temporalio_common::data_converters::PayloadConversionError> for WorkflowTermination {
+    fn from(err: temporalio_common::data_converters::PayloadConversionError) -> Self {
         Self::Failed(err.into())
     }
 }

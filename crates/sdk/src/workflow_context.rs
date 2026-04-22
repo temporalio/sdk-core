@@ -707,7 +707,7 @@ impl<W> SyncWorkflowContext<W> {
         };
         let arguments = pc
             .to_payloads(&ctx, input)
-            .map_err(|err| WorkflowTermination::from(anyhow::Error::new(err)))?;
+            .map_err(WorkflowTermination::from)?;
         let workflow_type = self.workflow_initial_info().workflow_type.clone();
         let proto = opts.into_proto(workflow_type, arguments);
         Err(WorkflowTermination::continue_as_new(proto))
@@ -1479,7 +1479,7 @@ impl CancellableFuture<ActivityResolution> for LATimerBackoffFut {
 enum ActivityFut<F, Output> {
     /// Immediate error (e.g., input serialization failure). Resolves on first poll.
     Errored {
-        error: Box<Option<ActivityExecutionError>>,
+        error: Option<Box<ActivityExecutionError>>,
         _phantom: PhantomData<Output>,
     },
     /// Running activity that will deserialize output on completion.
@@ -1494,7 +1494,7 @@ enum ActivityFut<F, Output> {
 impl<F, Output> ActivityFut<F, Output> {
     fn eager(err: ActivityExecutionError) -> Self {
         Self::Errored {
-            error: Box::new(Some(err)),
+            error: Some(Box::new(err)),
             _phantom: PhantomData,
         }
     }
@@ -1521,7 +1521,7 @@ where
         let this = self.get_mut();
         let poll = match this {
             ActivityFut::Errored { error, .. } => {
-                Poll::Ready(Err(error.take().expect("polled after completion")))
+                Poll::Ready(Err(*error.take().expect("polled after completion")))
             }
             ActivityFut::Running {
                 inner,

@@ -52,8 +52,7 @@ impl ActivityDoesntHeartbeatHitsTimeoutThenCompletesWf {
         let ActivityExecutionError::Failed(failure) = &err else {
             panic!("expected Failed, got {err:?}");
         };
-        let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = failure.cause()
-        else {
+        let Some(timeout) = failure.as_timeout() else {
             panic!("expected timeout cause, got {failure:?}");
         };
         assert_eq!(timeout.timeout_type(), TimeoutType::Heartbeat);

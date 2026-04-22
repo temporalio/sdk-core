@@ -163,6 +163,67 @@ async fn one_activity_only() {
 }
 
 #[tokio::test]
+async fn activity_panics_are_retryable() {
+    struct PanicOnceActivities;
+
+    #[activities]
+    impl PanicOnceActivities {
+        #[activity]
+        async fn panic_once(self: Arc<Self>, ctx: ActivityContext) -> Result<u32, ActivityError> {
+            let _ = self;
+            if ctx.info().attempt == 1 {
+                panic!("panic once");
+            }
+            Ok(ctx.info().attempt)
+        }
+    }
+
+    #[workflow]
+    #[derive(Default)]
+    struct ActivityPanicRetryWorkflow;
+
+    #[workflow_methods]
+    impl ActivityPanicRetryWorkflow {
+        #[run]
+        async fn run(ctx: &mut WorkflowContext<Self>) -> WorkflowResult<u32> {
+            ctx.start_activity(
+                PanicOnceActivities::panic_once,
+                (),
+                ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                    .retry_policy(RetryPolicy {
+                        maximum_attempts: 2,
+                        ..Default::default()
+                    })
+                    .build(),
+            )
+            .await
+            .map_err(|e| anyhow!("{e}").into())
+        }
+    }
+
+    let wf_name = ActivityPanicRetryWorkflow::name();
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.sdk_config.register_activities(PanicOnceActivities);
+    starter
+        .sdk_config
+        .register_workflow::<ActivityPanicRetryWorkflow>();
+    let mut worker = starter.worker().await;
+
+    let task_queue = starter.get_task_queue().to_owned();
+    let handle = worker
+        .submit_workflow(
+            ActivityPanicRetryWorkflow::run,
+            (),
+            WorkflowStartOptions::new(task_queue, wf_name.to_owned()).build(),
+        )
+        .await
+        .unwrap();
+
+    worker.run_until_done().await.unwrap();
+    assert_eq!(handle.get_result(Default::default()).await.unwrap(), 2);
+}
+
+#[tokio::test]
 async fn activity_workflow() {
     let mut starter = init_core_and_create_wf("activity_workflow").await;
     let core = starter.get_worker().await;
@@ -381,15 +442,13 @@ async fn workflow_observes_non_retryable_activity() {
                 .start_activity(
                     NonRetryableActivityErrorActivities::fail_non_retryable,
                     (),
-                    ActivityOptions {
-                        activity_id: Some("non-retryable-act".to_owned()),
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        retry_policy: Some(RetryPolicy {
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .activity_id("non-retryable-act".to_owned())
+                        .retry_policy(RetryPolicy {
                             maximum_attempts: 3,
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
+                        })
+                        .build(),
                 )
                 .await
                 .unwrap_err();
@@ -463,15 +522,13 @@ async fn workflow_observes_non_retryable_activity_failure_builder() {
                 .start_activity(
                     NonRetryableActivityBuilderActivities::fail_non_retryable_with_builder,
                     (),
-                    ActivityOptions {
-                        activity_id: Some("non-retryable-builder-act".to_owned()),
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        retry_policy: Some(RetryPolicy {
+                    ActivityOptions::with_start_to_close_timeout(Duration::from_secs(5))
+                        .activity_id("non-retryable-builder-act".to_owned())
+                        .retry_policy(RetryPolicy {
                             maximum_attempts: 3,
                             ..Default::default()
-                        }),
-                        ..Default::default()
-                    },
+                        })
+                        .build(),
                 )
                 .await
                 .unwrap_err();
@@ -1380,8 +1437,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
                 panic!("expected activity failure, got {err:?}");
             };
             assert_eq!(fail_err.retry_state(), RetryState::MaximumAttemptsReached);
-            let Some(temporalio_common::error::IncomingError::Timeout(timeout)) = fail_err.cause()
-            else {
+            let Some(timeout) = fail_err.as_timeout() else {
                 panic!("expected timeout cause, got {fail_err:?}");
             };
             assert_eq!(timeout.timeout_type(), TimeoutType::StartToClose);
